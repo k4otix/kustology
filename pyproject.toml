@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pykusto-language"
+version = "0.1.0"
+description = "A Python wrapper for the Microsoft.Kusto.Language C# library."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+# This handles the root-level files for the built wheel
+license-files = ["LICENSE", "NOTICE", "THIRD-PARTY-NOTICES.md"]
+dependencies = [
+    "pythonnet>=3.0.0",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.1.0",
+]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.1.0",
+    "build>=1.0.0",
+    "twine>=5.0.0",
+    "ruff>=0.3.0",
+    "mypy>=1.9.0",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# Only binary assets belong here
+"pykusto_language.bin" = ["Kusto.Language.dll"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
