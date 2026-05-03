@@ -4,22 +4,23 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![.NET 10.0+](https://img.shields.io/badge/.NET-10.0+-purple.svg)](https://dotnet.microsoft.com/download/dotnet/10.0)
 
-`pykusto-language` is a high-fidelity Python wrapper for the official **Microsoft.Kusto.Language** C# library. It enables robust KQL (Kusto Query Language) parsing, syntax validation, and Abstract Syntax Tree (AST) analysis directly in Python.
+`pykusto-language` is a high-fidelity KQL (Kusto Query Language) analysis and automation library for Python. While it is built on a robust .NET 10 bridge to the official **Microsoft.Kusto.Language** engine, it provides an extensive suite of Pythonic utilities for deep AST analysis, structural reasoning, and query transformation.
 
-Unlike regex-based or partial Python implementations, this library utilizes the official .NET engine via `pythonnet` to ensure 100% parity with the parser used by Azure Data Explorer, Azure Monitor, and Microsoft Sentinel.
+Unlike regex-based tools, this library ensures 100% parity with the parser used by Azure Data Explorer, Azure Monitor, and Microsoft Sentinel, while offering high-level abstractions for detection engineering and automated query management.
 
-## Features
+## Key Capabilities
 
-* **Full Syntax Support:** Complete KQL language coverage including the latest operators and functions.
-* **AST Analysis:** Deep inspection of query structure for detection engineering, linting, and transpilation.
-* **Diagnostics:** Access to high-quality compiler-grade error messages and syntax warnings.
-* **Cross-Platform:** Developed to run seamlessly on Windows, Linux, and macOS.
-* **Type Fidelity:** Direct access to the underlying .NET object model.
+*   **Unified Language Services:** Integrated tools for compiler-grade formatting (`format`), diagnostic validation (`validate`), and AST parsing.
+*   **Deep Structural Analysis:** Utilities to flatten complex binary ASTs into linear pipeline chains, enabling easy reasoning about operator flow.
+*   **Intelligent Symbol Binding:** Support for both fast syntactic heuristics and rigorous semantic binding using provided schemas to verified table and column symbols.
+*   **Query Fingerprinting:** Stable structural hashing that identifies logical patterns while ignoring literals and whitespace—ideal for deduplication and templating.
+*   **Advanced Transformations:** Surgical search-and-replace for table references and type-aware literal masking to redact sensitive PII (e.g., strings and regex) for safe logging.
+*   **JSON Interop:** Recursive export of the complete AST to Python dictionaries or JSON for use in web frontends or data pipelines.
 
 ## Prerequisites
 
-* **Python 3.10+**
-* **[.NET Runtime 10.0+](https://dotnet.microsoft.com/download/dotnet/10.0)**: The library requires the .NET runtime to host the C# parsing engine.
+*   **Python 3.10+**
+*   **[.NET Runtime 10.0+](https://dotnet.microsoft.com/download/dotnet/10.0)**: Required to host the underlying parsing engine.
 
 ## Installation
 
@@ -27,44 +28,32 @@ Unlike regex-based or partial Python implementations, this library utilizes the 
 pip install pykusto-language
 ```
 
-## Usage
-
-**Basic Parsing and Validation**
+## Quick Start
 
 ```python
-from pykusto_language.parser import parse_query
+from pykusto_language import parse, format, validate
 
-query = "StormEvents | where State == 'TEXAS' | count"
-result = parse_query(query)
+# 1. Format and Validate
+query = "SecurityEvent|where EventID==4624"
+print(format(query))
 
-# Check for syntax errors (Diagnostics)
-diagnostics = result.GetDiagnostics()
-if len(diagnostics) > 0:
-    for diag in diagnostics:
-        print(f"[{diag.Severity}] Line {diag.Start}: {diag.Message}")
-else:
-    print("Query is syntactically valid.")
+# 2. Deep Analysis
+result = parse(query)
+print(f"Tables: {result.get_referenced_tables()}")
+print(f"Logic Fingerprint: {result.get_structural_hash()}")
+
+# 3. Pipeline Reasoning
+for op in result.get_operator_chain():
+    print(f"Step: {op.Kind}")
 ```
 
-**Accessing the Syntax Tree**
-```python
-root = result.Syntax
-print(f"Root Node Kind: {root.Kind}") # e.g., QueryStatement
+## Architecture
 
-# Accessing children or specific properties
-# Note: These properties follow the C# Kusto.Language API naming conventions
-statements = root.Items
-for stmt in statements:
-    print(f"Statement Kind: {stmt.Kind}")
-```
+This library bridges CPython and the .NET Common Language Runtime (CLR) via `pythonnet`, bundling the official Microsoft `Kusto.Language.dll`.
 
-**Architecture**
-
-This project acts as a bridge between CPython and the .NET Common Language Runtime (CLR). It bundles a specific version of the `Kusto.Language.dll` compiled from the [official Microsoft repository](https://github.com/microsoft/Kusto-Query-Language).
-
-1. Python Layer: Provides a clean, Pythonic entry point.
-2. Bridge (`pythonnet`): Manages the data marshalling between the Python interpreter and the .NET runtime.
-3. Engine (`Kusto.Language.dll`): The official Microsoft library that performs the actual lexing and parsing.
+1.  **Python Layer**: A high-level, Pythonic API for analysis and transformation.
+2.  **Bridge**: Managed marshalling and a reflection-based fallback system for robust interop.
+3.  **Engine**: The official Microsoft parser ensuring total KQL fidelity.
 
 ## Development
 
@@ -72,7 +61,7 @@ To set up a development environment with all testing tools:
 
 ```bash
 # Clone the repository
-git clone [https://github.com/k4otix/pykusto-language.git](https://github.com/k4otix/pykusto-language.git)
+git clone https://github.com/k4otix/pykusto-language.git
 cd pykusto-language
 
 # Install in editable mode with dev dependencies

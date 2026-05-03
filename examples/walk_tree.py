@@ -4,7 +4,7 @@ import sys
 # Ensure the local src directory is in the path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
-from pykusto_language.parser import parse_query
+from pykusto_language import parse
 
 
 def walk_node(node, depth=0):
@@ -29,7 +29,7 @@ def walk_node(node, depth=0):
                 walk_node(child, depth)
         return
 
-    # 3. LOGICAL MAPPING: Focus on the "Blue Team" semantics
+    # 3. LOGICAL MAPPING: Focus on high-level operator semantics
     match kind:
         case "QueryBlock":
             print(f"{indent}📦 Root: QueryBlock")
@@ -72,5 +72,5 @@ if __name__ == "__main__":
     query = "SecurityEvent | where EventID == 4624 | project TimeGenerated, Account"
     print(f"🔍 Analyzing: {query}\n")
 
-    result = parse_query(query)
-    walk_node(result.Syntax)
+    result = parse(query)
+    walk_node(result.syntax)
