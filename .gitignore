@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# mine_corpus.py JSON output
+reports/
+.venv_base/
+
+# Local-only Azure-Sentinel IR validation artifacts (one-time sanity check)
+/tests/fixtures/sentinel_sample/
+/tests/fixtures/sentinel_schemas.json

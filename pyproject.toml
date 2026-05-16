@@ -5,34 +5,62 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pykusto-language"
 version = "0.1.0"
-description = "A Python wrapper for the Microsoft.Kusto.Language C# library."
+description = "A Python wrapper for the Kusto.Language parser (Microsoft.Azure.Kusto.Language NuGet package). Not affiliated with Microsoft."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
+authors = [{name = "Eddie Allan"}]
 # This handles the root-level files for the built wheel
-license-files = ["LICENSE", "NOTICE", "THIRD-PARTY-NOTICES.md"]
+license-files = ["LICENSE", "NOTICE.md", "THIRD-PARTY-NOTICES.md"]
 dependencies = [
     "pythonnet>=3.0.0",
 ]
 classifiers = [
-    "Programming Language :: Python :: 3",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
     "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Security",
     "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
 ]
 
+[project.urls]
+Homepage = "https://github.com/k4otix/pykusto-language"
+Repository = "https://github.com/k4otix/pykusto-language"
+Changelog = "https://github.com/k4otix/pykusto-language/blob/main/CHANGELOG.md"
+Issues = "https://github.com/k4otix/pykusto-language/issues"
+Documentation = "https://github.com/k4otix/pykusto-language/blob/main/README.md"
+
+[project.scripts]
+pykusto = "pykusto_language.cli:main"
+
 [project.optional-dependencies]
+# Tier-2 opinionated IR. Activates pykusto_language.ir.* — pydantic-typed
+# operator / expression models plus a schema binder.
+ir = [
+    "pydantic>=2.6.0",
+]
+# Base test extras — NO pydantic. The CI matrix uses these to prove
+# `pip install pykusto-language` still works without the IR extras.
 test = [
     "pytest>=8.0.0",
     "pytest-cov>=4.1.0",
 ]
+# Full dev extras — includes pydantic so lint/typecheck can see the IR module.
 dev = [
     "pytest>=8.0.0",
     "pytest-cov>=4.1.0",
+    "pydantic>=2.6.0",
     "build>=1.0.0",
     "twine>=5.0.0",
     "ruff>=0.3.0",
     "mypy>=1.9.0",
+    "cyclonedx-bom>=4.0.0",
+    "pyyaml>=6.0",
 ]
 
 [tool.setuptools]
@@ -42,13 +70,54 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-# Only binary assets belong here
-"pykusto_language.bin" = ["Kusto.Language.dll"]
+# Binary assets + version manifest, plus PEP 561 marker for inline type hints.
+"pykusto_language" = ["py.typed"]
+"pykusto_language.bin" = ["Kusto.Language.dll", "VERSION.txt"]
 
 [tool.ruff]
 line-length = 120
 target-version = "py310"
 
+[tool.ruff.lint.per-file-ignores]
+# Re-exports — F401 unused imports are intentional in __init__.py.
+"src/pykusto_language/ir/__init__.py" = ["F401"]
+# AnyExpr Union line is long by design; splitting would obscure the surface.
+"src/pykusto_language/ir/expr.py" = ["E501"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"
+addopts = "-q --strict-markers"
+
+[tool.coverage.run]
+source = ["pykusto_language"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+
+[tool.mypy]
+python_version = "3.10"
+files = ["src"]
+ignore_missing_imports = true
+check_untyped_defs = false
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+# Microsoft .NET types reach Python via pythonnet at runtime; no stubs exist.
+module = ["Kusto.*", "clr", "pythonnet", "pythonnet.*", "System", "System.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Tier-2 IR uses heavy pydantic Union types where mypy can't always narrow
+# the operator/expression dispatch the visitor produces. The IR is pre-1.0
+# and not the right place to fight mypy invariance — re-tighten once shapes
+# stabilize.
+module = ["pykusto_language.ir.*"]
+ignore_errors = true
+
+[tool.pykusto-language]
+# Pinned version of Microsoft.Azure.Kusto.Language NuGet package (Kusto.Language.dll).
+# Refresh with `python scripts/refresh_dll.py --pin --version X.Y.Z`.
+kusto_language_version = "12.3.2"
