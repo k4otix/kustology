@@ -30,9 +30,14 @@ def parse(query_text: str, schema: SchemaLike = None):
 
 
 def format_query(query_text: str, options: FormattingOptions | None = None) -> str:
-    """Format a KQL query using Microsoft's KustoCodeService."""
+    """Format a KQL query using Microsoft's KustoCodeService.
+
+    The .NET formatter emits ``Environment.NewLine`` for ``PlacementStyle.NewLine``
+    (CRLF on Windows, LF elsewhere). Normalize to LF so output bytes are
+    platform-consistent — the KQL canonical form is LF-only.
+    """
     formatted = KustoCodeService(query_text).GetFormattedText(options)
-    return str(formatted.Text)
+    return str(formatted.Text).replace("\r\n", "\n")
 
 
 def validate(
