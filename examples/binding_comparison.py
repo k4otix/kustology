@@ -1,59 +1,102 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Eddie Allan
+
+"""Semantic binding via ``parse(query, schema=...)``.
+
+Without a schema the parser only checks syntax. With a schema, Microsoft's
+binder resolves every name to a symbol and surfaces real semantic errors
+(typos, unknown columns, type mismatches) — the kind of feedback that pure
+parsing cannot produce.
+
+This example uses the canonical Azure Data Explorer ``StormEvents`` schema
+and a query containing a deliberate typo (``EvenType`` instead of
+``EventType``) to show the difference.
+"""
+
 import os
 import sys
-import time
 
-# Ensure the local src directory is in the path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
-from pykusto_language import parse
+from pykusto_language import parse, validate
 
-def run_comparison():
-    print("=== KQL Binding Comparison: Syntactic vs. Semantic ===\n")
 
-    query = """
-    DeviceProcessEvents 
-    | where ProcessCommandLine contains "powershell" 
-    | where DeviceName == "COMP-01"
-    | project TimeGenerated, DeviceName, FileName, ProcessCommandLine
-    """
-    
-    # Warmup to ensure DLLs and mapping overhead are cleared
-    _ = parse(query).get_referenced_tables()
-
-    # 1. SYNTACTIC BINDING (Fast)
-    iterations = 10
-    start_time = time.perf_counter()
-    for _ in range(iterations):
-        result = parse(query)
-        _ = result.get_referenced_tables()
-    syntactic_duration = ((time.perf_counter() - start_time) / iterations) * 1000
-
-    print(f"--- Fast Syntactic Path (Average of {iterations}) ---")
-    print(f"Duration: {syntactic_duration:.2f} ms")
-    print("Logic: Walks AST searching for NameReferences in source positions.\n")
-
-    # 2. SEMANTIC BINDING (Rigorous)
-    schema = {
-        "DeviceProcessEvents": ["TimeGenerated", "DeviceName", "FileName", "ProcessCommandLine"]
+# Canonical Azure Data Explorer sample table — used by every ADX tutorial.
+# Each value is a KQL scalar type that pykusto resolves via
+# ScalarTypes.GetSymbol at parse time.
+STORM_EVENTS_SCHEMA = {
+    "StormEvents": {
+        "StartTime": "datetime",
+        "EndTime": "datetime",
+        "EpisodeId": "int",
+        "EventId": "int",
+        "State": "string",
+        "EventType": "string",
+        "InjuriesDirect": "int",
+        "InjuriesIndirect": "int",
+        "DeathsDirect": "int",
+        "DeathsIndirect": "int",
+        "DamageProperty": "int",
+        "DamageCrops": "int",
+        "Source": "string",
+        "BeginLocation": "string",
+        "EndLocation": "string",
+        "BeginLat": "real",
+        "BeginLon": "real",
+        "EndLat": "real",
+        "EndLon": "real",
+        "EpisodeNarrative": "string",
+        "EventNarrative": "string",
+        "StormSummary": "dynamic",
     }
-    
-    start_time = time.perf_counter()
-    for _ in range(iterations):
-        # Semantic requires re-analysis with state
-        _ = result.get_referenced_tables(schema=schema)
-    semantic_duration = ((time.perf_counter() - start_time) / iterations) * 1000
+}
 
-    print(f"--- Semantic Binding Path (Average of {iterations}) ---")
-    print(f"Duration: {semantic_duration:.2f} ms")
-    print("Logic: Creates .NET GlobalState, performs symbol binding, and extracts TableSymbols.\n")
 
-    # PERFORMANCE SUMMARY
-    print("=== Performance Metrics ===")
-    ratio = semantic_duration / syntactic_duration if syntactic_duration > 0 else 0
-    print(f"Syntactic is ~{ratio:.1f}x faster than Semantic.")
-    print("Use Case Tip:")
-    print("  - Use Syntactic for: Quick linting, syntax highlighting, basic table lists.")
-    print("  - Use Semantic for: Symbol validation, column lineage, resolving ambiguous names.")
+# `EvenType` is a typo for `EventType`. Both are syntactically valid
+# identifiers, so pure parsing accepts the query. Only the binder, which
+# needs the schema to resolve names, can reject it.
+QUERY = (
+    'StormEvents '
+    '| where EvenType == "Tornado" and State == "TEXAS" '
+    '| summarize count() by State'
+)
+
+
+def banner(title: str) -> None:
+    print(f"\n=== {title} ===")
+
+
+def print_diagnostics(diags: list[dict]) -> None:
+    if not diags:
+        print("  (none)")
+        return
+    for d in diags:
+        print(f"  [{d['severity']} {d['code']}] at char {d['start']}: {d['message']}")
+
+
+def main() -> None:
+    print("Input query:")
+    print(f"  {QUERY}")
+    print()
+    print("Schema (StormEvents — 22 columns):")
+    cols = STORM_EVENTS_SCHEMA["StormEvents"]
+    for name, kql_type in cols.items():
+        print(f"  {name:<22s} {kql_type}")
+
+    banner("parse(query)  — syntactic only, no schema")
+    syntactic = parse(QUERY)
+    print(f"  has_semantics : {syntactic.has_semantics}")
+    print("  diagnostics   :")
+    print_diagnostics(validate(QUERY))
+    print("  → The parser cannot tell `EvenType` is a typo; it's a valid identifier.")
+
+    banner("parse(query, schema=...)  — bound against StormEvents")
+    bound = parse(QUERY, schema=STORM_EVENTS_SCHEMA)
+    print(f"  has_semantics : {bound.has_semantics}")
+    print("  diagnostics   :")
+    print_diagnostics(validate(QUERY, schema=STORM_EVENTS_SCHEMA))
+    print("  → The binder resolves names against the schema and rejects EvenType.")
+
 
 if __name__ == "__main__":
-    run_comparison()
+    main()
