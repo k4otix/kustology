@@ -1,0 +1,6 @@
+SecurityEvent
+| where EventID == 4624
+| distinct
+    Account,
+    FirstHop = bin(TimeGenerated, 1m),
+    FirstComputer = toupper(Computer)

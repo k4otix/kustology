@@ -1,0 +1,5 @@
+(union isfuzzy=true
+  (SecurityEvent | where EventID == 4624),
+  (WindowsEvent | where EventID == 4624)
+)
+| summarize count() by EventID

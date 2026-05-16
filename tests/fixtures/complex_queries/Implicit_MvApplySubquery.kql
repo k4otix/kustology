@@ -1,0 +1,5 @@
+AuditLogs
+| mv-apply TargetResource = TargetResources on (
+    where TargetResource.type =~ "Device"
+    | extend ModifiedProperties = TargetResource.modifiedProperties
+)

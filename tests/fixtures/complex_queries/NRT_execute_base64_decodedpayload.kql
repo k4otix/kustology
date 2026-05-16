@@ -1,0 +1,9 @@
+SecurityEvent
+| where EventID==4688
+| where isnotempty(CommandLine)
+| project TimeGenerated, Computer, AccountName = SubjectUserName, AccountNTDomain = SubjectDomainName, FileName = Process, CommandLine, ParentProcessName, SubjectAccount
+| extend HostName = tostring(split(Computer, ".")[0]), DomainIndex = toint(indexof(Computer, '.'))
+| extend HostNameDomain = iff(DomainIndex != -1, substring(Computer, DomainIndex + 1), Computer)
+| where CommandLine contains ".decode('base64')"
+        or CommandLine contains "base64 --decode"
+        or CommandLine contains ".decode64("
