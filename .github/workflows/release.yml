@@ -22,36 +22,60 @@ jobs:
           dotnet-version: "8.0.x"
       - name: Verify bundled DLL matches NuGet before building
         run: python scripts/verify_dll.py
-      - name: Build sdist + wheel
+
+      - name: Build and Generate SBOM
         run: |
           python -m pip install --upgrade pip
-          python -m pip install build
+          python -m pip install build cyclonedx-bom
           python -m build
-      - name: Upload distributions
+
+          # Install the built wheel so cyclonedx can map the true dependency tree
+          python -m pip install dist/*.whl
+          cyclonedx-py environment --output-format JSON --output-file release-sbom.json
+
+      - name: Upload release artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: dist
-          path: dist/
+          name: release-artifacts
+          path: |
+            dist/
+            release-sbom.json
 
   publish:
     needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment:
       name: pypi
       url: https://pypi.org/p/pykusto-language
     permissions:
-      # Required for PyPI Trusted Publishing.
       id-token: write
-      # Required so the action can attach Sigstore attestations.
       attestations: write
-      contents: read
+      contents: write
     steps:
-      - name: Download distributions
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Download release artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: dist
-          path: dist/
+          name: release-artifacts
+
       - name: Publish to PyPI with attestations
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
         with:
           attestations: true
+
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@1c608d11d69870c2092266b3f9a6f3abbf17002c # v2
+        with:
+          subject-path: 'dist/*'
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create ${{ github.ref_name }} \
+            --title "Release ${{ github.ref_name }}" \
+            --generate-notes \
+            dist/* \
+            release-sbom.json
