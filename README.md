@@ -1,10 +1,10 @@
-# kustology
+# Kustology
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![.NET 8.0+](https://img.shields.io/badge/.NET-8.0+-purple.svg)](https://dotnet.microsoft.com/download/dotnet/8.0)
 
-`kustology` is a two-tier Python library for Microsoft's KQL parser
+Kustology is a two-tier Python library for Microsoft's KQL parser
 (the `Microsoft.Azure.Kusto.Language` NuGet package), bridged via `pythonnet`.
 It exposes the same parser used by Azure Data Explorer, Azure Monitor, and
 Microsoft Sentinel.

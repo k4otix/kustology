@@ -1,4 +1,4 @@
-# AI Agent Notes: kustology
+# AI Agent Notes: Kustology
 
 Non-obvious technical context for agents modifying this repository. Read
 before changing CLR interop, the AST analysis layer, or the bundled DLL.
