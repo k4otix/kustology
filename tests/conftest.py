@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-"""Shared test setup for pykusto-language.
+"""Shared test setup for kustology.
 
 Mirrors the bridge's DOTNET_ROOT cascade so `pytest` works on a fresh clone
 without requiring users to set DOTNET_ROOT manually. The bridge's own cascade

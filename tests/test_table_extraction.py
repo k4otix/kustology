@@ -12,7 +12,7 @@ covered.
 
 import pytest
 
-from pykusto_language import parse
+from kustology import parse
 
 
 JOIN_QUERY = "A | join (B) on x"

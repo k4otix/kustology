@@ -5,12 +5,12 @@ A 400-foot view of the codebase, oriented for new contributors.
 ## Layout
 
 ```
-src/pykusto_language/
+src/kustology/
   bridge.py          # .NET CLR init, loads Kusto.Language.dll via pythonnet
   core.py            # KustoQuery wrapper (parse / format / validate seam)
   services.py        # Public entry points: parse(), format_query(), validate()
   reflection.py      # Runtime introspection of Kusto.Language for func classification
-  cli.py             # Command-line interface — pykusto parse/format/validate/version
+  cli.py             # Command-line interface — kustology parse/format/validate/version
   ir/                # Tier-2: pydantic IR (opt-in via [ir] extras)
     builder.py       # Walks .NET syntax tree → QueryIR; dispatch tables for operators/expressions
     query.py         # Operator and pipeline node models
@@ -33,10 +33,10 @@ tests/               # pytest suite
 
 ## Tiers
 
-**Tier 1** — `pykusto_language` top-level surface (`bridge`, `services`, `core`, `utils`,
+**Tier 1** — `kustology` top-level surface (`bridge`, `services`, `core`, `utils`,
 `reflection`, `cli`). SemVer-stable. Public API for callers and the CLI.
 
-**Tier 2** — `pykusto_language.ir.*`. Pydantic IR with semantic enrichment. On a pre-1.0
+**Tier 2** — `kustology.ir.*`. Pydantic IR with semantic enrichment. On a pre-1.0
 track until the IR survives one Kusto.Language.dll upgrade cycle without breaking. Minor
 breaking changes are possible at minor versions; each is called out in CHANGELOG.md.
 
@@ -46,14 +46,14 @@ See README.md "Stability policy" for what counts as breaking.
 
 **A new tabular operator** (e.g. `mv-apply`, `partition`):
 
-1. Add an IR node class in `src/pykusto_language/ir/query.py`.
+1. Add an IR node class in `src/kustology/ir/query.py`.
 2. Add its `SyntaxKind` string to `IRBuilder._HANDLED_OPERATOR_KINDS` in
-   `src/pykusto_language/ir/builder.py`.
+   `src/kustology/ir/builder.py`.
 3. Add a dispatch branch in `IRBuilder._visit_operator()` that reads the .NET
    node's attributes and constructs your IR node. Probe attribute names with:
 
    ```python
-   from pykusto_language.bridge import KustoCode
+   from kustology.bridge import KustoCode
    from Kusto.Language import GlobalState
    code = KustoCode.ParseAndAnalyze("T | <your-operator>", GlobalState.Default)
    # inspect type(node).__name__ and dir(node)
@@ -66,7 +66,7 @@ See README.md "Stability policy" for what counts as breaking.
 
 **A new IR expression** (e.g. a new literal kind, a new operator shape):
 
-1. Add the model in `src/pykusto_language/ir/expr.py` (or reuse `LiteralExpr` if
+1. Add the model in `src/kustology/ir/expr.py` (or reuse `LiteralExpr` if
    it's just a new `literal_kind`).
 2. Add its kind to `IRBuilder._HANDLED_EXPR_KINDS`.
 3. Add a dispatch branch in `IRBuilder._visit_expr()`.
@@ -74,7 +74,7 @@ See README.md "Stability policy" for what counts as breaking.
 
 **A new CLI subcommand**:
 
-1. Add the subparser + handler in `src/pykusto_language/cli.py`.
+1. Add the subparser + handler in `src/kustology/cli.py`.
 2. Add subprocess-based tests in `tests/test_cli.py` covering happy path,
    error path, and `--json` output shape if applicable.
 3. Document the subcommand in the README's CLI section.
@@ -85,8 +85,8 @@ See README.md "Stability policy" for what counts as breaking.
 Homebrew, apt, the Microsoft installer, and `~/.dotnet`. If everything fails, it
 raises `RuntimeError` with the paths it tried.
 
-`Kusto.Language.dll` is bundled at `src/pykusto_language/bin/Kusto.Language.dll`,
-pinned by SHA-256 in `src/pykusto_language/bin/VERSION.txt`, and refreshed via
+`Kusto.Language.dll` is bundled at `src/kustology/bin/Kusto.Language.dll`,
+pinned by SHA-256 in `src/kustology/bin/VERSION.txt`, and refreshed via
 `scripts/refresh_dll.py` (which runs `dotnet publish` against a known nuget
 version). CI verifies the hash on every push via `scripts/verify_dll.py`.
 

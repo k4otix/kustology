@@ -26,7 +26,7 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
-from pykusto_language import parse
+from kustology import parse
 
 
 # Wrappers that have no logical weight — descend through them silently.

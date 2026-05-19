@@ -5,7 +5,7 @@
 Refresh the bundled Kusto.Language.dll.
 
 Resolves Microsoft.Azure.Kusto.Language from NuGet via the dotnet CLI, copies
-the resulting Kusto.Language.dll into src/pykusto_language/bin/, and writes
+the resulting Kusto.Language.dll into src/kustology/bin/, and writes
 bin/VERSION.txt with the package version, sha256, and refresh timestamp.
 
 Usage:
@@ -15,7 +15,7 @@ Usage:
                                                         # back into pyproject.toml
 
 The pinned version is read from pyproject.toml under
-[tool.pykusto-language] kusto_language_version.
+[tool.kustology] kusto_language_version.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ except ModuleNotFoundError:  # pragma: no cover
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = REPO_ROOT / "pyproject.toml"
-BIN_DIR = REPO_ROOT / "src" / "pykusto_language" / "bin"
+BIN_DIR = REPO_ROOT / "src" / "kustology" / "bin"
 DLL_NAME = "Kusto.Language.dll"
 PACKAGE = "Microsoft.Azure.Kusto.Language"
 
@@ -46,13 +46,13 @@ def read_pinned_version() -> str | None:
     if not PYPROJECT.exists():
         return None
     data = tomllib.loads(PYPROJECT.read_text())
-    return data.get("tool", {}).get("pykusto-language", {}).get("kusto_language_version")
+    return data.get("tool", {}).get("kustology", {}).get("kusto_language_version")
 
 
 def write_pinned_version(version: str) -> None:
-    """Insert or update [tool.pykusto-language] kusto_language_version atomically."""
+    """Insert or update [tool.kustology] kusto_language_version atomically."""
     text = PYPROJECT.read_text()
-    marker = "[tool.pykusto-language]"
+    marker = "[tool.kustology]"
     block = f"{marker}\nkusto_language_version = \"{version}\"\n"
     if marker in text:
         lines = text.splitlines(keepends=True)
@@ -137,7 +137,7 @@ def main() -> int:
     parser.add_argument(
         "--pin",
         action="store_true",
-        help="Update [tool.pykusto-language] kusto_language_version in pyproject.toml.",
+        help="Update [tool.kustology] kusto_language_version in pyproject.toml.",
     )
     args = parser.parse_args()
 
@@ -156,7 +156,7 @@ def main() -> int:
 
     BIN_DIR.mkdir(parents=True, exist_ok=True)
 
-    with tempfile.TemporaryDirectory(prefix="pykusto-dll-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="kustology-dll-") as tmp:
         work_dir = Path(tmp)
         print(f"Fetching {PACKAGE} {version} via dotnet publish...")
         dll = restore_and_publish(version, work_dir)

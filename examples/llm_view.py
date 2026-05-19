@@ -25,7 +25,7 @@ ask "what does this query do?", "where is the bug?", or "rewrite this
 to also filter X." For round-trip serialization, keep using
 ``QueryIR.model_dump_json()``.
 
-Requires the ``[ir]`` extras: ``pip install 'pykusto-language[ir]'``.
+Requires the ``[ir]`` extras: ``pip install 'kustology[ir]'``.
 """
 
 import json
@@ -34,8 +34,8 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
-from pykusto_language.ir import IRBuilder, SchemaAttacher
-from pykusto_language.utils.analysis import build_global_state
+from kustology.ir import IRBuilder, SchemaAttacher
+from kustology.utils.analysis import build_global_state
 
 
 # StormEvents schema lets the binder resolve column types so the LLM view

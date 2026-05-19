@@ -15,9 +15,9 @@ import pytest
 
 pytest.importorskip("pydantic")
 
-from pykusto_language import parse  # noqa: E402
-from pykusto_language import services as _services  # noqa: E402
-from pykusto_language.ir import builder as _builder  # noqa: E402
+from kustology import parse  # noqa: E402
+from kustology import services as _services  # noqa: E402
+from kustology.ir import builder as _builder  # noqa: E402
 
 
 class _Counter:

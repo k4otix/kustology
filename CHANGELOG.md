@@ -15,7 +15,7 @@ First public release.
 - `parse(query, schema=None)` and `KustoQuery` for syntactic + optional semantic analysis.
 - `format_query(query)` for canonical reformatting.
 - `validate(query, schema=None, ignore_unknown_tables=False)` for structured parser diagnostics.
-- `pykusto` CLI with subcommands `version`, `format`, `validate`, `parse`.
+- `kustology` CLI with subcommands `version`, `format`, `validate`, `parse`.
 - Reflection helpers: `time_functions()`, `aggregate_functions()`, `scalar_functions()`,
   `string_functions()`, `all_function_names()`, `syntax_kinds()`.
 - Bundled `Kusto.Language.dll` (12.3.2) pinned by SHA-256; refresh + verify scripts.
@@ -23,7 +23,7 @@ First public release.
 
 ### Added — Tier 2 (pre-1.0 IR, opt-in via `[ir]` extras)
 
-- `pykusto_language.ir.IRBuilder.build(query)` walks the .NET syntax tree and emits a
+- `kustology.ir.IRBuilder.build(query)` walks the .NET syntax tree and emits a
   pydantic `QueryIR` with typed operator and expression nodes.
 - `SchemaAttacher` for schema-aware type enrichment.
 - 52 operator node types and 23 expression node types covering the Kusto query

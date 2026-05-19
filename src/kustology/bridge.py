@@ -54,7 +54,7 @@ def _load_runtime() -> None:
 
     hint_paths = "\n  ".join(str(p) for p in _HOMEBREW_OPT_PATHS + _SYSTEM_PATHS)
     raise RuntimeError(
-        "Failed to initialize the .NET runtime for pykusto-language.\n"
+        "Failed to initialize the .NET runtime for kustology.\n"
         "Install .NET 8.0+ and either set DOTNET_ROOT or place dotnet at one of:\n"
         f"  {hint_paths}\n"
         "On macOS: `brew install dotnet` (auto-detected) or set "

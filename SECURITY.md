@@ -4,7 +4,7 @@
 
 Please report security issues privately using GitHub's [private vulnerability reporting](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability) feature for this repository:
 
-**[Open a private security advisory](https://github.com/k4otix/pykusto-language/security/advisories/new)**
+**[Open a private security advisory](https://github.com/k4otix/kustology/security/advisories/new)**
 
 Do not file public issues for security vulnerabilities.
 
@@ -20,7 +20,7 @@ Only the latest released version receives security fixes. Older versions are not
 ## Scope
 
 In scope:
-- The `pykusto-language` Python package and its public API
+- The `kustology` Python package and its public API
 - Build, release, and CI workflows in this repository
 - The bundled `Kusto.Language.dll` insofar as how this package loads or wraps it
 

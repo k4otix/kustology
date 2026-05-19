@@ -23,8 +23,8 @@ import pytest
 
 pytest.importorskip("pydantic")
 
-from pykusto_language.ir import IRBuilder  # noqa: E402
-from pykusto_language.reflection import syntax_kinds  # noqa: E402
+from kustology.ir import IRBuilder  # noqa: E402
+from kustology.reflection import syntax_kinds  # noqa: E402
 
 BASELINE = Path(__file__).resolve().parent / "fixtures" / "syntax_kinds_baseline.json"
 
@@ -50,7 +50,7 @@ def test_no_new_unhandled_syntax_kinds():
     assert not new_unhandled, (
         "New SyntaxKinds appeared that the IR builder doesn't handle:\n  "
         + "\n  ".join(sorted(new_unhandled))
-        + "\n\nEither add a case in src/pykusto_language/ir/builder.py and update "
+        + "\n\nEither add a case in src/kustology/ir/builder.py and update "
         "_HANDLED_*_KINDS, or add to `deliberately_skipped` in the baseline. "
         "Then regenerate with `python scripts/audit_syntax_kinds.py --update-baseline`."
     )

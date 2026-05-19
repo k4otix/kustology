@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-"""Command-line interface for pykusto-language.
+"""Command-line interface for kustology.
 
 Subcommands: version, format, validate, parse.
 
@@ -36,12 +36,12 @@ def _read_input(args: argparse.Namespace) -> str:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="pykusto",
-        description="KQL parser, formatter, and validator (CLI for pykusto-language).",
+        prog="kustology",
+        description="KQL parser, formatter, and validator (CLI for kustology).",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser("version", help="Print pykusto-language version and exit.")
+    subparsers.add_parser("version", help="Print kustology version and exit.")
 
     format_p = subparsers.add_parser(
         "format", help="Reformat a KQL query into canonical form.",
@@ -88,7 +88,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _cmd_version() -> int:
-    print(f"pykusto-language {__version__}")
+    print(f"kustology {__version__}")
     return 0
 
 
@@ -179,8 +179,8 @@ def _cmd_parse(args: argparse.Namespace) -> int:
             from .ir import IRBuilder
         except ImportError as e:
             sys.stderr.write(
-                "pykusto parse --ir requires the [ir] extras (pydantic). "
-                "Install with: pip install 'pykusto-language[ir]'\n"
+                "kustology parse --ir requires the [ir] extras (pydantic). "
+                "Install with: pip install 'kustology[ir]'\n"
             )
             sys.stderr.write(f"({e})\n")
             return 2

@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pykusto-language"
+name = "kustology"
 version = "0.1.0"
 description = "A Python wrapper for the Kusto.Language parser (Microsoft.Azure.Kusto.Language NuGet package). Not affiliated with Microsoft."
 readme = "README.md"
@@ -29,23 +29,23 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/k4otix/pykusto-language"
-Repository = "https://github.com/k4otix/pykusto-language"
-Changelog = "https://github.com/k4otix/pykusto-language/blob/main/CHANGELOG.md"
-Issues = "https://github.com/k4otix/pykusto-language/issues"
-Documentation = "https://github.com/k4otix/pykusto-language/blob/main/README.md"
+Homepage = "https://github.com/k4otix/kustology"
+Repository = "https://github.com/k4otix/kustology"
+Changelog = "https://github.com/k4otix/kustology/blob/main/CHANGELOG.md"
+Issues = "https://github.com/k4otix/kustology/issues"
+Documentation = "https://github.com/k4otix/kustology/blob/main/README.md"
 
 [project.scripts]
-pykusto = "pykusto_language.cli:main"
+kustology = "kustology.cli:main"
 
 [project.optional-dependencies]
-# Tier-2 opinionated IR. Activates pykusto_language.ir.* — pydantic-typed
+# Tier-2 opinionated IR. Activates kustology.ir.* — pydantic-typed
 # operator / expression models plus a schema binder.
 ir = [
     "pydantic>=2.6.0",
 ]
 # Base test extras — NO pydantic. The CI matrix uses these to prove
-# `pip install pykusto-language` still works without the IR extras.
+# `pip install kustology` still works without the IR extras.
 test = [
     "pytest>=8.0.0",
     "pytest-cov>=4.1.0",
@@ -71,8 +71,8 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 # Binary assets + version manifest, plus PEP 561 marker for inline type hints.
-"pykusto_language" = ["py.typed"]
-"pykusto_language.bin" = ["Kusto.Language.dll", "VERSION.txt"]
+"kustology" = ["py.typed"]
+"kustology.bin" = ["Kusto.Language.dll", "VERSION.txt"]
 
 [tool.ruff]
 line-length = 120
@@ -80,9 +80,9 @@ target-version = "py310"
 
 [tool.ruff.lint.per-file-ignores]
 # Re-exports — F401 unused imports are intentional in __init__.py.
-"src/pykusto_language/ir/__init__.py" = ["F401"]
+"src/kustology/ir/__init__.py" = ["F401"]
 # AnyExpr Union line is long by design; splitting would obscure the surface.
-"src/pykusto_language/ir/expr.py" = ["E501"]
+"src/kustology/ir/expr.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -90,7 +90,7 @@ python_files = "test_*.py"
 addopts = "-q --strict-markers"
 
 [tool.coverage.run]
-source = ["pykusto_language"]
+source = ["kustology"]
 branch = true
 
 [tool.coverage.report]
@@ -114,10 +114,10 @@ ignore_missing_imports = true
 # the operator/expression dispatch the visitor produces. The IR is pre-1.0
 # and not the right place to fight mypy invariance — re-tighten once shapes
 # stabilize.
-module = ["pykusto_language.ir.*"]
+module = ["kustology.ir.*"]
 ignore_errors = true
 
-[tool.pykusto-language]
+[tool.kustology]
 # Pinned version of Microsoft.Azure.Kusto.Language NuGet package (Kusto.Language.dll).
 # Refresh with `python scripts/refresh_dll.py --pin --version X.Y.Z`.
 kusto_language_version = "12.3.2"

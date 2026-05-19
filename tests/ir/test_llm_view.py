@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import pytest
 
-from pykusto_language.ir import (
+from kustology.ir import (
     IRBuilder, QueryIR, SchemaAttacher, to_llm_dict,
 )
-from pykusto_language.utils.analysis import build_global_state
+from kustology.utils.analysis import build_global_state
 
 
 STORM_EVENTS_SCHEMA = {
@@ -244,11 +244,11 @@ def test_lookup_kind_field_is_renamed():
 # KIND coverage ----------------------------------------------------------
 
 def test_every_ir_model_class_has_kind_constant():
-    """Every BaseModel subclass exported from ``pykusto_language.ir`` must
+    """Every BaseModel subclass exported from ``kustology.ir`` must
     declare a ``KIND`` class constant. Catches drift when a new operator
     is added without updating the LLM discriminator vocabulary."""
     from pydantic import BaseModel
-    import pykusto_language.ir as ir_pkg
+    import kustology.ir as ir_pkg
 
     # ``Span`` is stripped from LLM output entirely, so it needs no KIND.
     EXEMPT = {"Span"}
@@ -268,7 +268,7 @@ def test_every_ir_model_class_has_kind_constant():
 def test_kind_values_are_unique_per_class():
     """Two different IR classes must not share a KIND string."""
     from pydantic import BaseModel
-    import pykusto_language.ir as ir_pkg
+    import kustology.ir as ir_pkg
 
     seen: dict[str, str] = {}
     for name in ir_pkg.__all__:

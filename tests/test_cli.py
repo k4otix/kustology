@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-"""Subprocess-based tests for the `pykusto` CLI.
+"""Subprocess-based tests for the `kustology` CLI.
 
-We invoke the CLI via `python -m pykusto_language.cli` so the tests don't
-depend on `pip install -e .` having been run. The installed `pykusto`
+We invoke the CLI via `python -m kustology.cli` so the tests don't
+depend on `pip install -e .` having been run. The installed `kustology`
 entry point (declared in pyproject.toml `[project.scripts]`) shares the
 same `main()` function, so testing the module form covers both.
 """
@@ -14,12 +14,12 @@ import json
 import subprocess
 import sys
 
-import pykusto_language
+import kustology
 
 
 def _run(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, "-m", "pykusto_language.cli", *args],
+        [sys.executable, "-m", "kustology.cli", *args],
         input=stdin,
         capture_output=True,
         text=True,
@@ -31,8 +31,8 @@ def _run(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
 def test_version_prints_runtime_version():
     result = _run("version")
     assert result.returncode == 0, result.stderr
-    assert pykusto_language.__version__ in result.stdout
-    assert "pykusto-language" in result.stdout
+    assert kustology.__version__ in result.stdout
+    assert "kustology" in result.stdout
 
 
 def test_format_from_stdin():

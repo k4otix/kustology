@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from pykusto_language.ir import (
+from kustology.ir import (
     Expr,
     IRBuilder,
     KustoType,

@@ -1,13 +1,13 @@
 # Contributing
 
-Thanks for your interest in `pykusto-language`. This project is small; the
+Thanks for your interest in `kustology`. This project is small; the
 contribution loop is intentionally short.
 
 ## Setup
 
 ```bash
-git clone https://github.com/k4otix/pykusto-language.git
-cd pykusto-language
+git clone https://github.com/k4otix/kustology.git
+cd kustology
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 ```

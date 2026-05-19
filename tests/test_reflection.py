@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from pykusto_language.reflection import (
+from kustology.reflection import (
     aggregate_functions,
     all_function_names,
     string_functions,

@@ -18,7 +18,7 @@ Pair this with ``examples/walk_tree.py`` to see the trade-off:
   and operators the IR doesn't dispatch yet. Use that for refactoring,
   syntax highlighting, or when you need token-level positions.
 
-Requires the ``[ir]`` extras: ``pip install 'pykusto-language[ir]'``.
+Requires the ``[ir]`` extras: ``pip install 'kustology[ir]'``.
 """
 
 import os
@@ -26,10 +26,10 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
-from pykusto_language.ir import (
+from kustology.ir import (
     Assignment, ColumnRef, FilterOp, IRBuilder, ProjectOp, TableRef,
 )
-from pykusto_language.utils.analysis import build_global_state
+from kustology.utils.analysis import build_global_state
 
 
 # Schema binds StormEvents so the .NET binder fills result types and emits no

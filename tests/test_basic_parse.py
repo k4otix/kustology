@@ -5,7 +5,7 @@ import warnings
 
 import pytest
 
-from pykusto_language import parse, format_query, validate
+from kustology import parse, format_query, validate
 
 
 @pytest.mark.parametrize(

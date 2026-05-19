@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-"""Stateless helpers used by :class:`pykusto_language.ir.builder.IRBuilder`.
+"""Stateless helpers used by :class:`kustology.ir.builder.IRBuilder`.
 
 Each function operates on a .NET AST node, a primitive, or already-built IR
 nodes. None of them needs ``self`` or the visitor — splitting them out keeps

@@ -15,7 +15,7 @@ def _require_pydantic() -> None:
         import pydantic  # noqa: F401
     except ImportError as e:  # pragma: no cover — exercised by base-install CI
         raise ImportError(
-            "pykusto_language.ir requires pydantic. Install with:\n"
-            "    pip install 'pykusto-language[ir]'\n"
+            "kustology.ir requires pydantic. Install with:\n"
+            "    pip install 'kustology[ir]'\n"
             "(or directly: pip install 'pydantic>=2.6.0')."
         ) from e

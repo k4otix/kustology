@@ -11,7 +11,7 @@ A clear description of the bug.
 The smallest KQL input and Python snippet that demonstrates the issue:
 
 ```python
-from pykusto_language import parse
+from kustology import parse
 result = parse("...")
 ```
 
@@ -19,8 +19,8 @@ result = parse("...")
 What you expected to happen, and what happened instead.
 
 **Environment**
-- pykusto-language version:
+- kustology version:
 - Python version:
 - OS / arch:
 - .NET runtime version (`dotnet --info`):
-- Bundled DLL (`cat src/pykusto_language/bin/VERSION.txt`):
+- Bundled DLL (`cat src/kustology/bin/VERSION.txt`):

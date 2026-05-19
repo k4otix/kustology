@@ -74,7 +74,7 @@ jobs:
           python -m pip install -e ".[test]"
 
       - name: Run pytest with coverage
-        run: pytest --cov=pykusto_language --cov-report=xml --cov-report=term
+        run: pytest --cov=kustology --cov-report=xml --cov-report=term
 
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'

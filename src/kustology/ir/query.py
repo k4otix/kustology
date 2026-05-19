@@ -430,7 +430,7 @@ class QueryIR(BaseModel):
     parse_warnings: list[str] = []
 
     def to_llm_dict(self) -> dict[str, Any]:
-        """LLM-friendly serialization. See :mod:`pykusto_language.ir.llm_view`."""
+        """LLM-friendly serialization. See :mod:`kustology.ir.llm_view`."""
         from .llm_view import to_llm_dict
         return to_llm_dict(self)
 

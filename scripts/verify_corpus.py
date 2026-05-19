@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Verify a corpus of .kql files against the pykusto IR.
+"""Verify a corpus of .kql files against the kustology IR.
 
 Schema-loading priority:
   (B) tests/fixtures/sentinel_schemas.json — extracted ahead of time, in repo
       (gitignored). Run scripts/extract_sentinel_schemas.py to produce it.
   (C) Live workspace via the Azure CLI — requires ``az login`` and the
-      ``PYKUSTO_WORKSPACE_ID`` environment variable (or ``--workspace-id``)
+      ``KUSTOLOGY_WORKSPACE_ID`` environment variable (or ``--workspace-id``)
       set to a Log Analytics workspace you can read. Also requires the
       ``log-analytics`` az extension (``az extension add --name log-analytics``).
   (A) Synthesized — empty-column schema per table-name scan of the corpus.
@@ -29,7 +29,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from pykusto_language.ir import (
+from kustology.ir import (
     IRBuilder,
     Operator,
     QueryIR,
@@ -37,7 +37,7 @@ from pykusto_language.ir import (
     UnknownExpr,
     UnknownSource,
 )
-from pykusto_language.utils.analysis import build_global_state
+from kustology.utils.analysis import build_global_state
 
 CATEGORIES = [
     "builder_exception", "binder_exception",
@@ -51,10 +51,10 @@ DEFAULT_SCHEMAS = REPO_ROOT / "tests/fixtures/sentinel_schemas.json"
 DEFAULT_OUTPUT = REPO_ROOT / "reports/sentinel_sample_verdict.json"
 
 # Option C (live az lookup) is a maintainer-only fallback. The workspace ID is
-# environment-specific; export PYKUSTO_WORKSPACE_ID or pass --workspace-id to
+# environment-specific; export KUSTOLOGY_WORKSPACE_ID or pass --workspace-id to
 # use it. We do NOT hardcode an ID here — that would embed a tenant-specific
 # identifier in an OSS distribution.
-_WORKSPACE_ID_ENV = "PYKUSTO_WORKSPACE_ID"
+_WORKSPACE_ID_ENV = "KUSTOLOGY_WORKSPACE_ID"
 
 # Resolved from PATH at startup; falls through to option A if not found.
 _AZ_ON_PATH = shutil.which("az")
@@ -103,7 +103,7 @@ def load_schemas_c(az_bin: Path,
     Runs ``az monitor log-analytics query --workspace <id> --analytics-query
     "T | getschema | project ColumnName, ColumnType"`` per unique table found
     in the corpus and parses the JSON response. Requires ``az login``, a
-    workspace ID (env var ``PYKUSTO_WORKSPACE_ID`` or ``--workspace-id``), and
+    workspace ID (env var ``KUSTOLOGY_WORKSPACE_ID`` or ``--workspace-id``), and
     the ``log-analytics`` az extension. Returns None if any prerequisite is
     missing or no tables can be resolved.
     """

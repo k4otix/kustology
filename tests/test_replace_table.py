@@ -7,7 +7,7 @@ Pins behavior for the leftmost pipe source as well as join, union, lookup,
 and database-qualified targets, in both the syntactic and semantic paths.
 """
 
-from pykusto_language import parse
+from kustology import parse
 
 
 def test_replace_leftmost_table_syntactic():

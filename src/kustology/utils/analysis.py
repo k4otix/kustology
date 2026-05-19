@@ -23,7 +23,7 @@ __all__ = [
 ]
 
 
-# See pykusto_language.reflection.time_functions for the reflected source.
+# See kustology.reflection.time_functions for the reflected source.
 try:
     from ..reflection import time_functions as _time_functions
 

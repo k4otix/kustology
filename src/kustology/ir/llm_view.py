@@ -24,7 +24,7 @@ being fed to a language model:
   field that collides with the discriminator key; they're renamed to
   ``render_kind`` / ``join_kind`` / ``lookup_kind`` in the LLM output.
 
-Use :meth:`~pykusto_language.ir.QueryIR.model_dump_json` for canonical,
+Use :meth:`~kustology.ir.QueryIR.model_dump_json` for canonical,
 lossless round-trip; ``to_llm_dict`` for handing the IR off to a model.
 """
 

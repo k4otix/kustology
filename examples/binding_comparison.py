@@ -18,11 +18,11 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
-from pykusto_language import parse, validate
+from kustology import parse, validate
 
 
 # Canonical Azure Data Explorer sample table — used by every ADX tutorial.
-# Each value is a KQL scalar type that pykusto resolves via
+# Each value is a KQL scalar type that kustology resolves via
 # ScalarTypes.GetSymbol at parse time.
 STORM_EVENTS_SCHEMA = {
     "StormEvents": {

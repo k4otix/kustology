@@ -11,7 +11,7 @@ list — without it, downstream column refs see the wrong view.
 
 import pytest
 
-from pykusto_language.ir import IRBuilder, SchemaAttacher
+from kustology.ir import IRBuilder, SchemaAttacher
 
 
 @pytest.fixture(scope="module")
@@ -191,7 +191,7 @@ def test_makeseries_synthesizes_aggregate_and_group_columns(builder, attacher):
 # Pipeline.result_schema population --------------------------------------
 
 def test_pipeline_result_schema_populated_after_enrich(builder, attacher):
-    from pykusto_language.ir import TabularSchema
+    from kustology.ir import TabularSchema
     ir = builder.build(
         "DeviceProcessEvents | project FileName, AccountName"
     )

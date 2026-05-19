@@ -53,7 +53,7 @@ def _iter_kql(path: Path) -> Iterable[tuple[str, str]]:
 def _walk(ir, unknown_exprs: Counter, unknown_sources: Counter, unspecialized_ops: Counter,
           per_kind_examples: dict, query_name: str) -> None:
     """Walk an IR for coverage gaps, accumulating counts and examples."""
-    from pykusto_language.ir import (
+    from kustology.ir import (
         CompoundNamedExpr, NamedExpr, Operator, UnknownExpr, UnknownSource,
     )
 
@@ -142,7 +142,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    from pykusto_language.ir import IRBuilder
+    from kustology.ir import IRBuilder
 
     builder = IRBuilder()
 

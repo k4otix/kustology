@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-from pykusto_language import parse, format_query
+from kustology import parse, format_query
 
 
 def test_get_operator_chain():
@@ -121,7 +121,7 @@ def test_format_query_accepts_options():
     """The optional FormattingOptions argument is part of the public surface."""
     from Kusto.Language.Editor import PlacementStyle
 
-    from pykusto_language.bridge import FormattingOptions
+    from kustology.bridge import FormattingOptions
 
     smart = FormattingOptions.Default.WithPipeOperatorStyle(PlacementStyle.Smart)
     newline = FormattingOptions.Default.WithPipeOperatorStyle(PlacementStyle.NewLine)

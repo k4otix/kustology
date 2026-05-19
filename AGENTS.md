@@ -1,4 +1,4 @@
-# AI Agent Notes: pykusto-language
+# AI Agent Notes: kustology
 
 Non-obvious technical context for agents modifying this repository. Read
 before changing CLR interop, the AST analysis layer, or the bundled DLL.
@@ -83,10 +83,10 @@ return callee.TextStart == node.TextStart and callee.Width == node.Width
 
 ## Bundled DLL
 
-`src/pykusto_language/bin/Kusto.Language.dll` comes from the
+`src/kustology/bin/Kusto.Language.dll` comes from the
 `Microsoft.Azure.Kusto.Language` NuGet package. The version is pinned in
 `bin/VERSION.txt` (package, version, sha256, refresh date) and in
-`pyproject.toml` under `[tool.pykusto-language]`. Refresh with:
+`pyproject.toml` under `[tool.kustology]`. Refresh with:
 
 ```bash
 python scripts/refresh_dll.py             # uses the pinned version

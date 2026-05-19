@@ -75,8 +75,8 @@ def _read_pin() -> str:
 
 
 def _compute_state(extra_skipped: set[str]) -> dict:
-    from pykusto_language.ir import IRBuilder
-    from pykusto_language.reflection import syntax_kinds
+    from kustology.ir import IRBuilder
+    from kustology.reflection import syntax_kinds
 
     all_kinds = set(syntax_kinds())
     handled_expr = set(IRBuilder._HANDLED_EXPR_KINDS)
@@ -153,7 +153,7 @@ def main() -> int:
             for k in sorted(new):
                 print(f"  {k}", file=sys.stderr)
             print(
-                "\nEither: (a) add handling in src/pykusto_language/ir/builder.py "
+                "\nEither: (a) add handling in src/kustology/ir/builder.py "
                 "and update _HANDLED_*_KINDS, or (b) add to `deliberately_skipped` "
                 "in the baseline, then regenerate with --update-baseline.",
                 file=sys.stderr,

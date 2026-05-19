@@ -8,7 +8,7 @@ This distribution includes the following third-party components:
 * **NuGet package:** [Microsoft.Azure.Kusto.Language](https://www.nuget.org/packages/Microsoft.Azure.Kusto.Language)
 * **License:** Apache License 2.0
 * **Copyright:** Copyright (c) Microsoft Corporation. All rights reserved.
-* **Component:** `Kusto.Language.dll` (bundled at `src/pykusto_language/bin/`, version pinned in `bin/VERSION.txt` and `pyproject.toml`)
+* **Component:** `Kusto.Language.dll` (bundled at `src/kustology/bin/`, version pinned in `bin/VERSION.txt` and `pyproject.toml`)
 * **Modifications:** None. The DLL is taken byte-for-byte from the NuGet package's `lib/net6.0/` directory and is redistributed unmodified. Verifiable via `python scripts/verify_dll.py`.
 * **Upstream NOTICE file:** The upstream Kusto-Query-Language repository ships a LICENSE file but no NOTICE file. Apache License 2.0 §4(d) requires propagation of any NOTICE file that exists in the original work; since none exists upstream, no additional attribution beyond this section is required.
 

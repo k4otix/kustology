@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from pykusto_language.ir import (
+from kustology.ir import (
     CompoundNamedExpr,
     IRBuilder,
     NamedExpr,

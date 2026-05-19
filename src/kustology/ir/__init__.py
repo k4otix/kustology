@@ -4,7 +4,7 @@
 """Semantic intermediate representation (IR) for KQL queries.
 
 A pydantic model of the parsed query — typed operators and expressions, source
-spans, and a schema binder. Activated by ``pip install 'pykusto-language[ir]'``;
+spans, and a schema binder. Activated by ``pip install 'kustology[ir]'``;
 importing without pydantic raises an ``ImportError`` with the install command.
 
 Stability: pre-1.0. Minor breaking changes are possible at minor versions

@@ -5,7 +5,7 @@
 
 Two entry points: :meth:`IRBuilder.build` (string in, IR out, parses+binds)
 and :meth:`IRBuilder.build_from_code` (use when the caller already has a
-``KustoCode``, e.g. via :meth:`pykusto_language.KustoQuery.to_ir`).
+``KustoCode``, e.g. via :meth:`kustology.KustoQuery.to_ir`).
 
 The handled-SyntaxKind sets are exposed as :attr:`_HANDLED_OPERATOR_KINDS`
 and :attr:`_HANDLED_EXPR_KINDS` for the coverage audit script.

@@ -6,7 +6,7 @@ binder enrichment with an inline schema."""
 
 import pytest
 
-from pykusto_language.ir import (
+from kustology.ir import (
     BinOp,
     ColumnRef,
     FilterOp,
@@ -109,7 +109,7 @@ def test_binder_enrichment(binder):
 
 
 def test_count_operator_dispatch(ir_builder):
-    from pykusto_language.ir import CountOp
+    from kustology.ir import CountOp
     ir = ir_builder.build("DeviceProcessEvents | count")
     assert len(ir.main_pipeline.operators) == 1
     op = ir.main_pipeline.operators[0]
@@ -118,7 +118,7 @@ def test_count_operator_dispatch(ir_builder):
 
 
 def test_count_operator_with_as_clause(ir_builder):
-    from pykusto_language.ir import CountOp
+    from kustology.ir import CountOp
     ir = ir_builder.build("DeviceProcessEvents | count as Total")
     op = ir.main_pipeline.operators[0]
     assert isinstance(op, CountOp)
@@ -126,7 +126,7 @@ def test_count_operator_with_as_clause(ir_builder):
 
 
 def test_print_operator_dispatch(ir_builder):
-    from pykusto_language.ir import PrintOp
+    from kustology.ir import PrintOp
     ir = ir_builder.build("print x = 1, y = tolower('AB')")
     op = ir.main_pipeline.operators[0]
     assert isinstance(op, PrintOp)
@@ -134,7 +134,7 @@ def test_print_operator_dispatch(ir_builder):
 
 
 def test_case_lifts_to_caseexpr(ir_builder):
-    from pykusto_language.ir import CaseExpr, FilterOp
+    from kustology.ir import CaseExpr, FilterOp
     ir = ir_builder.build(
         "DeviceProcessEvents "
         "| where case(FileName == 'cmd.exe', true, FileName == 'pwsh.exe', true, false)"
@@ -147,7 +147,7 @@ def test_case_lifts_to_caseexpr(ir_builder):
 
 
 def test_iif_lifts_to_caseexpr(ir_builder):
-    from pykusto_language.ir import CaseExpr, ExtendOp
+    from kustology.ir import CaseExpr, ExtendOp
     ir = ir_builder.build(
         "DeviceProcessEvents | extend tag = iif(FileName == 'cmd.exe', 'shell', 'other')"
     )
@@ -161,14 +161,14 @@ def test_iif_lifts_to_caseexpr(ir_builder):
 
 def test_case_odd_arg_count_falls_back_to_funccall(ir_builder):
     # case(predicate, value) is malformed (no default) — keep as FuncCall.
-    from pykusto_language.ir import FuncCall
+    from kustology.ir import FuncCall
     ir = ir_builder.build("DeviceProcessEvents | extend x = case(true, 1)")
     expr = ir.main_pipeline.operators[0].assignments[0].expr
     assert isinstance(expr, FuncCall)
 
 
 def test_isnotnull_lifts_to_exists(ir_builder):
-    from pykusto_language.ir import Exists, FilterOp
+    from kustology.ir import Exists, FilterOp
     ir = ir_builder.build("DeviceProcessEvents | where isnotnull(FileName)")
     op = ir.main_pipeline.operators[0]
     assert isinstance(op, FilterOp)
@@ -176,13 +176,13 @@ def test_isnotnull_lifts_to_exists(ir_builder):
 
 
 def test_isnotempty_lifts_to_exists(ir_builder):
-    from pykusto_language.ir import Exists
+    from kustology.ir import Exists
     ir = ir_builder.build("DeviceProcessEvents | where isnotempty(FileName)")
     assert isinstance(ir.main_pipeline.operators[0].predicate, Exists)
 
 
 def test_matches_regex_lifts_to_regexmatch(ir_builder):
-    from pykusto_language.ir import RegexMatch
+    from kustology.ir import RegexMatch
     ir = ir_builder.build(
         "DeviceProcessEvents | where FileName matches regex '^cmd.*\\\\.exe$'"
     )
@@ -192,7 +192,7 @@ def test_matches_regex_lifts_to_regexmatch(ir_builder):
 
 
 def test_not_func_lifts_to_not(ir_builder):
-    from pykusto_language.ir import Not
+    from kustology.ir import Not
     # The KQL `not(X)` function call lifts to Not via the FuncCall name lift.
     ir = ir_builder.build("DeviceProcessEvents | where not(FileName == 'cmd.exe')")
     pred = ir.main_pipeline.operators[0].predicate
@@ -200,7 +200,7 @@ def test_not_func_lifts_to_not(ir_builder):
 
 
 def test_cluster_database_qualified_source(ir_builder):
-    from pykusto_language.ir import TableRef
+    from kustology.ir import TableRef
     ir = ir_builder.build(
         'cluster("c").database("d").DeviceProcessEvents '
         "| where FileName == 'cmd.exe'"
@@ -210,7 +210,7 @@ def test_cluster_database_qualified_source(ir_builder):
 
 
 def test_database_qualified_source(ir_builder):
-    from pykusto_language.ir import TableRef
+    from kustology.ir import TableRef
     ir = ir_builder.build(
         'database("d").DeviceProcessEvents | where FileName == "cmd.exe"'
     )
@@ -219,12 +219,12 @@ def test_database_qualified_source(ir_builder):
 
 
 def test_kustotype_has_tabular():
-    from pykusto_language.ir import KustoType
+    from kustology.ir import KustoType
     assert "TABULAR" in {m.name for m in KustoType}
 
 
 def test_expr_has_nullable_and_inner_type():
-    from pykusto_language.ir import LiteralExpr, Span
+    from kustology.ir import LiteralExpr, Span
     e = LiteralExpr(value="x", literal_kind="string", span=Span(text_start=0, width=1))
     # Defaults
     assert e.nullable is True
@@ -232,7 +232,7 @@ def test_expr_has_nullable_and_inner_type():
 
 
 def test_pipeline_result_schema_field():
-    from pykusto_language.ir import Pipeline, Span, TableRef, TabularSchema
+    from kustology.ir import Pipeline, Span, TableRef, TabularSchema
     pipe = Pipeline(
         source=TableRef(name="T", span=Span(text_start=0, width=1)),
         operators=[],
@@ -246,7 +246,7 @@ def test_pipeline_result_schema_field():
 
 def test_funccall_as_pipeline_source(ir_builder):
     """User-defined functions returning tables resolve to FuncCallSource in union branches."""
-    from pykusto_language.ir import FuncCallSource, UnionOp
+    from kustology.ir import FuncCallSource, UnionOp
     ir = ir_builder.build(
         "union findAnomalies('foo'), findAnomalies('bar')"
     )
@@ -261,7 +261,7 @@ def test_funccall_as_pipeline_source(ir_builder):
 
 def test_misc_operators_dispatch_to_specific_classes(ir_builder):
     """getschema / consume / serialize / find each dispatch to their own Operator subclass."""
-    from pykusto_language.ir import (
+    from kustology.ir import (
         ConsumeOp, FindOp, GetSchemaOp, Operator, SerializeOp,
     )
     cases = [

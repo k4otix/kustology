@@ -15,8 +15,8 @@ from __future__ import annotations
 
 import pytest
 
-from pykusto_language.ir import IRBuilder, QueryIR, SchemaAttacher
-from pykusto_language.utils.analysis import build_global_state
+from kustology.ir import IRBuilder, QueryIR, SchemaAttacher
+from kustology.utils.analysis import build_global_state
 
 QUERIES = [
     # Plain filters.

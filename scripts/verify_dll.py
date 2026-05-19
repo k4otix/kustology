@@ -7,7 +7,7 @@ Verify that the bundled Kusto.Language.dll matches what nuget.org publishes.
 This script downloads the Microsoft.Azure.Kusto.Language NuGet package at the
 pinned version, extracts every Kusto.Language.dll inside it (one per TFM),
 hashes each, and confirms that one of them is byte-identical to the DLL
-shipped in src/pykusto_language/bin/.
+shipped in src/kustology/bin/.
 
 This converts "trust the maintainer" into "trust Microsoft + you can verify
 offline." Run this in CI on every PR, and re-run it locally when you need to
@@ -41,7 +41,7 @@ except ModuleNotFoundError:  # pragma: no cover
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = REPO_ROOT / "pyproject.toml"
-BIN_DIR = REPO_ROOT / "src" / "pykusto_language" / "bin"
+BIN_DIR = REPO_ROOT / "src" / "kustology" / "bin"
 DLL_NAME = "Kusto.Language.dll"
 PACKAGE = "Microsoft.Azure.Kusto.Language"
 
@@ -52,7 +52,7 @@ def read_pinned_version() -> str | None:
     if not PYPROJECT.exists():
         return None
     data = tomllib.loads(PYPROJECT.read_text())
-    return data.get("tool", {}).get("pykusto-language", {}).get("kusto_language_version")
+    return data.get("tool", {}).get("kustology", {}).get("kusto_language_version")
 
 
 def read_version_txt_sha() -> tuple[str | None, str | None]:
@@ -128,7 +128,7 @@ def main() -> int:
     if not version:
         print(
             "FAIL: no version pin found. "
-            "Set [tool.pykusto-language] kusto_language_version in pyproject.toml "
+            "Set [tool.kustology] kusto_language_version in pyproject.toml "
             "or pass --version.",
             file=sys.stderr,
         )
