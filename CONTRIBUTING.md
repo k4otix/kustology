@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in `kustology`. This project is small; the
+Thanks for your interest in Kustology. This project is small; the
 contribution loop is intentionally short.
 
 ## Setup

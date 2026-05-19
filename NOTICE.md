@@ -1,4 +1,4 @@
-kustology
+Kustology
 Copyright 2026 Eddie Allan
 
 This product includes software developed by Microsoft Corporation:
