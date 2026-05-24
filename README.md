@@ -127,6 +127,10 @@ breakage. Each break is named in `CHANGELOG.md` with a migration path.
 - **`UnknownExpr` / `UnknownSource`** — explicit fallback nodes for shapes
   the builder doesn't model. The coverage audit (`scripts/audit_syntax_kinds.py`)
   fails CI when new shapes appear after a Kusto.Language DLL upgrade.
+- **`walk(node)` / `find_all(node, type_)`** — depth-first IR traversal.
+  `find_all(ir, FilterOp)` is the one-liner most custom analyzers reduce
+  to; pair it with `isinstance` dispatch on the typed pydantic IR. See
+  `examples/find_all_demo.py`.
 
 ## Prerequisites
 
