@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added — Tier 2
+
+- `kustology.ir.walk(node)` — depth-first, pre-order traversal of the IR,
+  yielding every pydantic `BaseModel` descendant.
+- `kustology.ir.find_all(node, type_)` — type-filtered traversal. The
+  building block for custom analyzers: `find_all(ir, FilterOp)` collapses
+  most "walk the IR and collect Xs" patterns into a one-liner.
+
 ## [0.1.0] — 2026-05-14
 
 First public release.

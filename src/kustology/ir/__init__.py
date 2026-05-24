@@ -42,10 +42,13 @@ from .query import (  # noqa: E402, F401
 from .builder import IRBuilder  # noqa: E402
 from .binder import BinderEnricher, SchemaAttacher  # noqa: E402
 from .llm_view import to_llm_dict  # noqa: E402
+from .walk import find_all, walk  # noqa: E402
 
 __all__ = [
     # Builder / binder / serialization views
     "IRBuilder", "SchemaAttacher", "BinderEnricher", "to_llm_dict",
+    # Traversal
+    "walk", "find_all",
     # Top-level / container
     "QueryIR", "Pipeline", "LetBinding", "Diagnostic", "Assignment", "Span",
     "KustoType", "TabularSchema",

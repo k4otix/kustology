@@ -16,6 +16,7 @@ src/kustology/
     query.py         # Operator and pipeline node models
     expr.py          # Expression node models
     binder.py        # Schema attachment + type enrichment
+    walk.py          # Generic IR traversal: walk() and find_all()
     types.py         # Kusto type enum
     spans.py         # Source location tracking
   utils/             # Helpers for tree walking and schema binding
