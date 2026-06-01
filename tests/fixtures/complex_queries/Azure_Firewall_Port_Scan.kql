@@ -1,0 +1,21 @@
+let MinimumDifferentPortsThreshold = 100;
+let BinTime = 30s;
+// Exclude known benign scanner IPs in your environment to reduce noise
+let KnownScannerIPs = dynamic([]); 
+union isfuzzy=true(
+AZFWApplicationRule
+| where SourceIp !in (KnownScannerIPs)
+| summarize AlertTimedCountPortsInBinTime = dcount(DestinationPort) by SourceIp, bin(TimeGenerated, BinTime), Fqdn
+| where AlertTimedCountPortsInBinTime > MinimumDifferentPortsThreshold),
+(AZFWNetworkRule
+| where SourceIp !in (KnownScannerIPs)
+| extend Fqdn = DestinationIp
+| summarize AlertTimedCountPortsInBinTime = dcount(DestinationPort) by SourceIp, bin(TimeGenerated, BinTime), Fqdn
+| where AlertTimedCountPortsInBinTime > MinimumDifferentPortsThreshold),
+(AzureDiagnostics
+| where OperationName == "AzureFirewallApplicationRuleLog" or OperationName == "AzureFirewallNetworkRuleLog"
+| parse msg_s with * "from " SourceIp ":" SourcePort:int " to " Fqdn ":" DestinationPort:int *
+| where isnotempty(Fqdn) and isnotempty(SourceIp)
+| where SourceIp !in (KnownScannerIPs) 
+| summarize AlertTimedCountPortsInBinTime = dcount(DestinationPort) by SourceIp, bin(TimeGenerated, BinTime), Fqdn
+| where AlertTimedCountPortsInBinTime > MinimumDifferentPortsThreshold)

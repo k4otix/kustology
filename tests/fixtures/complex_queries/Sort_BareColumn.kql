@@ -1,0 +1,5 @@
+CloudAppEvents
+| where ActionType == "AirInvestigationData"
+| project Timestamp, RawEventData
+| sort by Timestamp
+| take 25

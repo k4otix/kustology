@@ -1,0 +1,3 @@
+_Im_WebSession(eventresultdetails_in=dynamic(["403"]))
+| extend Codes = dynamic({"primary": "403", "secondary": "500"})
+| summarize count() by SrcIpAddr

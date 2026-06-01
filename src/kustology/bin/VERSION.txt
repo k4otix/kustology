@@ -1,0 +1,4 @@
+package=Microsoft.Azure.Kusto.Language
+version=12.3.2
+sha256=6d3ea80aba32935a3820579a245cf00b552c23e5563efaed0e8390b18a6e159c
+refreshed=2026-05-04T03:40:28+00:00
