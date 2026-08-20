@@ -217,8 +217,8 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# mine_corpus.py JSON output
-reports/
+# mine_corpus.py JSON output (root only -- docs/superpowers/reports/ is tracked)
+/reports/
 .venv_base/
 
 # Local-only Azure-Sentinel IR validation artifacts (one-time sanity check)
