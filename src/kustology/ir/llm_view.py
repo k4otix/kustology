@@ -8,8 +8,8 @@ being fed to a language model:
 
 * Every node carries a stable ``kind`` discriminator drawn from the class's
   ``KIND`` constant — the wire format uses snake_case KQL-aligned labels.
-* Fields holding their declared default (``nullable=True``,
-  ``result_type=unknown``, empty lists/dicts) are dropped.
+* Fields holding their declared default (``result_type=unknown``,
+  ``result_type_inner=None``, empty lists/dicts) are dropped.
 * ``span`` and ``schema_attached`` are stripped — character offsets aren't
   useful without source-text triangulation, and ``schema_attached`` is
   inferrable from whether ``result_schema`` is populated.

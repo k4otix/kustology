@@ -607,7 +607,6 @@ class QueryIR(BaseModel):
     main_pipeline: Pipeline
     diagnostics: list[Diagnostic] = []
     schema_attached: bool = False
-    parse_warnings: list[str] = []
 
     def to_llm_dict(self) -> dict[str, Any]:
         """LLM-friendly serialization. See :mod:`kustology.ir.llm_view`."""

@@ -113,3 +113,37 @@ def test_ir_roundtrip(builder, attacher, query):
     assert ir.model_dump() == reloaded.model_dump(), (
         f"round-trip drift for query: {query!r}"
     )
+
+
+def test_dumps_carrying_removed_fields_are_rejected():
+    """``extra="forbid"`` makes the removal visible instead of silent.
+
+    ``QueryIR.parse_warnings``, ``Span.source_text`` and ``Expr.nullable``
+    were declared and never populated by any code path -- the first two by
+    nothing at all, the third by a probe naming a .NET member that does not
+    exist. A stored dump written by an older release carries them, and must
+    fail to load rather than quietly dropping data. That is what the
+    IR_SCHEMA_VERSION bump is for.
+    """
+    import json
+
+    import pytest
+    from pydantic import ValidationError
+
+    from kustology.ir import IRBuilder, QueryIR
+
+    ir = IRBuilder().build("DeviceProcessEvents | where FileName == 'a.exe'")
+    payload = json.loads(ir.model_dump_json())
+
+    # Round-trips cleanly as written today.
+    assert QueryIR.model_validate(payload).semantic_hash == ir.semantic_hash
+
+    for mutate in (
+        lambda p: p.update(parse_warnings=[]),
+        lambda p: p["main_pipeline"]["source"]["span"].update(source_text="T"),
+        lambda p: p["main_pipeline"]["operators"][0]["predicate"].update(nullable=True),
+    ):
+        stale = json.loads(ir.model_dump_json())
+        mutate(stale)
+        with pytest.raises(ValidationError):
+            QueryIR.model_validate(stale)

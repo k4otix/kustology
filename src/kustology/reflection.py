@@ -57,24 +57,6 @@ def _safe_return_type_name(sym: object) -> str | None:
         return None
 
 
-def _safe_first_param_type_name(sym: object) -> str | None:
-    """First signature's first parameter type name, lowercased."""
-    try:
-        signatures = getattr(sym, "Signatures", None)
-        if signatures is None or signatures.Count == 0:
-            return None
-        params = getattr(signatures[0], "Parameters", None)
-        if params is None or params.Count == 0:
-            return None
-        ptype = getattr(params[0], "Type", None) or getattr(params[0], "TypeKind", None)
-        if ptype is None:
-            return None
-        ptype_name = getattr(ptype, "Name", None) or str(ptype)
-        return str(ptype_name).lower()
-    except Exception:  # pragma: no cover
-        return None
-
-
 def _enumerate_static_symbols(container_name: str) -> dict[str, object]:
     """Return ``{symbol_name: symbol}`` for all FunctionSymbol-shaped static
     members of the named ``Kusto.Language.<container>`` class.

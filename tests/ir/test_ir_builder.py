@@ -95,7 +95,7 @@ def test_semantic_hash_stability(ir_builder):
 
 def test_ir_serialization():
     """IR round-trips through model_dump_json / model_validate_json without drift."""
-    span = Span(text_start=0, width=10, source_text="test")
+    span = Span(text_start=0, width=10)
     ir = QueryIR(
         raw_text="test",
         semantic_hash="abc",
@@ -114,7 +114,7 @@ def test_ir_serialization():
 
 def test_binder_enrichment(binder):
     """Schema attachment resolves a bare ColumnRef to its owning table and type."""
-    span = Span(text_start=0, width=0, source_text="")
+    span = Span(text_start=0, width=0)
 
     col = ColumnRef(name="FileName", span=span)
     lit = LiteralExpr(value="cmd.exe", literal_kind="string", span=span)
@@ -249,16 +249,20 @@ def test_database_qualified_source(ir_builder):
 
 
 def test_kustotype_has_tabular():
+    """``TABULAR`` is declared but unreachable from ``map_net_type``.
+
+    Reaching it needs a .NET symbol whose ``Name`` is literally "tabular";
+    ``TableSymbol.Name`` is the table's own name and ``ScalarTypes`` has no
+    such entry. Kept as a member of the type system, pinned here as a stated
+    boundary rather than asserted into looking implemented.
+    """
     from kustology.ir import KustoType
+    from kustology.ir._builder_helpers import map_net_type
+
     assert "TABULAR" in {m.name for m in KustoType}
-
-
-def test_expr_has_nullable_and_inner_type():
-    from kustology.ir import LiteralExpr, Span
-    e = LiteralExpr(value="x", literal_kind="string", span=Span(text_start=0, width=1))
-    # Defaults
-    assert e.nullable is True
-    assert e.result_type_inner is None
+    # Only a literal "tabular" type name would produce it, and nothing emits one.
+    assert map_net_type("tabular") is KustoType.TABULAR
+    assert map_net_type("long") is KustoType.LONG
 
 
 def test_pipeline_result_schema_field():

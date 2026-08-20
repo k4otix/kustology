@@ -64,7 +64,13 @@ def map_net_type(type_name: str) -> KustoType:
 
 
 def map_semantic_info(node: Any, expr: Any) -> None:
-    """Copy ResultType, dynamic-element type, and nullability from the binder."""
+    """Copy ResultType and the dynamic-element type from the binder.
+
+    Nullability is deliberately absent: no type in ``Kusto.Language``
+    exposes it. The probe that used to read ``res_type.IsNullable`` named a
+    member that does not exist, so ``Expr.nullable`` was ``True`` on every
+    node ever built while its declaration claimed the binder would flip it.
+    """
     res_type = getattr(node, "ResultType", None)
     if res_type is None:
         return
@@ -81,12 +87,6 @@ def map_semantic_info(node: Any, expr: Any) -> None:
                 expr.result_type_inner = map_net_type(str(inner_name))
         except Exception as e:  # pragma: no cover — defensive
             logger.debug("inner result-type probe fell through: %s", e)
-    try:
-        is_nullable = getattr(res_type, "IsNullable", None)
-        if is_nullable is not None:
-            expr.nullable = bool(is_nullable)
-    except Exception as e:  # pragma: no cover — defensive
-        logger.debug("nullability probe fell through: %s", e)
 
 
 def to_span(node: Any) -> Span:

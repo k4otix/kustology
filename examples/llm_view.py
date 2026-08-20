@@ -5,7 +5,7 @@
 
 The canonical ``model_dump_json`` output is round-trippable but verbose —
 every node carries a span, every Expr carries default fields
-(``nullable=True``, ``result_type=unknown``), and structural hashes /
+(``result_type=unknown``), and structural hashes /
 schema-attached flags add noise that doesn't help an LLM reason about
 the query.
 

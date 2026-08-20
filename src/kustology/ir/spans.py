@@ -13,7 +13,6 @@ class Span(BaseModel):
 
     text_start: int
     width: int
-    source_text: str | None = None
 
     @property
     def text_end(self) -> int:

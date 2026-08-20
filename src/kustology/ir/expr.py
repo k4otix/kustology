@@ -32,8 +32,6 @@ class Expr(BaseModel):
     result_type: KustoType = KustoType.UNRESOLVED
     # For DYNAMIC, the element type (e.g. dynamic<bool>). None otherwise.
     result_type_inner: KustoType | None = None
-    # KQL default is nullable; binder flips to False when it can prove non-null.
-    nullable: bool = True
 
     @property
     def canonical_form(self) -> str:

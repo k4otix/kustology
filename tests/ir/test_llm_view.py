@@ -107,12 +107,11 @@ def test_spans_are_omitted_everywhere(storm_ir):
 
 
 def test_default_fields_are_dropped(storm_ir):
-    """Default values (``nullable=True``, ``result_type_inner=None``) carry
-    no signal for an LLM and are stripped. Non-default values survive."""
+    """Default values (``result_type_inner=None``) carry no signal for an
+    LLM and are stripped. Non-default values survive."""
     out = to_llm_dict(storm_ir)
     column = out["main_pipeline"]["operators"][1]["columns"][0]
     # Defaults that the binder leaves untouched: dropped.
-    assert "nullable" not in column            # default True
     assert "result_type_inner" not in column   # default None
     # Non-defaults that the binder populates: kept.
     assert column["name"] == "StartTime"
@@ -123,7 +122,6 @@ def test_default_fields_are_dropped(storm_ir):
 def test_empty_diagnostics_array_is_dropped(storm_ir):
     out = to_llm_dict(storm_ir)
     assert "diagnostics" not in out
-    assert "parse_warnings" not in out
     assert "let_bindings" not in out
 
 

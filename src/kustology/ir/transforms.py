@@ -134,7 +134,7 @@ def _merge_at_one_level(ops: list) -> list:
 
 # Stripped from the dump before hashing. Spans depend on character offsets so
 # would defeat the purpose of a semantic hash; the type-annotation fields
-# (``result_type``, ``result_type_inner``, ``nullable``) are populated by the
+# (``result_type``, ``result_type_inner``) are populated by the
 # binder, so leaving them in would make the hash differ between a bound and an
 # unbound parse purely because of the annotations.
 #
@@ -150,7 +150,7 @@ def _merge_at_one_level(ops: list) -> list:
 # difference for a silently wrong answer. Queries with no table-aliasing
 # ``let`` are unaffected.
 _VOLATILE_FIELDS = frozenset({
-    "span", "result_type", "result_type_inner", "nullable",
+    "span", "result_type", "result_type_inner",
 })
 
 
