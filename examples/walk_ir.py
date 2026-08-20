@@ -23,6 +23,8 @@ from kustology.ir import (
     Assignment,
     ColumnRef,
     FilterOp,
+    LetBinding,
+    LetRef,
     Pipeline,
     ProjectOp,
     QueryIR,
@@ -42,7 +44,20 @@ def walk(node, depth: int = 0) -> None:
     indent = "  " * depth
     if isinstance(node, QueryIR):
         print(f"{indent}QueryIR")
+        # let bindings hang off the query, not off the main pipeline —
+        # walking only main_pipeline silently skips them.
+        for binding in node.let_bindings:
+            walk(binding, depth + 1)
         walk(node.main_pipeline, depth + 1)
+    elif isinstance(node, LetBinding):
+        # A binding's right-hand side is a pipeline, a scalar expression or
+        # a user function; only the first is walkable as a pipeline.
+        if node.rhs_expr is not None:
+            print(f"{indent}Let: {node.name} = {node.rhs_expr.canonical_form}")
+        else:
+            print(f"{indent}Let: {node.name}")
+            if node.rhs_pipeline is not None:
+                walk(node.rhs_pipeline, depth + 1)
     elif isinstance(node, Pipeline):
         print(f"{indent}Pipeline")
         walk(node.source, depth + 1)
@@ -50,6 +65,10 @@ def walk(node, depth: int = 0) -> None:
             walk(op, depth + 1)
     elif isinstance(node, TableRef):
         print(f"{indent}Source: {node.name}")
+    elif isinstance(node, LetRef):
+        # A source naming a let binding rather than a real table. Without
+        # this branch it falls through to the bare-class-name fallback.
+        print(f"{indent}Source: {node.name} (let)")
     elif isinstance(node, FilterOp):
         print(f"{indent}Filter: {node.predicate.canonical_form}")
     elif isinstance(node, ProjectOp):
@@ -60,15 +79,17 @@ def walk(node, depth: int = 0) -> None:
 
 
 QUERY = (
-    "StormEvents "
-    '| where State == "TEXAS" and EventType == "Tornado" '
+    'let tornadoes = StormEvents | where EventType == "Tornado";\n'
+    "tornadoes "
+    '| where State == "TEXAS" '
     "| project StartTime, State, EventType, DeathsDirect"
 )
 
 
 def main() -> None:
     print("Input query:")
-    print(f"  {QUERY}")
+    for line in QUERY.splitlines():
+        print(f"  {line}")
     print()
     print("IR walk (typed pipeline):")
     walk(parse(QUERY).to_ir())

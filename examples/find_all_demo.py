@@ -21,7 +21,7 @@ Requires the ``[ir]`` extras: ``pip install 'kustology[ir]'``.
 """
 
 from kustology import parse
-from kustology.ir import ColumnRef, FilterOp, TableRef, find_all
+from kustology.ir import ColumnRef, FilterOp, LetRef, TableRef, find_all
 
 SCHEMA = {
     "DeviceProcessEvents": {
@@ -33,8 +33,8 @@ SCHEMA = {
 }
 
 QUERY = """
-DeviceProcessEvents
-| where FileName == 'powershell.exe'
+let powershell_procs = DeviceProcessEvents | where FileName == 'powershell.exe';
+powershell_procs
 | join (DeviceNetworkEvents | where RemoteIP != '127.0.0.1') on DeviceId
 | project DeviceName, FileName, RemoteIP
 """
@@ -43,13 +43,22 @@ DeviceProcessEvents
 def main() -> None:
     ir = parse(QUERY, schema=SCHEMA).to_ir()
 
-    # Every table referenced anywhere in the query — including inside
-    # join right-side sub-pipelines.
+    # Every *table* referenced anywhere in the query — including inside
+    # join right-side sub-pipelines and let-binding bodies. Note what is
+    # absent: `powershell_procs` is a let alias, not a table, so it is a
+    # LetRef and never shows up here.
     tables = {n.name for n in find_all(ir, TableRef)}
     print(f"Tables: {tables}")
 
+    # The aliases, found the same way. Keeping the two node types distinct
+    # is what stops a `let` name from being reported as a real table.
+    aliases = {n.name for n in find_all(ir, LetRef)}
+    print(f"Let aliases: {aliases}")
+
     # Every column reference, regardless of role (filter, project,
-    # join key). Binder-resolved table provenance is on each node.
+    # join key). Binder-resolved table provenance is on each node, and it
+    # names the *immediate* source: columns downstream of the alias resolve
+    # to `powershell_procs`, not to the DeviceProcessEvents behind it.
     provenance = {(n.name, n.table) for n in find_all(ir, ColumnRef)}
     print("Column provenance:")
     for col, table in sorted(provenance):
