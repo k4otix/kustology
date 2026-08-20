@@ -140,19 +140,23 @@ def _collapse_polarity_into_op(out: dict[str, Any], cls: type) -> None:
 
     Builder behavior differs by node:
 
-    * ``BinOp.op`` already carries the literal KQL string with ``!`` baked
-      in (``!=``, ``!contains``). Polarity is redundant → drop it.
-    * ``SetMembership`` / ``Between`` have no ``op`` field on the model;
-      polarity is the only signal. Synthesize ``op: "in"/"!in"`` or
-      ``op: "between"/"!between"`` and drop polarity.
+    * ``BinOp.op`` and ``SetMembership.op`` already carry the literal KQL
+      string with ``!`` baked in (``!=``, ``!contains``, ``!in~``).
+      Polarity is redundant → drop it.
+    * ``Between`` has no ``op`` field on the model; polarity is the only
+      signal, and ``between``/``!between`` is a closed two-member set that
+      polarity fully determines. Synthesize it and drop polarity.
+
+    ``SetMembership`` used to be synthesized like ``Between``, which was
+    the worst of both: it emitted ``op: "in"`` for ``has_any`` and
+    ``has_all``, and because ``case_sensitive`` defaults to ``False`` the
+    default-stripping pass above removed that field too — so a model was
+    shown ``has_all`` as a bare, case-sensitive ``in``.
     """
     polarity = out.get("polarity")
     if polarity is None:
         return
-    if issubclass(cls, BinOp):
-        del out["polarity"]
-    elif issubclass(cls, SetMembership):
-        out["op"] = "!in" if polarity == "exclusion" else "in"
+    if issubclass(cls, (BinOp, SetMembership)):
         del out["polarity"]
     elif issubclass(cls, Between):
         out["op"] = "!between" if polarity == "exclusion" else "between"

@@ -99,11 +99,12 @@ def canonical(expr: Any) -> str:
         args = ", ".join(canonical(a) for a in expr.args)
         return f"{expr.name}({args})"
     if isinstance(expr, SetMembership):
+        # Render the recorded operator. Rebuilding it from polarity plus
+        # case_sensitive could only ever emit one of four strings, so
+        # has_any and has_all both came out as `in~` -- a different
+        # predicate. Same reason BinOp above renders `expr.op` verbatim.
         vals = ", ".join(sorted(canonical(v) for v in expr.values))
-        op = "in" if expr.polarity == "inclusion" else "!in"
-        if not expr.case_sensitive:
-            op += "~"
-        return f"{canonical(expr.column)} {op} ({vals})"
+        return f"{canonical(expr.column)} {expr.op} ({vals})"
     if isinstance(expr, Between):
         op = "between" if expr.polarity == "inclusion" else "!between"
         return (
@@ -117,7 +118,8 @@ def canonical(expr: Any) -> str:
         default = canonical(expr.default) if expr.default is not None else "_"
         return f"case({branches} | else {default})"
     if isinstance(expr, Exists):
-        return f"exists({canonical(expr.target)})"
+        # `exists(...)` is not KQL -- name the function that produced it.
+        return f"{expr.op}({canonical(expr.target)})"
     if isinstance(expr, RegexMatch):
         return f"{canonical(expr.target)} matches regex \"{expr.pattern}\""
     if isinstance(expr, UnaryOp):

@@ -510,6 +510,18 @@ def test_distinct_membership_operators_do_not_collide(ir_builder, left, right):
     assert a.semantic_hash != b.semantic_hash
 
 
+def test_membership_canonical_form_names_the_real_operator(ir_builder):
+    """``canonical()`` rebuilt the operator from polarity + case_sensitive, so
+    it could only ever emit one of four strings; ``has_any`` and ``has_all``
+    both rendered as ``in~`` -- a different predicate."""
+    from kustology.ir import SetMembership, find_all
+
+    for op in ("in", "!in", "in~", "!in~", "has_any", "has_all"):
+        ir = ir_builder.build(f'T | where C {op} ("a")')
+        m = next(iter(find_all(ir, SetMembership)))
+        assert m.canonical_form == f'C {op} ("a")', op
+
+
 def test_membership_operator_is_read_without_semantic_analysis(ir_builder):
     """``op`` comes from ``Operator.ToString()``, which a syntax-only parse
     has. ``ReferencedSymbol.OperatorKind`` would also identify the operator
@@ -650,3 +662,14 @@ def test_case_folding_variants_do_not_collide(ir_builder):
         for op in ("has", "has_cs", "!has", "!has_cs", "contains", "contains_cs")
     }
     assert len(set(seen.values())) == len(seen)
+
+
+def test_exists_canonical_form_names_the_real_function(ir_builder):
+    """``canonical()`` emitted a literal ``exists(...)`` -- a spelling that
+    appears in no KQL query -- for both source functions."""
+    from kustology.ir import Exists, find_all
+
+    for fn in ("isnotnull", "isnotempty"):
+        ir = ir_builder.build(f"T | where {fn}(C)")
+        e = next(iter(find_all(ir, Exists)))
+        assert e.canonical_form == f"{fn}(C)", fn

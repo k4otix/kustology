@@ -192,18 +192,19 @@ def test_binop_contains_exclusion_becomes_not_contains():
     assert "polarity" not in bin_op
 
 
-def test_setmembership_synthesizes_in_op():
-    """``SetMembership`` has no ``op`` field on the model; the LLM view
-    synthesizes one from polarity (``in`` / ``!in``)."""
-    ir_pos = IRBuilder().build("T | where x in (1, 2, 3)")
-    op_pos = to_llm_dict(ir_pos)["main_pipeline"]["operators"][0]["predicate"]
-    assert op_pos["op"] == "in"
-    assert "polarity" not in op_pos
+def test_setmembership_shows_its_real_operator():
+    """``SetMembership.op`` is carried on the model, so the view surfaces it
+    rather than synthesizing one from polarity.
 
-    ir_neg = IRBuilder().build("T | where x !in (1, 2, 3)")
-    op_neg = to_llm_dict(ir_neg)["main_pipeline"]["operators"][0]["predicate"]
-    assert op_neg["op"] == "!in"
-    assert "polarity" not in op_neg
+    Synthesizing labelled ``has_any`` and ``has_all`` as ``in``, and since
+    ``case_sensitive`` defaults to False the default-stripping pass removed
+    that too -- a model was shown ``has_all`` as a case-sensitive ``in``.
+    """
+    for op in ("in", "!in", "in~", "!in~", "has_any", "has_all"):
+        ir = IRBuilder().build(f'T | where x {op} ("a", "b")')
+        pred = to_llm_dict(ir)["main_pipeline"]["operators"][0]["predicate"]
+        assert pred["op"] == op, op
+        assert "polarity" not in pred
 
 
 def test_between_synthesizes_between_op():
@@ -333,6 +334,9 @@ def test_dispatch_survives_a_class_rename():
     _drop_redundant_canonical_form(out, RenamedColumnRef)
     assert "canonical_form" not in out
 
-    out2 = {"polarity": "exclusion"}
+    # SetMembership carries its own op, so the rule only drops the
+    # now-redundant polarity -- but it still has to *fire*, which is what
+    # identity dispatch buys.
+    out2 = {"polarity": "exclusion", "op": "!in~"}
     _collapse_polarity_into_op(out2, RenamedSetMembership)
-    assert out2 == {"op": "!in"}
+    assert out2 == {"op": "!in~"}
