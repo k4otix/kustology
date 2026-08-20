@@ -12,7 +12,6 @@ linter or CI step.
 
 from kustology import format_query, validate
 
-
 MESSY_QUERY = (
     'StormEvents|where EventType=="Tornado"|   summarize TotalDeaths=sum(DeathsDirect),'
     'TotalInjuries=sum(InjuriesDirect) by State|order by TotalDeaths desc'

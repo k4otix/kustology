@@ -32,7 +32,6 @@ join-bearing query:
 
 from kustology import format_query, parse, validate
 
-
 QUERY = """\
 let lookback = 7d;
 let high_impact_states = StormEvents

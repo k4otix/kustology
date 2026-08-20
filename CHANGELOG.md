@@ -8,6 +8,64 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Column provenance is resolved everywhere, not in 17 of 53 operators
+  (tier 2).** `SchemaAttacher` recursed a hardcoded tuple of attribute names
+  with no `pipeline`, `branches` or `default` entry, and dispatched on an
+  `isinstance` chain that simply fell off the end for unhandled operators. So
+  in `SecurityEvent | where EventID > toscalar(SecurityEvent | summarize
+  max(EventID))`, `EventID` resolved to `SecurityEvent` outside the `toscalar`
+  and to `None` inside — the same column, one query, inconsistent provenance,
+  silent. `| sort by EventID` left it unresolved while a `| project` in the
+  same query worked, and every `ColumnRef` inside a `case()` or `iif()` was
+  unresolved. The traversal now derives from `model_fields`; operators without
+  a bespoke scope rule fill their expressions and walk their sub-pipelines
+  instead of being skipped. `SchemaAttacher`'s docstring names the operators
+  whose downstream scope is still stale, so that boundary is stated rather
+  than silent.
+- **`walk()` / `find_all()` descend tuple-valued fields (tier 2).** They
+  unwrapped lists and dicts but not tuples, so `CaseExpr.branches` — typed
+  `list[tuple[Expr, Expr]]` — was invisible. A `case()` holding five
+  `ColumnRef`s surfaced one. This is the traversal the docs point every
+  analyzer at, and the one the bespoke walkers were converted to.
+- **`let` bindings are enriched, and their names resolve (tier 2).**
+  `SchemaAttacher.enrich` walked `main_pipeline` only, so a tabular binding's
+  `rhs_pipeline.result_schema` stayed `None` on a fully bound parse and the
+  `ColumnRef`s inside it kept `table=None`. Bindings are now walked in
+  declaration order and each one's output columns registered under its name,
+  so in `let Base = SecurityEvent | where EventID > 4624; Base | project
+  Account`, `Account` gains the type `string` and the provenance `"Base"` —
+  previously `unknown` and `None`.
+- **`ExternalDataExpr` carries real data (tier 2).** `uri` was the hardcoded
+  placeholder `"url"` because the guard read `node.Uris` and the member is
+  `URIs`; `columns` was bound to `[]` and never appended to; `format` was
+  hardcoded `"unknown"`. All three are read from the node. `format` is now
+  `None` when the query states none, rather than a string that read like a
+  real value.
+- **`ParseKvOp.columns` and `MacroExpandOp.pipeline` are populated (tier 2).**
+  Both probed .NET members that do not exist — `Keys.Count` where `Keys` is a
+  `RowSchema` exposing `Columns`, and `Subquery`/`Body` where the member is
+  `StatementList` — so both were empty for every query ever parsed.
+- **`in` and `in~` are distinguishable (tier 2).** `SetMembership.case_sensitive`
+  was hardcoded `False`, so KQL's case-sensitive `in` was indistinguishable
+  from `in~`, `canonical_form` rendered `C in ("a")` as `C in~ ("a")`, and the
+  two queries produced the **same** `semantic_hash` despite being different.
+- **`canonical_form` renders every expression shape (tier 2).** It handled 12
+  of 23 `Expr` types; the rest fell through to a bare `"?"`, so `-X > 1`,
+  `D.a == 1` and `toscalar(...) > 1` were all the identical string `"? > 1"`.
+- **`find in (...)` and `search in (...)` tables are found (tier 1).**
+  `get_referenced_tables()` returned an empty set for `find in (S1, S2) where
+  X == 1`, and `replace_table()` returned the query **unchanged**, with no
+  error — so a consumer migrating a table shipped one still pointing at the
+  old name.
+- **The corpus gates see what they were built to see (tier 2).** Both gate
+  walkers shared the blind spot above and additionally probed operator fields
+  by `hasattr` from a fixed list, missing `SortOp.expressions`, `TopOp.by`,
+  `RangeOp.start`/`end`/`step`, `FacetOp.with_pipeline` and others. Both now
+  use `find_all`: over the bundled 33-query corpus that reaches 3661 nodes
+  against the old walk's 3179, with nothing lost. A new assertion catches a
+  regression of the parenthesized-`let` fix, which the `SubqueryExpr` work had
+  made invisible to the gate.
+
 - **Culture no longer corrupts fractional numeric literals (tier 1).**
   Importing `kustology` now pins .NET's culture to invariant, process-wide.
   Microsoft's parser evaluates `LiteralValue` lazily on property access, so
@@ -51,6 +109,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`LetRef` is emitted (tier 2).** It was exported, declared in the
+  `Pipeline.source` union, and constructed nowhere — every source-position
+  name became a `TableRef`, so `let X = T | take 1; X | count` reported `X` as
+  a table. The classification is decidable from the `let` statements alone, so
+  it holds identically for a bound and an unbound parse.
+- **`Expr.result_type_inner` is populated (tier 2).** It read
+  `res_type.Underlying`, a property on no type in the assembly. The real
+  member is `ElementType` on `DynamicArraySymbol`, so
+  `print x = dynamic([1,2,3])` now reports `result_type_inner=long`.
+- `tests/test_reflection_audit.py` (tier 1) — asserts every PascalCase .NET
+  member name passed to `getattr`/`hasattr` in `src/` exists in the loaded
+  `Kusto.Language` assembly. Four defects in this release came from a probe
+  naming a member that does not exist; pythonnet is case-sensitive and silent
+  about the miss, so the guard declines and the field keeps its default.
+
 - `iter_elements()` (tier 1) — unwraps the `SeparatedElement` wrappers that
   .NET list properties yield, and passes plain `SyntaxList` through unchanged.
 - `LiteralExpr.ticks` (tier 2) — exact .NET ticks for `datetime` and
@@ -78,6 +151,32 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   resolved range.
 
 ### Breaking (tier 2, pre-1.0)
+
+- **`LetRef` replaces `TableRef` for `let`-bound names.**
+  `find_all(ir, TableRef)` no longer returns aliases, and
+  `LetBinding.inner_tables` narrows to real tables. Both now answer "which
+  tables does this query read"; aliases are reachable via
+  `find_all(..., LetRef)`.
+- **`QueryIR.parse_warnings`, `Span.source_text` and `Expr.nullable` are
+  removed.** None was populated by any code path. `parse_warnings` had zero
+  assignments anywhere and duplicated `QueryIR.diagnostics`; `source_text`
+  duplicated `Span.text(raw)`, which already slices from the source;
+  `nullable` was filled from `res_type.IsNullable`, a property on no type in
+  the assembly, and is not populatable at all — Microsoft's parser carries no
+  nullability information. Stored IR JSON containing any of them now fails to
+  load under `extra="forbid"`.
+- **`ParseKvOp.columns` changes from `list[Assignment]` to `dict[str, str]`**,
+  matching `AssertSchemaOp`. A declared key has a name and a type; there is no
+  expression for an `Assignment` to hold.
+- **`ColumnRef.table` is populated in many more places**, including inside
+  `toscalar(...)`, `case()`/`iif()` arms, and under operators that previously
+  filled nothing. `Pipeline.result_schema` is populated on `let` pipelines.
+  Both are in the hash payload.
+- **`semantic_hash` changes for any query** containing a membership operator,
+  an `externaldata`, a `let`-bound name, or — on a bound parse — a column the
+  binder can now resolve. `SEMANTIC_HASH_SCHEME` is `kustology-sem-v3` and
+  `IR_SCHEMA_VERSION` is `0.3`, bumped in lockstep, so stored hashes are
+  invalidated visibly rather than silently comparing unequal.
 
 - **Generic traversal now descends into `let` right-hand sides.** Populating
   `LetBinding.rhs_pipeline` changes what `walk()` and `find_all()` return for
@@ -125,6 +224,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   unequal with no signal that the canonicalization rules moved.
 
 ### Internal
+
+- The `ruff` job lints `examples/` as well as `src tests scripts`; the six
+  pre-existing `I001` findings there are fixed. `examples/` was already
+  smoke-tested by `tests/test_examples.py` but never linted.
+- `docs/superpowers/reports/2026-08-20-stub-sweep.md` records the full
+  declared-but-unpopulated sweep behind this release, including the two
+  detection methods that found ten of the twelve instances and two findings
+  left open as follow-ups.
+- The LLM view dispatches on class identity rather than `cls.__name__`
+  string comparison, which would silently stop firing on a rename.
 
 - Lint tooling is installed from `uv.lock` in CI rather than resolved fresh, so
   an upstream ruff release can no longer redefine the rule set mid-flight.

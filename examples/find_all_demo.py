@@ -23,7 +23,6 @@ Requires the ``[ir]`` extras: ``pip install 'kustology[ir]'``.
 from kustology import parse
 from kustology.ir import ColumnRef, FilterOp, TableRef, find_all
 
-
 SCHEMA = {
     "DeviceProcessEvents": {
         "FileName": "string",

@@ -220,7 +220,7 @@ jobs:
       - name: Install package + dev deps (locked)
         run: uv sync --locked --extra dev
       - name: ruff
-        run: uv run ruff check src tests scripts
+        run: uv run ruff check src tests scripts examples
       - name: mypy
         run: uv run mypy src
 

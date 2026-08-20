@@ -30,6 +30,24 @@ text = KustoCodeService(query).GetFormattedText().Text
   `/usr/local/share/dotnet`, `~/.dotnet`. Probing the `opt` symlink (not the
   `Cellar/X.Y.Z/` path) keeps detection stable across `brew upgrade`.
 
+### pythonnet member lookup is exact, case-sensitive, and silent
+`getattr(node, "Uris", None)` on a node whose member is `URIs` returns `None`.
+No exception, no warning. So the guard around it declines, the field it would
+have populated keeps its declared default, and the surface reads as implemented
+forever. Four separate defects shipped this way — `Uris` for `URIs`,
+`IsNullable` and `Underlying` (properties on *no* type in the assembly), and
+`Keys.Count` where `Keys` is a `RowSchema` exposing `Columns`.
+
+`tests/test_reflection_audit.py` now asserts every PascalCase member name passed
+to `getattr`/`hasattr` in `src/` resolves somewhere in `Kusto.Language`. Its
+limit is that the check is per name, not per type, so the `Keys.Count` shape
+still needs a value assertion on a real parse. Before adding a probe, confirm
+the member exists:
+
+```python
+[m for m in dir(node) if m[:1].isupper()]
+```
+
 ### `LiteralValue` is lazy, cached, and culture-sensitive
 Microsoft's parser computes `node.LiteralValue` on **property access**, not at
 parse time, then caches it. The .NET culture live at that first read decides the
@@ -155,16 +173,21 @@ AST kinds.
   it over writing a fresh `KustoWalker` subclass; the bespoke walkers
   that remain are multi-pass, stateful, or ordered.
 
-**Hand-maintained attribute lists drift.** Several bespoke walkers recurse over
-a hardcoded tuple of field names (`"left"`, `"right"`, `"operand"`, …) — see
-`SchemaAttacher._fill` (`ir/binder.py`), `_walk_expr`
-(`tests/ir/test_complex_harness.py`), and `walk_expr` (`scripts/mine_corpus.py`).
-Each omits `pipeline`, so none descends into `ToScalarExpr` / `MaterializeExpr` /
-`SubqueryExpr`; the binder consequence is that `ColumnRef.table` stays `None`
-inside a `toscalar(...)` while the same column resolves fine outside it. Every
-new IR field silently widens these holes. If you add a field or a
-pipeline-bearing node, either extend all three or convert the walker to iterate
-`model_fields` — which is what generic `walk()` / `find_all()` already do.
+**Hand-maintained attribute lists drift — all of them are now gone.** Four
+bespoke walkers recursed over a hardcoded tuple of field names (`"left"`,
+`"right"`, `"operand"`, …): `SchemaAttacher._fill`, `_walk_expr`
+(`tests/ir/test_complex_harness.py`), `walk_expr` (`scripts/mine_corpus.py`) and
+a fourth copy in `scripts/verify_corpus.py`. All omitted `pipeline`, `branches`
+and `default`, so none descended into `ToScalarExpr` / `MaterializeExpr` /
+`SubqueryExpr` or either arm of a `case()`. Each now derives from `model_fields`
+or calls `find_all` outright. **Do not reintroduce one.** If you need a
+traversal, use `walk` / `find_all`.
+
+Note the generic walker was not immune either: it descended lists and dicts but
+not tuples, so `CaseExpr.branches` (`list[tuple[Expr, Expr]]`) was invisible to
+`find_all` — a `case()` with five `ColumnRef`s surfaced one. Container descent
+is now recursive and container-kind agnostic. A field whose *type* nests
+containers is the shape to watch for.
 
 ### `KustoQuery.to_ir(attach_schema=...)` auto-attach default
 Default is `attach_schema=None`, which auto-attaches iff the parse was
@@ -203,9 +226,25 @@ A declared-but-never-populated field reads as implemented and is invisible to
 tests. `LetBinding` shipped a public release with four such fields and a
 seven-value `category` enum of which one value was ever emitted, which blocked a
 downstream consumer entirely. If you cannot populate it now, do not declare it —
-and when a field turns out to be unreadable *and* unread, deleting it is usually
-better than implementing it (`category` was removed, not filled in). Two known
-survivors of this pattern are `QueryIR.parse_warnings` and `Span.source_text`.
+and when a field turns out to be unpopulatable *and* unread, deleting it is
+usually better than implementing it (`category` was removed, not filled in).
+
+A full sweep for this pattern lives in
+`docs/superpowers/reports/2026-08-20-stub-sweep.md`. It cleared the known
+instances; two remain open there as follow-ups (`MaterializeExpr` appears to
+have no producer; `SetMembership` cannot distinguish `has_any` from `in~`).
+
+**Two detection questions, not one.** "Is this field ever assigned?" is the
+obvious check and it is not sufficient — it would not have caught `category`,
+which *was* assigned, always to the same literal. Also ask "is every assignment
+site the same constant?" That is what found `ExternalDataExpr.format="unknown"`
+and `SetMembership.case_sensitive=False`.
+
+### A test that asserts a default proves nothing
+Three defects in the sweep survived review behind tests asserting only a field's
+default value or its declaration's existence — `assert e.result_type_inner is
+None` on a hand-built node passes identically whether the populating code works
+or has never worked once. Assert a **non-default value on a real parse**.
 
 ### Version tags bump together, and the hash is bind-state-dependent
 `IR_SCHEMA_VERSION` (`ir/__init__.py`) must be bumped on any breaking
@@ -216,7 +255,9 @@ hashes *visibly* instead of silently returning "these queries differ".
 Note `semantic_hash` is not bind-invariant: a `let` aliasing a table resolves to
 `rhs_pipeline` when bound and `rhs_expr` when not, and that is a shape
 difference no volatile-field stripping can hide. `_VOLATILE_FIELDS` strips
-`span` / `result_type` / `result_type_inner` / `nullable` only.
+`span` / `result_type` / `result_type_inner` only. This applies to a binding's
+own right-hand side; the *use* site is bind-independent, since a name bound by
+an earlier `let` is a `LetRef` decided from the statement text alone.
 
 ### `extra="forbid"` on every IR `BaseModel`
 Strict validation: JSON dumps with extra top-level fields fail to

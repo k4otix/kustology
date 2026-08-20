@@ -24,7 +24,6 @@ custom AST-level analyzers.
 
 from kustology import parse
 
-
 # Wrappers that have no logical weight — descend through them silently.
 _TRANSPARENT = {"List", "SeparatedElement", "TokenName"}
 

@@ -33,7 +33,6 @@ import json
 from kustology.ir import IRBuilder, SchemaAttacher
 from kustology.utils.analysis import build_global_state
 
-
 # StormEvents schema lets the binder resolve column types so the LLM view
 # shows ``result_type: datetime`` / ``string`` / ``int`` rather than
 # ``unknown``. Without a schema the example still runs — types just stay

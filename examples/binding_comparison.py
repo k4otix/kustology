@@ -15,7 +15,6 @@ and a query containing a deliberate typo (``EvenType`` instead of
 
 from kustology import parse, validate
 
-
 # Canonical Azure Data Explorer sample table — used by every ADX tutorial.
 # Each value is a KQL scalar type that kustology resolves via
 # ScalarTypes.GetSymbol at parse time.

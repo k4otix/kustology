@@ -33,11 +33,11 @@ def binder(sample_schema):
 
 
 def test_semantic_hash_carries_scheme_prefix(ir_builder):
-    """The hash is prefixed with ``kustology-sem-v2:`` so the
+    """The hash is prefixed with ``kustology-sem-v3:`` so the
     canonicalization rules themselves are versionable. Tests pin the
     exact prefix so a future rename can't slip through silently."""
     ir = ir_builder.build("DeviceProcessEvents | where FileName == 'cmd.exe'")
-    assert ir.semantic_hash.startswith("kustology-sem-v2:"), ir.semantic_hash
+    assert ir.semantic_hash.startswith("kustology-sem-v3:"), ir.semantic_hash
     # Digest portion is 64 hex chars — full SHA-256.
     digest = ir.semantic_hash.split(":", 1)[1]
     assert len(digest) == 64
@@ -53,7 +53,7 @@ def test_compute_semantic_hash_accepts_subtree(ir_builder):
     binops = list(find_all(ir, BinOp))
     assert binops, "expected at least one BinOp"
     h = compute_semantic_hash(binops[0])
-    assert h.startswith("kustology-sem-v2:")
+    assert h.startswith("kustology-sem-v3:")
     # Same BinOp from a different query with the same shape collides.
     ir2 = ir_builder.build("DeviceProcessEvents\n| where FileName == 'cmd.exe' ")
     binops2 = list(find_all(ir2, BinOp))
