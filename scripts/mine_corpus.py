@@ -4,7 +4,8 @@
 
 """Bulk-process a KQL corpus through the IR builder and report coverage gaps.
 
-For every ``.kql`` file in the corpus, build the IR and walk it looking for:
+For every ``.kql`` file in the corpus, build the IR and walk it — both
+``main_pipeline`` and every ``let`` binding's right-hand side — looking for:
 
 * ``UnknownExpr`` — an expression kind the builder didn't recognize.
 * ``UnknownSource`` — a pipeline whose source wasn't a TableRef / LetRef.
@@ -107,6 +108,15 @@ def _walk(ir, unknown_exprs: Counter, unknown_sources: Counter, unspecialized_op
                     walk_pipeline(sub)
 
     walk_pipeline(ir.main_pipeline)
+    # `let` right-hand sides are part of the query, so a gap reachable only
+    # through one is still a gap. Walking `main_pipeline` alone is how an
+    # unpopulated tabular `rhs_pipeline` — and the `UnknownExpr` standing in
+    # for it — went unreported here.
+    for lb in ir.let_bindings:
+        if lb.rhs_expr is not None:
+            walk_expr(lb.rhs_expr)
+        if lb.rhs_pipeline is not None:
+            walk_pipeline(lb.rhs_pipeline)
 
 
 def _clone_microsoft(into: Path) -> Path:
