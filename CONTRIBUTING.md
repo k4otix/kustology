@@ -23,14 +23,21 @@ runtime is not on a standard path.
 3. Run the full check locally:
    ```bash
    pytest
-   ruff check src tests scripts
+   ruff check src tests scripts examples
    mypy src
    ```
 4. Add or update tests for any behavior change. Tests should pin a specific
    diagnostic code, AST shape, or output — avoid asserting on free-form English
    text from the upstream Microsoft library.
 5. Update `CHANGELOG.md` under an `## [Unreleased]` heading.
-6. Open a PR. CI runs the same checks across macOS, Linux, and Windows on
+6. Changing an IR field shape, or anything that feeds `semantic_hash`? Record
+   it in the CHANGELOG, but do **not** bump `IR_SCHEMA_VERSION`
+   (`src/kustology/ir/__init__.py`) or `SEMANTIC_HASH_SCHEME`
+   (`src/kustology/ir/transforms.py`) yourself. They move once, at release, so
+   they mark what a consumer can observe rather than the project's internal
+   history — several branches can land between releases and still share one
+   increment.
+7. Open a PR. CI runs the same checks across macOS, Linux, and Windows on
    Python 3.10–3.12, plus a DLL-provenance verification.
 
 ## Refreshing the bundled DLL

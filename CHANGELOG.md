@@ -88,7 +88,14 @@ release is in `docs/superpowers/reports/`.
   `datetime` / `timespan`; `ticks // 10` gives exact microseconds.
 - `iter_elements()` (tier 1) — unwraps the `SeparatedElement` wrappers .NET
   list properties yield, passing plain `SyntaxList` through unchanged.
-- README section documenting the syntax-tree traps.
+- `SEMANTIC_HASH_SCHEME` is exported from `kustology.ir`, beside
+  `IR_SCHEMA_VERSION`. Both are the consumer's compatibility contract; only
+  one of them was reachable without importing a private module.
+- README gains a "Versioning and stability" section covering both tags and
+  what they mean for stored IR and stored hashes.
+- README section documenting the syntax-tree traps, including two pythonnet
+  ones this release's audits turned up: member lookup is exact,
+  case-sensitive and silent, and an empty .NET `IReadOnlyList` is truthy.
 
 ### Changed
 

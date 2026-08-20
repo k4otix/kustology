@@ -50,6 +50,7 @@ from .builder import IRBuilder
 from .binder import BinderEnricher, SchemaAttacher
 from .llm_view import to_llm_dict
 from .transforms import (
+    SEMANTIC_HASH_SCHEME,
     compute_semantic_hash, merge_consecutive_filters, normalize_expressions,
 )
 from .walk import find_all, walk
@@ -57,7 +58,7 @@ from .analyzers import AnalyzerFn, Finding, Severity
 
 __all__ = [
     # Schema-version
-    "IR_SCHEMA_VERSION",
+    "IR_SCHEMA_VERSION", "SEMANTIC_HASH_SCHEME",
     # Builder / binder / serialization views
     "IRBuilder", "SchemaAttacher", "BinderEnricher", "to_llm_dict",
     # Traversal & transforms

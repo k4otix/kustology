@@ -25,10 +25,17 @@ everywhere it appears. You work with Microsoft's syntax tree directly.
 
 The IR tier gives you a typed Pydantic model of the parsed query —
 `FilterOp`, `BinOp`, `ColumnRef` — for the questions an *analyzer*
-asks: which source table a column came from after joins and renames,
-what schema the pipeline produces at the end, whether two queries are
-the same modulo formatting, and how to serialize the whole graph for a
-UI, a service, or a language model.
+asks: which source table a column came from after joins, renames and
+`let` aliases, what schema the pipeline produces at the end, whether two
+queries are the same modulo formatting, and how to serialize the whole
+graph for a UI, a service, or a language model.
+
+`let`-bound names are modeled as `LetRef` rather than `TableRef`, and a bound
+parse resolves columns through them — so in
+`let Base = SecurityEvent | …; Base | project Account`, `Account` carries the
+type from `SecurityEvent` and the provenance `Base`. `find_all(ir, TableRef)`
+therefore answers "which tables does this query read"; use
+`find_all(ir, LetRef)` for the aliases.
 
 ## Choosing a tier
 
@@ -241,6 +248,37 @@ All subcommands also read from stdin when `file` is `-` or omitted. Exit codes:
 `2` usage error (bad flags, missing file, or missing `[ir]` extras for
 `parse --ir`).
 
+## Versioning and stability
+
+This is a `0.y` release — per SemVer §4, the public API is not yet stable.
+Tier 1 is on a stabilization track and the package reaches 1.0 once it
+survives external use without correctness breaks; Tier 2 is expected to keep
+evolving at minor cadence.
+
+Three numbers describe compatibility, and they are deliberately independent:
+
+| | What it tags | When it moves |
+| --- | --- | --- |
+| `kustology.__version__` | the library | SemVer; pre-1.0, either tier may break at a minor |
+| `kustology.ir.IR_SCHEMA_VERSION` | the IR's *field shape* | any breaking field-shape change |
+| `kustology.ir.SEMANTIC_HASH_SCHEME` | the `semantic_hash` *canonicalization rules* | in lockstep with the above |
+
+Both IR tags move **once per release**, not once per change — so they mark
+what a consumer can observe, not the project's internal history.
+
+Tag stored IR JSON with `IR_SCHEMA_VERSION` and refuse a payload whose tag you
+do not recognise: every IR model sets `extra="forbid"`, so a dump from an
+older release fails to load rather than silently deserializing into a shape
+that no longer matches. IR JSON written before 0.2.0 does not load into 0.2.0.
+
+`semantic_hash` carries its scheme as a prefix (`kustology-sem-v2:…`) for the
+same reason — a stored hash from a different scheme will not collide with a
+freshly computed one, instead of comparing unequal with no signal that the
+rules moved. **Note for anyone deduplicating queries by stored hash:** as of
+`kustology-sem-v2` the hash distinguishes `in` / `in~` / `has_any` /
+`has_all` and `isnotnull` / `isnotempty`, which it did not before. Rehash from
+source rather than comparing across schemes.
+
 ## Development
 
 ```bash
@@ -249,7 +287,7 @@ cd kustology
 pip install -e ".[dev]"
 
 pytest
-ruff check src tests scripts
+ruff check src tests scripts examples
 mypy src
 ```
 

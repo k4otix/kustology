@@ -41,14 +41,14 @@ tests/               # pytest suite
 track until the IR survives one Kusto.Language.dll upgrade cycle without breaking. Minor
 breaking changes are possible at minor versions; each is called out in CHANGELOG.md.
 
-See README.md "Stability policy" for what counts as breaking.
+See README.md "Versioning and stability" for what counts as breaking.
 
 ## Where to add things
 
 **A new tabular operator** (e.g. `mv-apply`, `partition`):
 
 1. Add an IR node class in `src/kustology/ir/query.py`.
-2. Add its `SyntaxKind` string to `IRBuilder._HANDLED_OPERATOR_KINDS` in
+2. Add its `SyntaxKind` string to `IRBuilder.HANDLED_OPERATOR_KINDS` in
    `src/kustology/ir/builder.py`.
 3. Add a dispatch branch in `IRBuilder._visit_operator()` that reads the .NET
    node's attributes and constructs your IR node. Probe attribute names with:
@@ -69,7 +69,7 @@ See README.md "Stability policy" for what counts as breaking.
 
 1. Add the model in `src/kustology/ir/expr.py` (or reuse `LiteralExpr` if
    it's just a new `literal_kind`).
-2. Add its kind to `IRBuilder._HANDLED_EXPR_KINDS`.
+2. Add its kind to `IRBuilder.HANDLED_EXPR_KINDS`.
 3. Add a dispatch branch in `IRBuilder._visit_expr()`.
 4. Regenerate the baseline.
 
@@ -93,6 +93,6 @@ version). CI verifies the hash on every push via `scripts/verify_dll.py`.
 
 ## See also
 
-- `README.md` — quickstart, install, examples, stability policy.
+- `README.md` — quickstart, install, examples, versioning and stability.
 - `CONTRIBUTING.md` — workflow, coding conventions, pre-commit setup.
 - `CHANGELOG.md` — every minor version's breaking changes.

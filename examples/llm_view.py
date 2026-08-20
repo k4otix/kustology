@@ -16,7 +16,7 @@ the query.
 * Spans are stripped (offsets aren't useful without source text).
 * Default field values are dropped.
 * ``polarity`` is collapsed into the operator (``!=`` reads as
-  ``op: "!="``; ``!in`` materializes ``op: "!in"`` on SetMembership).
+  ``op: "!="``; ``!in`` likewise on SetMembership).
 * Redundant leaf ``canonical_form`` is dropped when it just restates
   ``name`` / ``value``.
 
@@ -47,9 +47,9 @@ STORM_EVENTS_SCHEMA = {
 }
 
 
-# Two negations exercise both polarity-collapse paths:
-#   * ``State != "TEXAS"`` → BinOp emits ``op: "!="`` directly
-#   * ``EventType !in (...)`` → SetMembership synthesizes ``op: "!in"``
+# Two negations show the polarity collapse. Both nodes carry the negated
+# operator on ``op`` already (``"!="`` and ``"!in"``), so the view drops the
+# redundant ``polarity`` from each rather than synthesizing anything.
 QUERY = (
     'StormEvents '
     '| where State != "TEXAS" and EventType !in ("Tornado", "Hail") '
