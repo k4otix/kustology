@@ -367,3 +367,57 @@ def test_tabular_subquery_in_membership_test_is_modeled(ir_builder):
 
     assert [r.name for r in find_all(subqueries[0].pipeline, LetRef)] == ["Suspicious"]
     assert not list(find_all(subqueries[0].pipeline, TableRef))
+
+
+# --- externaldata ----------------------------------------------------------
+
+
+def _external(query):
+    from kustology.ir import ExternalDataExpr, IRBuilder, find_all
+
+    return next(iter(find_all(IRBuilder().build(query), ExternalDataExpr)))
+
+
+def test_externaldata_populates_uri_columns_and_format():
+    """All three fields were placeholders.
+
+    ``uri`` kept the hardcoded string "url" because the guard read
+    ``node.Uris`` and the real member is ``URIs`` -- pythonnet is
+    case-sensitive and silent about the miss. ``columns`` was bound to a
+    literal ``[]`` and never appended to. ``format`` was hardcoded
+    "unknown". The data for all three is on the node.
+    """
+    e = _external(
+        'let known = externaldata(id:string, n:long) '
+        '[@"https://example.test/known.csv"] with (format="csv"); '
+        'T | where C !in (known)'
+    )
+    assert e.uri == "https://example.test/known.csv"
+    assert e.columns == [("id", "string"), ("n", "long")]
+    assert e.format == "csv"
+
+
+def test_externaldata_without_a_with_clause_reports_no_format():
+    """``format`` is None when the query does not state one -- not the
+    string "unknown", which read as a real value."""
+    e = _external('T | where C in ((externaldata(id:string) [@"https://example.test/x"]))')
+    assert e.format is None
+    assert e.columns == [("id", "string")]
+    assert e.uri == "https://example.test/x"
+
+
+def test_externaldata_in_the_corpus_is_modeled():
+    """The bundled Sentinel fixture declares two columns and format=csv."""
+    from pathlib import Path
+
+    from kustology.ir import ExternalDataExpr, IRBuilder, find_all
+
+    fixture = (
+        Path(__file__).resolve().parent.parent
+        / "fixtures" / "complex_queries" / "SuspiciousOAuthApp_OfflineAccess.kql"
+    )
+    ir = IRBuilder().build(fixture.read_text())
+    e = next(iter(find_all(ir, ExternalDataExpr)))
+    assert [n for n, _ in e.columns] == ["knownAppClientId", "knownAppDisplayName"]
+    assert e.format == "csv"
+    assert e.uri.startswith("https://")

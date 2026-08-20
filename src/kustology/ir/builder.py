@@ -1127,11 +1127,36 @@ class IRBuilder:
             res = SubqueryExpr(pipeline=self._visit_pipeline(node), span=span)
 
         elif kind == "ExternalDataExpression":
+            # All three fields used to be placeholders. The URI guard read
+            # ``node.Uris``; the member is ``URIs``, and pythonnet is
+            # case-sensitive and silent about the miss, so ``uri`` kept the
+            # literal string "url". ``columns`` was bound to [] and never
+            # appended to, and ``format`` was hardcoded "unknown".
             cols: list[tuple[str, str]] = []
-            uri = "url"
-            if hasattr(node, "Uris") and node.Uris.Count > 0:
-                uri = node.Uris[0].Element.ToString().strip(" @\"")
-            res = ExternalDataExpr(columns=cols, uri=uri, format="unknown", span=span)
+            schema_node = getattr(node, "Schema", None)
+            if schema_node is not None:
+                for col in _iter_elements(schema_node.Columns):
+                    cols.append((
+                        col.Name.ToString().strip(),
+                        col.Type.ToString().strip(),
+                    ))
+
+            uri = ""
+            uris = getattr(node, "URIs", None)
+            if uris is not None and uris.Count > 0:
+                uri = uris[0].Element.ToString().strip().strip("@").strip("\"'")
+
+            # ``with (format="csv", ignoreFirstRecord=true)`` -- only the
+            # format is modeled; the rest stay in the source text.
+            fmt: str | None = None
+            with_clause = getattr(node, "WithClause", None)
+            if with_clause is not None:
+                for prop in _iter_elements(with_clause.Properties):
+                    if prop.Name.ToString().strip().lower() == "format":
+                        fmt = prop.Expression.ToString().strip().strip("\"'")
+                        break
+
+            res = ExternalDataExpr(columns=cols, uri=uri, format=fmt, span=span)
 
         elif kind == "MakeSeriesExpression":
             res = self._visit_expr(node.Expression)
