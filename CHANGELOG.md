@@ -6,287 +6,150 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.2.0] — 2026-08-20
 
+First release since 0.1.0. Two themes: values the library reported wrongly
+(culture-corrupted literals, mis-assigned column provenance, conflated
+operators), and public surface that never worked (`LetBinding`'s fields,
+`LetRef`, `ExternalDataExpr`'s contents).
+
+Tier 2 breaks in several places, as its pre-1.0 policy permits — see
+**Breaking** for the migration. Root-cause detail for the audits behind this
+release is in `docs/superpowers/reports/`.
+
 ### Fixed
 
-- **Distinct KQL operators no longer collide in the IR (tier 2).** `in~`,
-  `has_any` and `has_all` all produced a byte-identical `SetMembership` and an
-  identical `semantic_hash`, and `isnotnull` / `isnotempty` an identical
-  `Exists` — so `semantic_hash`'s documented contract that different operators
-  do not collide was false, and a consumer deduplicating rules by hash silently
-  merged rules meaning different things. `has_any` and `has_all` are opposites
-  (OR vs AND of term matches); `in~` compares whole values rather than terms;
-  `isnotempty` also rejects `""`. Both nodes now carry `op`, following the
-  existing `BinOp` pattern, and `canonical_form` and the LLM view render it
-  instead of re-deriving the operator from flags. The parser had always
-  supplied the distinction — `in` / `!in` / `in~` / `!in~` share the class
-  `InExpression` and differ only in `.Kind`, which the builder discarded by
-  dispatching on the class name.
-- **`BinOp.case_sensitive` is right for the whole operator family (tier 2).**
-  It came from a hand-maintained allow-list of six operators, with everything
-  absent falling through to `True` — so `hasprefix` and `hassuffix` were wrong
-  before anyone negated anything, and `!has`, `!contains`, `!startswith`,
-  `!endswith`, `!hasprefix` and `!hassuffix` were all reported backwards. KQL
-  string operators fold case unless suffixed `_cs`, and negating a predicate
-  does not change how it compares. Now derived from the operator's suffix, so
-  an operator added by a DLL refresh no longer lands wrong by default.
-
-- **Column provenance is resolved everywhere, not in 17 of 53 operators
-  (tier 2).** `SchemaAttacher` recursed a hardcoded tuple of attribute names
-  with no `pipeline`, `branches` or `default` entry, and dispatched on an
-  `isinstance` chain that simply fell off the end for unhandled operators. So
-  in `SecurityEvent | where EventID > toscalar(SecurityEvent | summarize
-  max(EventID))`, `EventID` resolved to `SecurityEvent` outside the `toscalar`
-  and to `None` inside — the same column, one query, inconsistent provenance,
-  silent. `| sort by EventID` left it unresolved while a `| project` in the
-  same query worked, and every `ColumnRef` inside a `case()` or `iif()` was
-  unresolved. The traversal now derives from `model_fields`; operators without
-  a bespoke scope rule fill their expressions and walk their sub-pipelines
-  instead of being skipped. `SchemaAttacher`'s docstring names the operators
-  whose downstream scope is still stale, so that boundary is stated rather
-  than silent.
-- **`walk()` / `find_all()` descend tuple-valued fields (tier 2).** They
-  unwrapped lists and dicts but not tuples, so `CaseExpr.branches` — typed
-  `list[tuple[Expr, Expr]]` — was invisible. A `case()` holding five
-  `ColumnRef`s surfaced one. This is the traversal the docs point every
-  analyzer at, and the one the bespoke walkers were converted to.
-- **`let` bindings are enriched, and their names resolve (tier 2).**
-  `SchemaAttacher.enrich` walked `main_pipeline` only, so a tabular binding's
-  `rhs_pipeline.result_schema` stayed `None` on a fully bound parse and the
-  `ColumnRef`s inside it kept `table=None`. Bindings are now walked in
-  declaration order and each one's output columns registered under its name,
-  so in `let Base = SecurityEvent | where EventID > 4624; Base | project
-  Account`, `Account` gains the type `string` and the provenance `"Base"` —
-  previously `unknown` and `None`.
-- **`ExternalDataExpr` carries real data (tier 2).** `uri` was the hardcoded
-  placeholder `"url"` because the guard read `node.Uris` and the member is
-  `URIs`; `columns` was bound to `[]` and never appended to; `format` was
-  hardcoded `"unknown"`. All three are read from the node. `format` is now
-  `None` when the query states none, rather than a string that read like a
-  real value.
-- **`ParseKvOp.columns` and `MacroExpandOp.pipeline` are populated (tier 2).**
-  Both probed .NET members that do not exist — `Keys.Count` where `Keys` is a
-  `RowSchema` exposing `Columns`, and `Subquery`/`Body` where the member is
-  `StatementList` — so both were empty for every query ever parsed.
-- **`in` and `in~` are distinguishable (tier 2).** `SetMembership.case_sensitive`
-  was hardcoded `False`, so KQL's case-sensitive `in` was indistinguishable
-  from `in~`, `canonical_form` rendered `C in ("a")` as `C in~ ("a")`, and the
-  two queries produced the **same** `semantic_hash` despite being different.
-- **`canonical_form` renders every expression shape (tier 2).** It handled 12
-  of 23 `Expr` types; the rest fell through to a bare `"?"`, so `-X > 1`,
-  `D.a == 1` and `toscalar(...) > 1` were all the identical string `"? > 1"`.
-- **`find in (...)` and `search in (...)` tables are found (tier 1).**
-  `get_referenced_tables()` returned an empty set for `find in (S1, S2) where
-  X == 1`, and `replace_table()` returned the query **unchanged**, with no
-  error — so a consumer migrating a table shipped one still pointing at the
-  old name.
-- **The corpus gates see what they were built to see (tier 2).** Both gate
-  walkers shared the blind spot above and additionally probed operator fields
-  by `hasattr` from a fixed list, missing `SortOp.expressions`, `TopOp.by`,
-  `RangeOp.start`/`end`/`step`, `FacetOp.with_pipeline` and others. Both now
-  use `find_all`: over the bundled 33-query corpus that reaches 3661 nodes
-  against the old walk's 3179, with nothing lost. A new assertion catches a
-  regression of the parenthesized-`let` fix, which the `SubqueryExpr` work had
-  made invisible to the gate.
-
 - **Culture no longer corrupts fractional numeric literals (tier 1).**
-  Importing `kustology` now pins .NET's culture to invariant, process-wide.
+  Importing `kustology` pins .NET's culture to invariant, process-wide.
   Microsoft's parser evaluates `LiteralValue` lazily on property access, so
-  the culture live in *caller* code decided the parsed value: under `de-DE`
-  the decimal point was read as a group separator and the fractional part was
-  swallowed. This was never limited to durations — `timespan` (`1.5h` → 15
-  hours, `2.25s` → 3m45s), `real` (`1.5` → `15.0`, making
-  `| where CpuPct > 1.5` ten times too strict) and `decimal`
-  (`decimal(1.5)` → `15`) all corrupt identically; under `fr-FR` a duration
-  parsed to zero. Integer literals were unaffected, which is why the previous
-  suite passed green under `de-DE`. A `de-DE`/`fr-FR` CI matrix now guards it.
+  the culture live in *caller* code decided the value: under `de-DE`, `1.5h`
+  parsed as 15 hours and `| where CpuPct > 1.5` became ten times too strict;
+  under `fr-FR` durations parsed to zero. Integer literals were unaffected,
+  which is why it stayed invisible. A `de-DE`/`fr-FR` CI matrix guards it.
   No opt-out. **Residual risk:** the pin runs once, at import — a host that
-  changes .NET's culture afterwards re-opens the corruption for every
-  `LiteralValue` not yet read, and nothing at this layer can prevent that.
-  See `bridge._pin_invariant_culture`.
-- **`literal_kind` is read from the .NET node (tier 2).** It was re-inferred
-  from the Python type of `LiteralValue`, so `real` reported as `int` and
-  `datetime`, `timespan` and `guid` all reported as `string`.
-- **`LiteralExpr.value` is culture-independent (tier 2).** Datetimes render
-  as ISO 8601 round-trip and timespans in invariant constant form. The
-  previous bare `ToString()` rendered through the ambient culture and reached
-  `semantic_hash`, making the hash differ across machines for the same query.
-- **`LetBinding` is populated (tier 2).** The builder set only `name`, `span`
-  and a hardcoded `category="alias"`, leaving `rhs_expr`, `rhs_pipeline`,
-  `inner_tables` and `inner_time_exprs` permanently empty. Every tabular
-  right-hand-side shape is covered, including the two that a first pass
-  missed: the parenthesized form `let X = ( T | where … );` — the dominant
-  Microsoft Sentinel idiom, which arrives wrapped in a
-  `ParenthesizedExpression` — and operator-rooted right-hand sides
-  (`union`, `range`, `search`, `print`, `find`, `datatable`).
-- **The corpus coverage gates walk `let` bindings (tier 2).** Both
-  `tests/ir/test_complex_harness.py` and `scripts/mine_corpus.py` inspected
-  only `QueryIR.main_pipeline`, so a gap reachable only through a `let`
-  right-hand side reported green. That is why the unpopulated tabular `let`
-  above survived review. Walking the bindings surfaced one further real gap,
-  fixed below.
-- **A bare tabular subquery in expression position is modeled (tier 2).**
-  `| where User in ((Suspicious | project User))` collapsed the entire inner
-  query into a single `UnknownExpr` blob of raw text. It now builds a
-  `SubqueryExpr`, so the subtree is reachable by `walk` / `find_all`.
+  changes culture afterwards re-opens the corruption for any literal not yet
+  read. See `bridge._pin_invariant_culture`.
+- **Column provenance resolves everywhere (tier 2).** `ColumnRef.table` was
+  filled for 17 of 53 operator types and never inside `toscalar(...)`,
+  `case()`/`iif()` arms, or nested pipelines — so the same column resolved in
+  one clause and not another, silently. Any lineage analysis over those
+  subtrees was wrong.
+- **`let` bindings are enriched and their names resolve (tier 2).**
+  `SchemaAttacher.enrich` walked the main pipeline only. It now walks
+  bindings in order and threads their names, so
+  `let Base = SecurityEvent | …; Base | project Account` gives `Account` a
+  type and the provenance `"Base"` — previously `unknown` and `None`.
+- **Distinct KQL operators no longer collide (tier 2).** `in~`, `has_any` and
+  `has_all` produced identical IR and an identical `semantic_hash`, as did
+  `isnotnull` / `isnotempty` — so hash-based deduplication merged queries
+  that mean different things (`has_any` and `has_all` are opposites). Both
+  nodes now carry `op`.
+- **`BinOp.case_sensitive` is correct across the operator family (tier 2).**
+  Eight operators were reported backwards, including every negated string
+  operator (`!has`, `!contains`, …) and `hasprefix`/`hassuffix`.
+- **`literal_kind` and `LiteralExpr.value` are faithful (tier 2).**
+  `literal_kind` was re-inferred from the Python type, so `real` reported as
+  `int` and `datetime`/`timespan`/`guid` all as `string`. `value` rendered
+  through the ambient culture and reached `semantic_hash`, making the hash
+  machine-dependent; datetimes now render as ISO 8601 round-trip and
+  timespans in invariant form.
+- **`LetBinding` is populated (tier 2).** `rhs_expr`, `rhs_pipeline`,
+  `inner_tables` and `inner_time_exprs` were permanently empty, which blocked
+  let-resolution entirely. All tabular right-hand-side shapes are covered,
+  including the parenthesized `let X = ( T | where … );` form that dominates
+  Microsoft Sentinel rules.
+- **`ExternalDataExpr` carries real data (tier 2).** `uri`, `columns` and
+  `format` were placeholders — `uri` was literally the string `"url"`.
+- **`ParseKvOp.columns`, `MacroExpandOp.pipeline` and `Expr.result_type_inner`
+  are populated (tier 2).** Each was empty for every query ever parsed.
+- **`walk()` / `find_all()` descend tuple-valued fields (tier 2).** A
+  `case()` holding five `ColumnRef`s surfaced one, since `CaseExpr.branches`
+  is `list[tuple[Expr, Expr]]`.
+- **`canonical_form` renders every expression shape (tier 2).** Eleven `Expr`
+  types rendered as a bare `"?"`, so `-X > 1`, `D.a == 1` and
+  `toscalar(…) > 1` were indistinguishable.
+- **A bare tabular subquery is modeled (tier 2).**
+  `| where User in ((Suspicious | project User))` collapsed the inner query
+  into one `UnknownExpr` blob; it now builds a `SubqueryExpr`.
+- **`find in (...)` / `search in (...)` tables are found (tier 1).**
+  `get_referenced_tables()` returned nothing for them, and `replace_table()`
+  returned the query **unchanged with no error** — so a table migration
+  silently shipped the old name.
 
 ### Added
 
-- **`LetRef` is emitted (tier 2).** It was exported, declared in the
-  `Pipeline.source` union, and constructed nowhere — every source-position
-  name became a `TableRef`, so `let X = T | take 1; X | count` reported `X` as
-  a table. The classification is decidable from the `let` statements alone, so
-  it holds identically for a bound and an unbound parse.
-- **`Expr.result_type_inner` is populated (tier 2).** It read
-  `res_type.Underlying`, a property on no type in the assembly. The real
-  member is `ElementType` on `DynamicArraySymbol`, so
-  `parse("print x = dynamic([1,2,3])", schema={}).to_ir()` now reports
-  `result_type_inner=long`. Like every binder-derived annotation this needs
-  an analyzed parse — bare `parse(q)` calls `KustoCode.Parse`, which never
-  analyses, so `result_type` and `result_type_inner` are both unset there.
-- `tests/test_reflection_audit.py` (tier 1) — asserts every PascalCase .NET
-  member name passed to `getattr`/`hasattr` in `src/` exists in the loaded
-  `Kusto.Language` assembly. Four defects in this release came from a probe
-  naming a member that does not exist; pythonnet is case-sensitive and silent
-  about the miss, so the guard declines and the field keeps its default.
-
-- `iter_elements()` (tier 1) — unwraps the `SeparatedElement` wrappers that
-  .NET list properties yield, and passes plain `SyntaxList` through unchanged.
-- `LiteralExpr.ticks` (tier 2) — exact .NET ticks for `datetime` and
-  `timespan` literals. `ticks // 10` converts to exact microseconds — down to
-  `1microsecond`, but not below it: `2tick` is 2 ticks and `timedelta` cannot
-  represent 200ns. This field is the only lossless form.
-- `LetFunction` (tier 2) — parameter names and body span for `let`-declared
-  functions. The body is not modeled.
-- `SubqueryExpr` (tier 2) — a bare pipeline in expression position, i.e. the
-  value set of a membership test. Mirrors `MaterializeExpr` / `ToScalarExpr`;
-  carries the inner `Pipeline`.
-- `literal_kind` gains `"decimal"`.
+- `LetRef` (tier 2) — now actually emitted, so a `let` alias is
+  distinguishable from a table. Decided from the `let` statements alone, so
+  it holds with or without a schema.
+- `SetMembership.op` and `Exists.op` (tier 2) — the literal KQL operator,
+  following `BinOp.op`.
+- `SubqueryExpr`, `LetFunction`, `LiteralExpr.ticks` (tier 2), and
+  `literal_kind` gains `"decimal"`. `ticks` is the only lossless form for
+  `datetime` / `timespan`; `ticks // 10` gives exact microseconds.
+- `iter_elements()` (tier 1) — unwraps the `SeparatedElement` wrappers .NET
+  list properties yield, passing plain `SyntaxList` through unchanged.
 - README section documenting the syntax-tree traps.
 
 ### Changed
 
-- `.NET` runtime discovery and the .NET-boundary member probes now log at
-  `DEBUG` instead of failing silently. Enable `logging` for `kustology.bridge`
-  to see which candidate `dotnet` roots were tried before the
-  "Failed to initialize the .NET runtime" error is raised.
 - `get_time_range()` is renamed `find_time_expressions()` on both the module
-  and `KustoQuery`. The old names remain as `DeprecationWarning` aliases with
-  identical behavior. The function returns a source-ordered discovery list —
-  including bare `now()`, bare operands and `!between` operands — not a
-  resolved range.
+  and `KustoQuery`; the old name remains as a deprecated alias. It returns
+  every time-related expression, not a resolved range, and the old name led a
+  consumer to use it as a lookback extractor.
+- .NET runtime discovery and boundary member probes log at `DEBUG`.
 
 ### Breaking (tier 2, pre-1.0)
 
-- **`SetMembership` and `Exists` gain a required `op` field**, and
-  `MaterializeExpr` is removed. Stored IR JSON written before this change fails
-  to load under `extra="forbid"`.
-- **`semantic_hash` changes for any query** using a membership operator,
-  `isnotnull` / `isnotempty`, or one of the eight string operators whose
-  case sensitivity was wrong. Across the bundled 33-query corpus, 22 hashes
-  change and 11 do not — a clean partition matching exactly which files use an
-  affected operator.
-- **`MaterializeExpr` is removed** — proven unreachable by three independent
-  methods (grammar sweep, 1,808 parse mutations, an instrumented builder over
-  1,091 queries). `materialize` is a keyword the parser admits only as a `let`
-  right-hand side, where it becomes a nested `Pipeline`. Unusually safe for a
-  breaking change: since none was ever produced, no stored IR can contain one.
-  See `docs/superpowers/reports/2026-08-20-materialize-reachability.md`.
-
-- **`LetRef` replaces `TableRef` for `let`-bound names.**
-  `find_all(ir, TableRef)` no longer returns aliases, and
+- **`SetMembership.op` and `Exists.op` are required**, and
+  `ParseKvOp.columns` changes from `list[Assignment]` to `dict[str, str]`.
+- **Removed:** `MaterializeExpr` (proven unreachable — see
+  `docs/superpowers/reports/2026-08-20-materialize-reachability.md`),
+  `LetBinding.category`, `QueryIR.parse_warnings`, `Span.source_text` and
+  `Expr.nullable`. None was ever populated by any code path.
+- **Stored IR JSON from 0.1.0 no longer loads** under `extra="forbid"`, in
+  both directions: it lacks the new required fields and may carry removed
+  ones. Rebuild from source rather than migrating.
+- **`semantic_hash` changes for most queries**, and this is the point — it
+  was machine-dependent (culture-rendered literals) and collided across
+  distinct operators. It now differs for any query containing a datetime,
+  timespan, real or decimal literal; a membership or null-test operator; one
+  of the eight corrected string operators; a `let` statement; or, on a bound
+  parse, a column the binder can now resolve. `IR_SCHEMA_VERSION` bumps
+  `0.1` → `0.2` and `SEMANTIC_HASH_SCHEME` `kustology-sem-v1` →
+  `kustology-sem-v2` in lockstep, so stored hashes are invalidated visibly
+  rather than silently comparing unequal.
+- **`literal_kind` returns different values** for `long`, `real`, `decimal`,
+  `datetime`, `timespan`, `guid` and `null` literals, and `LiteralExpr.value`
+  changes format for `datetime` and `timespan`. Both were wrong before; code
+  branching on the old values needs updating.
+- **`find_all(ir, TableRef)` no longer returns `let` aliases**, and
   `LetBinding.inner_tables` narrows to real tables. Both now answer "which
   tables does this query read"; aliases are reachable via
   `find_all(..., LetRef)`.
-- **`QueryIR.parse_warnings`, `Span.source_text` and `Expr.nullable` are
-  removed.** None was populated by any code path. `parse_warnings` had zero
-  assignments anywhere and duplicated `QueryIR.diagnostics`; `source_text`
-  duplicated `Span.text(raw)`, which already slices from the source;
-  `nullable` was filled from `res_type.IsNullable`, a property on no type in
-  the assembly, and is not populatable at all — Microsoft's parser carries no
-  nullability information. Stored IR JSON containing any of them now fails to
-  load under `extra="forbid"`.
-- **`ParseKvOp.columns` changes from `list[Assignment]` to `dict[str, str]`**,
-  matching `AssertSchemaOp`. A declared key has a name and a type; there is no
-  expression for an `Assignment` to hold.
-- **`ColumnRef.table` is populated in many more places**, including inside
-  `toscalar(...)`, `case()`/`iif()` arms, and under operators that previously
-  filled nothing. `Pipeline.result_schema` is populated on `let` pipelines.
-  Both are in the hash payload.
-- **`semantic_hash` changes for any query** containing a membership operator,
-  an `externaldata`, a `let`-bound name, or — on a bound parse — a column the
-  binder can now resolve. Covered by the single schema bump described below.
-
-- **Generic traversal now descends into `let` right-hand sides.** Populating
-  `LetBinding.rhs_pipeline` changes what `walk()` and `find_all()` return for
-  any query with a tabular `let` — the binding's whole subtree is now part of
-  the IR. On `let Base = SecurityEvent | where EventID == 1; Base | count`,
-  `find_all(ir, TableRef)` yields `['SecurityEvent', 'Base']` where it
-  previously yielded `['Base']`. A lineage or table-inventory analyzer built
-  on `find_all` will change its answers — usually to the correct ones, but
-  silently. `to_llm_dict()` payloads grow correspondingly. Deduplicate, or
-  scope the walk to `ir.main_pipeline`, if you need the old shape.
-- **`semantic_hash` can differ between a bound and an unbound parse of a
-  query whose `let` aliases a table.** `let A = OtherTable` builds
-  `rhs_expr: ColumnRef` unbound and `rhs_pipeline: Pipeline(TableRef)` once
-  the binder proves `OtherTable` is a table, so the IR *shape* — not just
-  bind-time annotations — depends on whether a schema was supplied, and the
-  volatile-field stripping that keeps `result_type` out of the hash cannot
-  undo it. Accepted rather than fixed: the only way to make the shapes match
-  without a schema is to assume any bare name on a `let` right-hand side is a
-  table, which trades a documented difference for a silently wrong answer.
-  Queries with no table-aliasing `let` hash identically bound or unbound.
-  Compare hashes only across parses made the same way.
-- `literal_kind` returns different values for `long`, `real`, `decimal`,
-  `datetime`, `timespan`, `guid` and `null` literals.
-- `LiteralExpr.value` changes format for `datetime` and `timespan`.
-- `semantic_hash` changes for any query containing a datetime, timespan or
-  real literal, or a `let` statement. This is the point — it was previously
-  machine-dependent.
-- `LetBinding.category` is removed. Nothing read it, every binding carried
-  the same value, and it entered `semantic_hash` without being stripped as
-  volatile. Which `rhs_*` field is populated already carries the distinction.
-  Stored IR JSON containing `category` now fails `extra="forbid"` on load.
-- `IR_SCHEMA_VERSION` bumps `0.1` → `0.2`, once, covering every field-shape
-  change in this release: `LetBinding.category` and `MaterializeExpr`
-  removed; `QueryIR.parse_warnings`, `Span.source_text` and `Expr.nullable`
-  removed; `LiteralExpr.ticks`, `LetFunction`, `SubqueryExpr`, `LetRef`,
-  `SetMembership.op` and `Exists.op` added; `ParseKvOp.columns` retyped;
-  `literal_kind` and `LiteralExpr.value` changed. That is what the tag exists
-  to flag — a consumer comparing it on stored IR JSON can refuse a payload
-  from before this release rather than deserializing it into a shape that no
-  longer matches.
-- `SEMANTIC_HASH_SCHEME` bumps `kustology-sem-v1` → `kustology-sem-v2` in
-  lockstep. The dump format feeding the hash changed, so `semantic_hash`
-  differs for any query containing a datetime, timespan, real or decimal
-  literal, a `let` statement, a membership or null-test operator, or — on a
-  bound parse — a column the binder can now resolve. Bumping the tag makes
-  that visible: a hash stored under `kustology-sem-v1:` no longer collides
-  with one computed under `kustology-sem-v2:`, instead of silently comparing
-  unequal with no signal that the canonicalization rules moved.
+- **Generic traversal descends into `let` right-hand sides**, so `walk()` and
+  `find_all()` return nodes from inside bindings that were previously
+  unreachable.
+- **`ColumnRef.table` and `Pipeline.result_schema` are populated in many more
+  places**, including inside `toscalar(...)`, `case()` arms and `let`
+  pipelines. Both are in the hash payload.
+- **`semantic_hash` can differ between a bound and an unbound parse** of a
+  query whose `let` aliases a table: the binder proves it is a table and the
+  IR shape changes accordingly. Accepted and documented rather than papered
+  over — the alternative is treating every bare name as a table without
+  proof.
 
 ### Internal
 
-- Both schema tags move exactly once for this release, not once per branch
-  that touched them. Three branches landed breaking IR changes since `v0.1.0`;
-  numbering each would have burned tags no consumer ever saw and left gaps in
-  the released sequence for a later reader to explain. Reasoning recorded next
-  to `SEMANTIC_HASH_SCHEME`, since the lockstep rule otherwise reads as
-  "bump on every change".
-
-- The `ruff` job lints `examples/` as well as `src tests scripts`; the six
-  pre-existing `I001` findings there are fixed. `examples/` was already
-  smoke-tested by `tests/test_examples.py` but never linted.
-- `docs/superpowers/reports/2026-08-20-stub-sweep.md` records the full
-  declared-but-unpopulated sweep behind this release, including the two
-  detection methods that found ten of the twelve instances and two findings
-  left open as follow-ups.
-- The LLM view dispatches on class identity rather than `cls.__name__`
-  string comparison, which would silently stop firing on a rename.
-
-- Lint tooling is installed from `uv.lock` in CI rather than resolved fresh, so
-  an upstream ruff release can no longer redefine the rule set mid-flight.
-  Adopted ruff 0.16's default rule set; deviations are documented in
-  `[tool.ruff.lint.per-file-ignores]`.
+- `docs/superpowers/reports/` records the two audits behind this release: a
+  sweep for declared-but-unpopulated surface, and the reachability proof for
+  `MaterializeExpr`.
+- `tests/test_reflection_audit.py` asserts every .NET member name probed via
+  `getattr`/`hasattr` exists in the loaded assembly. Four defects in this
+  release came from a probe naming a member that does not exist — pythonnet
+  resolves members case-sensitively and says nothing when one is absent.
+- The corpus coverage gates walk the whole `QueryIR` via `find_all` instead
+  of hand-maintained attribute lists, and now cover `let` right-hand sides.
+- CI lints `examples/` alongside `src tests scripts`, and installs lint
+  tooling from `uv.lock` so an upstream release cannot redefine the rule set
+  mid-flight.
 
 ## [0.1.0] — 2026-06-01
 
