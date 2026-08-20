@@ -118,6 +118,18 @@ class TableRef(BaseModel):
 
 
 class LetRef(BaseModel):
+    """A source-position name bound by an earlier ``let`` in the same query.
+
+    Distinct from :class:`TableRef`, which names something the cluster is
+    expected to hold. The distinction is decidable from the ``let``
+    statements alone -- no schema and no binder -- so it holds identically
+    for a bound and an unbound parse.
+
+    Only bindings that *precede* the reference count. ``let A = A | …`` and
+    a reference to a binding declared further down both stay a ``TableRef``:
+    resolving them to the binding would be a guess rather than a reading.
+    """
+
     model_config = {"extra": "forbid"}
     KIND: ClassVar[str] = "let_ref"
     kind: Literal["let_ref"] = "let_ref"
@@ -569,6 +581,11 @@ class LetBinding(BaseModel):
     rhs_pipeline: Pipeline | None = None
     rhs_function: LetFunction | None = None
     # Tables and time expressions found inside rhs_pipeline; empty otherwise.
+    # ``inner_tables`` is real tables only -- a hop to an earlier binding
+    # (``let B = A | …``) is a ``LetRef``, reachable via
+    # ``find_all(rhs_pipeline, LetRef)``. Keeping aliases out means the field
+    # answers "which tables does this binding read", which is what a lineage
+    # consumer wants, rather than mixing the two kinds of name.
     inner_tables: list[str] = []
     inner_time_exprs: list[AnyExpr] = []
 

@@ -177,7 +177,11 @@ def _is_tabular_let_rhs(net_kind: str) -> bool:
 
 
 def _collect_inner_tables(pipeline: Any) -> list[str]:
-    """Distinct table names inside a let binding's pipeline, in first-seen order."""
+    """Distinct table names inside a let binding's pipeline, in first-seen order.
+
+    ``TableRef`` only, so a hop to an earlier binding does not appear here --
+    that is a ``LetRef``. Use ``find_all(pipeline, LetRef)`` for the aliases.
+    """
     from .query import TableRef
     from .walk import find_all
 
@@ -244,6 +248,10 @@ class IRBuilder:
 
     def __init__(self, global_state: GlobalState | None = None):
         self.global_state = global_state or GlobalState.Default
+        # Names bound by ``let`` statements already visited in the current
+        # build. Reset per build so a reused builder cannot leak names
+        # between queries. See ``_visit_pipeline``'s source-position branch.
+        self._let_names: set[str] = set()
 
     # -- entry points ----------------------------------------------------
 
@@ -280,10 +288,16 @@ class IRBuilder:
             ))
 
         root = code.Syntax
-        let_bindings: list[LetBinding] = [
-            self._visit_let_statement(ls)
-            for ls in root.GetDescendants[LetStatement]()
-        ]
+        self._let_names = set()
+        let_bindings: list[LetBinding] = []
+        for ls in root.GetDescendants[LetStatement]():
+            binding = self._visit_let_statement(ls)
+            let_bindings.append(binding)
+            # Registered only *after* its own right-hand side is visited, so
+            # ``let A = A | where …`` and a reference to a binding declared
+            # further down still name whatever the cluster has. Resolving
+            # those to the binding would be a guess, not a reading.
+            self._let_names.add(binding.name)
 
         main_pipeline: Pipeline | None = None
         expr_stmts = root.GetDescendants[ExpressionStatement]()
@@ -458,7 +472,14 @@ class IRBuilder:
                 else:
                     name = n.ToString().strip()
                 if name.lower() not in ("and", "or", "in", "in~", "has", "has_any", "not", "search"):
-                    source = TableRef(name=name, span=to_span(n))
+                    # A name an earlier ``let`` bound is an alias, not a
+                    # table. The distinction is decidable from the let
+                    # statements alone -- no schema, no binder -- so it holds
+                    # identically for a bound and an unbound parse.
+                    if name in self._let_names:
+                        source = LetRef(name=name, span=to_span(n))
+                    else:
+                        source = TableRef(name=name, span=to_span(n))
 
         walk(node)
         # Operators-but-no-explicit-source means the source is implicit (parent

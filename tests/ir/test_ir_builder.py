@@ -339,4 +339,8 @@ def test_tabular_subquery_in_membership_test_is_modeled(ir_builder):
     assert len(subqueries) == 1
     # The inner pipeline is a real subtree, not a raw-text blob.
     assert isinstance(subqueries[0].pipeline, Pipeline)
-    assert [t.name for t in find_all(subqueries[0].pipeline, TableRef)] == ["Suspicious"]
+    # `Suspicious` is a let alias, so the inner source is a LetRef.
+    from kustology.ir import LetRef
+
+    assert [r.name for r in find_all(subqueries[0].pipeline, LetRef)] == ["Suspicious"]
+    assert not list(find_all(subqueries[0].pipeline, TableRef))
