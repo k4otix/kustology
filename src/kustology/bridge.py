@@ -67,6 +67,34 @@ def _load_runtime() -> None:
     )
 
 
+def _pin_invariant_culture() -> None:
+    """Pin .NET's culture to invariant, process-wide, before any parsing.
+
+    Kusto's ``LiteralValue`` is evaluated lazily on property access, using the
+    culture live at that moment — not the one active during ``parse()``. Under
+    ``de-DE`` the decimal point is read as a group separator, so ``1.5h``
+    yields fifteen hours and ``2.25s`` yields three minutes forty-five; under
+    ``fr-FR`` the parse fails to zero. Because the corruption happens inside
+    caller code, arbitrarily far from any kustology call, a pin scoped around
+    our own entry points would not close it — only a process-wide pin does.
+
+    ``DefaultThreadCurrentCulture`` covers threads created after import;
+    ``CurrentThread.CurrentCulture`` covers the importing thread, which the
+    default does not retroactively affect. ``CurrentUICulture`` is deliberately
+    left alone: it selects exception and diagnostic message language, not value
+    parsing.
+
+    This is a deliberate process-global effect of importing kustology, with no
+    opt-out. An escape hatch would let a host silently reintroduce 10x and 100x
+    duration errors, which is worse than the co-tenancy cost it would avoid.
+    """
+    from System.Globalization import CultureInfo
+    from System.Threading import Thread
+
+    CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture
+    Thread.CurrentThread.CurrentCulture = CultureInfo.InvariantCulture
+
+
 def _initialize_bridge() -> None:
     _load_runtime()
 
@@ -85,6 +113,8 @@ def _initialize_bridge() -> None:
             f"Could not load Kusto.Language assembly. "
             f"Ensure Kusto.Language.dll is in {bin_dir}. Error: {e}"
         ) from e
+
+    _pin_invariant_culture()
 
 
 _initialize_bridge()
