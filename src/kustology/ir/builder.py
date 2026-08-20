@@ -842,12 +842,18 @@ class IRBuilder:
                     reason="Missing parse-kv target",
                 )
             )
-            cols = []
+            # ``Keys`` is a RowSchema. The previous guard tested it for a
+            # ``Count`` member, which RowSchema does not have -- the loop
+            # body never ran and the field was always empty.
+            declared: dict[str, str] = {}
             keys = getattr(n, "Keys", None)
-            if keys is not None and hasattr(keys, "Count"):
-                for el in _iter_elements(keys):
-                    cols.append(self._visit_assignment(el))
-            return ParseKvOp(target=target, columns=cols, span=span)
+            if keys is not None and hasattr(keys, "Columns"):
+                for col in _iter_elements(keys.Columns):
+                    ctype_node = getattr(col, "Type", None)
+                    declared[visit_name(col)] = (
+                        ctype_node.ToString().strip() if ctype_node else "unknown"
+                    )
+            return ParseKvOp(target=target, columns=declared, span=span)
 
         if kind == "SampleDistinctOperator":
             count = safe_int(n.Expression) if hasattr(n, "Expression") else 0
@@ -872,10 +878,17 @@ class IRBuilder:
         if kind == "MakeGraphOperator":
             return MakeGraphOp(raw_text=node.ToString(), span=span)
         if kind == "MacroExpandOperator":
+            # The body is a ``StatementList``. The previous probe read
+            # ``Subquery`` then ``Body``; neither is a member of
+            # MacroExpandOperator, so the field was always None.
             inner = None
-            inner_node = getattr(n, "Subquery", None) or getattr(n, "Body", None)
-            if inner_node is not None:
-                inner = self._visit_pipeline(inner_node)
+            statements = getattr(n, "StatementList", None)
+            if statements is not None and statements.Count > 0:
+                for stmt in _iter_elements(statements):
+                    expr = getattr(stmt, "Expression", None)
+                    if expr is not None:
+                        inner = self._visit_pipeline(expr)
+                        break
             return MacroExpandOp(raw_text=node.ToString(), pipeline=inner, span=span)
         if kind == "GraphMatchOperator":
             return GraphMatchOp(raw_text=node.ToString(), span=span)

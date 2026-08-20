@@ -421,3 +421,39 @@ def test_externaldata_in_the_corpus_is_modeled():
     assert [n for n, _ in e.columns] == ["knownAppClientId", "knownAppDisplayName"]
     assert e.format == "csv"
     assert e.uri.startswith("https://")
+
+
+# --- parse-kv and macro-expand ---------------------------------------------
+
+
+def test_parse_kv_populates_its_declared_columns(ir_builder):
+    """``ParseKvOp.columns`` was always empty.
+
+    The guard read ``keys is not None and hasattr(keys, "Count")``; ``Keys``
+    is a ``RowSchema``, which exposes ``Columns`` and has no ``Count``, so
+    the loop body never ran.
+    """
+    from kustology.ir import ParseKvOp, find_all
+
+    ir = ir_builder.build("T | parse-kv Message as (b:string, c:long)")
+    op = next(iter(find_all(ir, ParseKvOp)))
+    assert op.columns == {"b": "string", "c": "long"}
+
+
+def test_parse_kv_without_declared_keys_has_no_columns(ir_builder):
+    from kustology.ir import ParseKvOp, find_all
+
+    ir = ir_builder.build("T | parse-kv Message as (b:string) with (pair_delimiter=',')")
+    op = next(iter(find_all(ir, ParseKvOp)))
+    assert op.columns == {"b": "string"}
+
+
+def test_macro_expand_models_its_inner_pipeline(ir_builder):
+    """``MacroExpandOp.pipeline`` was always None -- it probed ``Subquery``
+    and ``Body``; the member is ``StatementList``."""
+    from kustology.ir import MacroExpandOp, Pipeline, TableRef, find_all
+
+    ir = ir_builder.build("macro-expand EG as X (T | count)")
+    op = next(iter(find_all(ir, MacroExpandOp)))
+    assert isinstance(op.pipeline, Pipeline)
+    assert [t.name for t in find_all(op.pipeline, TableRef)] == ["T"]

@@ -405,7 +405,10 @@ class ParseKvOp(Operator):
     KIND: ClassVar[str] = "parse_kv"
     kind: Literal["parse_kv"] = "parse_kv"
     target: AnyExpr
-    columns: list[Assignment] = []
+    # ``as (b:string, c:long)`` -- a name:type schema, modeled the same way
+    # as :class:`AssertSchemaOp`. It was ``list[Assignment]``, which had no
+    # expression to hold: a declared key has a type, not a value.
+    columns: dict[str, str] = {}
 
 
 class SampleDistinctOp(Operator):
