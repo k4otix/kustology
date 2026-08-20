@@ -13,7 +13,7 @@ AnyExpr = Union[
     "Exists", "RegexMatch", "CaseExpr", "ColumnRef", "LiteralExpr",
     "FuncCall", "PathExpr", "ElementExpr", "StarExpr", "NamedExpr",
     "CompoundNamedExpr", "BracketedExpr", "MaterializeExpr", "ToScalarExpr",
-    "ExternalDataExpr", "UnknownExpr", "Expr",
+    "SubqueryExpr", "ExternalDataExpr", "UnknownExpr", "Expr",
 ]
 
 
@@ -60,9 +60,12 @@ class LiteralExpr(Expr):
     ]
     # Exact .NET tick count (100ns units) for datetime and timespan literals;
     # None for every other kind. TimeSpan.TotalSeconds is a float and loses
-    # sub-second exactness, so consumers rebuilding a timedelta use
-    # ``ticks // 10`` for microseconds — that is what makes 1microsecond and
-    # 2tick round-trip.
+    # sub-second exactness, so consumers rebuilding a ``timedelta`` use
+    # ``ticks // 10`` for microseconds — exact down to ``1microsecond``
+    # (10 ticks -> 1us). Finer literals do not survive that conversion:
+    # ``2tick`` is 2 ticks, ``2 // 10 == 0``, and ``timedelta`` cannot
+    # represent 200ns at any rate. This field is the only lossless form —
+    # read it directly rather than a reconstructed ``timedelta``.
     ticks: int | None = None
 
 
@@ -208,6 +211,22 @@ class ToScalarExpr(Expr):
     pipeline: Any  # forward ref to Pipeline (cycle avoidance)
 
 
+class SubqueryExpr(Expr):
+    """A bare tabular subquery sitting in expression position.
+
+    KQL allows a pipeline as the value set of a membership test —
+    ``| where User in ((Suspicious | project User))``. Unlike
+    ``MaterializeExpr`` / ``ToScalarExpr`` there is no wrapping function to
+    name it after, so the pipeline arrives naked. Modeling it keeps the
+    subtree reachable by ``walk``/``find_all`` instead of collapsing a whole
+    inner query into an ``UnknownExpr`` blob of raw text.
+    """
+
+    KIND: ClassVar[str] = "subquery"
+    kind: Literal["subquery"] = "subquery"
+    pipeline: Any  # forward ref to Pipeline (cycle avoidance)
+
+
 class ExternalDataExpr(Expr):
     KIND: ClassVar[str] = "external_data"
     kind: Literal["external_data"] = "external_data"
@@ -228,6 +247,6 @@ for _cls in (
     LiteralExpr, ColumnRef, BinOp, SetMembership, Between, And, Or, Not,
     FuncCall, CaseExpr, RegexMatch, Exists, PathExpr, ElementExpr, StarExpr,
     NamedExpr, CompoundNamedExpr, UnaryOp, BracketedExpr, MaterializeExpr,
-    ToScalarExpr, ExternalDataExpr,
+    ToScalarExpr, SubqueryExpr, ExternalDataExpr,
 ):
     _cls.model_rebuild()

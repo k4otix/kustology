@@ -29,7 +29,7 @@ from .expr import (
     And, AnyExpr, Between, BinOp, BracketedExpr, CaseExpr, ColumnRef,
     CompoundNamedExpr, ElementExpr, Exists, Expr, ExternalDataExpr, FuncCall,
     LiteralExpr, MaterializeExpr, NamedExpr, Not, Or, PathExpr, RegexMatch,
-    SetMembership, StarExpr, ToScalarExpr, UnaryOp, UnknownExpr,
+    SetMembership, StarExpr, SubqueryExpr, ToScalarExpr, UnaryOp, UnknownExpr,
 )
 from .query import (
     AsOp, AssertSchemaOp, Assignment, ConsumeOp, CountOp, Diagnostic,
@@ -73,7 +73,7 @@ __all__ = [
     "And", "Or", "Not", "Exists", "RegexMatch", "CaseExpr", "UnknownExpr",
     "LiteralExpr", "FuncCall", "PathExpr", "ElementExpr", "StarExpr",
     "NamedExpr", "UnaryOp", "BracketedExpr", "CompoundNamedExpr",
-    "MaterializeExpr", "ToScalarExpr", "ExternalDataExpr",
+    "MaterializeExpr", "ToScalarExpr", "SubqueryExpr", "ExternalDataExpr",
     # Operators
     "Operator", "FilterOp", "ExtendOp", "SummarizeOp", "ProjectOp",
     "ProjectAwayOp", "ProjectKeepOp", "ProjectReorderOp", "ProjectRenameOp",

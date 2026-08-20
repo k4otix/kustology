@@ -30,6 +30,7 @@ from .expr import (  # noqa: F401 — names referenced via forward refs
     RegexMatch,
     SetMembership,
     StarExpr,
+    SubqueryExpr,
     ToScalarExpr,
     UnaryOp,
     UnknownExpr,
@@ -555,6 +556,16 @@ class LetBinding(BaseModel):
     name: str
     span: Span
     rhs_expr: AnyExpr | None = None
+    # Set for a tabular right-hand side. Note the enrichment boundary:
+    # ``SchemaAttacher.enrich`` walks ``QueryIR.main_pipeline`` only, so
+    # ``rhs_pipeline.result_schema`` stays ``None`` even on a fully bound
+    # parse where ``main_pipeline.result_schema`` is populated. ``ColumnRef``
+    # nodes inside a let pipeline are likewise not given a ``table``.
+    # Deliberate, not an oversight: resolving a let pipeline's output schema
+    # means threading let-bound names through the attacher's scope model, a
+    # behavior change with its own consequences, and nothing consumes the
+    # field today. Read the binding's ``inner_tables`` and look their schemas
+    # up directly if you need the source columns.
     rhs_pipeline: Pipeline | None = None
     rhs_function: LetFunction | None = None
     # Tables and time expressions found inside rhs_pipeline; empty otherwise.

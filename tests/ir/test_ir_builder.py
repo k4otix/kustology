@@ -317,3 +317,26 @@ def test_misc_operators_dispatch_to_specific_classes(ir_builder):
             assert matched, (
                 f"{query!r} -> ops {[type(o).__name__ for o in ops]}; expected {expected_cls.__name__}"
             )
+
+
+def test_tabular_subquery_in_membership_test_is_modeled(ir_builder):
+    """`in ((P))` used to collapse the whole inner query into an UnknownExpr.
+
+    Surfaced when the corpus gate started walking `let` right-hand sides —
+    the only corpus occurrence sits inside one. Asserted here rather than
+    only via the corpus so a fixture change can't retire the coverage.
+    """
+    from kustology.ir import SetMembership, SubqueryExpr, UnknownExpr, find_all
+
+    ir = ir_builder.build(
+        "let Suspicious = SigninLogs | project UserPrincipalName;\n"
+        "SigninLogs | where UserPrincipalName in ((Suspicious | project UserPrincipalName))"
+    )
+    assert not list(find_all(ir, UnknownExpr))
+
+    membership = next(iter(find_all(ir, SetMembership)))
+    subqueries = [v for v in membership.values if isinstance(v, SubqueryExpr)]
+    assert len(subqueries) == 1
+    # The inner pipeline is a real subtree, not a raw-text blob.
+    assert isinstance(subqueries[0].pipeline, Pipeline)
+    assert [t.name for t in find_all(subqueries[0].pipeline, TableRef)] == ["Suspicious"]

@@ -54,6 +54,7 @@ from .expr import (
     RegexMatch,
     SetMembership,
     StarExpr,
+    SubqueryExpr,
     ToScalarExpr,
     UnaryOp,
     UnknownExpr,
@@ -151,6 +152,30 @@ def _is_time_func_name(name: str) -> bool:
         return "time" in lower or "ago" in lower or "now" in lower
 
 
+# Non-operator .NET node kinds that put a ``let`` right-hand side in tabular
+# position. Every *other* tabular RHS is a query-operator node, matched
+# structurally by the ``…Operator`` suffix in ``_is_tabular_let_rhs`` — the
+# suffix is the .NET class hierarchy's own marker for "this is a query
+# operator", and query operators only ever appear in tabular position.
+_TABULAR_LET_RHS_KINDS = frozenset({
+    "PipeExpression",        # let A = T | where …
+    "MaterializeExpression", # let A = materialize(T | where …)
+    "DataTableExpression",   # let A = datatable(a:int)[1, 2]
+})
+
+
+def _is_tabular_let_rhs(net_kind: str) -> bool:
+    """True when a ``let`` RHS of this .NET node kind is a tabular expression.
+
+    Covers the operator-rooted forms (``union``/``range``/``search``/``print``/
+    ``find``, plus any operator Microsoft adds later) as well as the three
+    non-operator tabular kinds. Does *not* cover a bare ``NameReference`` —
+    that is only tabular when the binder proves it, which the caller checks
+    separately.
+    """
+    return net_kind.endswith("Operator") or net_kind in _TABULAR_LET_RHS_KINDS
+
+
 def _collect_inner_tables(pipeline: Any) -> list[str]:
     """Distinct table names inside a let binding's pipeline, in first-seen order."""
     from .query import TableRef
@@ -213,7 +238,8 @@ class IRBuilder:
         "AndExpression", "OrExpression", "OrderedExpression", "BinaryExpression",
         "InExpression", "HasAnyExpression", "HasAllExpression",
         "BetweenExpression", "FunctionCallExpression", "MaterializeExpression",
-        "ToScalarExpression", "ExternalDataExpression", "MakeSeriesExpression",
+        "ToScalarExpression", "PipeExpression", "ExternalDataExpression",
+        "MakeSeriesExpression",
     })
 
     def __init__(self, global_state: GlobalState | None = None):
@@ -285,9 +311,17 @@ class IRBuilder:
         which shape it is:
 
         * ``FunctionDeclaration``  -> ``rhs_function``
-        * ``PipeExpression`` / ``MaterializeExpression`` -> ``rhs_pipeline``
+        * any tabular kind (see :func:`_is_tabular_let_rhs`) -> ``rhs_pipeline``
         * a ``NameReference`` the binder resolved to a table -> ``rhs_pipeline``
         * anything else            -> ``rhs_expr``
+
+        Parentheses are unwrapped first. ``let A = (T | where …)`` is the
+        dominant Sentinel idiom and arrives as a ``ParenthesizedExpression``
+        wrapping the ``PipeExpression``; dispatching on the wrapper's class
+        would drop the whole subtree into ``rhs_expr`` as an ``UnknownExpr``.
+        Unwrapping is safe for the scalar path too — ``_visit_expr`` unwraps
+        parens itself, so ``let m = (toscalar(...))`` still yields a
+        ``ToScalarExpr``.
 
         A bare ``NameReference`` is only tabular when the binder can prove it
         (``let A = OtherTable`` with a schema). Unbound, it stays an
@@ -296,6 +330,8 @@ class IRBuilder:
         name = visit_name(ls.Name)
         span = to_span(ls)
         expr = getattr(ls, "Expression", None)
+        while expr is not None and str(type(expr).__name__) == "ParenthesizedExpression":
+            expr = getattr(expr, "Expression", None)
         if expr is None:  # pragma: no cover — defensive
             return LetBinding(name=name, span=span)
 
@@ -308,7 +344,7 @@ class IRBuilder:
                 rhs_function=self._visit_function_declaration(expr),
             )
 
-        if net_kind in ("PipeExpression", "MaterializeExpression") or (
+        if _is_tabular_let_rhs(net_kind) or (
             net_kind == "NameReference"
             and is_table_symbol(getattr(expr, "ReferencedSymbol", None))
         ):
@@ -1062,6 +1098,12 @@ class IRBuilder:
 
         elif kind == "ToScalarExpression":
             res = ToScalarExpr(pipeline=self._visit_pipeline(node.Expression), span=span)
+
+        elif kind == "PipeExpression":
+            # A bare pipeline in expression position — the value set of a
+            # membership test, `| where User in ((Suspicious | project User))`.
+            # No wrapping function names it, so it arrives naked here.
+            res = SubqueryExpr(pipeline=self._visit_pipeline(node), span=span)
 
         elif kind == "ExternalDataExpression":
             cols: list[tuple[str, str]] = []
