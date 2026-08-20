@@ -603,3 +603,50 @@ def test_negative_null_tests_are_not_lowered(ir_builder):
         ir_builder.build("T | where isnull(C)").semantic_hash
         != ir_builder.build("T | where isempty(C)").semantic_hash
     )
+
+
+# --- BinOp case sensitivity across the whole string-operator family ---------
+
+
+@pytest.mark.parametrize(
+    "op, case_sensitive",
+    [
+        # Comparison operators compare exactly.
+        ("==", True), ("!=", True), ("<", True), (">", True),
+        # The tilde forms fold case.
+        ("=~", False), ("!~", False),
+        # KQL string operators are case-INsensitive by default...
+        ("has", False), ("contains", False), ("startswith", False),
+        ("endswith", False), ("hasprefix", False), ("hassuffix", False),
+        # ...their negations too -- negating a predicate does not change how
+        # it compares. All six of these reported True.
+        ("!has", False), ("!contains", False), ("!startswith", False),
+        ("!endswith", False), ("!hasprefix", False), ("!hassuffix", False),
+        # ...and only the _cs suffix makes one sensitive.
+        ("has_cs", True), ("contains_cs", True), ("startswith_cs", True),
+        ("!has_cs", True), ("!contains_cs", True),
+    ],
+)
+def test_binop_case_sensitivity_follows_the_operator_suffix(
+    ir_builder, op, case_sensitive
+):
+    """Derived from a hand-maintained allow-list, so anything absent fell
+    through to True. It was already missing ``hasprefix``/``hassuffix``
+    before anyone negated anything, and every negated string operator was
+    reported backwards."""
+    from kustology.ir import BinOp, find_all
+
+    ir = ir_builder.build(f'T | where C {op} "a"')
+    m = next(b for b in find_all(ir, BinOp) if b.op == op)
+    assert m.case_sensitive is case_sensitive
+
+
+def test_case_folding_variants_do_not_collide(ir_builder):
+    """``has`` and ``has_cs`` are different predicates and must not share a
+    hash. They did not before -- ``op`` already differed -- but the flag
+    they carried disagreed with the operator they named."""
+    seen = {
+        op: ir_builder.build(f'T | where C {op} "a"').semantic_hash
+        for op in ("has", "has_cs", "!has", "!has_cs", "contains", "contains_cs")
+    }
+    assert len(set(seen.values())) == len(seen)

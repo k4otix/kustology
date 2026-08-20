@@ -164,6 +164,39 @@ _TABULAR_LET_RHS_KINDS = frozenset({
 })
 
 
+def _is_case_sensitive_op(op: str) -> bool:
+    """Whether a KQL binary operator compares case-sensitively.
+
+    Derived from the operator's own suffix rather than an allow-list of
+    members. The allow-list this replaced named six operators and let
+    everything else fall through to ``True``, so it was already wrong for
+    ``hasprefix`` and ``hassuffix`` before anyone negated anything, and every
+    negated string operator (``!has``, ``!contains``, ``!startswith``,
+    ``!endswith``, ``!hasprefix``, ``!hassuffix``) was reported backwards.
+    A new operator from a DLL refresh would land wrong the same way.
+
+    KQL's rule, in the order it has to be applied:
+
+    * ``_cs`` suffix -> sensitive (``has_cs``, ``!contains_cs``)
+    * ``~`` suffix -> insensitive (``=~``, ``!~``)
+    * string operators -> insensitive by default, negation included
+    * everything else, i.e. the comparisons -> sensitive
+    """
+    if op.endswith("_cs"):
+        return True
+    if op.endswith("~"):
+        return False
+    return not op.lstrip("!").startswith(_CASE_INSENSITIVE_OP_STEMS)
+
+
+# Stems of the KQL string operators, which fold case unless suffixed ``_cs``.
+# Matched as a prefix after stripping a leading ``!`` so negated and future
+# suffixed forms are covered without listing each one.
+_CASE_INSENSITIVE_OP_STEMS = (
+    "has", "contains", "startswith", "endswith", "matches",
+)
+
+
 def _is_tabular_let_rhs(net_kind: str) -> bool:
     """True when a ``let`` RHS of this .NET node kind is a tabular expression.
 
@@ -1060,15 +1093,10 @@ class IRBuilder:
                     span=span,
                 )
             else:
-                case_sensitive = True
-                if op.endswith("~") or op in ("has", "contains", "startswith", "endswith", "has_any", "has_all"):
-                    case_sensitive = False
-                elif op in ("==", "in", "!in") or "_cs" in op:
-                    case_sensitive = True
                 res = BinOp(
                     op=op,
                     polarity="inclusion" if "!" not in op else "exclusion",
-                    case_sensitive=case_sensitive,
+                    case_sensitive=_is_case_sensitive_op(op),
                     left=left,
                     right=right,
                     span=span,
