@@ -857,7 +857,10 @@ class IRBuilder:
 
         if kind == "SampleDistinctOperator":
             count = safe_int(n.Expression) if hasattr(n, "Expression") else 0
-            of_node = getattr(n, "OfExpression", None) or getattr(n, "Of", None)
+            # ``Of`` is not a member of any Kusto.Language type; the
+            # fallback never fired. tests/test_reflection_audit.py now
+            # rejects probes for names the assembly does not have.
+            of_node = getattr(n, "OfExpression", None)
             of = self._visit_expr(of_node) if of_node is not None else UnknownExpr(
                 span=span, raw_text="?", ast_kind="None",
                 reason="Missing sample-distinct 'of'",
