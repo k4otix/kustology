@@ -156,6 +156,16 @@ def _collect_table_refs(syntax) -> list:
             if kind == "UnionOperator":
                 for i in range(node.ChildCount):
                     refs.extend(_unwrap_table_expr(node.GetChild(i)))
+                return
+
+            if kind in ("FindOperator", "SearchOperator"):
+                # `find in (T1, T2) …` / `search in (T1, T2) …`. Without
+                # this, `find in (S1, S2)` reported *no* tables at all, and
+                # replace_table returned the query unchanged with no error.
+                in_clause = getattr(node, "InClause", None)
+                if in_clause is not None:
+                    for el in iter_elements(in_clause.Expressions):
+                        refs.extend(_unwrap_table_expr(el))
 
     Walker().visit(syntax)
     out = []

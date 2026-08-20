@@ -79,3 +79,49 @@ def test_database_qualified_table_replaces_only_table_name():
     """replace_table renames the trailing identifier, not database()/cluster()."""
     out = parse('database("d").T | count').replace_table("T", "U")
     assert out == 'database("d").U | count'
+
+
+# --- operators whose table positions were never collected ------------------
+#
+# `_collect_table_refs` enumerated table-source positions by node kind and
+# omitted the `find in (...)` / `search in (...)` clauses. The consequence
+# for get_referenced_tables is a missing name; the consequence for
+# replace_table is worse -- it returns the query *unchanged*, with no error,
+# so a consumer migrating a table ships one still pointing at the old name.
+#
+# A partition subquery has no table position at all: `partition by K (B | …)`
+# is a parse error ("Query operator expected"), since the subquery runs on
+# the partitioned rows rather than a new source.
+
+
+def test_partition_subquery_has_no_table_position():
+    q = "A | partition by K (where Z > 1)"
+    assert parse(q).get_referenced_tables() == {"A"}
+
+
+def test_find_in_clause_tables_are_collected():
+    q = "find in (S1, S2) where X == 1"
+    assert parse(q).get_referenced_tables() == {"S1", "S2"}
+
+
+def test_search_in_clause_tables_are_collected():
+    q = 'search in (S1, S2) "err"'
+    assert parse(q).get_referenced_tables() == {"S1", "S2"}
+
+
+def test_replace_table_rewrites_those_positions():
+    """The silent-no-op case: replace_table must actually rewrite."""
+    assert (
+        parse("find in (S1, S2) where X == 1").replace_table("S1", "NewS1")
+        == "find in (NewS1, S2) where X == 1"
+    )
+    assert (
+        parse('search in (S1, S2) "err"').replace_table("S2", "NewS2")
+        == 'search in (S1, NewS2) "err"'
+    )
+
+
+def test_let_bound_names_are_still_excluded_in_those_positions():
+    """A let alias in an `in (...)` clause is not a table reference."""
+    q = "let Local = A | take 1; find in (Local, B) where X == 1"
+    assert parse(q).get_referenced_tables() == {"A", "B"}
