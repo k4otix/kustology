@@ -149,8 +149,19 @@ class RegexMatch(Expr):
 
 
 class Exists(Expr):
+    """A positive null/empty test, lowered from ``isnotnull`` or ``isnotempty``.
+
+    Note the asymmetry: the *negative* forms ``isnull`` and ``isempty`` are
+    not lowered at all -- they stay :class:`FuncCall`. Whether to lower them
+    too is an open question, not an oversight.
+    """
+
     KIND: ClassVar[str] = "exists"
     kind: Literal["exists"] = "exists"
+    # Which function produced this: "isnotnull" or "isnotempty". They are not
+    # equivalent -- isnotempty also rejects "" -- and without this field both
+    # lowered to the same node with the same semantic_hash.
+    op: str
     target: AnyExpr
 
 

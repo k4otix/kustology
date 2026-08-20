@@ -565,3 +565,41 @@ def test_canonical_form_distinguishes_shapes_that_used_to_collide(ir_builder):
     forms = {form("T | where -X > 1"), form("T | where D.a == 1"),
              form("T | where toscalar(S | summarize max(A)) > 1")}
     assert len(forms) == 3, f"distinct predicates collapsed to {forms}"
+
+
+# --- Exists records which function produced it ------------------------------
+
+
+@pytest.mark.parametrize("fn", ["isnotnull", "isnotempty"])
+def test_exists_records_its_source_function(ir_builder, fn):
+    """``Exists`` had only ``target``, so both functions lowered to the same
+    node with the same hash -- though ``isnotempty`` also rejects ``""``."""
+    from kustology.ir import Exists, find_all
+
+    ir = ir_builder.build(f"T | where {fn}(C)")
+    e = next(iter(find_all(ir, Exists)))
+    assert e.op == fn
+
+
+def test_isnotnull_and_isnotempty_do_not_collide(ir_builder):
+    a = ir_builder.build("T | where isnotnull(C)")
+    b = ir_builder.build("T | where isnotempty(C)")
+    assert a.semantic_hash != b.semantic_hash
+
+
+def test_negative_null_tests_are_not_lowered(ir_builder):
+    """``isnull`` / ``isempty`` stay ``FuncCall`` -- the IR lowers only the
+    positive forms. Pinned so the asymmetry is a stated boundary rather than
+    something a reader assumes is symmetric."""
+    from kustology.ir import Exists, FuncCall, find_all
+
+    for fn in ("isnull", "isempty"):
+        ir = ir_builder.build(f"T | where {fn}(C)")
+        assert not list(find_all(ir, Exists)), fn
+        assert [f.name for f in find_all(ir, FuncCall)] == [fn]
+
+    # And they already hashed distinctly, which is why they were not the bug.
+    assert (
+        ir_builder.build("T | where isnull(C)").semantic_hash
+        != ir_builder.build("T | where isempty(C)").semantic_hash
+    )

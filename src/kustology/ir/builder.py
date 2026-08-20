@@ -1154,7 +1154,10 @@ class IRBuilder:
             elif lname == "iif" and len(args) == 3:
                 res = CaseExpr(branches=[(args[0], args[1])], default=args[2], span=span)
             elif lname in ("isnotnull", "isnotempty") and len(args) == 1:
-                res = Exists(target=args[0], span=span)
+                # Record which one: isnotempty also rejects "", so lowering
+                # both to a bare Exists made two different predicates
+                # indistinguishable.
+                res = Exists(op=lname, target=args[0], span=span)
             elif lname == "not" and len(args) == 1:
                 res = Not(operand=args[0], span=span)
 
