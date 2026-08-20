@@ -14,10 +14,15 @@ import pytest
 
 pytest.importorskip("pydantic")
 
-from kustology import parse  # noqa: E402
-from kustology.ir import (  # noqa: E402
-    AnalyzerFn, BinOp, ColumnRef, Finding, Span,
-    find_all, normalize_expressions,
+from kustology import parse
+from kustology.ir import (
+    AnalyzerFn,
+    BinOp,
+    ColumnRef,
+    Finding,
+    Span,
+    find_all,
+    normalize_expressions,
 )
 
 

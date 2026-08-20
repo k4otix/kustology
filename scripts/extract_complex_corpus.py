@@ -64,7 +64,7 @@ RELATIVE_PATHS: list[str] = [
 def _slugify(basename: str) -> str:
     """Filename-safe slug. Sentinel YAML names often contain spaces and
     parentheses; keep alphanumerics, collapse the rest to underscores."""
-    stem = basename[: -len(".yaml")] if basename.endswith(".yaml") else basename
+    stem = basename.removesuffix(".yaml")
     slug = re.sub(r"[^A-Za-z0-9_]+", "_", stem).strip("_")
     return slug or "query"
 

@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-from typing import Optional
 
 from pydantic import BaseModel
 
@@ -14,7 +13,7 @@ class Span(BaseModel):
 
     text_start: int
     width: int
-    source_text: Optional[str] = None
+    source_text: str | None = None
 
     @property
     def text_end(self) -> int:

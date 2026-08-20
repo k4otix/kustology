@@ -12,16 +12,42 @@ dict directly — callers handle JSON/YAML/IO themselves.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
 
 from .expr import (
-    And, Between, BinOp, ColumnRef, Expr, LiteralExpr, Not, Or, SetMembership,
+    And,
+    Between,
+    BinOp,
+    ColumnRef,
+    Expr,
+    LiteralExpr,
+    Not,
+    Or,
+    SetMembership,
 )
 from .query import (
-    Assignment, DistinctOp, ExtendOp, FilterOp, JoinOp, LookupOp,
-    MakeSeriesOp, MvExpandOp, Operator, ParseOp, ParseWhereOp, Pipeline,
-    ProjectAwayOp, ProjectByNamesOp, ProjectKeepOp, ProjectOp, ProjectRenameOp,
-    ProjectReorderOp, QueryIR, SummarizeOp, TableRef, TabularSchema, UnionOp,
+    Assignment,
+    DistinctOp,
+    ExtendOp,
+    FilterOp,
+    JoinOp,
+    LookupOp,
+    MakeSeriesOp,
+    MvExpandOp,
+    Operator,
+    ParseOp,
+    ParseWhereOp,
+    Pipeline,
+    ProjectAwayOp,
+    ProjectByNamesOp,
+    ProjectKeepOp,
+    ProjectOp,
+    ProjectRenameOp,
+    ProjectReorderOp,
+    QueryIR,
+    SummarizeOp,
+    TableRef,
+    TabularSchema,
+    UnionOp,
 )
 from .types import KustoType
 
@@ -34,8 +60,8 @@ class ScopeEntry:
     them with a synthesized anonymous entry (``table=None``).
     """
 
-    table: Optional[str]
-    columns: Dict[str, str] = field(default_factory=dict)
+    table: str | None
+    columns: dict[str, str] = field(default_factory=dict)
 
 
 class SchemaAttacher:
@@ -45,15 +71,15 @@ class SchemaAttacher:
     Tables not present here are treated as opaque (no enrichment).
     """
 
-    def __init__(self, schemas: Optional[Dict[str, Dict[str, str]]] = None):
-        self.schemas: Dict[str, Dict[str, str]] = dict(schemas or {})
+    def __init__(self, schemas: dict[str, dict[str, str]] | None = None):
+        self.schemas: dict[str, dict[str, str]] = dict(schemas or {})
 
     def enrich(self, ir: QueryIR) -> QueryIR:
         self._walk_pipeline(ir.main_pipeline)
         ir.schema_attached = True
         return ir
 
-    def _table_schema(self, name: Optional[str]) -> Dict[str, str]:
+    def _table_schema(self, name: str | None) -> dict[str, str]:
         if not name:
             return {}
         return self.schemas.get(name, {})
@@ -63,12 +89,12 @@ class SchemaAttacher:
         name = source.name if isinstance(source, TableRef) else None
         return ScopeEntry(table=name, columns=self._table_schema(name))
 
-    def _walk_pipeline(self, pipeline: Pipeline) -> List[ScopeEntry]:
-        scope: List[ScopeEntry] = [self._source_entry(pipeline)]
+    def _walk_pipeline(self, pipeline: Pipeline) -> list[ScopeEntry]:
+        scope: list[ScopeEntry] = [self._source_entry(pipeline)]
         for op in pipeline.operators:
             self._walk_operator(op, scope)
         # Snapshot final scope so downstream consumers don't re-walk operators.
-        merged: Dict[str, str] = {}
+        merged: dict[str, str] = {}
         for entry in scope:
             merged.update(entry.columns)
         pipeline.result_schema = TabularSchema(columns=merged)
@@ -76,19 +102,19 @@ class SchemaAttacher:
 
     # --- scope-mutation helpers ---------------------------------------------
 
-    def _scope_columns(self, scope: List[ScopeEntry]) -> Dict[str, str]:
+    def _scope_columns(self, scope: list[ScopeEntry]) -> dict[str, str]:
         """Flatten scope into a single {column: type} map (most recent wins)."""
-        merged: Dict[str, str] = {}
+        merged: dict[str, str] = {}
         for entry in scope:
             merged.update(entry.columns)
         return merged
 
-    def _set_scope(self, scope: List[ScopeEntry], columns: Dict[str, str]) -> None:
+    def _set_scope(self, scope: list[ScopeEntry], columns: dict[str, str]) -> None:
         """Replace scope with a single anonymous entry containing `columns`."""
         scope.clear()
         scope.append(ScopeEntry(table=None, columns=columns))
 
-    def _extract_target_name(self, expr) -> Optional[str]:
+    def _extract_target_name(self, expr) -> str | None:
         """Pull a bare column name from a ColumnRef / Assignment / similar."""
         if isinstance(expr, ColumnRef):
             return expr.name
@@ -97,7 +123,7 @@ class SchemaAttacher:
             return name
         return None
 
-    def _walk_operator(self, op: Operator, scope: List[ScopeEntry]) -> None:
+    def _walk_operator(self, op: Operator, scope: list[ScopeEntry]) -> None:
         if isinstance(op, FilterOp):
             self._fill(op.predicate, scope)
             return
@@ -118,7 +144,7 @@ class SchemaAttacher:
                     e.name for e in op.on if isinstance(e, ColumnRef)
                 }
             for entry in rhs_scope[:1]:
-                renamed: Dict[str, str] = {}
+                renamed: dict[str, str] = {}
                 for name, kt in entry.columns.items():
                     if name in drop_keys:
                         continue
@@ -143,7 +169,7 @@ class SchemaAttacher:
                         scope.append(entry)
             return
         if isinstance(op, ExtendOp):
-            new_cols: Dict[str, str] = {}
+            new_cols: dict[str, str] = {}
             for a in op.assignments:
                 self._fill(a.expr, scope)
                 kt = getattr(a.expr, "result_type", KustoType.UNRESOLVED)
@@ -151,7 +177,7 @@ class SchemaAttacher:
             scope.append(ScopeEntry(table=None, columns=new_cols))
             return
         if isinstance(op, SummarizeOp):
-            out_cols: Dict[str, str] = {}
+            out_cols: dict[str, str] = {}
             # KQL summarize emits grouping keys before aggregations in the output schema.
             for b in op.by:
                 inner = getattr(b, "expr", b)
@@ -168,7 +194,7 @@ class SchemaAttacher:
             return
         if isinstance(op, ProjectOp):
             current = self._scope_columns(scope)
-            kept: Dict[str, str] = {}
+            kept: dict[str, str] = {}
             for c in op.columns:
                 self._fill(getattr(c, "expr", c), scope)
                 if isinstance(c, Assignment):
@@ -185,14 +211,14 @@ class SchemaAttacher:
         if isinstance(op, ProjectRenameOp):
             current = self._scope_columns(scope)
             # Build {old: new} so we can rebuild the dict preserving original positions.
-            rename_map: Dict[str, str] = {}
+            rename_map: dict[str, str] = {}
             for c in op.columns:
                 self._fill(c.expr, scope)
                 old = self._extract_target_name(c.expr)
                 if old and old in current:
                     rename_map[old] = c.name
             if rename_map:
-                rebuilt: Dict[str, str] = {}
+                rebuilt: dict[str, str] = {}
                 for k, v in current.items():
                     rebuilt[rename_map.get(k, k)] = v
                 current = rebuilt
@@ -202,7 +228,7 @@ class SchemaAttacher:
             # KQL: `distinct *` keeps the full scope; `distinct C1, C2` narrows
             # the output schema to the listed columns in listed order
             # (semantically equivalent to ``summarize by C1, C2``).
-            from .expr import StarExpr  # noqa: PLC0415
+            from .expr import StarExpr
 
             has_star = any(
                 isinstance(c, StarExpr) or isinstance(getattr(c, "expr", None), StarExpr)
@@ -213,7 +239,7 @@ class SchemaAttacher:
             if has_star:
                 return
             current = self._scope_columns(scope)
-            kept: Dict[str, str] = {}
+            kept: dict[str, str] = {}
             for c in op.columns:
                 name = self._extract_target_name(c)
                 if name and name in current:
@@ -253,7 +279,7 @@ class SchemaAttacher:
                 if name and name in current and name not in listed:
                     listed.append(name)
             if listed:
-                reordered: Dict[str, str] = {n: current[n] for n in listed}
+                reordered: dict[str, str] = {n: current[n] for n in listed}
                 for k, v in current.items():
                     if k not in reordered:
                         reordered[k] = v
@@ -266,7 +292,7 @@ class SchemaAttacher:
             return
         if isinstance(op, (ParseOp, ParseWhereOp)):
             self._fill(op.target, scope)
-            new_cap: Dict[str, str] = {}
+            new_cap: dict[str, str] = {}
             for p in op.patterns:
                 self._fill(p, scope)
                 if isinstance(p, ColumnRef):
@@ -293,7 +319,7 @@ class SchemaAttacher:
         if isinstance(op, MakeSeriesOp):
             # KQL make-series emits: by-keys, then aggregation series, then the
             # on-axis as a trailing dynamic column.
-            out_cols2: Dict[str, str] = {}
+            out_cols2: dict[str, str] = {}
             for b in op.by:
                 self._fill(b.expr, scope)
                 kt = getattr(b.expr, "result_type", KustoType.UNRESOLVED)
@@ -314,14 +340,14 @@ class SchemaAttacher:
             self._set_scope(scope, out_cols2)
             return
 
-    def _resolve_column_table(self, name: str, scope: List[ScopeEntry]) -> Optional[str]:
+    def _resolve_column_table(self, name: str, scope: list[ScopeEntry]) -> str | None:
         # Most recently joined side wins on collisions (matches KQL binding).
         matches = [e.table for e in scope if e.table and name in e.columns]
         if not matches:
             return None
         return matches[-1]
 
-    def _fill(self, expr: Optional[Expr], scope: List[ScopeEntry]) -> None:
+    def _fill(self, expr: Expr | None, scope: list[ScopeEntry]) -> None:
         if expr is None:
             return
         for attr in (

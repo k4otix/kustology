@@ -68,9 +68,7 @@ def _is_default_skipped(kind: str) -> bool:
         return True
     if any(kind.startswith(p) for p in _DEFAULT_SKIP_PREFIXES):
         return True
-    if any(kind.endswith(s) for s in _DEFAULT_SKIP_SUFFIXES):
-        return True
-    return False
+    return any(kind.endswith(s) for s in _DEFAULT_SKIP_SUFFIXES)
 
 
 def _read_pin() -> str:
@@ -97,7 +95,7 @@ def _discover_dispatched_via_class() -> dict[str, list[str]]:
 
     Returns ``{python_class_name: sorted_unique_syntax_kinds}``.
     """
-    from kustology import parse  # noqa: PLC0415 — defers CLR init
+    from kustology import parse  # local import: defers CLR init until the audit runs
 
     by_class: dict[str, set[str]] = {}
     if not CORPUS_DIR.exists():

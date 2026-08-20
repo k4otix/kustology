@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
+import logging
 import os
 import sys
 from pathlib import Path
 
 import pythonnet
 
+logger = logging.getLogger(__name__)
 
 _HOMEBREW_OPT_PATHS = [
     Path("/opt/homebrew/opt/dotnet/libexec"),
@@ -42,14 +44,15 @@ def _load_runtime() -> None:
     try:
         pythonnet.load("coreclr")
         return
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("coreclr load without an explicit root failed: %s", e)
 
     for root in _candidate_dotnet_roots():
         try:
             pythonnet.load("coreclr", dotnet_root=str(root))
             return
-        except Exception:
+        except Exception as e:
+            logger.debug("coreclr load from %s failed: %s", root, e)
             continue
 
     hint_paths = "\n  ".join(
@@ -86,25 +89,24 @@ def _initialize_bridge() -> None:
 
 _initialize_bridge()
 
-from Kusto.Language import KustoCode, GlobalState  # noqa: E402
-from Kusto.Language.Editor import KustoCodeService, FormattingOptions  # noqa: E402
-from Kusto.Language.Symbols import (  # noqa: E402
-    TableSymbol,
+from Kusto.Language import GlobalState, KustoCode
+from Kusto.Language.Editor import FormattingOptions, KustoCodeService
+from Kusto.Language.Symbols import (
     ColumnSymbol,
     DatabaseSymbol,
     FunctionSymbol,
     ScalarTypes,
+    TableSymbol,
 )
 
-
 __all__ = [
-    "KustoCode",
-    "GlobalState",
-    "KustoCodeService",
-    "FormattingOptions",
-    "TableSymbol",
     "ColumnSymbol",
     "DatabaseSymbol",
+    "FormattingOptions",
     "FunctionSymbol",
+    "GlobalState",
+    "KustoCode",
+    "KustoCodeService",
     "ScalarTypes",
+    "TableSymbol",
 ]

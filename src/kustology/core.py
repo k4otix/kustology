@@ -4,20 +4,20 @@
 import json
 
 from .bridge import KustoCode
-from .utils.schema_state import extract_schemas_from_global_state as _extract_schemas_from_global_state
 from .utils.analysis import (
-    get_tables_syntactic,
-    get_tables_semantic,
+    find_table_references,
     get_operator_chain,
     get_operator_stats,
-    node_to_dict,
     get_referenced_columns,
     get_referenced_functions,
     get_structural_hash,
+    get_tables_semantic,
+    get_tables_syntactic,
     get_time_range,
+    node_to_dict,
     replace_table,
-    find_table_references,
 )
+from .utils.schema_state import extract_schemas_from_global_state as _extract_schemas_from_global_state
 
 
 class KustoQuery:
@@ -117,7 +117,7 @@ class KustoQuery:
         * ``dict`` — force the attach pass using the supplied schema
           dict, overriding the parse-time schema for this step only.
         """
-        from .ir.builder import IRBuilder  # noqa: PLC0415 — triggers [ir] guard lazily
+        from .ir.builder import IRBuilder  # local import: triggers the [ir] extra guard lazily
 
         global_state = self._code.Globals if self._code.HasSemantics else None
         ir = IRBuilder(global_state=global_state).build_from_code(self._code)
@@ -128,7 +128,7 @@ class KustoQuery:
             attach_schema = self._code.HasSemantics
 
         if attach_schema:
-            from .ir.binder import SchemaAttacher  # noqa: PLC0415
+            from .ir.binder import SchemaAttacher
 
             schemas = attach_schema if isinstance(attach_schema, dict) else None
             if schemas is None and self._code.HasSemantics:

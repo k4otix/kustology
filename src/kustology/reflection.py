@@ -12,7 +12,6 @@ drift from upstream.
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 # Import for side effect: triggers `_initialize_bridge()` (CLR + Kusto.Language).
 from . import bridge  # noqa: F401
@@ -24,7 +23,7 @@ _FUNCS_BY_NAME: dict[str, object] = {}  # symbol-name → FunctionSymbol
 _CATEGORIES: dict[str, frozenset[str]] = {}
 
 
-def _safe_name(sym: object) -> Optional[str]:
+def _safe_name(sym: object) -> str | None:
     try:
         name = getattr(sym, "Name", None)
         if name is None:
@@ -34,7 +33,7 @@ def _safe_name(sym: object) -> Optional[str]:
         return None
 
 
-def _safe_return_type_name(sym: object) -> Optional[str]:
+def _safe_return_type_name(sym: object) -> str | None:
     """First signature's return-type name, lowercased. None if unavailable.
 
     ``Signature.DeclaredReturnType`` is the property that carries the
@@ -58,7 +57,7 @@ def _safe_return_type_name(sym: object) -> Optional[str]:
         return None
 
 
-def _safe_first_param_type_name(sym: object) -> Optional[str]:
+def _safe_first_param_type_name(sym: object) -> str | None:
     """First signature's first parameter type name, lowercased."""
     try:
         signatures = getattr(sym, "Signatures", None)
@@ -91,7 +90,8 @@ def _enumerate_static_symbols(container_name: str) -> dict[str, object]:
                 continue
             try:
                 sym = getattr(container, attr, None)
-            except Exception:
+            except Exception as e:
+                logger.debug("skipping %s.%s: %s", container_name, attr, e)
                 continue
             if sym is None:
                 continue
@@ -187,9 +187,8 @@ def all_function_names() -> frozenset[str]:
 def syntax_kinds() -> frozenset[str]:
     """Every member of ``Kusto.Language.Syntax.SyntaxKind`` as a string."""
     try:
-        from System import Enum
-
         from Kusto.Language.Syntax import SyntaxKind
+        from System import Enum
 
         return frozenset(str(k) for k in Enum.GetValues(SyntaxKind))
     except Exception as e:  # pragma: no cover
@@ -198,10 +197,10 @@ def syntax_kinds() -> frozenset[str]:
 
 
 __all__ = [
-    "time_functions",
     "aggregate_functions",
-    "string_functions",
-    "scalar_functions",
     "all_function_names",
+    "scalar_functions",
+    "string_functions",
     "syntax_kinds",
+    "time_functions",
 ]

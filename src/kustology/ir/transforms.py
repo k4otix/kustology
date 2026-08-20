@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Union
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -31,7 +31,7 @@ from .types import KustoType
 from .walk import find_all
 
 
-def merge_consecutive_filters(root: Union[Pipeline, QueryIR]) -> None:
+def merge_consecutive_filters(root: Pipeline | QueryIR) -> None:
     """Collapse runs of consecutive ``FilterOp``s into a single ``FilterOp``
     whose predicate is an ``And`` of the originals.
 
@@ -48,7 +48,7 @@ def merge_consecutive_filters(root: Union[Pipeline, QueryIR]) -> None:
         pipeline.operators = _merge_at_one_level(pipeline.operators)
 
 
-def normalize_expressions(root: Union[Pipeline, QueryIR]) -> None:
+def normalize_expressions(root: Pipeline | QueryIR) -> None:
     """Apply semantic-preserving expression rewrites everywhere in ``root``.
 
     Rewrites (from :mod:`kustology.ir._normalize`):

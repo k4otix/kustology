@@ -292,7 +292,11 @@ def test_funccall_as_pipeline_source(ir_builder):
 def test_misc_operators_dispatch_to_specific_classes(ir_builder):
     """getschema / consume / serialize / find each dispatch to their own Operator subclass."""
     from kustology.ir import (
-        ConsumeOp, FindOp, GetSchemaOp, Operator, SerializeOp,
+        ConsumeOp,
+        FindOp,
+        GetSchemaOp,
+        Operator,
+        SerializeOp,
     )
     cases = [
         ("DeviceProcessEvents | getschema", GetSchemaOp),

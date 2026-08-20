@@ -24,8 +24,8 @@ import random
 import re
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator
 
 import yaml
 
@@ -68,8 +68,7 @@ def iter_yaml(sentinel_root: Path, sub: str) -> Iterator[Path]:
     base = sentinel_root / sub
     if not base.exists():
         return
-    for path in base.rglob("*.yaml"):
-        yield path
+    yield from base.rglob("*.yaml")
 
 
 def slugify(path: Path) -> str:
@@ -93,8 +92,8 @@ def sample(sentinel_root: Path, seed: int) -> dict:
         for kw in RARE_KEYWORDS:
             if kw in low:
                 keyword_buckets[kw].append(idx)
-    for kw in keyword_buckets:
-        rng.shuffle(keyword_buckets[kw])
+    for bucket in keyword_buckets.values():
+        rng.shuffle(bucket)
 
     diversity_picks: list[int] = []
     diversity_provenance: dict[int, str] = {}

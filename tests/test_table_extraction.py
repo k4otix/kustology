@@ -14,7 +14,6 @@ import pytest
 
 from kustology import parse
 
-
 JOIN_QUERY = "A | join (B) on x"
 UNION_QUERY = "union A, B | count"
 LOOKUP_QUERY = "A | lookup B on x"

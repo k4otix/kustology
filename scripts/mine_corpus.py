@@ -30,8 +30,8 @@ import subprocess
 import sys
 import tempfile
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CORPUS = REPO_ROOT / "tests" / "fixtures" / "complex_queries"
@@ -54,7 +54,11 @@ def _walk(ir, unknown_exprs: Counter, unknown_sources: Counter, unspecialized_op
           per_kind_examples: dict, query_name: str) -> None:
     """Walk an IR for coverage gaps, accumulating counts and examples."""
     from kustology.ir import (
-        CompoundNamedExpr, NamedExpr, Operator, UnknownExpr, UnknownSource,
+        CompoundNamedExpr,
+        NamedExpr,
+        Operator,
+        UnknownExpr,
+        UnknownSource,
     )
 
     def walk_expr(expr):

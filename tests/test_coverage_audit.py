@@ -23,8 +23,8 @@ import pytest
 
 pytest.importorskip("pydantic")
 
-from kustology.ir import IRBuilder  # noqa: E402
-from kustology.reflection import syntax_kinds  # noqa: E402
+from kustology.ir import IRBuilder
+from kustology.reflection import syntax_kinds
 
 BASELINE = Path(__file__).resolve().parent / "fixtures" / "syntax_kinds_baseline.json"
 
