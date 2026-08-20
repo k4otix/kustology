@@ -209,5 +209,20 @@ def literal_value_and_ticks(node: Any) -> tuple[Any, int | None]:
         return raw.ToString("c", CultureInfo.InvariantCulture), raw.Ticks
     if isinstance(raw, (str, int, float, bool)):
         return raw, None
-    return raw.ToString(), None
+    # Covers decimal and guid (and anything else with no dedicated branch
+    # above). ``None`` as the format keeps each type's default format ("G"
+    # for decimal, "D" for guid); the two-argument overload is required
+    # because Guid has no single-argument ToString(IFormatProvider).
+    #
+    # Passing InvariantCulture here only pins how the value *renders* — it
+    # does not protect the value itself. LiteralValue is parsed lazily on
+    # first property access, so for decimal (as for the timespan literals
+    # Task 1 fixed) a non-invariant ambient culture already in effect at
+    # *parse* time can corrupt the parsed value before this function ever
+    # runs (e.g. treating the decimal point as a group separator); no
+    # ToString() argument can recover a value that was mis-parsed upstream.
+    # What actually protects decimal is the import-time culture pin in
+    # ``bridge._pin_invariant_culture`` — this argument only removes one
+    # more ambient-culture dependency from the rendering step itself.
+    return raw.ToString(None, CultureInfo.InvariantCulture), None
 
