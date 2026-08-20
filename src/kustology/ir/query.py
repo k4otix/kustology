@@ -568,16 +568,16 @@ class LetBinding(BaseModel):
     name: str
     span: Span
     rhs_expr: AnyExpr | None = None
-    # Set for a tabular right-hand side. Note the enrichment boundary:
-    # ``SchemaAttacher.enrich`` walks ``QueryIR.main_pipeline`` only, so
-    # ``rhs_pipeline.result_schema`` stays ``None`` even on a fully bound
-    # parse where ``main_pipeline.result_schema`` is populated. ``ColumnRef``
-    # nodes inside a let pipeline are likewise not given a ``table``.
-    # Deliberate, not an oversight: resolving a let pipeline's output schema
-    # means threading let-bound names through the attacher's scope model, a
-    # behavior change with its own consequences, and nothing consumes the
-    # field today. Read the binding's ``inner_tables`` and look their schemas
-    # up directly if you need the source columns.
+    # Set for a tabular right-hand side. ``SchemaAttacher.enrich`` walks
+    # bindings in declaration order and registers each one's output columns
+    # under its name, so on a bound parse ``rhs_pipeline.result_schema`` is
+    # populated and a later binding or the main pipeline reading the name
+    # through a ``LetRef`` resolves against those columns.
+    #
+    # Two boundaries remain: a binding naming one declared *later* is not a
+    # ``LetRef`` (see that class), so there is nothing to thread; and
+    # ``let``-declared functions are recorded, not expanded, so a call site
+    # does not acquire the body's schema.
     rhs_pipeline: Pipeline | None = None
     rhs_function: LetFunction | None = None
     # Tables and time expressions found inside rhs_pipeline; empty otherwise.

@@ -31,6 +31,7 @@ from .query import (
     ExtendOp,
     FilterOp,
     JoinOp,
+    LetRef,
     LookupOp,
     MakeSeriesOp,
     MvExpandOp,
@@ -95,18 +96,41 @@ class SchemaAttacher:
 
     def __init__(self, schemas: dict[str, dict[str, str]] | None = None):
         self.schemas: dict[str, dict[str, str]] = dict(schemas or {})
+        # {let name: {column: type}} for the enrich() call in progress.
+        # Reset per call, not per instance: a reused attacher must not carry
+        # one query's binding names into the next.
+        self._let_schemas: dict[str, dict[str, str]] = {}
 
     def enrich(self, ir: QueryIR) -> QueryIR:
-        """Enrich ``ir.main_pipeline`` in place and mark the IR attached.
+        """Enrich the whole IR in place and mark it attached.
 
-        Scope boundary: ``ir.let_bindings`` are *not* walked, so a tabular
-        binding's ``rhs_pipeline.result_schema`` stays ``None`` and the
-        ``ColumnRef`` nodes inside it keep ``table=None``. Extending the walk
-        there requires threading let-bound names through this class's scope
-        model so a later ``let`` (or the main pipeline) sees an earlier one's
-        output columns — a behavior change, not a loop addition. See the note
-        on ``LetBinding.rhs_pipeline``.
+        Tabular ``let`` bindings are walked first, in declaration order, and
+        each one's output columns are registered under its name. A later
+        binding or the main pipeline reading that name through a
+        :class:`LetRef` then resolves against those columns, so
+
+            let Base = SecurityEvent | where EventID > 4624;
+            Base | project Account
+
+        gives ``Account`` the type ``string`` and the provenance ``"Base"``
+        rather than leaving both unresolved.
+
+        Two boundaries remain, and are boundaries rather than bugs:
+
+        * A binding naming one declared *later* is not a ``LetRef`` at all
+          (see :class:`LetRef`), so there is nothing to thread — it stays an
+          opaque table.
+        * ``let``-declared functions are recorded, not expanded, so a call
+          site does not acquire the body's schema.
         """
+        self._let_schemas = {}
+        for binding in ir.let_bindings:
+            if binding.rhs_pipeline is None:
+                continue
+            self._walk_pipeline(binding.rhs_pipeline)
+            schema = binding.rhs_pipeline.result_schema
+            if schema is not None:
+                self._let_schemas[binding.name] = dict(schema.columns)
         self._walk_pipeline(ir.main_pipeline)
         ir.schema_attached = True
         return ir
@@ -126,6 +150,15 @@ class SchemaAttacher:
             self._walk_pipeline(source)
             columns = dict(source.result_schema.columns) if source.result_schema else {}
             return ScopeEntry(table=None, columns=columns)
+        if isinstance(source, LetRef):
+            # A let alias carries the binding's output columns, and keeps its
+            # own name as provenance -- the alias *is* what the pipeline
+            # reads, and reporting the underlying table would lose the step
+            # the query actually wrote.
+            columns = self._let_schemas.get(source.name)
+            if columns is not None:
+                return ScopeEntry(table=source.name, columns=dict(columns))
+            return ScopeEntry(table=None, columns={})
         name = source.name if isinstance(source, TableRef) else None
         return ScopeEntry(table=name, columns=self._table_schema(name))
 

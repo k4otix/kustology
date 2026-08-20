@@ -482,3 +482,77 @@ def test_count_reshapes_scope_to_a_single_column(builder, attacher):
     ir2 = builder.build("DeviceProcessEvents | count as Hits")
     attacher.enrich(ir2)
     assert set(ir2.main_pipeline.result_schema.columns) == {"Hits"}
+
+
+# --- let threading ---------------------------------------------------------
+
+
+def test_let_pipeline_is_enriched(builder, attacher):
+    """``enrich`` walked ``main_pipeline`` only, so a tabular binding's
+    ``result_schema`` stayed None and the ColumnRefs inside it kept
+    ``table=None`` even on a fully bound parse."""
+    ir = builder.build(
+        "let Base = DeviceProcessEvents | where ProcessId > 1; Base | count"
+    )
+    attacher.enrich(ir)
+    binding = ir.let_bindings[0]
+    assert binding.rhs_pipeline.result_schema is not None
+    assert "AccountName" in binding.rhs_pipeline.result_schema.columns
+    assert _refs(ir)["ProcessId"] == {"DeviceProcessEvents"}
+
+
+def test_main_pipeline_resolves_columns_through_a_let_name(builder, attacher):
+    """The whole point: `Base | project AccountName` knows what Base holds."""
+    ir = builder.build(
+        "let Base = DeviceProcessEvents | where ProcessId > 1; "
+        "Base | project AccountName"
+    )
+    attacher.enrich(ir)
+    refs = _refs(ir)
+    assert refs["AccountName"] == {"Base"}
+    assert ir.main_pipeline.result_schema.columns["AccountName"] == "string"
+
+
+def test_let_threading_follows_a_chain(builder, attacher):
+    ir = builder.build(
+        "let A = DeviceProcessEvents | project AccountName, ProcessId; "
+        "let B = A | where ProcessId > 2; "
+        "B | project AccountName"
+    )
+    attacher.enrich(ir)
+    a, b = ir.let_bindings
+    assert set(a.rhs_pipeline.result_schema.columns) == {"AccountName", "ProcessId"}
+    assert set(b.rhs_pipeline.result_schema.columns) == {"AccountName", "ProcessId"}
+    assert ir.main_pipeline.result_schema.columns["AccountName"] == "string"
+
+
+def test_let_threading_does_not_resolve_a_forward_reference(builder, attacher):
+    """A binding naming one declared later is not a LetRef at all, so there
+    is nothing to thread -- it stays an opaque table."""
+    ir = builder.build(
+        "let Early = Later | take 1; "
+        "let Later = DeviceProcessEvents | take 1; "
+        "Early | project AccountName"
+    )
+    attacher.enrich(ir)
+    assert ir.let_bindings[0].rhs_pipeline.result_schema.columns == {}
+
+
+def test_scalar_binding_is_untouched_by_threading(builder, attacher):
+    ir = builder.build("let lookback = 1h; DeviceProcessEvents | count")
+    attacher.enrich(ir)
+    assert ir.let_bindings[0].rhs_pipeline is None
+    assert ir.let_bindings[0].rhs_expr is not None
+
+
+def test_let_names_do_not_leak_between_enrich_calls(attacher, builder):
+    """The let scope is per-call state; a reused attacher must not carry
+    one query's binding names into the next."""
+    first = builder.build(
+        "let Base = DeviceProcessEvents | project AccountName; Base | count"
+    )
+    attacher.enrich(first)
+    # `Base` here is an unrelated, unknown table -- not the previous binding.
+    second = builder.build("Base | project AccountName")
+    attacher.enrich(second)
+    assert second.main_pipeline.result_schema.columns.get("AccountName") == "unknown"

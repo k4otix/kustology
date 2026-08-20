@@ -176,11 +176,12 @@ def test_semantic_hash_diverges_across_bind_state_for_a_table_alias():
     )
 
 
-def test_let_pipeline_result_schema_is_not_populated():
-    """SchemaAttacher walks main_pipeline only — documented boundary (R6).
+def test_let_pipeline_result_schema_is_populated():
+    """SchemaAttacher now walks let bindings too, threading their names.
 
-    Pinned so the field's emptiness is a stated contract rather than a
-    silent gap, and so extending the binder later has to update this test.
+    This replaces a test that pinned the *absence* of this behavior as a
+    documented boundary (R6), on the stated condition that extending the
+    binder would have to update it.
     """
     ir = parse(
         "let Base = OtherTable | where EventID == 1; Base | count",
@@ -188,8 +189,22 @@ def test_let_pipeline_result_schema_is_not_populated():
     ).to_ir()
     assert ir.schema_attached is True
     assert ir.main_pipeline.result_schema is not None
-    assert ir.let_bindings[0].rhs_pipeline is not None
-    assert ir.let_bindings[0].rhs_pipeline.result_schema is None
+    binding = ir.let_bindings[0]
+    assert binding.rhs_pipeline is not None
+    assert binding.rhs_pipeline.result_schema.columns == {"EventID": "int"}
+
+
+def test_let_bound_columns_carry_the_alias_as_provenance():
+    """Reading through a let alias reports the alias, not the base table --
+    the alias is the step the query actually wrote."""
+    from kustology.ir import ColumnRef, find_all
+
+    ir = parse(
+        "let Base = OtherTable | where EventID == 1; Base | project EventID",
+        schema={"OtherTable": {"EventID": "int"}},
+    ).to_ir()
+    tables = {c.table for c in find_all(ir.main_pipeline, ColumnRef)}
+    assert tables == {"Base"}
 
 
 def test_tabular_binding_is_reachable_by_generic_traversal():
