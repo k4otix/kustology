@@ -128,7 +128,7 @@ has 'WithClause': True -> with (format="csv")
 
 ## 4. Detection methods
 
-The handoff supplied one heuristic. It found two of the twelve Pattern A items.
+The handoff supplied one heuristic. It found two of the fourteen Pattern A items.
 Two further methods found the rest, and are worth keeping.
 
 ### 4a. Assembly reflection (found A4, A5, A8, A9)
