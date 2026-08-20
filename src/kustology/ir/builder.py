@@ -172,6 +172,19 @@ def _is_tabular_let_rhs(net_kind: str) -> bool:
     non-operator tabular kinds. Does *not* cover a bare ``NameReference`` —
     that is only tabular when the binder proves it, which the caller checks
     separately.
+
+    ``externaldata`` is deliberately excluded, though it *is* tabular in KQL.
+    It has no pipeline and no source to build one from, so routing it through
+    ``_visit_pipeline`` would manufacture an ``UnknownSource`` — inventing a
+    coverage gap to satisfy a field, and tripping the corpus gate on a query
+    the builder actually handles. ``let X = externaldata(...)`` therefore
+    lands on ``rhs_expr`` as an :class:`~kustology.ir.expr.ExternalDataExpr`,
+    which carries the declared columns, the URI and the format, so a consumer
+    can read the shape from there.
+
+    The consequence to know: ``rhs_pipeline is not None`` is *not* a reliable
+    test for "is this binding tabular". Check ``rhs_expr`` for an
+    ``ExternalDataExpr`` as well.
     """
     return net_kind.endswith("Operator") or net_kind in _TABULAR_LET_RHS_KINDS
 

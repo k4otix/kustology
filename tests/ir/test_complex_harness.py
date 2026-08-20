@@ -29,6 +29,7 @@ import pytest
 from kustology.ir import (
     IRBuilder,
     Operator,
+    SubqueryExpr,
     UnknownExpr,
     UnknownSource,
     find_all,
@@ -84,7 +85,28 @@ def _scan(ir):
         # _visit_operator; isinstance would match every subclass.
         [op for op in find_all(ir, Operator) if type(op) is Operator],
         list(find_all(ir, UnknownSource)),
+        _degraded_let_bindings(ir),
     )
+
+
+def _degraded_let_bindings(ir) -> list[str]:
+    """Tabular ``let`` right-hand sides that landed on ``rhs_expr``.
+
+    Closes a hole the ``SubqueryExpr`` work opened. Removing the paren
+    unwrap in ``_visit_let_statement`` used to degrade
+    ``let X = ( T | where … );`` -- the dominant Sentinel idiom -- to an
+    ``UnknownExpr``, which the first assertion caught. Now that a bare
+    tabular subquery is modeled, the same regression degrades it to
+    ``rhs_expr=SubqueryExpr`` with ``inner_tables=[]`` instead, which is a
+    perfectly well-formed node the gate had no reason to flag.
+
+    A ``SubqueryExpr`` on a ``let`` right-hand side always means the unwrap
+    failed: the binding is tabular, so it belongs in ``rhs_pipeline``.
+    """
+    return [
+        lb.name for lb in ir.let_bindings
+        if isinstance(lb.rhs_expr, SubqueryExpr)
+    ]
 
 
 @pytest.mark.skipif(
@@ -95,7 +117,7 @@ def _scan(ir):
 def test_complex_kql_parsing(builder, name, query):
     ir = builder.build(query)
 
-    unknowns, unspecialized, unknown_sources = _scan(ir)
+    unknowns, unspecialized, unknown_sources, degraded_lets = _scan(ir)
 
     assert not unknowns, (
         f"{name}: builder produced {len(unknowns)} UnknownExpr nodes: "
@@ -107,6 +129,11 @@ def test_complex_kql_parsing(builder, name, query):
     assert not unknown_sources, (
         f"{name}: builder produced {len(unknown_sources)} UnknownSource nodes — "
         f"expected ImplicitSource for sub-pipelines"
+    )
+    assert not degraded_lets, (
+        f"{name}: tabular let bindings {degraded_lets} landed on rhs_expr as a "
+        f"SubqueryExpr — the parenthesized-RHS unwrap did not fire, so "
+        f"rhs_pipeline and inner_tables are empty"
     )
 
 
@@ -158,7 +185,7 @@ def test_gate_walks_let_bindings():
             source=TableRef(name="Main", span=span), operators=[],
         ),
     )
-    unknowns, unspecialized, unknown_sources = _scan(ir)
+    unknowns, unspecialized, unknown_sources, _ = _scan(ir)
 
     assert [u.ast_kind for u in unknowns] == ["MadeUpExpression"]
     assert len(unknown_sources) == 1

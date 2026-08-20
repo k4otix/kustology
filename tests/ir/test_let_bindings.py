@@ -383,3 +383,27 @@ def test_let_ref_classification_is_bind_independent():
     # The RHS divergence is unchanged and unfixable without a schema.
     assert unbound.let_bindings[0].rhs_expr is not None
     assert bound.let_bindings[0].rhs_pipeline is not None
+
+
+def test_externaldata_let_rhs_is_scalar_shaped_by_design():
+    """``rhs_pipeline is not None`` is not a reliable "is tabular" test.
+
+    ``externaldata`` is tabular in KQL but has no pipeline and no source to
+    build one from, so it lands on ``rhs_expr``. Routing it through
+    ``_visit_pipeline`` would manufacture an ``UnknownSource`` -- inventing a
+    coverage gap to satisfy a field. Pinned here with the reasoning in
+    ``_is_tabular_let_rhs``'s docstring so it is not rediscovered as a bug.
+    """
+    from kustology.ir import ExternalDataExpr, IRBuilder
+
+    ir = IRBuilder().build(
+        'let known = externaldata(id:string) [@"https://example.test/x.csv"]; '
+        "T | where C !in (known)"
+    )
+    lb = ir.let_bindings[0]
+    assert lb.rhs_pipeline is None
+    assert isinstance(lb.rhs_expr, ExternalDataExpr)
+    assert lb.inner_tables == []
+    # The shape is still legible: the columns and URI are on the expression.
+    assert lb.rhs_expr.columns == [("id", "string")]
+    assert lb.rhs_expr.uri == "https://example.test/x.csv"
