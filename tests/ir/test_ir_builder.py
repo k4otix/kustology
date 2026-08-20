@@ -504,3 +504,46 @@ def test_has_any_is_case_insensitive(ir_builder):
     ir = ir_builder.build('T | where C has_any ("a", "b")')
     m = next(iter(find_all(ir, SetMembership)))
     assert m.case_sensitive is False
+
+
+# --- canonical_form coverage -----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "query, expected",
+    [
+        ("T | where -X > 1", "-X > 1"),
+        ("T | where D.a == 1", "D.a == 1"),
+        ("T | where D['a'] == 1", 'D["a"] == 1'),
+        ("T | where toscalar(S | summarize max(A)) > 1", "toscalar(S | ...) > 1"),
+        ("T | where X in ((S | project X))", "X in ((S | ...))"),
+        ("T | distinct *", "*"),
+    ],
+)
+def test_canonical_form_covers_every_expr_shape(ir_builder, query, expected):
+    """``canonical()`` handled 12 of 23 Expr types; the rest fell through to
+    a bare ``"?"``, so ``-X > 1``, ``D.a == 1`` and ``toscalar(...) > 1``
+    were all indistinguishable as ``"? > 1"``.
+    """
+    from kustology.ir import Expr, FilterOp, find_all
+
+    ir = ir_builder.build(query)
+    filters = list(find_all(ir, FilterOp))
+    if filters:
+        node = filters[0].predicate
+    else:  # `distinct *` has no predicate -- take the star itself
+        node = next(e for e in find_all(ir, Expr) if type(e).__name__ == "StarExpr")
+    form = node.canonical_form
+    assert "?" not in form, f"unhandled Expr shape rendered as '?': {form}"
+    assert form == expected
+
+
+def test_canonical_form_distinguishes_shapes_that_used_to_collide(ir_builder):
+    from kustology.ir import FilterOp, find_all
+
+    def form(q):
+        return next(iter(find_all(ir_builder.build(q), FilterOp))).predicate.canonical_form
+
+    forms = {form("T | where -X > 1"), form("T | where D.a == 1"),
+             form("T | where toscalar(S | summarize max(A)) > 1")}
+    assert len(forms) == 3, f"distinct predicates collapsed to {forms}"

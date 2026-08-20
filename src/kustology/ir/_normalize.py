@@ -17,15 +17,26 @@ from .expr import (
     And,
     Between,
     BinOp,
+    BracketedExpr,
     CaseExpr,
     ColumnRef,
+    CompoundNamedExpr,
+    ElementExpr,
     Exists,
+    ExternalDataExpr,
     FuncCall,
     LiteralExpr,
+    MaterializeExpr,
+    NamedExpr,
     Not,
     Or,
+    PathExpr,
     RegexMatch,
     SetMembership,
+    StarExpr,
+    SubqueryExpr,
+    ToScalarExpr,
+    UnaryOp,
 )
 
 
@@ -109,4 +120,44 @@ def canonical(expr: Any) -> str:
         return f"exists({canonical(expr.target)})"
     if isinstance(expr, RegexMatch):
         return f"{canonical(expr.target)} matches regex \"{expr.pattern}\""
+    if isinstance(expr, UnaryOp):
+        return f"{expr.op}{canonical(expr.operand)}"
+    if isinstance(expr, PathExpr):
+        return f"{canonical(expr.expression)}.{canonical(expr.selector)}"
+    if isinstance(expr, ElementExpr):
+        return f"{canonical(expr.expression)}[{canonical(expr.selector)}]"
+    if isinstance(expr, BracketedExpr):
+        # Parentheses carry no semantics once the tree is built, so they are
+        # dropped rather than rendered -- `(X) > 1` and `X > 1` are the same
+        # predicate and must produce the same string.
+        return canonical(expr.expression)
+    if isinstance(expr, NamedExpr):
+        return f"{expr.name} = {canonical(expr.expression)}"
+    if isinstance(expr, CompoundNamedExpr):
+        return f"({', '.join(expr.names)}) = {canonical(expr.expression)}"
+    if isinstance(expr, StarExpr):
+        return "*"
+    if isinstance(expr, ExternalDataExpr):
+        cols = ", ".join(f"{n}:{ty}" for n, ty in expr.columns)
+        return f"externaldata({cols})[{expr.uri}]"
+    # Pipeline-bearing expressions. The inner pipeline is elided rather than
+    # rendered: canonical() is a pure Expr function and Pipeline is modeled
+    # in ir.query, so recursing would invert the dependency. The wrapper is
+    # still named, which is what distinguishes these from each other and
+    # from every other shape -- before, all three rendered as a bare "?".
+    if isinstance(expr, ToScalarExpr):
+        return f"toscalar({_pipeline_head(expr.pipeline)} | ...)"
+    if isinstance(expr, MaterializeExpr):
+        return f"materialize({_pipeline_head(expr.pipeline)} | ...)"
+    if isinstance(expr, SubqueryExpr):
+        return f"({_pipeline_head(expr.pipeline)} | ...)"
+    # UnknownExpr and anything a future release adds. UnknownExpr carries the
+    # source text, which is the most faithful thing available for a shape the
+    # builder could not model.
     return getattr(expr, "raw_text", "?").strip() if hasattr(expr, "raw_text") else "?"
+
+
+def _pipeline_head(pipeline: Any) -> str:
+    """The name a sub-pipeline reads from, for canonical rendering."""
+    source = getattr(pipeline, "source", None)
+    return getattr(source, "name", None) or "..."
