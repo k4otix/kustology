@@ -25,9 +25,6 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any
-
-from pydantic import BaseModel
 
 from kustology.ir import (
     IRBuilder,
@@ -36,6 +33,7 @@ from kustology.ir import (
     SchemaAttacher,
     UnknownExpr,
     UnknownSource,
+    walk,
 )
 from kustology.utils.analysis import build_global_state
 
@@ -171,24 +169,6 @@ def load_schemas(in_repo: Path, corpus: Path,
 # Per-query verification
 # ---------------------------------------------------------------------------
 
-def _walk(node: Any):
-    """Yield every pydantic-model node reachable from `node`."""
-    if not isinstance(node, BaseModel):
-        return
-    yield node
-    for field_name in type(node).model_fields:
-        try:
-            val = getattr(node, field_name)
-        except Exception:
-            continue
-        if isinstance(val, BaseModel):
-            yield from _walk(val)
-        elif isinstance(val, list):
-            for v in val:
-                if isinstance(v, BaseModel):
-                    yield from _walk(v)
-
-
 def verify_query(builder: IRBuilder, attacher: SchemaAttacher,
                  qid: str, body: str) -> dict | None:
     failure: dict = {"id": qid, "categories": []}
@@ -203,7 +183,7 @@ def verify_query(builder: IRBuilder, attacher: SchemaAttacher,
     bare_ops: list[str] = []
     unknown_exprs: list[str] = []
     unknown_sources: list[str] = []
-    for n in _walk(ir.main_pipeline):
+    for n in walk(ir):
         if type(n) is Operator:
             bare_ops.append("Operator")
         elif isinstance(n, UnknownExpr):

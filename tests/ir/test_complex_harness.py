@@ -27,13 +27,11 @@ from pathlib import Path
 import pytest
 
 from kustology.ir import (
-    CompoundNamedExpr,
     IRBuilder,
-    NamedExpr,
     Operator,
-    Pipeline,
     UnknownExpr,
     UnknownSource,
+    find_all,
 )
 
 CORPUS_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "complex_queries"
@@ -62,72 +60,31 @@ def builder():
     return IRBuilder()
 
 
-def _walk_expr(expr, unknowns: list):
-    if expr is None:
-        return
-    if isinstance(expr, UnknownExpr):
-        unknowns.append(expr)
-    for attr in (
-        "left", "right", "operand", "expression", "selector",
-        "target", "column", "low", "high",
-    ):
-        child = getattr(expr, attr, None)
-        if child is not None:
-            _walk_expr(child, unknowns)
-    for attr in ("operands", "args", "values"):
-        children = getattr(expr, attr, None) or []
-        for c in children:
-            _walk_expr(c, unknowns)
-    if isinstance(expr, (NamedExpr, CompoundNamedExpr)):
-        _walk_expr(expr.expression, unknowns)
+def _scan(ir):
+    """Every coverage gap in ``ir``, found with the generic walker.
 
+    This replaced three hand-rolled traversals -- one here, one in
+    ``scripts/mine_corpus.py``, one in ``SchemaAttacher`` -- that each
+    recursed a hardcoded tuple of attribute names. All three omitted
+    ``pipeline``, so nothing inside ``toscalar(...)`` / ``materialize(...)``
+    / a bare subquery was ever inspected, and this one also probed operator
+    fields by ``hasattr`` from a fixed list, missing ``SortOp.expressions``,
+    ``TopOp.by``, ``RangeOp.start``/``end``/``step``,
+    ``FacetOp.with_pipeline``, ``MacroExpandOp.pipeline`` and
+    ``MakeSeriesOp.on_column`` among others.
 
-def _walk_pipeline(pipeline, unknowns: list, unspecialized: list, unknown_sources: list):
-    # An UnknownSource at any pipeline position is a coverage gap — every
-    # sub-pipeline whose source is implicit (union-at-root, mv-apply / partition
-    # subquery, join/lookup RHS) should resolve to ImplicitSource.
-    if isinstance(pipeline.source, UnknownSource):
-        unknown_sources.append(pipeline.source)
-    if isinstance(pipeline.source, Pipeline):
-        _walk_pipeline(pipeline.source, unknowns, unspecialized, unknown_sources)
-    for op in pipeline.operators:
-        # Strict identity catches the bare-base-class fallthrough in _visit_operator.
-        if type(op) is Operator:
-            unspecialized.append(op)
-        if hasattr(op, "predicate"):
-            _walk_expr(op.predicate, unknowns)
-        if hasattr(op, "assignments"):
-            for a in op.assignments:
-                _walk_expr(a.expr, unknowns)
-        if hasattr(op, "aggregations"):
-            for a in op.aggregations:
-                _walk_expr(a.expr, unknowns)
-        if hasattr(op, "columns"):
-            for c in op.columns:
-                if hasattr(c, "expr"):
-                    _walk_expr(c.expr, unknowns)
-                else:
-                    _walk_expr(c, unknowns)
-        if hasattr(op, "right") and op.right is not None and hasattr(op.right, "operators"):
-            _walk_pipeline(op.right, unknowns, unspecialized, unknown_sources)
-        if hasattr(op, "pipelines") and op.pipelines:
-            for sub in op.pipelines:
-                _walk_pipeline(sub, unknowns, unspecialized, unknown_sources)
-
-
-def _walk_let_bindings(let_bindings, unknowns: list, unspecialized: list, unknown_sources: list):
-    """Cover every ``let`` right-hand side, not just the main pipeline.
-
-    A gap reachable only through a ``let`` binding is still a gap: the whole
-    point of populating ``LetBinding`` is that consumers traverse into it.
-    Walking only ``ir.main_pipeline`` is how an unpopulated ``rhs_pipeline``
-    (and the ``UnknownExpr`` that stood in for it) shipped green.
+    ``find_all`` iterates ``model_fields``, so a gate built on it cannot
+    develop a blind spot when the model grows a field -- which is the whole
+    reason this gate exists. It also covers ``let`` bindings for free,
+    without the separate walk that used to be needed.
     """
-    for lb in let_bindings:
-        if lb.rhs_expr is not None:
-            _walk_expr(lb.rhs_expr, unknowns)
-        if lb.rhs_pipeline is not None:
-            _walk_pipeline(lb.rhs_pipeline, unknowns, unspecialized, unknown_sources)
+    return (
+        list(find_all(ir, UnknownExpr)),
+        # Strict identity catches the bare-base-class fallthrough in
+        # _visit_operator; isinstance would match every subclass.
+        [op for op in find_all(ir, Operator) if type(op) is Operator],
+        list(find_all(ir, UnknownSource)),
+    )
 
 
 @pytest.mark.skipif(
@@ -138,11 +95,7 @@ def _walk_let_bindings(let_bindings, unknowns: list, unspecialized: list, unknow
 def test_complex_kql_parsing(builder, name, query):
     ir = builder.build(query)
 
-    unknowns: list = []
-    unspecialized: list = []
-    unknown_sources: list = []
-    _walk_pipeline(ir.main_pipeline, unknowns, unspecialized, unknown_sources)
-    _walk_let_bindings(ir.let_bindings, unknowns, unspecialized, unknown_sources)
+    unknowns, unspecialized, unknown_sources = _scan(ir)
 
     assert not unknowns, (
         f"{name}: builder produced {len(unknowns)} UnknownExpr nodes: "
@@ -165,7 +118,14 @@ def test_gate_walks_let_bindings():
     ship green through six task reviews. Built from a synthetic IR rather than
     a query so the coverage survives the builder growing better.
     """
-    from kustology.ir import LetBinding, Pipeline, Span, TableRef, UnknownExpr
+    from kustology.ir import (
+        LetBinding,
+        Pipeline,
+        QueryIR,
+        Span,
+        TableRef,
+        UnknownExpr,
+    )
 
     span = Span(text_start=0, width=1)
     bindings = [
@@ -190,10 +150,15 @@ def test_gate_walks_let_bindings():
         ),
     ]
 
-    unknowns: list = []
-    unspecialized: list = []
-    unknown_sources: list = []
-    _walk_let_bindings(bindings, unknowns, unspecialized, unknown_sources)
+    ir = QueryIR(
+        raw_text="",
+        semantic_hash="",
+        let_bindings=bindings,
+        main_pipeline=Pipeline(
+            source=TableRef(name="Main", span=span), operators=[],
+        ),
+    )
+    unknowns, unspecialized, unknown_sources = _scan(ir)
 
     assert [u.ast_kind for u in unknowns] == ["MadeUpExpression"]
     assert len(unknown_sources) == 1
