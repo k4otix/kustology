@@ -12,7 +12,7 @@ AnyExpr = Union[
     "BinOp", "UnaryOp", "SetMembership", "Between", "And", "Or", "Not",
     "Exists", "RegexMatch", "CaseExpr", "ColumnRef", "LiteralExpr",
     "FuncCall", "PathExpr", "ElementExpr", "StarExpr", "NamedExpr",
-    "CompoundNamedExpr", "BracketedExpr", "MaterializeExpr", "ToScalarExpr",
+    "CompoundNamedExpr", "BracketedExpr", "ToScalarExpr",
     "SubqueryExpr", "ExternalDataExpr", "UnknownExpr", "Expr",
 ]
 
@@ -218,12 +218,6 @@ class BracketedExpr(Expr):
     expression: AnyExpr
 
 
-class MaterializeExpr(Expr):
-    KIND: ClassVar[str] = "materialize"
-    kind: Literal["materialize"] = "materialize"
-    pipeline: Any  # forward ref to Pipeline (cycle avoidance)
-
-
 class ToScalarExpr(Expr):
     KIND: ClassVar[str] = "to_scalar"
     kind: Literal["to_scalar"] = "to_scalar"
@@ -235,8 +229,8 @@ class SubqueryExpr(Expr):
 
     KQL allows a pipeline as the value set of a membership test —
     ``| where User in ((Suspicious | project User))``. Unlike
-    ``MaterializeExpr`` / ``ToScalarExpr`` there is no wrapping function to
-    name it after, so the pipeline arrives naked. Modeling it keeps the
+    ``ToScalarExpr`` there is no wrapping function to name it after, so the
+    pipeline arrives naked. Modeling it keeps the
     subtree reachable by ``walk``/``find_all`` instead of collapsing a whole
     inner query into an ``UnknownExpr`` blob of raw text.
     """
@@ -265,7 +259,7 @@ class UnknownExpr(Expr):
 for _cls in (
     LiteralExpr, ColumnRef, BinOp, SetMembership, Between, And, Or, Not,
     FuncCall, CaseExpr, RegexMatch, Exists, PathExpr, ElementExpr, StarExpr,
-    NamedExpr, CompoundNamedExpr, UnaryOp, BracketedExpr, MaterializeExpr,
+    NamedExpr, CompoundNamedExpr, UnaryOp, BracketedExpr,
     ToScalarExpr, SubqueryExpr, ExternalDataExpr,
 ):
     _cls.model_rebuild()

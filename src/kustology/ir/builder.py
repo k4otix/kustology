@@ -46,7 +46,6 @@ from .expr import (
     ExternalDataExpr,
     FuncCall,
     LiteralExpr,
-    MaterializeExpr,
     NamedExpr,
     Not,
     Or,
@@ -288,6 +287,12 @@ class IRBuilder:
         "AndExpression", "OrExpression", "OrderedExpression", "BinaryExpression",
         "InExpression", "HasAnyExpression", "HasAllExpression",
         "BetweenExpression", "FunctionCallExpression", "MaterializeExpression",
+        # MaterializeExpression is handled, but by ``_visit_pipeline`` --
+        # ``materialize`` is a keyword the grammar admits only as a ``let``
+        # right-hand side, where ``_TABULAR_LET_RHS_KINDS`` routes it to a
+        # nested ``Pipeline``. It stays listed because the kind *is* modelled;
+        # dropping it would make the coverage audit report a fully-handled
+        # shape as unhandled.
         "ToScalarExpression", "PipeExpression", "ExternalDataExpression",
         "MakeSeriesExpression",
     })
@@ -1188,9 +1193,6 @@ class IRBuilder:
                 res = Exists(op=lname, target=args[0], span=span)
             elif lname == "not" and len(args) == 1:
                 res = Not(operand=args[0], span=span)
-
-        elif kind == "MaterializeExpression":
-            res = MaterializeExpr(pipeline=self._visit_pipeline(node.Expression), span=span)
 
         elif kind == "ToScalarExpression":
             res = ToScalarExpr(pipeline=self._visit_pipeline(node.Expression), span=span)

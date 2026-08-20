@@ -673,3 +673,56 @@ def test_exists_canonical_form_names_the_real_function(ir_builder):
         ir = ir_builder.build(f"T | where {fn}(C)")
         e = next(iter(find_all(ir, Exists)))
         assert e.canonical_form == f"{fn}(C)", fn
+
+
+def test_materialize_appears_only_on_a_let_right_hand_side():
+    """Pins the grammar fact that makes ``MaterializeExpr`` unnecessary.
+
+    ``materialize`` is a KQL keyword the parser accepts in exactly one
+    position -- as a ``let`` statement's right-hand side -- where
+    ``_visit_pipeline`` turns it into a nested ``Pipeline``. It is never an
+    expression, so the IR has no expression node for it.
+
+    Written against the .NET tree rather than the IR so it survives the
+    removal, and so a DLL refresh that widens the grammar turns this red
+    instead of silently reintroducing an unmodelled shape.
+    """
+    from Kusto.Language import KustoCode
+
+    import kustology  # noqa: F401  -- loads the CLR
+
+    def parents_of_materialize(query):
+        code = KustoCode.Parse(query)
+        found = []
+
+        def walk(node, parent):
+            if node is None:
+                return
+            if type(node).__name__ == "MaterializeExpression":
+                found.append(type(parent).__name__ if parent else "<root>")
+            for i in range(node.ChildCount):
+                walk(node.GetChild(i), node)
+
+        walk(code.Syntax, None)
+        return found, code.GetSyntaxDiagnostics().Count
+
+    # The one valid position.
+    parents, diags = parents_of_materialize("let A = materialize(S | count); A | count")
+    assert diags == 0
+    assert parents == ["LetStatement"]
+
+    # Every expression position is a parse error, and none builds a node.
+    # Note `.Count` rather than truthiness: an empty .NET IReadOnlyList is
+    # truthy under pythonnet, so `if not diagnostics` never fires.
+    for query in (
+        "T | where materialize(S | count) > 1",
+        "T | extend X = materialize(S | count)",
+        "T | where X in ((materialize(S | count)))",
+        "T | where toscalar(materialize(S | count)) > 1",
+        "materialize(S | count) | count",
+        # Cannot hide under the paren unwrap in _visit_let_statement either.
+        "let A = (materialize(S | count)); A | count",
+    ):
+        parents, diags = parents_of_materialize(query)
+        assert diags > 0, query
+        assert [p for p in parents if p != "LetStatement"] == [], query

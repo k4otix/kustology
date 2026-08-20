@@ -26,7 +26,6 @@ from .expr import (
     ExternalDataExpr,
     FuncCall,
     LiteralExpr,
-    MaterializeExpr,
     NamedExpr,
     Not,
     Or,
@@ -149,8 +148,6 @@ def canonical(expr: Any) -> str:
     # from every other shape -- before, all three rendered as a bare "?".
     if isinstance(expr, ToScalarExpr):
         return f"toscalar({_pipeline_head(expr.pipeline)} | ...)"
-    if isinstance(expr, MaterializeExpr):
-        return f"materialize({_pipeline_head(expr.pipeline)} | ...)"
     if isinstance(expr, SubqueryExpr):
         return f"({_pipeline_head(expr.pipeline)} | ...)"
     # UnknownExpr and anything a future release adds. UnknownExpr carries the
