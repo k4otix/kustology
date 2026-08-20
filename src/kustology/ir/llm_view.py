@@ -40,7 +40,9 @@ from pydantic_core import PydanticUndefined
 # aren't useful for the LLM (offsets need source-text triangulation, KIND
 # duplicates the ``kind`` discriminator). ``schema_attached`` duplicates what
 # ``result_schema`` already conveys.
-_OMIT_FIELDS = {"span", "schema_attached"}
+# ``ticks`` is the machine-exact companion to ``value``; an LLM reads the
+# rendered value, so emitting both is noise.
+_OMIT_FIELDS = {"span", "schema_attached", "ticks"}
 
 
 def to_llm_dict(node: Any) -> Any:

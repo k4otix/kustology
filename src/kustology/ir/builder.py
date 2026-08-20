@@ -25,6 +25,8 @@ from ._builder_helpers import (
     extract_named_param,
     extract_qualified_table_name,
     is_table_symbol,
+    literal_kind_for,
+    literal_value_and_ticks,
     map_semantic_info,
     safe_int,
     to_span,
@@ -838,15 +840,17 @@ class IRBuilder:
             res = StarExpr(span=span)
 
         elif kind == "LiteralExpression":
-            val = node.LiteralValue
-            if hasattr(val, "ToString") and not isinstance(val, (str, int, float, bool, type(None))):
-                val = val.ToString()
-            lit_kind = "string"
-            if isinstance(val, bool):
-                lit_kind = "bool"
-            elif isinstance(val, (int, float)):
-                lit_kind = "int"
-            res = LiteralExpr(value=val, literal_kind=lit_kind, span=span)
+            # The .NET node already carries the exact kind; read it rather than
+            # re-inferring from the Python type of LiteralValue, which cannot
+            # distinguish long from real and collapses datetime/timespan/guid
+            # into "string".
+            value, ticks = literal_value_and_ticks(node)
+            res = LiteralExpr(
+                value=value,
+                literal_kind=literal_kind_for(node),
+                ticks=ticks,
+                span=span,
+            )
 
         elif kind == "DynamicExpression":
             # LiteralValue is the JSON body as a string; consumers can json.loads.

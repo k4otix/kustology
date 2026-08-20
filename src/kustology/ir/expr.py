@@ -55,9 +55,15 @@ class LiteralExpr(Expr):
     kind: Literal["literal"] = "literal"
     value: str | int | float | bool | None
     literal_kind: Literal[
-        "string", "int", "real", "bool", "datetime",
-        "timespan", "dynamic", "guid", "long", "null",
+        "string", "int", "long", "real", "decimal", "bool", "datetime",
+        "timespan", "dynamic", "guid", "null",
     ]
+    # Exact .NET tick count (100ns units) for datetime and timespan literals;
+    # None for every other kind. TimeSpan.TotalSeconds is a float and loses
+    # sub-second exactness, so consumers rebuilding a timedelta use
+    # ``ticks // 10`` for microseconds — that is what makes 1microsecond and
+    # 2tick round-trip.
+    ticks: int | None = None
 
 
 class ColumnRef(Expr):

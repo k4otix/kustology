@@ -150,3 +150,64 @@ def extract_named_param(node: Any, param_name: str, default: str) -> str:
     return default
 
 
+# Microsoft gives every literal its own SyntaxKind. Reading it is exact;
+# re-inferring from the Python type of LiteralValue is not — it cannot tell
+# long from real, and collapses datetime, timespan and guid into "string".
+_LITERAL_KIND_BY_NET_KIND = {
+    "StringLiteralExpression": "string",
+    "BooleanLiteralExpression": "bool",
+    "LongLiteralExpression": "long",
+    "IntLiteralExpression": "int",
+    "RealLiteralExpression": "real",
+    "DecimalLiteralExpression": "decimal",
+    "DateTimeLiteralExpression": "datetime",
+    "TimespanLiteralExpression": "timespan",
+    "GuidLiteralExpression": "guid",
+    "NullLiteralExpression": "null",
+}
+
+
+def literal_kind_for(node: Any) -> str:
+    """Map a .NET literal node's ``SyntaxKind`` to an IR ``literal_kind``.
+
+    Typed nulls (``int(null)``, ``datetime(null)``) keep the SyntaxKind of
+    their declared type but carry a null ``LiteralValue``; they report as
+    ``"null"`` so consumers need only one check.
+    """
+    if node.LiteralValue is None:
+        return "null"
+    return _LITERAL_KIND_BY_NET_KIND.get(str(node.Kind), "string")
+
+
+def literal_value_and_ticks(node: Any) -> tuple[Any, int | None]:
+    """Return ``(value, ticks)`` for a .NET literal node, culture-independently.
+
+    ``.ToString()`` with no format specifier renders through the ambient
+    culture: the same datetime becomes ``1/1/2024 12:00:00 AM`` under en-US
+    (with a U+202F narrow no-break space), ``01.01.2024 00:00:00`` under de-DE
+    and ``2024/01/01 0:00:00`` under ja-JP. Those strings reach
+    ``semantic_hash`` through ``_normalize.canonical``, which made the hash
+    depend on the host locale. Explicit format specifiers remove the
+    dependency and, for datetimes, make the value round-trippable:
+
+    * ``"o"`` — ISO 8601 round-trip, e.g. ``2024-01-01T00:00:00.0000000``
+    * ``"c"`` — invariant TimeSpan constant form, tick-precise, e.g.
+      ``1.12:00:00`` and ``00:00:00.0000002``
+
+    ``ticks`` is populated for datetime and timespan only.
+    """
+    from System.Globalization import CultureInfo
+
+    raw = node.LiteralValue
+    if raw is None:
+        return None, None
+
+    net_kind = str(node.Kind)
+    if net_kind == "DateTimeLiteralExpression":
+        return raw.ToString("o", CultureInfo.InvariantCulture), raw.Ticks
+    if net_kind == "TimespanLiteralExpression":
+        return raw.ToString("c", CultureInfo.InvariantCulture), raw.Ticks
+    if isinstance(raw, (str, int, float, bool)):
+        return raw, None
+    return raw.ToString(), None
+
