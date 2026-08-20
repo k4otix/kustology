@@ -457,3 +457,50 @@ def test_macro_expand_models_its_inner_pipeline(ir_builder):
     op = next(iter(find_all(ir, MacroExpandOp)))
     assert isinstance(op.pipeline, Pipeline)
     assert [t.name for t in find_all(op.pipeline, TableRef)] == ["T"]
+
+
+# --- set membership case sensitivity ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    "op, case_sensitive, polarity",
+    [
+        ("in", True, "inclusion"),
+        ("in~", False, "inclusion"),
+        ("!in", True, "exclusion"),
+        ("!in~", False, "exclusion"),
+    ],
+)
+def test_set_membership_case_sensitivity_follows_the_operator(
+    ir_builder, op, case_sensitive, polarity
+):
+    """``case_sensitive`` was hardcoded False for every membership operator.
+
+    KQL ``in`` is case-*sensitive*; only the tilde forms are not. So the
+    field was constant *and* wrong for half its inputs, and
+    ``canonical_form`` rendered ``X in ("a")`` as ``X in~ ("a")`` -- a
+    different predicate.
+    """
+    from kustology.ir import SetMembership, find_all
+
+    ir = ir_builder.build(f'T | where C {op} ("a", "b")')
+    m = next(iter(find_all(ir, SetMembership)))
+    assert m.case_sensitive is case_sensitive
+    assert m.polarity == polarity
+
+
+def test_case_sensitive_membership_canonicalizes_without_a_tilde(ir_builder):
+    from kustology.ir import SetMembership, find_all
+
+    ir = ir_builder.build('T | where C in ("a")')
+    m = next(iter(find_all(ir, SetMembership)))
+    assert m.canonical_form == 'C in ("a")'
+
+
+def test_has_any_is_case_insensitive(ir_builder):
+    """``has_any`` is a term match and case-insensitive, unlike ``in``."""
+    from kustology.ir import SetMembership, find_all
+
+    ir = ir_builder.build('T | where C has_any ("a", "b")')
+    m = next(iter(find_all(ir, SetMembership)))
+    assert m.case_sensitive is False

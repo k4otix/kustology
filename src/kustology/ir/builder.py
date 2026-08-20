@@ -1059,11 +1059,19 @@ class IRBuilder:
                 )
 
         elif kind in ("InExpression", "HasAnyExpression", "HasAllExpression"):
+            # KQL `in` / `!in` compare exactly; only the tilde forms fold
+            # case. This was hardcoded False, so `in` and `in~` were
+            # indistinguishable in the IR and canonical_form rendered a
+            # case-sensitive `in` as `in~` -- a different predicate.
+            # `has_any` / `has_all` are term matches and always fold case.
+            membership_op = node.Operator.ToString().strip()
             res = SetMembership(
                 column=self._visit_expr(node.Left),
                 values=self._visit_list(node.Right),
-                polarity="inclusion" if "!" not in node.Operator.ToString() else "exclusion",
-                case_sensitive=False,
+                polarity="inclusion" if "!" not in membership_op else "exclusion",
+                case_sensitive=(
+                    kind == "InExpression" and not membership_op.endswith("~")
+                ),
                 span=span,
             )
 
