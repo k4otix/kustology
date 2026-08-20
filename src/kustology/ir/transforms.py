@@ -159,14 +159,19 @@ _VOLATILE_FIELDS = frozenset({
 # tag without silently invalidating stored hashes. Keep in lockstep with
 # ``IR_SCHEMA_VERSION`` in ``kustology.ir`` — bump together.
 #
-# The lockstep rule is about *released* versions. ``v3`` covers everything in
-# the current ``[Unreleased]`` section: the tag exists so a consumer holding
-# stored hashes learns they are stale, and no consumer has seen ``v3`` yet —
-# the only release tag is ``v0.1.0``, and ``release.yml`` fires on ``v*``.
-# Bumping again inside one unreleased window would churn the tag while
-# informing nobody. Bump on the next change *after* a release, not on the
-# next change.
-SEMANTIC_HASH_SCHEME = "kustology-sem-v3"
+# The lockstep rule is about *released* versions. One tag covers one
+# unreleased window: ``v2`` accounts for every canonicalization change since
+# ``v0.1.0``, however many branches landed in between. Bumping per branch
+# would burn tags nobody ever saw and leave gaps in the released sequence
+# that a later reader has to go digging to explain. Bump on the first change
+# *after* a release, not on every change.
+#
+# The one thing never to do is reuse a tag for different rules: a stored hash
+# whose prefix no longer implies its canonicalization is exactly the silent
+# wrong answer the prefix exists to prevent. Renumbering down into an
+# unreleased window is only safe while nothing has consumed the intermediate
+# value.
+SEMANTIC_HASH_SCHEME = "kustology-sem-v2"
 
 
 def compute_semantic_hash(node: BaseModel) -> str:
@@ -174,7 +179,7 @@ def compute_semantic_hash(node: BaseModel) -> str:
 
     Accepts any IR ``BaseModel`` subtree — a full :class:`QueryIR`, a
     standalone :class:`Pipeline`, an :class:`Expr` subtree — and returns
-    a scheme-tagged hash like ``kustology-sem-v3:<64 hex chars>``.
+    a scheme-tagged hash like ``kustology-sem-v2:<64 hex chars>``.
 
     Two subtrees with the same semantic content collide:
 

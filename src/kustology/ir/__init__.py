@@ -16,7 +16,7 @@ serialized IR JSON can carry a version tag (e.g. via wrapper envelope) and
 consumers can refuse to load an incompatible payload.
 """
 
-IR_SCHEMA_VERSION = "0.3"
+IR_SCHEMA_VERSION = "0.2"
 
 from ._guard import _require_pydantic
 

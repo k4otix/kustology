@@ -214,9 +214,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Both are in the hash payload.
 - **`semantic_hash` changes for any query** containing a membership operator,
   an `externaldata`, a `let`-bound name, or — on a bound parse — a column the
-  binder can now resolve. `SEMANTIC_HASH_SCHEME` is `kustology-sem-v3` and
-  `IR_SCHEMA_VERSION` is `0.3`, bumped in lockstep, so stored hashes are
-  invalidated visibly rather than silently comparing unequal.
+  binder can now resolve. Covered by the single schema bump described below.
 
 - **Generic traversal now descends into `let` right-hand sides.** Populating
   `LetBinding.rhs_pipeline` changes what `walk()` and `find_all()` return for
@@ -248,29 +246,32 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the same value, and it entered `semantic_hash` without being stripped as
   volatile. Which `rhs_*` field is populated already carries the distinction.
   Stored IR JSON containing `category` now fails `extra="forbid"` on load.
-- `IR_SCHEMA_VERSION` bumps `0.1` → `0.2`. This branch's field-shape changes
-  (`LetBinding.category` removed, `LiteralExpr.ticks` and `LetFunction`
-  added, `literal_kind` and `LiteralExpr.value` changed) are exactly what the
-  tag exists to flag: a consumer comparing the tag on stored IR JSON can now
-  refuse to load a payload from before this change instead of deserializing
-  it into a shape that no longer matches.
+- `IR_SCHEMA_VERSION` bumps `0.1` → `0.2`, once, covering every field-shape
+  change in this release: `LetBinding.category` and `MaterializeExpr`
+  removed; `QueryIR.parse_warnings`, `Span.source_text` and `Expr.nullable`
+  removed; `LiteralExpr.ticks`, `LetFunction`, `SubqueryExpr`, `LetRef`,
+  `SetMembership.op` and `Exists.op` added; `ParseKvOp.columns` retyped;
+  `literal_kind` and `LiteralExpr.value` changed. That is what the tag exists
+  to flag — a consumer comparing it on stored IR JSON can refuse a payload
+  from before this release rather than deserializing it into a shape that no
+  longer matches.
 - `SEMANTIC_HASH_SCHEME` bumps `kustology-sem-v1` → `kustology-sem-v2` in
-  lockstep with `IR_SCHEMA_VERSION`. The dump format feeding the hash
-  changed, so `semantic_hash` now differs for any query containing a
-  datetime, timespan, real or decimal literal, or a `let` statement, even
-  though nothing about the query changed. Bumping the scheme tag makes that
-  visible — a hash stored under `kustology-sem-v1:` no longer collides with
-  one computed under `kustology-sem-v2:`, instead of silently comparing
+  lockstep. The dump format feeding the hash changed, so `semantic_hash`
+  differs for any query containing a datetime, timespan, real or decimal
+  literal, a `let` statement, a membership or null-test operator, or — on a
+  bound parse — a column the binder can now resolve. Bumping the tag makes
+  that visible: a hash stored under `kustology-sem-v1:` no longer collides
+  with one computed under `kustology-sem-v2:`, instead of silently comparing
   unequal with no signal that the canonicalization rules moved.
 
 ### Internal
 
-- `IR_SCHEMA_VERSION` stays `0.3` and `SEMANTIC_HASH_SCHEME` stays
-  `kustology-sem-v3` despite the breaking changes above. The lockstep bump rule
-  is about *released* versions: `v3` already covers this whole unreleased
-  window, the only release tag is `v0.1.0`, and bumping again inside one window
-  would churn the tag while informing nobody. Reasoning recorded next to the
-  constant.
+- Both schema tags move exactly once for this release, not once per branch
+  that touched them. Three branches landed breaking IR changes since `v0.1.0`;
+  numbering each would have burned tags no consumer ever saw and left gaps in
+  the released sequence for a later reader to explain. Reasoning recorded next
+  to `SEMANTIC_HASH_SCHEME`, since the lockstep rule otherwise reads as
+  "bump on every change".
 
 - The `ruff` job lints `examples/` as well as `src tests scripts`; the six
   pre-existing `I001` findings there are fixed. `examples/` was already
