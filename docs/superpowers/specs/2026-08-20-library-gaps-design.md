@@ -95,7 +95,9 @@ what is needed:
     let m = toscalar(T | summarize max(X))  -> ToScalarExpression
     let f = (x:int) { x + 1 }               -> FunctionDeclaration
 
-The last shape fits none of the seven declared categories.
+The last shape fits none of the seven declared categories — one of
+several signals that the taxonomy was speculative. See the design
+section for its removal.
 
 ## Refuted — no change
 
@@ -143,13 +145,12 @@ Replace the type-guessing branch with dispatch on `str(node.Kind)`. Add
   (`01:30:00`, `00:00:00.0000002`)
 - numeric, bool, string, guid — unchanged apart from correct `literal_kind`
 
-**Open decision for review.** The downstream evaluator needs exact
-sub-second reconstruction (`Ticks / 10` -> microseconds -> `timedelta`) and
-today must string-parse `value` to get it. Proposed: add an optional
-`ticks: int | None` to `LiteralExpr`, populated for `datetime` and
-`timespan` only, leaving `value` human-readable for the LLM view. The
-alternative — making `value` itself the tick count — is exact but destroys
-readability in `to_llm_dict`. Recommendation: add `ticks`.
+**Decided.** `LiteralExpr` gains an optional `ticks: int | None`,
+populated for `datetime` and `timespan` only, leaving `value`
+human-readable for the LLM view. Consumers needing exact sub-second
+reconstruction use `ticks / 10` -> microseconds -> `timedelta` without
+string-parsing `value`. Rejected alternative: making `value` itself the
+tick count — exact, but it destroys readability in `to_llm_dict`.
 
 ### 3. `LetBinding` population (Tier 2)
 
@@ -160,25 +161,45 @@ Replace the list comprehension with a dispatch branch reading
 `_visit_expr`. `inner_tables` and `inner_time_exprs` are collected from the
 populated pipeline.
 
-Category taxonomy — proposed revision:
+`category` is **removed**. Rationale:
 
-| category | shape |
-|---|---|
-| `alias` | bare `NameReference` to a table or another let |
-| `subquery` | tabular pipeline |
-| `scalar_subquery` | `ToScalarExpression` |
-| `time_scalar` | timespan/datetime literal or time-function call |
-| `literal_constant` | other scalar literal |
-| `dynamic_constant` | dynamic literal |
-| `scalar_expr` | *(new)* non-literal scalar expression, e.g. `let x = 5 + 3` |
-| `function` | *(new)* `FunctionDeclaration` |
-| `baseline` | *(propose removal)* |
+- Nothing reads it. Across `src/`, `tests/`, `examples/`, and `scripts/`
+  the only occurrence is `builder.py:235` writing the hardcoded `"alias"`.
+  No analyzer, test, `llm_view` branch, or `_normalize` use consumes it.
+- It carries zero information today — every binding in every query gets
+  the same value.
+- It would degrade `semantic_hash`. `transforms.py:181` dumps
+  `let_bindings` into the hash payload and `_VOLATILE_FIELDS` does not
+  strip `category`, so a derived label would make the hash sensitive to
+  our classification choices rather than to query semantics.
+- Everything it would encode is recoverable from the fields this design
+  populates: tabular vs scalar is which of `rhs_pipeline` / `rhs_expr` is
+  set; time-scalar is `literal_kind == "timespan"` or `is_time_func`;
+  `scalar_subquery` is a `ToScalarExpr`; `alias` is a pipeline whose
+  source is a bare `TableRef` with no operators.
 
-**Open decision for review.** `baseline` has no discoverable meaning — it
-appears only in the type annotation, with no branch, test, comment, or
-history behind it (the sole commit touching `LetBinding` is the initial
-release). Recommend removing it while Tier 2 is pre-1.0, unless it encodes
-intent worth preserving.
+If a compact label is later wanted, it belongs as a derived `@property`
+following the `Expr.canonical_form` precedent — recomputed from the RHS so
+it cannot drift, and excluded from `model_dump()` so it stays out of the
+hash. Not built now: no consumer has asked for it.
+
+**Function-valued bindings.** `let f = (x:int) { x + 1 }` yields a
+`FunctionDeclaration`, which is neither an expression nor a pipeline and so
+cannot ride on `rhs_expr` or `rhs_pipeline`. Leaving all three fields
+`None` would reproduce the "looks implemented, isn't" trap this section
+exists to remove. `LetBinding` therefore gains
+`rhs_function: LetFunction | None`, where `LetFunction` is deliberately
+minimal:
+
+    class LetFunction(BaseModel):
+        parameters: list[str]   # parameter names, in declaration order
+        body_span: Span         # body is not modeled in this release
+
+(the function's name is already `LetBinding.name`)
+
+Modeling function bodies (parameter types, defaults, tabular vs scalar
+bodies, call-site expansion) is a separate feature and out of scope. The
+explicit `rhs_function` makes the boundary legible rather than silent.
 
 ### 4. Export the `SeparatedElement` unwrap helper (Tier 1)
 
@@ -237,8 +258,10 @@ Every fix lands test-first, with the test demonstrated failing before the fix.
 - **C2 / literals** — a table-driven test over one query per literal kind,
   asserting `literal_kind` and `value`. A locale-invariance test asserting
   `semantic_hash` is identical under all three locales.
-- **G1** — per-shape assertions for each category, including
-  `FunctionDeclaration`, plus `inner_tables` on a tabular binding.
+- **G1** — per-shape assertions that the right RHS field is populated
+  for scalar, tabular, `toscalar`, and function bindings, plus
+  `inner_tables` on a tabular binding. A test asserts `category` is
+  gone from `model_dump()`.
 - **unwrap** — assertions over both `SyntaxList` and `SeparatedSyntaxList`
   properties.
 - **rename** — the alias warns and returns identical results.
@@ -259,5 +282,7 @@ entry:
 - `LiteralExpr.value` changes format for datetime and timespan.
 - `semantic_hash` changes for any query containing a datetime, timespan, or
   real literal. This is the point — it was previously machine-dependent.
-- `LetBinding.category` gains and loses members.
-- `LiteralExpr` gains `ticks` (additive, pending the open decision).
+- `LetBinding.category` is removed. Stored IR JSON containing it
+  will fail to deserialize under `extra="forbid"`.
+- `LiteralExpr` gains `ticks` (additive).
+- `LetBinding` gains `rhs_function`; new `LetFunction` model (additive).
