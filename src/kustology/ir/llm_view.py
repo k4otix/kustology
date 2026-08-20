@@ -36,6 +36,11 @@ from typing import Any
 from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 
+# Imported for isinstance/issubclass dispatch rather than matched by class
+# name. Name-string dispatch silently stops firing when a class is renamed:
+# the rule just never applies again and the LLM view quietly regresses.
+from .expr import Between, BinOp, ColumnRef, LiteralExpr, SetMembership
+
 # Stripped from every node by name. ``span`` and ``KIND``-ClassVar metadata
 # aren't useful for the LLM (offsets need source-text triangulation, KIND
 # duplicates the ``kind`` discriminator). ``schema_attached`` duplicates what
@@ -109,13 +114,12 @@ def _drop_redundant_canonical_form(out: dict[str, Any], cls: type) -> None:
     cf = out.get("canonical_form")
     if cf is None:
         return
-    name = cls.__name__
-    if name == "ColumnRef":
+    if issubclass(cls, ColumnRef):
         col_name = out.get("name")
         table = out.get("table")
         if cf == col_name or (table and cf == f"{table}.{col_name}"):
             del out["canonical_form"]
-    elif name == "LiteralExpr" and cf == _canonical_literal_repr(out.get("value")):
+    elif issubclass(cls, LiteralExpr) and cf == _canonical_literal_repr(out.get("value")):
         del out["canonical_form"]
 
 
@@ -145,12 +149,11 @@ def _collapse_polarity_into_op(out: dict[str, Any], cls: type) -> None:
     polarity = out.get("polarity")
     if polarity is None:
         return
-    name = cls.__name__
-    if name == "BinOp":
+    if issubclass(cls, BinOp):
         del out["polarity"]
-    elif name == "SetMembership":
+    elif issubclass(cls, SetMembership):
         out["op"] = "!in" if polarity == "exclusion" else "in"
         del out["polarity"]
-    elif name == "Between":
+    elif issubclass(cls, Between):
         out["op"] = "!between" if polarity == "exclusion" else "between"
         del out["polarity"]

@@ -306,3 +306,33 @@ def test_canonical_serialization_still_round_trips(storm_ir):
     dumped = storm_ir.model_dump_json()
     reloaded = QueryIR.model_validate_json(dumped)
     assert storm_ir.model_dump() == reloaded.model_dump()
+
+
+def test_dispatch_survives_a_class_rename():
+    """The view's rules dispatch on class identity, not on class *name*.
+
+    They used to compare ``cls.__name__`` against string literals, so
+    renaming a class would silently stop every rule that mentioned it --
+    no error, just a quietly worse LLM view. A subclass is the cheapest
+    way to prove identity dispatch: it has a different ``__name__`` and
+    must still get the rules.
+    """
+    from kustology.ir.expr import ColumnRef, SetMembership
+    from kustology.ir.llm_view import (
+        _collapse_polarity_into_op,
+        _drop_redundant_canonical_form,
+    )
+
+    class RenamedColumnRef(ColumnRef):
+        pass
+
+    class RenamedSetMembership(SetMembership):
+        pass
+
+    out = {"canonical_form": "Account", "name": "Account", "table": None}
+    _drop_redundant_canonical_form(out, RenamedColumnRef)
+    assert "canonical_form" not in out
+
+    out2 = {"polarity": "exclusion"}
+    _collapse_polarity_into_op(out2, RenamedSetMembership)
+    assert out2 == {"op": "!in"}
