@@ -30,7 +30,51 @@ text = KustoCodeService(query).GetFormattedText().Text
   `/usr/local/share/dotnet`, `~/.dotnet`. Probing the `opt` symlink (not the
   `Cellar/X.Y.Z/` path) keeps detection stable across `brew upgrade`.
 
+### `LiteralValue` is lazy, cached, and culture-sensitive
+Microsoft's parser computes `node.LiteralValue` on **property access**, not at
+parse time, then caches it. The .NET culture live at that first read decides the
+value — so under a comma-decimal locale the decimal point is read as a group
+separator and *every fractional numeric literal* is silently wrong: `1.5h` → 15
+hours, `2.25s` → 3m45s, `1.5` → `15.0`, `decimal(1.5)` → `15`; under `fr-FR` the
+parse fails to `0`. Integer literals are unaffected, which is what makes this
+invisible in a test suite that only uses them.
+
+Because the corruption happens wherever the *caller* touches the property,
+scoping a culture fix around our own entry points cannot work.
+`bridge._pin_invariant_culture()` therefore pins `InvariantCulture`
+**process-wide at import**, with no opt-out. It sets both
+`DefaultThreadCurrentCulture` (covers later threads) and the importing thread's
+`CurrentCulture`; `CurrentUICulture` is left alone deliberately. A host that
+changes culture *after* import re-opens the corruption for any literal not yet
+read — documented in the docstring; nothing at this layer can prevent it.
+
+CI runs the suite under `LANG=de-DE` and `LANG=fr-FR` to guard this. If you touch
+the pin, verify the guard still bites: revert the pin and confirm the de-DE job
+goes red. A green suite without the pin means you are only testing integers.
+
 ## AST structure and navigation
+
+### Node *class* is generic; the type lives in `Kind`
+Branching on `type(node).__name__` and branching on `str(node.Kind)` are not
+interchangeable, and the difference is silent:
+- All six comparisons share the class `BinaryExpression`; only `Kind` separates
+  `GreaterThanExpression` / `EqualExpression` / `NotEqualExpression` / …
+  (`node.Operator.ToString().strip()` also works).
+- `between` and `!between` **both** have the class `BetweenExpression` — the
+  negation exists only in `Kind` (`NotBetweenExpression`), so branching on class
+  silently inverts the predicate. Bounds are in `.Right` as an `ExpressionCouple`
+  with `.First` / `.Second`.
+- Every literal shares the class `LiteralExpression`; `Kind` is what says
+  `TimespanLiteralExpression` vs `RealLiteralExpression`. Read `Kind` — do not
+  re-infer the type from the Python type of `LiteralValue`.
+
+`node.Kind` is a raw .NET enum with no `__format__`, so any f-string format spec
+(`f"{node.Kind:<30}"`) raises `TypeError`. Always `str()` it.
+
+### Unary minus wraps a *positive* literal
+`-1h` parses as `UnaryMinusExpression` over a `TimespanLiteralExpression` whose
+value is `+01:00:00` — correct KQL grammar, same as any language parsing `-1`.
+Read the sign from the parent. Tier 2 models it as `UnaryOp(op="-", operand=…)`.
 
 ### Left-associative pipe expressions
 A pipe chain `A | B | C` is parsed as `PipeExpression(PipeExpression(A, B), C)`.
@@ -111,6 +155,17 @@ AST kinds.
   it over writing a fresh `KustoWalker` subclass; the bespoke walkers
   that remain are multi-pass, stateful, or ordered.
 
+**Hand-maintained attribute lists drift.** Several bespoke walkers recurse over
+a hardcoded tuple of field names (`"left"`, `"right"`, `"operand"`, …) — see
+`SchemaAttacher._fill` (`ir/binder.py`), `_walk_expr`
+(`tests/ir/test_complex_harness.py`), and `walk_expr` (`scripts/mine_corpus.py`).
+Each omits `pipeline`, so none descends into `ToScalarExpr` / `MaterializeExpr` /
+`SubqueryExpr`; the binder consequence is that `ColumnRef.table` stays `None`
+inside a `toscalar(...)` while the same column resolves fine outside it. Every
+new IR field silently widens these holes. If you add a field or a
+pipeline-bearing node, either extend all three or convert the walker to iterate
+`model_fields` — which is what generic `walk()` / `find_all()` already do.
+
 ### `KustoQuery.to_ir(attach_schema=...)` auto-attach default
 Default is `attach_schema=None`, which auto-attaches iff the parse was
 bound. So `parse(q, schema=...).to_ir()` returns a fully enriched IR —
@@ -142,6 +197,26 @@ a DLL refresh). To add coverage: dispatch the shape explicitly in
 `IRBuilder` and append the `SyntaxKind` to
 `IRBuilder.HANDLED_OPERATOR_KINDS` or `IRBuilder.HANDLED_EXPR_KINDS` —
 these are **public** attributes that the audit script reads as contract.
+
+### Declare a field only in the change that populates it
+A declared-but-never-populated field reads as implemented and is invisible to
+tests. `LetBinding` shipped a public release with four such fields and a
+seven-value `category` enum of which one value was ever emitted, which blocked a
+downstream consumer entirely. If you cannot populate it now, do not declare it —
+and when a field turns out to be unreadable *and* unread, deleting it is usually
+better than implementing it (`category` was removed, not filled in). Two known
+survivors of this pattern are `QueryIR.parse_warnings` and `Span.source_text`.
+
+### Version tags bump together, and the hash is bind-state-dependent
+`IR_SCHEMA_VERSION` (`ir/__init__.py`) must be bumped on any breaking
+field-shape change, and `SEMANTIC_HASH_SCHEME` (`ir/transforms.py`) in lockstep
+— the scheme prefix exists so a canonicalization change invalidates stored
+hashes *visibly* instead of silently returning "these queries differ".
+
+Note `semantic_hash` is not bind-invariant: a `let` aliasing a table resolves to
+`rhs_pipeline` when bound and `rhs_expr` when not, and that is a shape
+difference no volatile-field stripping can hide. `_VOLATILE_FIELDS` strips
+`span` / `result_type` / `result_type_inner` / `nullable` only.
 
 ### `extra="forbid"` on every IR `BaseModel`
 Strict validation: JSON dumps with extra top-level fields fail to
