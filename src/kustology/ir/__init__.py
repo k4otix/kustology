@@ -37,7 +37,7 @@ from .query import (
     FindOp, ForkOp, FuncCallSource, GetSchemaOp, GraphMarkComponentsOp,
     GraphMatchOp, GraphShortestPathsOp, GraphToTableOp, GraphWhereEdgesOp,
     GraphWhereNodesOp, ImplicitSource,
-    InvokeOp, JoinOp, LetBinding, LetRef, LookupOp, MacroExpandOp,
+    InvokeOp, JoinOp, LetBinding, LetFunction, LetRef, LookupOp, MacroExpandOp,
     MakeGraphOp, MakeSeriesOp, MvApplyOp, MvExpandOp, Operator, ParseKvOp,
     ParseOp, ParseWhereOp, PartitionOp, Pipeline, PrintOp, ProjectAwayOp,
     ProjectByNamesOp, ProjectKeepOp, ProjectOp, ProjectRenameOp,
@@ -66,7 +66,7 @@ __all__ = [
     # Analyzer protocol
     "Finding", "AnalyzerFn", "Severity",
     # Top-level / container
-    "QueryIR", "Pipeline", "LetBinding", "Diagnostic", "Assignment", "Span",
+    "QueryIR", "Pipeline", "LetBinding", "LetFunction", "Diagnostic", "Assignment", "Span",
     "KustoType", "TabularSchema",
     # Expressions
     "Expr", "AnyExpr", "ColumnRef", "BinOp", "SetMembership", "Between",

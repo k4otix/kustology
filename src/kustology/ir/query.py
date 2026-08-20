@@ -515,18 +515,49 @@ class JoinOp(Operator):
     on: list[AnyExpr]
 
 
+class LetFunction(BaseModel):
+    """A ``let``-declared function's shape. The body is not modeled.
+
+    ``let f = (x:int) { ... }`` yields a .NET ``FunctionDeclaration``, which is
+    neither an expression nor a pipeline and so cannot ride on ``rhs_expr`` or
+    ``rhs_pipeline``. Recording it explicitly keeps the unmodeled boundary
+    legible instead of leaving three silent ``None``s that read as a bug.
+
+    Parameter types, defaults, tabular-vs-scalar bodies and call-site expansion
+    are out of scope; ``body_span`` locates the body in the source for callers
+    that want the text.
+    """
+
+    model_config = {"extra": "forbid"}
+    KIND: ClassVar[str] = "let_function"
+    kind: Literal["let_function"] = "let_function"
+    # Parameter names in declaration order. The function's own name is on the
+    # owning LetBinding.
+    parameters: list[str] = []
+    body_span: Span
+
+
 class LetBinding(BaseModel):
+    """One ``let`` statement. Exactly one ``rhs_*`` field is populated.
+
+    There is no ``category`` discriminator: which field is set already says
+    whether the binding is tabular, scalar or a function, and finer labels
+    (time-scalar, alias, scalar-subquery) are recoverable from the populated
+    right-hand side — ``rhs_expr.literal_kind == "timespan"``, a ``TableRef``
+    source with no operators, a ``ToScalarExpr``. A stored label would also
+    have entered ``semantic_hash``, making the hash sensitive to our
+    classification choices rather than to query semantics.
+    """
+
     model_config = {"extra": "forbid"}
     KIND: ClassVar[str] = "let_binding"
     kind: Literal["let_binding"] = "let_binding"
     name: str
     span: Span
-    category: Literal[
-        "time_scalar", "literal_constant", "dynamic_constant",
-        "scalar_subquery", "baseline", "subquery", "alias",
-    ]
     rhs_expr: AnyExpr | None = None
     rhs_pipeline: Pipeline | None = None
+    rhs_function: LetFunction | None = None
+    # Tables and time expressions found inside rhs_pipeline; empty otherwise.
     inner_tables: list[str] = []
     inner_time_exprs: list[AnyExpr] = []
 
@@ -557,6 +588,8 @@ class QueryIR(BaseModel):
 
 
 Pipeline.model_rebuild()
+LetBinding.model_rebuild()
+LetFunction.model_rebuild()
 UnionOp.model_rebuild()
 MvApplyOp.model_rebuild()
 LookupOp.model_rebuild()

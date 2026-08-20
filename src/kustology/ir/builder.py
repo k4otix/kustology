@@ -85,6 +85,7 @@ from .query import (
     InvokeOp,
     JoinOp,
     LetBinding,
+    LetFunction,
     LetRef,
     LookupOp,
     MacroExpandOp,
@@ -148,6 +149,31 @@ def _is_time_func_name(name: str) -> bool:
     except Exception:  # pragma: no cover — defensive
         lower = name.lower()
         return "time" in lower or "ago" in lower or "now" in lower
+
+
+def _collect_inner_tables(pipeline: Any) -> list[str]:
+    """Distinct table names inside a let binding's pipeline, in first-seen order."""
+    from .query import TableRef
+    from .walk import find_all
+
+    seen: list[str] = []
+    for ref in find_all(pipeline, TableRef):
+        if ref.name not in seen:
+            seen.append(ref.name)
+    return seen
+
+
+def _collect_inner_time_exprs(pipeline: Any) -> list[Any]:
+    """Time-function calls inside a let binding's pipeline, in walk order.
+
+    Time *literals* are reachable through ``rhs_pipeline`` already; this
+    surfaces the calls (``ago``, ``now``, ``bin``, ...) that a lookback
+    analyzer needs to find without re-walking the tree.
+    """
+    from .expr import FuncCall
+    from .walk import find_all
+
+    return [fc for fc in find_all(pipeline, FuncCall) if fc.is_time_func]
 
 
 class IRBuilder:
@@ -229,11 +255,7 @@ class IRBuilder:
 
         root = code.Syntax
         let_bindings: list[LetBinding] = [
-            LetBinding(
-                name=visit_name(ls.Name),
-                span=to_span(ls),
-                category="alias",
-            )
+            self._visit_let_statement(ls)
             for ls in root.GetDescendants[LetStatement]()
         ]
 
@@ -253,6 +275,70 @@ class IRBuilder:
         )
         ir.semantic_hash = compute_semantic_hash(ir)
         return ir
+
+    # -- let statements --------------------------------------------------
+
+    def _visit_let_statement(self, ls: Any) -> LetBinding:
+        """Build one :class:`LetBinding` from a .NET ``LetStatement``.
+
+        ``ls.Expression`` carries the right-hand side and its .NET class says
+        which shape it is:
+
+        * ``FunctionDeclaration``  -> ``rhs_function``
+        * ``PipeExpression`` / ``MaterializeExpression`` -> ``rhs_pipeline``
+        * a ``NameReference`` the binder resolved to a table -> ``rhs_pipeline``
+        * anything else            -> ``rhs_expr``
+
+        A bare ``NameReference`` is only tabular when the binder can prove it
+        (``let A = OtherTable`` with a schema). Unbound, it stays an
+        expression rather than guessing a table into existence.
+        """
+        name = visit_name(ls.Name)
+        span = to_span(ls)
+        expr = getattr(ls, "Expression", None)
+        if expr is None:  # pragma: no cover — defensive
+            return LetBinding(name=name, span=span)
+
+        net_kind = str(type(expr).__name__)
+
+        if net_kind == "FunctionDeclaration":
+            return LetBinding(
+                name=name,
+                span=span,
+                rhs_function=self._visit_function_declaration(expr),
+            )
+
+        if net_kind in ("PipeExpression", "MaterializeExpression") or (
+            net_kind == "NameReference"
+            and is_table_symbol(getattr(expr, "ReferencedSymbol", None))
+        ):
+            pipeline = self._visit_pipeline(expr)
+            return LetBinding(
+                name=name,
+                span=span,
+                rhs_pipeline=pipeline,
+                inner_tables=_collect_inner_tables(pipeline),
+                inner_time_exprs=_collect_inner_time_exprs(pipeline),
+            )
+
+        return LetBinding(name=name, span=span, rhs_expr=self._visit_expr(expr))
+
+    def _visit_function_declaration(self, node: Any) -> LetFunction:
+        """Extract parameter names and the body's span from a FunctionDeclaration.
+
+        ``node.Parameters`` is a ``FunctionParameters`` wrapper whose own
+        ``.Parameters`` is a ``SyntaxList[SeparatedElement[FunctionParameter]]``
+        — hence the unwrap.
+        """
+        params: list[str] = []
+        outer = getattr(node, "Parameters", None)
+        inner = getattr(outer, "Parameters", None) if outer is not None else None
+        if inner is not None:
+            for param in _iter_elements(inner):
+                name_and_type = getattr(param, "NameAndType", None)
+                if name_and_type is not None:
+                    params.append(visit_name(name_and_type.Name))
+        return LetFunction(parameters=params, body_span=to_span(node.Body))
 
     # -- pipeline / operator dispatch ------------------------------------
 
