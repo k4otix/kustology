@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-from .bridge import KustoCode, KustoCodeService, FormattingOptions
+from .bridge import FormattingOptions, KustoCode, KustoCodeService
 
 SchemaLike = dict | str | None
 

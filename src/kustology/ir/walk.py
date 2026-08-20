@@ -11,7 +11,8 @@ the node that owns them.
 ``find_all`` is the type-filtered convenience wrapper most analyzers use.
 """
 
-from typing import Callable, Iterator, Optional, Type, TypeVar
+from collections.abc import Callable, Iterator
+from typing import TypeVar
 
 from pydantic import BaseModel
 
@@ -22,7 +23,7 @@ Predicate = Callable[[BaseModel], bool]
 
 def walk(
     node: BaseModel,
-    predicate: Optional[Predicate] = None,
+    predicate: Predicate | None = None,
 ) -> Iterator[BaseModel]:
     """Yield every ``BaseModel`` descendant of ``node`` (including the
     root) in depth-first, pre-order.
@@ -57,7 +58,7 @@ def walk(
                 yield from walk(item, predicate)
 
 
-def find_all(node: BaseModel, type_: Type[T]) -> Iterator[T]:
+def find_all(node: BaseModel, type_: type[T]) -> Iterator[T]:
     """Yield every descendant of ``node`` that is an instance of ``type_``.
 
     The 90%-case wrapper around :func:`walk`. Custom analyzers typically

@@ -126,7 +126,7 @@ def load_schemas_c(az_bin: Path,
                  "--analytics-query",
                  f"{table} | getschema | project ColumnName, ColumnType",
                  "-o", "json"],
-                capture_output=True, text=True, timeout=60,
+                capture_output=True, text=True, timeout=60, check=False,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired):
             continue

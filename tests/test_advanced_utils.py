@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-from kustology import parse, format_query
+from kustology import format_query, parse
 
 
 def test_get_operator_chain():

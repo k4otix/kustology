@@ -8,6 +8,7 @@ from .schema_state import build_global_state  # re-exported
 from .walker import KustoWalker, node_to_dict  # re-exported
 
 __all__ = [
+    "KustoWalker",
     "build_global_state",
     "collect_nodes",
     "find_table_references",
@@ -19,7 +20,6 @@ __all__ = [
     "get_tables_semantic",
     "get_tables_syntactic",
     "get_time_range",
-    "KustoWalker",
     "node_to_dict",
     "replace_table",
 ]
@@ -137,26 +137,22 @@ def _collect_table_refs(syntax) -> list:
                     let_vars.add(name_node.ToString().strip())
                 rhs = node.GetChild(3)
                 if rhs is not None:
-                    for ref in _unwrap_table_expr(rhs):
-                        refs.append(ref)
+                    refs.extend(_unwrap_table_expr(rhs))
                 return
 
             if kind in ("PipeExpression", "ExpressionStatement"):
-                for ref in _unwrap_table_expr(node.GetChild(0)):
-                    refs.append(ref)
+                refs.extend(_unwrap_table_expr(node.GetChild(0)))
                 return
 
             if kind in ("JoinOperator", "LookupOperator", "FacetOperator"):
                 expr = getattr(node, "Expression", None)
                 if expr is not None:
-                    for ref in _unwrap_table_expr(expr):
-                        refs.append(ref)
+                    refs.extend(_unwrap_table_expr(expr))
                 return
 
             if kind == "UnionOperator":
                 for i in range(node.ChildCount):
-                    for ref in _unwrap_table_expr(node.GetChild(i)):
-                        refs.append(ref)
+                    refs.extend(_unwrap_table_expr(node.GetChild(i)))
 
     Walker().visit(syntax)
     out = []

@@ -7,7 +7,6 @@ Covers root-first yield, list and dict descent, scalar skipping, optional
 None handling, type filtering, and nested descent through sub-pipelines.
 """
 
-from typing import Optional
 
 import pytest
 from pydantic import BaseModel
@@ -74,7 +73,7 @@ def test_walk_skips_scalars(simple_ir):
 def test_walk_handles_optional_none():
     # A model whose Optional field is None must not raise.
     class WithOptional(BaseModel):
-        child: Optional[ColumnRef] = None
+        child: ColumnRef | None = None
 
     node = WithOptional()
     yielded = list(walk(node))

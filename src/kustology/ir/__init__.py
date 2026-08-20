@@ -18,20 +18,20 @@ consumers can refuse to load an incompatible payload.
 
 IR_SCHEMA_VERSION = "0.1"
 
-from ._guard import _require_pydantic  # noqa: E402
+from ._guard import _require_pydantic
 
 _require_pydantic()
 
 # Order matters: types/spans → expr → query → builder/binder.
-from .types import KustoType  # noqa: E402
-from .spans import Span  # noqa: E402
-from .expr import (  # noqa: E402, F401
+from .types import KustoType
+from .spans import Span
+from .expr import (
     And, AnyExpr, Between, BinOp, BracketedExpr, CaseExpr, ColumnRef,
     CompoundNamedExpr, ElementExpr, Exists, Expr, ExternalDataExpr, FuncCall,
     LiteralExpr, MaterializeExpr, NamedExpr, Not, Or, PathExpr, RegexMatch,
     SetMembership, StarExpr, ToScalarExpr, UnaryOp, UnknownExpr,
 )
-from .query import (  # noqa: E402, F401
+from .query import (
     AsOp, AssertSchemaOp, Assignment, ConsumeOp, CountOp, Diagnostic,
     DistinctOp, EvaluateOp, ExecuteAndCacheOp, ExtendOp, FacetOp, FilterOp,
     FindOp, ForkOp, FuncCallSource, GetSchemaOp, GraphMarkComponentsOp,
@@ -46,14 +46,14 @@ from .query import (  # noqa: E402, F401
     TabularSchema, TakeOp, TopHittersOp, TopNestedOp, TopOp, UnionOp,
     UnknownOp, UnknownSource,
 )
-from .builder import IRBuilder  # noqa: E402
-from .binder import BinderEnricher, SchemaAttacher  # noqa: E402
-from .llm_view import to_llm_dict  # noqa: E402
-from .transforms import (  # noqa: E402
+from .builder import IRBuilder
+from .binder import BinderEnricher, SchemaAttacher
+from .llm_view import to_llm_dict
+from .transforms import (
     compute_semantic_hash, merge_consecutive_filters, normalize_expressions,
 )
-from .walk import find_all, walk  # noqa: E402
-from .analyzers import AnalyzerFn, Finding, Severity  # noqa: E402
+from .walk import find_all, walk
+from .analyzers import AnalyzerFn, Finding, Severity
 
 __all__ = [
     # Schema-version

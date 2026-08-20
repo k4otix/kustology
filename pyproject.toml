@@ -57,7 +57,7 @@ dev = [
     "pydantic>=2.6.0",
     "build>=1.0.0",
     "twine>=5.0.0",
-    "ruff>=0.3.0",
+    "ruff>=0.16.3",
     "mypy>=1.9.0",
     "cyclonedx-bom>=4.0.0",
     "pyyaml>=6.0",
@@ -80,9 +80,22 @@ target-version = "py310"
 
 [tool.ruff.lint.per-file-ignores]
 # Re-exports — F401 unused imports are intentional in __init__.py.
-"src/kustology/ir/__init__.py" = ["F401"]
+# __all__ and the import block are ordered by tier, not alphabetically.
+"src/kustology/ir/__init__.py" = ["F401", "RUF022", "I001"]
+"src/kustology/__init__.py" = ["RUF022"]
 # AnyExpr Union line is long by design; splitting would obscure the surface.
 "src/kustology/ir/expr.py" = ["E501"]
+# .NET failures cross the pythonnet boundary as opaque CLR types with no Python
+# class to name; these modules probe defensively and fall back to a default.
+"src/kustology/bridge.py" = ["BLE001"]
+"src/kustology/reflection.py" = ["BLE001"]
+"src/kustology/utils/analysis.py" = ["BLE001"]
+"src/kustology/ir/builder.py" = ["BLE001"]
+"src/kustology/ir/_builder_helpers.py" = ["BLE001"]
+# Top-level error boundary: re-raises SystemExit, maps anything else to exit 1.
+"src/kustology/cli.py" = ["BLE001"]
+# Best-effort dev tooling — a malformed sample is skipped, not fatal.
+"scripts/*.py" = ["BLE001", "S112"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

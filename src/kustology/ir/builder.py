@@ -14,28 +14,9 @@ and :attr:`HANDLED_EXPR_KINDS` for the coverage audit script.
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional, Union
+from typing import Any
 
-from ..bridge import GlobalState, KustoCode  # noqa: F401 — re-export-friendly + CLR init
-from .expr import (
-    And, AnyExpr, Between, BinOp, BracketedExpr, CaseExpr, ColumnRef,
-    CompoundNamedExpr, ElementExpr, Exists, ExternalDataExpr, FuncCall,
-    LiteralExpr, MaterializeExpr, NamedExpr, Not, Or, PathExpr, RegexMatch,
-    SetMembership, StarExpr, ToScalarExpr, UnaryOp, UnknownExpr,
-)
-from .query import (
-    AsOp, AssertSchemaOp, Assignment, ConsumeOp, CountOp, Diagnostic,
-    DistinctOp, EvaluateOp, ExecuteAndCacheOp, ExtendOp, FacetOp, FilterOp,
-    FindOp, ForkOp, FuncCallSource, GetSchemaOp, GraphMarkComponentsOp,
-    GraphMatchOp, GraphShortestPathsOp, GraphToTableOp, GraphWhereEdgesOp,
-    GraphWhereNodesOp, ImplicitSource, InvokeOp, JoinOp, LetBinding, LetRef,
-    LookupOp, MacroExpandOp, MakeGraphOp, MakeSeriesOp, MvApplyOp, MvExpandOp,
-    Operator, ParseKvOp, ParseOp, ParseWhereOp, PartitionOp, Pipeline, PrintOp,
-    ProjectAwayOp, ProjectByNamesOp, ProjectKeepOp, ProjectOp, ProjectRenameOp,
-    ProjectReorderOp, QueryIR, RangeOp, RenderOp, SampleDistinctOp, SampleOp,
-    ScanOp, SearchOp, SerializeOp, SortOp, SummarizeOp, TableRef, TakeOp,
-    TopHittersOp, TopNestedOp, TopOp, UnionOp, UnknownOp, UnknownSource,
-)
+from ..bridge import GlobalState, KustoCode  # re-export-friendly; also triggers CLR init
 from ._builder_helpers import (
     extract_named_param,
     extract_qualified_table_name,
@@ -45,13 +26,105 @@ from ._builder_helpers import (
     to_span,
     visit_name,
 )
+from .expr import (
+    And,
+    AnyExpr,
+    Between,
+    BinOp,
+    BracketedExpr,
+    CaseExpr,
+    ColumnRef,
+    CompoundNamedExpr,
+    ElementExpr,
+    Exists,
+    ExternalDataExpr,
+    FuncCall,
+    LiteralExpr,
+    MaterializeExpr,
+    NamedExpr,
+    Not,
+    Or,
+    PathExpr,
+    RegexMatch,
+    SetMembership,
+    StarExpr,
+    ToScalarExpr,
+    UnaryOp,
+    UnknownExpr,
+)
+from .query import (
+    AsOp,
+    AssertSchemaOp,
+    Assignment,
+    ConsumeOp,
+    CountOp,
+    Diagnostic,
+    DistinctOp,
+    EvaluateOp,
+    ExecuteAndCacheOp,
+    ExtendOp,
+    FacetOp,
+    FilterOp,
+    FindOp,
+    ForkOp,
+    FuncCallSource,
+    GetSchemaOp,
+    GraphMarkComponentsOp,
+    GraphMatchOp,
+    GraphShortestPathsOp,
+    GraphToTableOp,
+    GraphWhereEdgesOp,
+    GraphWhereNodesOp,
+    ImplicitSource,
+    InvokeOp,
+    JoinOp,
+    LetBinding,
+    LetRef,
+    LookupOp,
+    MacroExpandOp,
+    MakeGraphOp,
+    MakeSeriesOp,
+    MvApplyOp,
+    MvExpandOp,
+    Operator,
+    ParseKvOp,
+    ParseOp,
+    ParseWhereOp,
+    PartitionOp,
+    Pipeline,
+    PrintOp,
+    ProjectAwayOp,
+    ProjectByNamesOp,
+    ProjectKeepOp,
+    ProjectOp,
+    ProjectRenameOp,
+    ProjectReorderOp,
+    QueryIR,
+    RangeOp,
+    RenderOp,
+    SampleDistinctOp,
+    SampleOp,
+    ScanOp,
+    SearchOp,
+    SerializeOp,
+    SortOp,
+    SummarizeOp,
+    TableRef,
+    TakeOp,
+    TopHittersOp,
+    TopNestedOp,
+    TopOp,
+    UnionOp,
+    UnknownOp,
+    UnknownSource,
+)
 from .spans import Span
 from .transforms import compute_semantic_hash
 
 logger = logging.getLogger(__name__)
 
 # Bridge import above already triggered AddReference("Kusto.Language").
-from Kusto.Language.Syntax import (  # noqa: E402
+from Kusto.Language.Syntax import (
     ExpressionStatement,
     LetStatement,
 )
@@ -117,7 +190,7 @@ class IRBuilder:
         "ToScalarExpression", "ExternalDataExpression", "MakeSeriesExpression",
     })
 
-    def __init__(self, global_state: Optional["GlobalState"] = None):
+    def __init__(self, global_state: GlobalState | None = None):
         self.global_state = global_state or GlobalState.Default
 
     # -- entry points ----------------------------------------------------
@@ -128,24 +201,24 @@ class IRBuilder:
         code = KustoCode.ParseAndAnalyze(query, self.global_state)
         return self.build_from_code(code)
 
-    def build_from_code(self, code: "KustoCode") -> QueryIR:
+    def build_from_code(self, code: KustoCode) -> QueryIR:
         """Build the IR from an already-parsed ``KustoCode``."""
         raw_text = str(code.Text)
 
         diagnostics: list[Diagnostic] = []
         for diag in code.GetDiagnostics():
-            code_val: Optional[str] = None
-            category_val: Optional[str] = None
+            code_val: str | None = None
+            category_val: str | None = None
             try:
                 if diag.Code:
                     code_val = str(diag.Code)
-            except Exception:  # pragma: no cover
-                pass
+            except Exception as e:  # pragma: no cover
+                logger.debug("diagnostic Code probe fell through: %s", e)
             try:
                 if diag.Category:
                     category_val = str(diag.Category)
-            except Exception:  # pragma: no cover
-                pass
+            except Exception as e:  # pragma: no cover
+                logger.debug("diagnostic Category probe fell through: %s", e)
             diagnostics.append(Diagnostic(
                 message=str(diag.Message),
                 severity=str(diag.Severity),
@@ -164,7 +237,7 @@ class IRBuilder:
             for ls in root.GetDescendants[LetStatement]()
         ]
 
-        main_pipeline: Optional[Pipeline] = None
+        main_pipeline: Pipeline | None = None
         expr_stmts = root.GetDescendants[ExpressionStatement]()
         if expr_stmts is not None and expr_stmts.Count > 0:
             main_pipeline = self._visit_pipeline(expr_stmts[0].Expression)
@@ -185,7 +258,7 @@ class IRBuilder:
 
     def _visit_pipeline(self, node: Any) -> Pipeline:
         operators: list[Any] = []
-        source: Union[TableRef, LetRef, UnknownSource, Pipeline] = UnknownSource(
+        source: TableRef | LetRef | UnknownSource | Pipeline = UnknownSource(
             raw_text="unknown", span=to_span(node),
         )
 
@@ -252,17 +325,18 @@ class IRBuilder:
                     operators.append(op)
                 return
 
-            if kind in ("TableReference", "NameReference") or "Reference" in kind:
-                if isinstance(source, UnknownSource):
-                    name = ""
-                    if hasattr(n, "Name"):
-                        name = visit_name(n.Name)
-                    elif hasattr(n, "SimpleName"):
-                        name = n.SimpleName.strip()
-                    else:
-                        name = n.ToString().strip()
-                    if name.lower() not in ("and", "or", "in", "in~", "has", "has_any", "not", "search"):
-                        source = TableRef(name=name, span=to_span(n))
+            if (kind in ("TableReference", "NameReference") or "Reference" in kind) and isinstance(
+                source, UnknownSource
+            ):
+                name = ""
+                if hasattr(n, "Name"):
+                    name = visit_name(n.Name)
+                elif hasattr(n, "SimpleName"):
+                    name = n.SimpleName.strip()
+                else:
+                    name = n.ToString().strip()
+                if name.lower() not in ("and", "or", "in", "in~", "has", "has_any", "not", "search"):
+                    source = TableRef(name=name, span=to_span(n))
 
         walk(node)
         # Operators-but-no-explicit-source means the source is implicit (parent
@@ -271,7 +345,7 @@ class IRBuilder:
             source = ImplicitSource(span=to_span(node))
         return Pipeline(source=source, operators=operators)
 
-    def _visit_operator(self, node: Any) -> Optional[Operator]:
+    def _visit_operator(self, node: Any) -> Operator | None:
         kind = str(type(node).__name__)
         span = to_span(node)
         n = node
@@ -292,10 +366,9 @@ class IRBuilder:
                 for el in _iter_elements(n.Aggregates):
                     aggs.append(self._visit_assignment(el, mode="aggregation"))
             by = []
-            if hasattr(n, "ByClause") and n.ByClause:
-                if hasattr(n.ByClause, "Expressions"):
-                    for el in _iter_elements(n.ByClause.Expressions):
-                        by.append(self._visit_expr_as_assignment(el, mode="grouping"))
+            if hasattr(n, "ByClause") and n.ByClause and hasattr(n.ByClause, "Expressions"):
+                for el in _iter_elements(n.ByClause.Expressions):
+                    by.append(self._visit_expr_as_assignment(el, mode="grouping"))
             return SummarizeOp(aggregations=aggs, by=by, span=span)
 
         if kind == "JoinOperator":
@@ -538,7 +611,7 @@ class IRBuilder:
             return EvaluateOp(func=func_expr, span=span)
 
         if kind == "CountOperator":
-            as_name: Optional[str] = None
+            as_name: str | None = None
             clause = getattr(n, "AsIdentifier", None) or getattr(n, "AsClause", None)
             if clause is not None:
                 name_node = getattr(clause, "Identifier", None) or getattr(clause, "Name", None)
@@ -688,7 +761,7 @@ class IRBuilder:
 
         span = to_span(node)
         kind = str(type(node).__name__)
-        res: Optional[AnyExpr] = None
+        res: AnyExpr | None = None
 
         if kind == "ParenthesizedExpression":
             res = self._visit_expr(node.Expression)
@@ -697,10 +770,7 @@ class IRBuilder:
             name = visit_name(node.Name)
             res = ColumnRef(name=name, span=span)
 
-        elif kind == "NameDeclaration":
-            res = ColumnRef(name=visit_name(node), span=span)
-
-        elif kind == "NameAndTypeDeclaration":
+        elif kind == "NameDeclaration" or kind == "NameAndTypeDeclaration":
             res = ColumnRef(name=visit_name(node), span=span)
 
         elif kind == "PathExpression":
@@ -714,9 +784,7 @@ class IRBuilder:
             if expr_kind == "NameReference" and sel_kind == "NameReference":
                 lhs_name = visit_name(expr_node.Name)
                 rhs_name = visit_name(sel_node.Name)
-                if lhs_name in ("$left", "$right"):
-                    res = ColumnRef(name=rhs_name, table=lhs_name, span=span)
-                elif is_table_symbol(getattr(expr_node, "ReferencedSymbol", None)):
+                if lhs_name in ("$left", "$right") or is_table_symbol(getattr(expr_node, "ReferencedSymbol", None)):
                     res = ColumnRef(name=rhs_name, table=lhs_name, span=span)
                 else:
                     res = PathExpr(
@@ -773,9 +841,8 @@ class IRBuilder:
 
         elif kind == "LiteralExpression":
             val = node.LiteralValue
-            if hasattr(val, "ToString"):
-                if not isinstance(val, (str, int, float, bool, type(None))):
-                    val = val.ToString()
+            if hasattr(val, "ToString") and not isinstance(val, (str, int, float, bool, type(None))):
+                val = val.ToString()
             lit_kind = "string"
             if isinstance(val, bool):
                 lit_kind = "bool"
@@ -820,13 +887,9 @@ class IRBuilder:
                 )
             else:
                 case_sensitive = True
-                if op.endswith("~"):
+                if op.endswith("~") or op in ("has", "contains", "startswith", "endswith", "has_any", "has_all"):
                     case_sensitive = False
-                elif op in ("has", "contains", "startswith", "endswith", "has_any", "has_all"):
-                    case_sensitive = False
-                elif op in ("==", "in", "!in"):
-                    case_sensitive = True
-                elif "_cs" in op:
+                elif op in ("==", "in", "!in") or "_cs" in op:
                     case_sensitive = True
                 res = BinOp(
                     op=op,
@@ -884,10 +947,9 @@ class IRBuilder:
                     logger.debug("FunctionCall name resolution fell through: %s", e)
 
             args: list[AnyExpr] = []
-            if hasattr(node, "ArgumentList") and node.ArgumentList:
-                if hasattr(node.ArgumentList, "Expressions"):
-                    for el in _iter_elements(node.ArgumentList.Expressions):
-                        args.append(self._visit_expr(el))
+            if hasattr(node, "ArgumentList") and node.ArgumentList and hasattr(node.ArgumentList, "Expressions"):
+                for el in _iter_elements(node.ArgumentList.Expressions):
+                    args.append(self._visit_expr(el))
 
             res = FuncCall(
                 name=name, args=args,
@@ -949,7 +1011,7 @@ class IRBuilder:
             span=to_span(node),
         )
 
-    def _visit_expr_as_assignment(self, node: Any, mode: str = "aggregation") -> Union[ColumnRef, Assignment, AnyExpr]:
+    def _visit_expr_as_assignment(self, node: Any, mode: str = "aggregation") -> ColumnRef | Assignment | AnyExpr:
         kind = str(type(node).__name__)
         if kind == "SimpleNamedExpression":
             return self._visit_assignment(node, mode=mode)
@@ -969,7 +1031,7 @@ class IRBuilder:
                 )
         return self._visit_expr(node)
 
-    def _auto_name(self, node: Any, mode: str) -> Optional[str]:
+    def _auto_name(self, node: Any, mode: str) -> str | None:
         """Canonical KQL output column name for an unnamed expression.
 
         Mirrors the binder's auto-naming so ``Assignment.name`` matches what
@@ -991,7 +1053,7 @@ class IRBuilder:
         if kind != "FunctionCallExpression":
             return None
 
-        fname: Optional[str] = None
+        fname: str | None = None
         ref_sym = getattr(node, "ReferencedSymbol", None)
         if ref_sym is not None:
             try:
@@ -1009,7 +1071,7 @@ class IRBuilder:
             except AttributeError:
                 fname = None
 
-        first_col: Optional[str] = None
+        first_col: str | None = None
         if hasattr(node, "ArgumentList") and node.ArgumentList:
             try:
                 for el in _iter_elements(node.ArgumentList.Expressions):
@@ -1017,11 +1079,11 @@ class IRBuilder:
                     if inner_kind == "NameReference":
                         try:
                             first_col = visit_name(el.Name)
-                        except Exception:  # pragma: no cover
-                            pass
+                        except Exception as e:  # pragma: no cover
+                            logger.debug("first-column name probe fell through: %s", e)
                         break
-            except Exception:  # pragma: no cover
-                pass
+            except Exception as e:  # pragma: no cover
+                logger.debug("argument-list walk fell through: %s", e)
 
         if mode == "grouping":
             return first_col
@@ -1037,9 +1099,8 @@ class IRBuilder:
         kind = str(type(node).__name__)
         if kind == "ParenthesizedExpression":
             return self._visit_list(node.Expression)
-        if kind == "ExpressionList":
-            if hasattr(node, "Expressions"):
-                return self._visit_list(node.Expressions)
+        if kind == "ExpressionList" and hasattr(node, "Expressions"):
+            return self._visit_list(node.Expressions)
         if "SyntaxList" in kind or hasattr(node, "Count"):
             for i in range(node.Count):
                 element = node[i]

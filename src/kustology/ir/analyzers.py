@@ -42,7 +42,8 @@ every time a new analyzer wants a side-channel field.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Iterable, Literal, Optional
+from collections.abc import Callable, Iterable
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -67,7 +68,7 @@ class Finding(BaseModel):
     rule_id: str
     severity: Severity
     message: str
-    span: Optional[Span] = None
+    span: Span | None = None
     extra: dict[str, Any] = {}
 
 

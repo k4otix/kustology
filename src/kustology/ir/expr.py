@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-from typing import Any, ClassVar, Literal, Optional, Union
+from typing import Any, ClassVar, Literal, Union
 
 from pydantic import BaseModel
 
@@ -31,7 +31,7 @@ class Expr(BaseModel):
     span: Span
     result_type: KustoType = KustoType.UNRESOLVED
     # For DYNAMIC, the element type (e.g. dynamic<bool>). None otherwise.
-    result_type_inner: Optional[KustoType] = None
+    result_type_inner: KustoType | None = None
     # KQL default is nullable; binder flips to False when it can prove non-null.
     nullable: bool = True
 
@@ -53,7 +53,7 @@ class Expr(BaseModel):
 class LiteralExpr(Expr):
     KIND: ClassVar[str] = "literal"
     kind: Literal["literal"] = "literal"
-    value: Union[str, int, float, bool, None]
+    value: str | int | float | bool | None
     literal_kind: Literal[
         "string", "int", "real", "bool", "datetime",
         "timespan", "dynamic", "guid", "long", "null",
@@ -66,7 +66,7 @@ class ColumnRef(Expr):
     name: str
     # "$left"/"$right" in join on-clauses, concrete table name when resolved,
     # None when the binder hasn't placed it.
-    table: Optional[str] = None
+    table: str | None = None
 
 
 class FuncCall(Expr):
@@ -141,7 +141,7 @@ class CaseExpr(Expr):
     KIND: ClassVar[str] = "case"
     kind: Literal["case"] = "case"
     branches: list[tuple[AnyExpr, AnyExpr]]
-    default: Optional[AnyExpr] = None
+    default: AnyExpr | None = None
 
 
 class PathExpr(Expr):
@@ -207,7 +207,7 @@ class ExternalDataExpr(Expr):
     kind: Literal["external_data"] = "external_data"
     columns: list[tuple[str, str]]
     uri: str
-    format: Optional[str] = None
+    format: str | None = None
 
 
 class UnknownExpr(Expr):

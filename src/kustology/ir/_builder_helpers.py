@@ -10,10 +10,13 @@ nodes. None of them needs ``self`` or the visitor — splitting them out keeps
 
 from __future__ import annotations
 
-from typing import Any, Optional
+import logging
+from typing import Any
 
 from .spans import Span
 from .types import KustoType
+
+logger = logging.getLogger(__name__)
 
 
 def safe_int(node: Any) -> int:
@@ -76,14 +79,14 @@ def map_semantic_info(node: Any, expr: Any) -> None:
             inner_name = getattr(inner, "Name", None)
             if inner_name:
                 expr.result_type_inner = map_net_type(str(inner_name))
-        except Exception:  # pragma: no cover — defensive
-            pass
+        except Exception as e:  # pragma: no cover — defensive
+            logger.debug("inner result-type probe fell through: %s", e)
     try:
         is_nullable = getattr(res_type, "IsNullable", None)
         if is_nullable is not None:
             expr.nullable = bool(is_nullable)
-    except Exception:  # pragma: no cover — defensive
-        pass
+    except Exception as e:  # pragma: no cover — defensive
+        logger.debug("nullability probe fell through: %s", e)
 
 
 def to_span(node: Any) -> Span:
@@ -91,7 +94,7 @@ def to_span(node: Any) -> Span:
     return Span(text_start=node.TextStart, width=node.Width)
 
 
-def extract_qualified_table_name(node: Any) -> Optional[str]:
+def extract_qualified_table_name(node: Any) -> str | None:
     """Return the rightmost simple name of a qualified table ``PathExpression``.
 
     Handles ``cluster("c").database("d").T``, ``database("d").T``, and ``A.B.T``.
@@ -112,8 +115,8 @@ def is_table_symbol(sym: Any) -> bool:
     try:
         if str(type(sym).__name__).endswith("TableSymbol"):
             return True
-    except Exception:  # pragma: no cover
-        pass
+    except Exception as e:  # pragma: no cover
+        logger.debug("TableSymbol type probe fell through: %s", e)
     try:
         return str(getattr(sym, "Kind", "")) == "Table"
     except Exception:  # pragma: no cover

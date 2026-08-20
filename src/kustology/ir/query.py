@@ -8,13 +8,33 @@ from pydantic import BaseModel, Field
 # Pydantic v2 resolves string forward refs in `AnyExpr` using the namespace of
 # the consuming module, so every name in AnyExpr must be importable here.
 from .expr import (  # noqa: F401 — names referenced via forward refs
-    And, AnyExpr, Between, BinOp, BracketedExpr, CaseExpr, ColumnRef,
-    CompoundNamedExpr, ElementExpr, Exists, Expr, ExternalDataExpr, FuncCall,
-    LiteralExpr, MaterializeExpr, NamedExpr, Not, Or, PathExpr, RegexMatch,
-    SetMembership, StarExpr, ToScalarExpr, UnaryOp, UnknownExpr,
+    And,
+    AnyExpr,
+    Between,
+    BinOp,
+    BracketedExpr,
+    CaseExpr,
+    ColumnRef,
+    CompoundNamedExpr,
+    ElementExpr,
+    Exists,
+    Expr,
+    ExternalDataExpr,
+    FuncCall,
+    LiteralExpr,
+    MaterializeExpr,
+    NamedExpr,
+    Not,
+    Or,
+    PathExpr,
+    RegexMatch,
+    SetMembership,
+    StarExpr,
+    ToScalarExpr,
+    UnaryOp,
+    UnknownExpr,
 )
 from .spans import Span
-
 
 # KIND is the LLM-facing discriminator surfaced by ``ir.llm_view.to_llm_dict``.
 # Keeping it separate from the Python class name lets the wire format use
@@ -27,9 +47,9 @@ class Diagnostic(BaseModel):
     kind: Literal["diagnostic"] = "diagnostic"
     message: str
     severity: str
-    span: Optional[Span] = None
-    code: Optional[str] = None
-    category: Optional[str] = None
+    span: Span | None = None
+    code: str | None = None
+    category: str | None = None
 
 
 class TabularSchema(BaseModel):
@@ -79,13 +99,13 @@ class SummarizeOp(Operator):
     KIND: ClassVar[str] = "summarize"
     kind: Literal["summarize"] = "summarize"
     aggregations: list[Assignment]
-    by: list[Union[ColumnRef, AnyExpr, Assignment]]
+    by: list[ColumnRef | AnyExpr | Assignment]
 
 
 class ProjectOp(Operator):
     KIND: ClassVar[str] = "project"
     kind: Literal["project"] = "project"
-    columns: list[Union[ColumnRef, Assignment, AnyExpr]]
+    columns: list[ColumnRef | Assignment | AnyExpr]
 
 
 class TableRef(BaseModel):
@@ -138,7 +158,7 @@ class FuncCallSource(BaseModel):
 class DistinctOp(Operator):
     KIND: ClassVar[str] = "distinct"
     kind: Literal["distinct"] = "distinct"
-    columns: list[Union[ColumnRef, Assignment, AnyExpr]]
+    columns: list[ColumnRef | Assignment | AnyExpr]
 
 
 class TakeOp(Operator):
@@ -176,7 +196,7 @@ class SampleOp(Operator):
 class SearchOp(Operator):
     KIND: ClassVar[str] = "search"
     kind: Literal["search"] = "search"
-    predicate: Optional[AnyExpr] = None
+    predicate: AnyExpr | None = None
 
 
 class UnionOp(Operator):
@@ -190,10 +210,10 @@ class MakeSeriesOp(Operator):
     kind: Literal["make_series"] = "make_series"
     aggregations: list[Assignment]
     by: list[Assignment]
-    on_column: Optional[AnyExpr] = None
-    range_from: Optional[AnyExpr] = None
-    range_to: Optional[AnyExpr] = None
-    step: Optional[AnyExpr] = None
+    on_column: AnyExpr | None = None
+    range_from: AnyExpr | None = None
+    range_to: AnyExpr | None = None
+    step: AnyExpr | None = None
 
 
 class MvExpandOp(Operator):
@@ -211,19 +231,19 @@ class RenderOp(Operator):
 class ProjectAwayOp(Operator):
     KIND: ClassVar[str] = "project_away"
     kind: Literal["project_away"] = "project_away"
-    columns: list[Union[ColumnRef, AnyExpr]]
+    columns: list[ColumnRef | AnyExpr]
 
 
 class ProjectKeepOp(Operator):
     KIND: ClassVar[str] = "project_keep"
     kind: Literal["project_keep"] = "project_keep"
-    columns: list[Union[ColumnRef, AnyExpr]]
+    columns: list[ColumnRef | AnyExpr]
 
 
 class ProjectReorderOp(Operator):
     KIND: ClassVar[str] = "project_reorder"
     kind: Literal["project_reorder"] = "project_reorder"
-    columns: list[Union[ColumnRef, AnyExpr]]
+    columns: list[ColumnRef | AnyExpr]
 
 
 class ProjectRenameOp(Operator):
@@ -268,13 +288,13 @@ class EvaluateOp(Operator):
 class CountOp(Operator):
     KIND: ClassVar[str] = "count"
     kind: Literal["count"] = "count"
-    as_name: Optional[str] = None
+    as_name: str | None = None
 
 
 class PrintOp(Operator):
     KIND: ClassVar[str] = "print"
     kind: Literal["print"] = "print"
-    columns: list[Union[Assignment, AnyExpr]]
+    columns: list[Assignment | AnyExpr]
 
 
 class AsOp(Operator):
@@ -295,7 +315,7 @@ class RangeOp(Operator):
 class LookupOp(Operator):
     KIND: ClassVar[str] = "lookup"
     kind: Literal["lookup"] = "lookup"
-    lookup_kind: Optional[str] = None
+    lookup_kind: str | None = None
     right: "Pipeline"
     # KQL ``on Foo`` is sugar for ``on $left.Foo == $right.Foo``; both surface
     # here as ``AnyExpr`` (a bare ``ColumnRef`` or a full equality ``BinOp``).
@@ -330,7 +350,7 @@ class InvokeOp(Operator):
 class FindOp(Operator):
     KIND: ClassVar[str] = "find"
     kind: Literal["find"] = "find"
-    predicate: Optional[AnyExpr] = None
+    predicate: AnyExpr | None = None
     tables: list[str] = []
 
 
@@ -482,13 +502,13 @@ class Pipeline(BaseModel):
         UnknownOp,
     ], Field(union_mode="left_to_right")]]
     # Final scope after walking ops. Populated by SchemaAttacher.enrich().
-    result_schema: Optional[TabularSchema] = None
+    result_schema: TabularSchema | None = None
 
 
 class JoinOp(Operator):
     KIND: ClassVar[str] = "join"
     kind: Literal["join"] = "join"
-    join_kind: Optional[str] = None
+    join_kind: str | None = None
     right: Pipeline
     # KQL ``on Foo`` is sugar for ``on $left.Foo == $right.Foo``; both surface
     # here as ``AnyExpr`` (a bare ``ColumnRef`` or a full equality ``BinOp``).
@@ -505,8 +525,8 @@ class LetBinding(BaseModel):
         "time_scalar", "literal_constant", "dynamic_constant",
         "scalar_subquery", "baseline", "subquery", "alias",
     ]
-    rhs_expr: Optional[AnyExpr] = None
-    rhs_pipeline: Optional[Pipeline] = None
+    rhs_expr: AnyExpr | None = None
+    rhs_pipeline: Pipeline | None = None
     inner_tables: list[str] = []
     inner_time_exprs: list[AnyExpr] = []
 

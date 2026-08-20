@@ -61,9 +61,8 @@ def normalize_in_place(expr: Any) -> Any:
             else:
                 flat.append(o)
         expr.operands = flat
-    elif isinstance(expr, Not):
-        if isinstance(expr.operand, Not):
-            return expr.operand.operand
+    elif isinstance(expr, Not) and isinstance(expr.operand, Not):
+        return expr.operand.operand
     return expr
 
 
