@@ -20,6 +20,7 @@ from .reflection import (
     time_functions,
 )
 from .services import format_query, parse, validate
+from .utils.walker import iter_elements
 
 __all__ = [
     # Version
@@ -30,6 +31,7 @@ __all__ = [
     "parse",
     "format_query",
     "validate",
+    "iter_elements",
     # Reflection — always available; reflects the loaded Kusto.Language.dll
     "time_functions",
     "aggregate_functions",

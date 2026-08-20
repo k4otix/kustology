@@ -17,6 +17,10 @@ import logging
 from typing import Any
 
 from ..bridge import GlobalState, KustoCode  # re-export-friendly; also triggers CLR init
+
+# Moved to Tier 1 so consumers walking the .NET tree can reach it without the
+# [ir] extra. The private alias keeps this module's call sites untouched.
+from ..utils.walker import iter_elements as _iter_elements
 from ._builder_helpers import (
     extract_named_param,
     extract_qualified_table_name,
@@ -142,12 +146,6 @@ def _is_time_func_name(name: str) -> bool:
     except Exception:  # pragma: no cover — defensive
         lower = name.lower()
         return "time" in lower or "ago" in lower or "now" in lower
-
-
-def _iter_elements(expr_list):
-    """Yield the ``.Element`` of each entry in a .NET ``SeparatedSyntaxList``."""
-    for i in range(expr_list.Count):
-        yield expr_list[i].Element
 
 
 class IRBuilder:

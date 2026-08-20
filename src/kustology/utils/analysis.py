@@ -5,7 +5,7 @@ import hashlib
 
 from ..bridge import ColumnSymbol, FunctionSymbol, TableSymbol
 from .schema_state import build_global_state  # re-exported
-from .walker import KustoWalker, node_to_dict  # re-exported
+from .walker import KustoWalker, iter_elements, node_to_dict  # re-exported
 
 __all__ = [
     "KustoWalker",
@@ -20,6 +20,7 @@ __all__ = [
     "get_tables_semantic",
     "get_tables_syntactic",
     "get_time_range",
+    "iter_elements",
     "node_to_dict",
     "replace_table",
 ]
