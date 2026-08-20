@@ -6,6 +6,7 @@ import json
 from .bridge import KustoCode
 from .utils.analysis import (
     find_table_references,
+    find_time_expressions,
     get_operator_chain,
     get_operator_stats,
     get_referenced_columns,
@@ -13,7 +14,6 @@ from .utils.analysis import (
     get_structural_hash,
     get_tables_semantic,
     get_tables_syntactic,
-    get_time_range,
     node_to_dict,
     replace_table,
 )
@@ -74,9 +74,26 @@ class KustoQuery:
     def get_structural_hash(self) -> str:
         return get_structural_hash(self._code)
 
+    def find_time_expressions(self) -> list[tuple[str, int, int]]:
+        """Return ``[(text, start, length), ...]`` in source order.
+
+        A discovery aid, not a lookback extractor — see
+        :func:`kustology.utils.analysis.find_time_expressions`.
+        """
+        return find_time_expressions(self._code)
+
     def get_time_range(self) -> list[tuple[str, int, int]]:
-        """Return [(text, start, length), ...] in source order."""
-        return get_time_range(self._code)
+        """Deprecated alias for :meth:`find_time_expressions`."""
+        import warnings
+
+        warnings.warn(
+            "KustoQuery.get_time_range() is deprecated; use "
+            "find_time_expressions(). It returns a source-ordered discovery "
+            "list of time expressions, not a resolved time range.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.find_time_expressions()
 
     def replace_table(
         self,

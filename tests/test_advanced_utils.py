@@ -79,28 +79,52 @@ def test_structural_hash_ignores_literal_values():
     assert h1 != h3
 
 
-def test_get_time_range_returns_tuples_in_source_order():
-    query = "T | where TimeGenerated > ago(1h) and TimeGenerated < datetime(2023-01-01)"
-    times = parse(query).get_time_range()
-    assert all(isinstance(t, tuple) and len(t) == 3 for t in times)
-    starts = [start for _, start, _ in times]
-    assert starts == sorted(starts)
-    texts = [text for text, _, _ in times]
-    assert any("ago(1h)" in t for t in texts)
-    assert any("2023-01-01" in t for t in texts)
+def test_find_time_expressions_returns_tuples_in_source_order():
+    query = "T | where TimeGenerated > ago(1h) | extend n = now()"
+    times = parse(query).find_time_expressions()
+    assert [t[0] for t in times] == ["ago(1h)", "now()"]
+    assert times == sorted(times, key=lambda t: t[1])
 
 
-def test_get_time_range_ignores_string_literal_text():
+def test_find_time_expressions_ignores_string_literal_text():
     """Substring 'ago(' embedded in a string literal must not match."""
     query = "T | where Note == 'this query uses ago()' | count"
-    assert parse(query).get_time_range() == []
+    assert parse(query).find_time_expressions() == []
 
 
-def test_get_time_range_does_not_double_count_nested_literals():
+def test_find_time_expressions_does_not_double_count_nested_literals():
     """ago(1h) reports the call once; the inner 1h timespan is suppressed."""
-    times = parse("T | where t > ago(1h)").get_time_range()
+    times = parse("T | where t > ago(1h)").find_time_expressions()
     texts = [text for text, _, _ in times]
     assert texts == ["ago(1h)"]
+
+
+def test_get_time_range_is_a_deprecated_alias():
+    import warnings
+
+    query = "T | where TimeGenerated > ago(1h)"
+    result = parse(query)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        legacy = result.get_time_range()
+    assert legacy == result.find_time_expressions()
+    assert len(caught) == 1
+    assert issubclass(caught[0].category, DeprecationWarning)
+    assert "find_time_expressions" in str(caught[0].message)
+
+
+def test_module_level_get_time_range_is_a_deprecated_alias():
+    import warnings
+
+    from kustology.utils.analysis import find_time_expressions, get_time_range
+
+    code = parse("T | where TimeGenerated > ago(1h)")._code
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        legacy = get_time_range(code)
+    assert legacy == find_time_expressions(code)
+    assert len(caught) == 1
+    assert issubclass(caught[0].category, DeprecationWarning)
 
 
 def test_format_query_round_trip():

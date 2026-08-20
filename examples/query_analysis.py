@@ -19,7 +19,7 @@ join-bearing query:
   - ``get_referenced_functions()`` — every function callee, including
                                      KQL built-ins and user-defined
                                      callables in semantic mode.
-  - ``get_time_range()``           — temporal expressions with source
+  - ``find_time_expressions()``    — temporal expressions with source
                                      offsets.
   - ``get_operator_chain()``       — ordered pipeline of operators.
   - ``get_operator_stats()``       — operator-kind counts across the
@@ -87,8 +87,8 @@ def analyze(query_text: str) -> None:
     functions = sorted(result.get_referenced_functions())
     print(f"  {functions}")
 
-    banner("get_time_range()")
-    time_windows = result.get_time_range()
+    banner("find_time_expressions()")
+    time_windows = result.find_time_expressions()
     if not time_windows:
         print("  (no temporal expressions)")
     for text, start, length in time_windows:

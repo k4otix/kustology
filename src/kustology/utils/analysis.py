@@ -2,6 +2,7 @@
 # Copyright 2026 Eddie Allan
 
 import hashlib
+import warnings
 
 from ..bridge import ColumnSymbol, FunctionSymbol, TableSymbol
 from .schema_state import build_global_state  # re-exported
@@ -12,6 +13,7 @@ __all__ = [
     "build_global_state",
     "collect_nodes",
     "find_table_references",
+    "find_time_expressions",
     "get_operator_chain",
     "get_operator_stats",
     "get_referenced_columns",
@@ -332,10 +334,18 @@ def get_structural_hash(kusto_code) -> str:
     return hashlib.sha256("".join(parts).encode()).hexdigest()
 
 
-def get_time_range(kusto_code) -> list[tuple[str, int, int]]:
-    """Return [(text, start, length), ...] for every time-related expression in
-    source order: time-function calls (``ago``, ``now``, ``bin``, ...) plus
+def find_time_expressions(kusto_code) -> list[tuple[str, int, int]]:
+    """Return ``[(text, start, length), ...]`` for every time-related expression
+    in source order: time-function calls (``ago``, ``now``, ``bin``, ...) plus
     standalone datetime/timespan literals not already inside a matched call.
+
+    A **discovery aid**, not a lookback extractor. The result is syntactic: it
+    includes bare ``now()``, bare ``1h`` operands, and the operands of
+    ``!between`` — with no indication of which bound a given expression is, or
+    whether it constrains the query's time column at all. Resolving an
+    effective time window additionally needs let-resolution, awareness of which
+    column is temporal, and negation handling; build that on the tier-2 IR
+    rather than on this list.
     """
     fn_ranges = []  # (start, end) of matched time-function calls
     out = []
@@ -381,6 +391,23 @@ def get_time_range(kusto_code) -> list[tuple[str, int, int]]:
         deduped.append(entry)
     deduped.sort(key=lambda t: t[1])
     return deduped
+
+
+def get_time_range(kusto_code) -> list[tuple[str, int, int]]:
+    """Deprecated alias for :func:`find_time_expressions`.
+
+    The old name promised a resolved range and returned a discovery list,
+    which led callers to use it as a lookback extractor and get wrong answers.
+    """
+    warnings.warn(
+        "get_time_range() is deprecated; use find_time_expressions(). It "
+        "returns a source-ordered discovery list of time expressions — "
+        "including bare now(), bare operands and !between operands — not a "
+        "resolved time range.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return find_time_expressions(kusto_code)
 
 
 def replace_table(kusto_code, old_name: str, new_name: str, force_syntactic: bool = False) -> str:
