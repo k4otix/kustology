@@ -224,3 +224,7 @@ reports/
 # Local-only Azure-Sentinel IR validation artifacts (one-time sanity check)
 /tests/fixtures/sentinel_sample/
 /tests/fixtures/sentinel_schemas.json
+
+# Agent workspaces: git worktrees and subagent-driven-development scratch
+/.claude/worktrees/
+/.superpowers/
