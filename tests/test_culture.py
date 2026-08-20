@@ -127,3 +127,53 @@ def test_pin_survives_a_thread_created_after_import():
     t.start()
     t.join()
     assert result["ticks"] == 54_000_000_000
+
+
+# The locale CI matrix (LANG=de_DE.UTF-8 / fr_FR.UTF-8) is what proves the pin
+# is load-bearing. It is only meaningful if .NET actually has data for those
+# cultures — and .NET fails soft here in two different ways. In
+# globalization-invariant mode (DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1, or an
+# image with no ICU) constructing the culture raises; for a name it merely
+# lacks data for, it silently returns invariant separators. Either way every
+# fractional literal parses correctly, the locale job goes green, and it has
+# tested nothing.
+#
+# Across all 1063 cultures .NET exposes, the outcome for a fractional literal is
+# decided entirely by the decimal separator: '.' parses correctly, ',' or '٫'
+# corrupts. Group separator never matters — a KQL literal contains none. So the
+# two matrix cultures are one representative per failure mode, and asserting
+# their decimal separator is exactly the check that they still exercise it.
+CORRUPTING_MATRIX_CULTURES = [
+    ("de-DE", ",", "."),      # digits concatenate: 1.5h -> 15:00:00
+    # NARROW NO-BREAK SPACE (U+202F), written as an escape on purpose:
+    # as a literal it is invisible and reads like a plain space.
+    ("fr-FR", ",", "\u202f"),  # parse fails outright: 1.5h -> 00:00:00
+]
+
+
+@pytest.mark.parametrize("name,decimal_sep,group_sep", CORRUPTING_MATRIX_CULTURES)
+def test_ci_matrix_culture_still_corrupts_fractional_literals(name, decimal_sep, group_sep):
+    """Guard the guard: the locale matrix must not be able to pass vacuously.
+
+    Asserts on the culture constructed by name, not on the ambient one, so this
+    holds under the import-time pin and in every job — not only the locale ones.
+    """
+    from System.Globalization import CultureInfo, CultureNotFoundException
+
+    try:
+        number_format = CultureInfo(name).NumberFormat
+    except CultureNotFoundException as e:  # globalization-invariant mode / no ICU
+        pytest.fail(
+            f"{name} is unavailable to .NET ({e.__class__.__name__}), so the "
+            f"LANG={name} CI job cannot exercise the culture bug and would pass "
+            f"vacuously. Install ICU data / unset "
+            f"DOTNET_SYSTEM_GLOBALIZATION_INVARIANT."
+        )
+
+    assert number_format.NumberDecimalSeparator == decimal_sep, (
+        f"{name} reports decimal separator "
+        f"{number_format.NumberDecimalSeparator!r}, not {decimal_sep!r} — .NET has "
+        f"no real data for it, so fractional literals parse correctly and the "
+        f"LANG={name} CI job proves nothing."
+    )
+    assert number_format.NumberGroupSeparator == group_sep
