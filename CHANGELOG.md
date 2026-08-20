@@ -117,7 +117,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`Expr.result_type_inner` is populated (tier 2).** It read
   `res_type.Underlying`, a property on no type in the assembly. The real
   member is `ElementType` on `DynamicArraySymbol`, so
-  `print x = dynamic([1,2,3])` now reports `result_type_inner=long`.
+  `parse("print x = dynamic([1,2,3])", schema={}).to_ir()` now reports
+  `result_type_inner=long`. Like every binder-derived annotation this needs
+  an analyzed parse — bare `parse(q)` calls `KustoCode.Parse`, which never
+  analyses, so `result_type` and `result_type_inner` are both unset there.
 - `tests/test_reflection_audit.py` (tier 1) — asserts every PascalCase .NET
   member name passed to `getattr`/`hasattr` in `src/` exists in the loaded
   `Kusto.Language` assembly. Four defects in this release came from a probe
