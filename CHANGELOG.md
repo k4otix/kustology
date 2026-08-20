@@ -96,6 +96,16 @@ release is in `docs/superpowers/reports/`.
 - README section documenting the syntax-tree traps, including two pythonnet
   ones this release's audits turned up: member lookup is exact,
   case-sensitive and silent, and an empty .NET `IReadOnlyList` is truthy.
+- ARCHITECTURE.md's "Where to add things" checklists gain the steps this
+  release proved load-bearing: a column-scope decision in `SchemaAttacher`
+  for new operators (the step whose absence left provenance covering 17 of
+  53), and, for new expressions, the `AnyExpr`/`__all__` pair, a `canonical()`
+  render branch, and the lossy-lowering check. Its layout map now lists all
+  of `ir/` and `utils/` rather than half of it.
+- `examples/walk_ir.py` and `examples/walk_tree.py` handle `let`, and their
+  shared query now contains one — demonstrating `LetBinding.rhs_pipeline` and
+  the `TableRef` / `LetRef` split against the AST equivalent.
+  `examples/find_all_demo.py` shows the same split via `find_all`.
 
 ### Changed
 

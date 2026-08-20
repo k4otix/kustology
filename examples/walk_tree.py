@@ -50,6 +50,10 @@ def walk_node(node, depth: int = 0) -> None:
 
     if kind == "QueryBlock":
         print(f"{indent}QueryBlock")
+    elif kind == "LetStatement":
+        # The name lives on the statement; the bound expression is a child,
+        # so recurse (no early return) to show the right-hand pipeline.
+        print(f"{indent}Let: {node.Name.ToString().strip()}")
     elif kind == "ExpressionStatement":
         print(f"{indent}Statement")
     elif kind == "PipeExpression":
@@ -73,15 +77,17 @@ def walk_node(node, depth: int = 0) -> None:
 
 
 QUERY = (
-    "StormEvents "
-    '| where State == "TEXAS" and EventType == "Tornado" '
+    'let tornadoes = StormEvents | where EventType == "Tornado";\n'
+    "tornadoes "
+    '| where State == "TEXAS" '
     "| project StartTime, State, EventType, DeathsDirect"
 )
 
 
 def main() -> None:
     print("Input query:")
-    print(f"  {QUERY}")
+    for line in QUERY.splitlines():
+        print(f"  {line}")
     print()
     print("AST walk (logical nodes only):")
     walk_node(parse(QUERY).syntax)

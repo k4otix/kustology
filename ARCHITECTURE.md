@@ -15,11 +15,20 @@ src/kustology/
     builder.py       # Walks .NET syntax tree → QueryIR; dispatch tables for operators/expressions
     query.py         # Operator and pipeline node models
     expr.py          # Expression node models
-    binder.py        # Schema attachment + type enrichment
+    binder.py        # SchemaAttacher: schema attachment + type enrichment
     walk.py          # Generic IR traversal: walk() and find_all()
+    transforms.py    # semantic_hash, canonicalization, SEMANTIC_HASH_SCHEME
+    llm_view.py      # to_llm_dict — compact JSON-safe rendering for LLMs
+    analyzers.py     # The Finding vocabulary for IR-driven static analysis
     types.py         # Kusto type enum
     spans.py         # Source location tracking
-  utils/             # Helpers for tree walking and schema binding
+    _normalize.py    # canonical() — backs Expr.canonical_form
+    _builder_helpers.py  # Stateless .NET-node helpers used by IRBuilder
+    _guard.py        # Optional-dependency guard: clear error without [ir] extras
+  utils/             # Tier-1 helpers, re-exported from kustology.utils
+    analysis.py      # AST-level analysis: table refs, operator stats, time ranges
+    walker.py        # KustoWalker + iter_elements: primitive AST traversal
+    schema_state.py  # build_global_state: Python schema dict → .NET GlobalState
   bin/               # Bundled Kusto.Language.dll + VERSION.txt (SHA-256 pinned)
 
 scripts/             # Tooling: audit_syntax_kinds.py, verify_corpus.py,
@@ -60,18 +69,41 @@ See README.md "Versioning and stability" for what counts as breaking.
    # inspect type(node).__name__ and dir(node)
    ```
 
-4. Add a minimal `.kql` fixture under `tests/fixtures/complex_queries/`. The
+4. Decide how the operator affects **column scope**, in
+   `src/kustology/ir/binder.py`. If it reshapes its output schema, add a
+   scope rule in `SchemaAttacher._walk_operator()`; if it passes its input
+   schema through, the generic fallback already handles it. Either way,
+   update the coverage list in `SchemaAttacher`'s class docstring, which
+   enumerates which operators reshape scope, which pass it through, and
+   which leave downstream scope knowingly stale. Skipping this step is how
+   `SchemaAttacher` silently ended up covering 17 of 53 operators.
+5. Add a minimal `.kql` fixture under `tests/fixtures/complex_queries/`. The
    parametrized harness in `tests/ir/test_complex_harness.py` picks it up
    automatically.
-5. Regenerate the baseline: `python scripts/audit_syntax_kinds.py --update`.
+6. Regenerate the baseline:
+   `python scripts/audit_syntax_kinds.py --update-baseline`.
 
 **A new IR expression** (e.g. a new literal kind, a new operator shape):
 
 1. Add the model in `src/kustology/ir/expr.py` (or reuse `LiteralExpr` if
    it's just a new `literal_kind`).
-2. Add its kind to `IRBuilder.HANDLED_EXPR_KINDS`.
-3. Add a dispatch branch in `IRBuilder._visit_expr()`.
-4. Regenerate the baseline.
+2. Add the class to the `AnyExpr` union in `expr.py` **and** to `__all__` in
+   `src/kustology/ir/__init__.py`. Omitting either half produces surface
+   that looks implemented and is not — both directions shipped in v0.1.0
+   (see `docs/superpowers/reports/2026-08-20-stub-sweep.md`).
+3. Add its kind to `IRBuilder.HANDLED_EXPR_KINDS`.
+4. Add a dispatch branch in `IRBuilder._visit_expr()`.
+5. Add a render branch to `canonical()` in `src/kustology/ir/_normalize.py`,
+   which backs `Expr.canonical_form`. That function ends in a silent
+   fallthrough to a bare `"?"`, so a missing branch degrades quietly rather
+   than raising: 11 `Expr` types had fallen through it, rendering `-X > 1`,
+   `D.a == 1` and `toscalar(...) > 1` all as the same string `"? > 1"`.
+6. Apply the **lossy-lowering check**. If the node is reachable from more
+   than one KQL construct, it needs a field naming which one — this is a
+   `semantic_hash` correctness requirement, not style, and it is why
+   `SetMembership.op` and `Exists.op` exist. See "Lossy lowering: a
+   populated node can still lose information" in `AGENTS.md`.
+7. Regenerate the baseline.
 
 **A new CLI subcommand**:
 
