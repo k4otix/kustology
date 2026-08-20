@@ -79,7 +79,12 @@ def map_semantic_info(node: Any, expr: Any) -> None:
     except AttributeError:  # pragma: no cover
         return
     expr.result_type = map_net_type(type_name)
-    inner = getattr(res_type, "Underlying", None) or getattr(res_type, "Element", None)
+    # ``ElementType`` on ``DynamicArraySymbol`` is the element type of a
+    # ``dynamic<T>``. The previous probe read ``Underlying`` or ``Element``:
+    # neither is a property on any type in ``Kusto.Language`` -- ``Element``
+    # exists only on the ``SeparatedElement`` syntax wrappers, never on a
+    # Symbol -- so this field was None on every node ever built.
+    inner = getattr(res_type, "ElementType", None)
     if inner is not None:
         try:
             inner_name = getattr(inner, "Name", None)

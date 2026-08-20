@@ -265,6 +265,25 @@ def test_kustotype_has_tabular():
     assert map_net_type("long") is KustoType.LONG
 
 
+def test_dynamic_element_type_is_populated_on_a_real_parse(ir_builder):
+    """``result_type_inner`` on a bound parse, not merely its default.
+
+    The previous test asserted ``e.result_type_inner is None`` on a
+    hand-built LiteralExpr, which passed identically whether the populating
+    code worked or -- as it did -- probed a .NET member that does not exist.
+    """
+    from kustology.ir import KustoType, find_all
+    from kustology.ir.expr import Expr
+
+    ir = ir_builder.build("print x = dynamic([1, 2, 3])")
+    inners = [
+        e.result_type_inner for e in find_all(ir, Expr)
+        if e.result_type_inner is not None
+    ]
+    assert inners, "no expression carried a dynamic element type"
+    assert all(isinstance(i, KustoType) for i in inners)
+
+
 def test_pipeline_result_schema_field():
     from kustology.ir import Pipeline, Span, TableRef, TabularSchema
     pipe = Pipeline(
