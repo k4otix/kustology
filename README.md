@@ -50,6 +50,31 @@ code wants to work with.
 Tier 1 is a thin projection: you get Microsoft's nodes, with Microsoft's
 shapes. These are the places that shape surprises people.
 
+**Member lookup is exact, case-sensitive, and silent.** pythonnet resolves
+.NET members by exact name and returns nothing when one is absent, so a
+typo'd or mis-cased probe fails quietly into your fallback:
+
+```python
+getattr(node, "Uris", None)   # None -- the member is URIs
+getattr(node, "URIs", None)   # the SyntaxList you wanted
+```
+
+Nothing raises and nothing logs. Four fields in this library sat at their
+default for a full release because of exactly this. Before relying on a
+probe, confirm the member exists:
+
+```python
+[m for m in dir(node) if m[:1].isupper()]
+```
+
+**An empty .NET collection is truthy in Python.** `IReadOnlyList` does not
+implement `__bool__`, so the natural check never fires — use `.Count`:
+
+```python
+if not code.GetSyntaxDiagnostics():      # never true, even with 0 diagnostics
+if code.GetSyntaxDiagnostics().Count == 0:   # correct
+```
+
 **`node.Kind` is a .NET enum, not a string.** It has no `__format__`, so any
 f-string format spec raises `TypeError`. Call `str()` on it — always:
 
