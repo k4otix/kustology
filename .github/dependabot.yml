@@ -1,0 +1,51 @@
+# Dependabot version updates.
+#
+# This file was absent while update PRs were already arriving (see #9,
+# "bump cryptography ... in the uv group"), which meant the cadence, grouping
+# and ignore rules lived somewhere not versioned with the code. Declaring them
+# here makes the behaviour reviewable and changeable in a PR.
+#
+# Security updates are a separate repository setting and do not depend on this
+# file; they will keep arriving regardless of what is configured below.
+version: 2
+
+updates:
+  # Python dependencies resolved through uv.lock. Note the lockfile flattens
+  # every group, so an alert here is not evidence of runtime exposure — check
+  # pyproject.toml before treating one as urgent. The only runtime dependency
+  # is pythonnet; everything else arrives via [ir], [test] or [dev].
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    groups:
+      # One PR per week for the routine churn. Security updates bypass
+      # grouping and arrive on their own, which is the behaviour we want.
+      uv:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "build(deps)"
+      include: "scope"
+
+  # Workflow actions are SHA-pinned with a trailing version comment; Dependabot
+  # is what keeps those SHAs current (see the note at .github/workflows/test.yml).
+  # Without this block those pins silently rot.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci(deps)"
+      include: "scope"
