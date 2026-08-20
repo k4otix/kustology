@@ -26,6 +26,7 @@ from .expr import (
 )
 from .query import (
     Assignment,
+    CountOp,
     DistinctOp,
     ExtendOp,
     FilterOp,
@@ -50,6 +51,7 @@ from .query import (
     UnionOp,
 )
 from .types import KustoType
+from .walk import _models_in
 
 
 @dataclass
@@ -69,6 +71,26 @@ class SchemaAttacher:
 
     ``schemas`` is a flat ``{table_name: {column_name: kusto_type_string}}``.
     Tables not present here are treated as opaque (no enrichment).
+
+    **Two levels of coverage, deliberately distinguished.** Every operator
+    gets its expressions filled and its sub-pipelines walked — that part is
+    derived from ``model_fields`` and cannot drift as the model grows. Only
+    some operators additionally *reshape* the scope, because only some have
+    an output schema we can derive without guessing:
+
+    ``project`` / ``project-away`` / ``project-keep`` / ``project-rename`` /
+    ``project-reorder`` / ``summarize`` / ``extend`` / ``distinct`` /
+    ``count`` / ``parse`` / ``parse-where`` / ``mv-expand`` / ``make-series``
+    / ``join`` / ``lookup`` / ``union`` / ``where`` / ``project-by-names``.
+
+    Operators outside that set pass the scope through unchanged. For the
+    ones that genuinely preserve their input schema (``sort``, ``top``,
+    ``take``, ``search``, the graph predicates) that is exact; for ones that
+    do reshape (``print``, ``range``, ``evaluate``, ``facet``, ``fork``,
+    ``mv-apply``, ``partition``, ``parse-kv``, ``serialize``, ``top-nested``)
+    the scope downstream is stale. Stale is worse than exact and better than
+    the previous behavior, which was to skip those operators entirely so
+    their own column references never resolved at all.
     """
 
     def __init__(self, schemas: dict[str, dict[str, str]] | None = None):
@@ -96,11 +118,38 @@ class SchemaAttacher:
 
     def _source_entry(self, pipeline: Pipeline) -> ScopeEntry:
         source = pipeline.source
+        if isinstance(source, Pipeline):
+            # ``materialize(P) | …`` nests a whole pipeline in source
+            # position. Walk it so its own operators shape the scope the
+            # outer pipeline starts from; returning an empty anonymous
+            # entry left everything downstream unresolvable.
+            self._walk_pipeline(source)
+            columns = dict(source.result_schema.columns) if source.result_schema else {}
+            return ScopeEntry(table=None, columns=columns)
         name = source.name if isinstance(source, TableRef) else None
         return ScopeEntry(table=name, columns=self._table_schema(name))
 
-    def _walk_pipeline(self, pipeline: Pipeline) -> list[ScopeEntry]:
-        scope: list[ScopeEntry] = [self._source_entry(pipeline)]
+    def _walk_pipeline(
+        self,
+        pipeline: Pipeline,
+        inherited: list[ScopeEntry] | None = None,
+    ) -> list[ScopeEntry]:
+        """Walk ``pipeline``, returning the scope its last operator leaves.
+
+        ``inherited`` seeds the scope for a sub-pipeline whose source is
+        implicit — the ``mv-apply`` / ``partition`` / ``fork`` / ``facet``
+        bodies, which run against the enclosing row set and so must see its
+        columns. A sub-pipeline with its own explicit source ignores it:
+        ``toscalar(...)`` and ``materialize(...)`` are uncorrelated in KQL,
+        and seeding them would invent provenance the query never expressed.
+        """
+        source_entry = self._source_entry(pipeline)
+        if inherited is not None and not source_entry.table and not source_entry.columns:
+            scope: list[ScopeEntry] = [
+                ScopeEntry(table=e.table, columns=dict(e.columns)) for e in inherited
+            ]
+        else:
+            scope = [source_entry]
         for op in pipeline.operators:
             self._walk_operator(op, scope)
         # Snapshot final scope so downstream consumers don't re-walk operators.
@@ -349,6 +398,32 @@ class SchemaAttacher:
                     self._fill(e, scope)
             self._set_scope(scope, out_cols2)
             return
+        if isinstance(op, CountOp):
+            # ``count`` discards the input schema for a single long column;
+            # ``count as N`` names it.
+            self._set_scope(scope, {op.as_name or "Count": KustoType.LONG.value})
+            return
+
+        # No bespoke scope rule for this operator kind. Fill provenance on
+        # every expression it carries and walk every pipeline it nests,
+        # leaving the scope unchanged.
+        #
+        # The branches above are the operators whose *output schema* we can
+        # derive; there are 17 of them against 53 operator subclasses. Before
+        # this fallback existed the function simply fell off the end for the
+        # other 36, so `| sort by X` left X with no table while a `| project`
+        # in the same query resolved fine. Filling without reshaping is the
+        # honest position: correct for the operators that pass their schema
+        # through (sort, top, take, search, the graph predicates), and for
+        # the ones that do reshape (print, range, evaluate, facet, fork,
+        # mv-apply, partition, parse-kv, serialize, top-nested) it leaves a
+        # stale scope rather than an empty one — strictly closer than
+        # skipping them, and visible here rather than silent.
+        #
+        # Sub-pipelines inherit the current scope: an mv-apply / partition /
+        # fork / facet body has an implicit source and runs against the
+        # enclosing row set.
+        self._fill_children(op, scope, inherited=scope)
 
     def _resolve_column_table(self, name: str, scope: list[ScopeEntry]) -> str | None:
         # Most recently joined side wins on collisions (matches KQL binding).
@@ -357,23 +432,42 @@ class SchemaAttacher:
             return None
         return matches[-1]
 
+    def _fill_children(
+        self,
+        node: object,
+        scope: list[ScopeEntry],
+        inherited: list[ScopeEntry] | None = None,
+    ) -> None:
+        """Fill every expression and pipeline ``node`` holds, at any depth.
+
+        Derived from ``model_fields`` rather than a hardcoded tuple of
+        attribute names. The tuple this replaced omitted ``pipeline``,
+        ``branches`` and ``default``, so ``toscalar(...)`` subtrees and both
+        arms of every ``case(...)`` went unvisited — the same column then
+        resolved inside one operator and not inside another, silently.
+        A hand-maintained list widens that hole every time the model grows a
+        field; ``model_fields`` cannot drift.
+
+        Note that adding ``"pipeline"`` to the old tuple would have changed
+        nothing: it guarded on ``isinstance(child, Expr)`` and ``Pipeline``
+        is not an ``Expr``. A nested pipeline needs ``_walk_pipeline``, which
+        builds a scope from its own source.
+        """
+        for name in type(node).model_fields:  # type: ignore[attr-defined]
+            for child in _models_in(getattr(node, name)):
+                if isinstance(child, Pipeline):
+                    self._walk_pipeline(child, inherited)
+                elif isinstance(child, Expr):
+                    self._fill(child, scope)
+                else:
+                    # Structural wrappers (Assignment, SortExpr, …) carry the
+                    # expressions rather than being one.
+                    self._fill_children(child, scope, inherited)
+
     def _fill(self, expr: Expr | None, scope: list[ScopeEntry]) -> None:
         if expr is None:
             return
-        for attr in (
-            "left", "right", "operand", "target", "expression", "selector",
-            "column", "low", "high",
-        ):
-            child = getattr(expr, attr, None)
-            if child is not None and isinstance(child, Expr):
-                self._fill(child, scope)
-        for attr in ("operands", "args", "values"):
-            children = getattr(expr, attr, None)
-            if not children:
-                continue
-            for item in children:
-                if isinstance(item, Expr):
-                    self._fill(item, scope)
+        self._fill_children(expr, scope)
 
         if isinstance(expr, ColumnRef):
             if expr.table == "$left" and len(scope) >= 2:

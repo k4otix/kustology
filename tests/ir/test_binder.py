@@ -379,3 +379,106 @@ def test_make_series_step_only_populates_step(builder, attacher):
     assert op.range_from is None
     assert op.range_to is None
     assert op.step is not None
+
+
+# --- traversal completeness: every Expr child, every nested Pipeline --------
+#
+# These four shapes all failed the same way before the walker was derived
+# from model_fields: a ColumnRef the binder never visited keeps table=None,
+# so the *same* column resolves inconsistently within one query. Any lineage
+# analyzer reading ColumnRef.table gets a silently wrong answer.
+
+
+def _refs(ir):
+    """{name: {table, ...}} for every ColumnRef in the IR."""
+    from kustology.ir import ColumnRef, find_all
+
+    out: dict[str, set] = {}
+    for c in find_all(ir, ColumnRef):
+        out.setdefault(c.name, set()).add(c.table)
+    return out
+
+
+def test_columns_resolve_inside_toscalar(builder, attacher):
+    """A pipeline nested in an expression resolves against its own source.
+
+    ``_fill`` recursed a hardcoded attribute tuple that had no ``pipeline``
+    entry, so ToScalarExpr / MaterializeExpr / SubqueryExpr subtrees were
+    never entered.
+    """
+    ir = builder.build(
+        "DeviceProcessEvents "
+        "| where ProcessId > toscalar(DeviceProcessEvents | summarize max(ProcessId)) "
+        "| project AccountName"
+    )
+    attacher.enrich(ir)
+    # The same column inside and outside the toscalar must agree.
+    assert _refs(ir)["ProcessId"] == {"DeviceProcessEvents"}
+
+
+def test_columns_resolve_inside_case_arms(builder, attacher):
+    """``CaseExpr.branches`` is tuple-nested and ``default`` was unlisted."""
+    ir = builder.build(
+        "DeviceProcessEvents "
+        "| extend Risk = iif(ProcessId > 100, AccountName, DeviceName)"
+    )
+    attacher.enrich(ir)
+    refs = _refs(ir)
+    assert refs["ProcessId"] == {"DeviceProcessEvents"}
+    assert refs["AccountName"] == {"DeviceProcessEvents"}
+    assert refs["DeviceName"] == {"DeviceProcessEvents"}
+
+
+def test_columns_resolve_under_operators_without_a_scope_rule(builder, attacher):
+    """`sort` and `top` carry expressions but reshape nothing.
+
+    ``_walk_operator`` was an isinstance chain over 17 of 53 operator types
+    with no fallback -- it fell off the end, so the other 36 filled nothing.
+    """
+    ir = builder.build(
+        "DeviceProcessEvents "
+        "| sort by ProcessId desc "
+        "| top 5 by TimeGenerated "
+        "| project AccountName"
+    )
+    attacher.enrich(ir)
+    refs = _refs(ir)
+    assert refs["ProcessId"] == {"DeviceProcessEvents"}
+    assert refs["TimeGenerated"] == {"DeviceProcessEvents"}
+    assert refs["AccountName"] == {"DeviceProcessEvents"}
+
+
+def test_columns_resolve_through_a_nested_pipeline_source(builder, attacher):
+    """``Pipeline.source`` may itself be a ``Pipeline``.
+
+    ``let M = materialize(T | where X)`` is the shape that produces one --
+    ``materialize(...)`` at the head of a bare statement is not accepted by
+    Microsoft's parser at all. ``_source_entry`` returned an empty anonymous
+    scope for the nested case and never walked the inner pipeline, so the
+    outer pipeline started from nothing.
+    """
+    from kustology.ir.query import Pipeline
+
+    ir = builder.build(
+        "let M = materialize(DeviceProcessEvents | where ProcessId > 1); "
+        "M | count"
+    )
+    inner = ir.let_bindings[0].rhs_pipeline
+    assert isinstance(inner.source, Pipeline), "expected a nested pipeline source"
+
+    attacher._walk_pipeline(inner)
+    # The nested source's table reached the outer pipeline's scope, and the
+    # ColumnRef inside it was visited.
+    assert set(inner.result_schema.columns) >= {"ProcessId", "AccountName"}
+    assert _refs(ir)["ProcessId"] == {"DeviceProcessEvents"}
+
+
+def test_count_reshapes_scope_to_a_single_column(builder, attacher):
+    """``count`` replaces the schema entirely; ``count as N`` names it."""
+    ir = builder.build("DeviceProcessEvents | where ProcessId > 1 | count")
+    attacher.enrich(ir)
+    assert set(ir.main_pipeline.result_schema.columns) == {"Count"}
+
+    ir2 = builder.build("DeviceProcessEvents | count as Hits")
+    attacher.enrich(ir2)
+    assert set(ir2.main_pipeline.result_schema.columns) == {"Hits"}
