@@ -38,6 +38,10 @@ forever. Four separate defects shipped this way — `Uris` for `URIs`,
 `IsNullable` and `Underlying` (properties on *no* type in the assembly), and
 `Keys.Count` where `Keys` is a `RowSchema` exposing `Columns`.
 
+An adjacent trap: an **empty .NET `IReadOnlyList` is truthy** in Python, so
+`if not code.GetSyntaxDiagnostics():` never fires and every query looks like a
+parse error. Use `.Count`.
+
 `tests/test_reflection_audit.py` now asserts every PascalCase member name passed
 to `getattr`/`hasattr` in `src/` resolves somewhere in `Kusto.Language`. Its
 limit is that the check is per name, not per type, so the `Keys.Count` shape
@@ -230,15 +234,37 @@ and when a field turns out to be unpopulatable *and* unread, deleting it is
 usually better than implementing it (`category` was removed, not filled in).
 
 A full sweep for this pattern lives in
-`docs/superpowers/reports/2026-08-20-stub-sweep.md`. It cleared the known
-instances; two remain open there as follow-ups (`MaterializeExpr` appears to
-have no producer; `SetMembership` cannot distinguish `has_any` from `in~`).
+`docs/superpowers/reports/2026-08-20-stub-sweep.md`. Both of its open follow-ups
+are now closed: `MaterializeExpr` was proven unreachable and removed
+(`docs/superpowers/reports/2026-08-20-materialize-reachability.md`), and
+`SetMembership` gained an `op` field — see lossy lowering below.
 
 **Two detection questions, not one.** "Is this field ever assigned?" is the
 obvious check and it is not sufficient — it would not have caught `category`,
 which *was* assigned, always to the same literal. Also ask "is every assignment
 site the same constant?" That is what found `ExternalDataExpr.format="unknown"`
 and `SetMembership.case_sensitive=False`.
+
+### Lossy lowering: a populated node can still lose information
+Distinct from declared-but-unpopulated surface, and invisible to the same
+checks. When the builder lowers several KQL constructs onto one IR node, the
+node is fully populated — nothing looks stubbed — but the distinction *between*
+the constructs is gone. `SetMembership` collapsed `in~`, `has_any` and `has_all`
+into one node (`has_any` and `has_all` are opposites), and `Exists` collapsed
+`isnotnull` and `isnotempty`. Both produced identical `semantic_hash` values for
+queries that mean different things, breaking that function's documented
+contract.
+
+The check is not "is this field populated" but **"can two different queries
+produce identical IR?"** If a node can be reached from more than one source
+construct, it needs a field naming which one — `BinOp.op` is the pattern to
+copy, and `canonical()` / `llm_view` should render that field rather than
+re-deriving the operator from flags.
+
+Often this is information the parser already handed over and the builder threw
+away: `in` / `!in` / `in~` / `!in~` share the class `InExpression` and differ
+only in `.Kind`, so dispatching on the class name discards it. See the
+Kind-vs-class trap above — it shows up as data loss, not just a wrong branch.
 
 ### A test that asserts a default proves nothing
 Three defects in the sweep survived review behind tests asserting only a field's

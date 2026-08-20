@@ -8,6 +8,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Distinct KQL operators no longer collide in the IR (tier 2).** `in~`,
+  `has_any` and `has_all` all produced a byte-identical `SetMembership` and an
+  identical `semantic_hash`, and `isnotnull` / `isnotempty` an identical
+  `Exists` — so `semantic_hash`'s documented contract that different operators
+  do not collide was false, and a consumer deduplicating rules by hash silently
+  merged rules meaning different things. `has_any` and `has_all` are opposites
+  (OR vs AND of term matches); `in~` compares whole values rather than terms;
+  `isnotempty` also rejects `""`. Both nodes now carry `op`, following the
+  existing `BinOp` pattern, and `canonical_form` and the LLM view render it
+  instead of re-deriving the operator from flags. The parser had always
+  supplied the distinction — `in` / `!in` / `in~` / `!in~` share the class
+  `InExpression` and differ only in `.Kind`, which the builder discarded by
+  dispatching on the class name.
+- **`BinOp.case_sensitive` is right for the whole operator family (tier 2).**
+  It came from a hand-maintained allow-list of six operators, with everything
+  absent falling through to `True` — so `hasprefix` and `hassuffix` were wrong
+  before anyone negated anything, and `!has`, `!contains`, `!startswith`,
+  `!endswith`, `!hasprefix` and `!hassuffix` were all reported backwards. KQL
+  string operators fold case unless suffixed `_cs`, and negating a predicate
+  does not change how it compares. Now derived from the operator's suffix, so
+  an operator added by a DLL refresh no longer lands wrong by default.
+
 - **Column provenance is resolved everywhere, not in 17 of 53 operators
   (tier 2).** `SchemaAttacher` recursed a hardcoded tuple of attribute names
   with no `pipeline`, `branches` or `default` entry, and dispatched on an
@@ -155,6 +177,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Breaking (tier 2, pre-1.0)
 
+- **`SetMembership` and `Exists` gain a required `op` field**, and
+  `MaterializeExpr` is removed. Stored IR JSON written before this change fails
+  to load under `extra="forbid"`.
+- **`semantic_hash` changes for any query** using a membership operator,
+  `isnotnull` / `isnotempty`, or one of the eight string operators whose
+  case sensitivity was wrong. Across the bundled 33-query corpus, 22 hashes
+  change and 11 do not — a clean partition matching exactly which files use an
+  affected operator.
+- **`MaterializeExpr` is removed** — proven unreachable by three independent
+  methods (grammar sweep, 1,808 parse mutations, an instrumented builder over
+  1,091 queries). `materialize` is a keyword the parser admits only as a `let`
+  right-hand side, where it becomes a nested `Pipeline`. Unusually safe for a
+  breaking change: since none was ever produced, no stored IR can contain one.
+  See `docs/superpowers/reports/2026-08-20-materialize-reachability.md`.
+
 - **`LetRef` replaces `TableRef` for `let`-bound names.**
   `find_all(ir, TableRef)` no longer returns aliases, and
   `LetBinding.inner_tables` narrows to real tables. Both now answer "which
@@ -227,6 +264,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   unequal with no signal that the canonicalization rules moved.
 
 ### Internal
+
+- `IR_SCHEMA_VERSION` stays `0.3` and `SEMANTIC_HASH_SCHEME` stays
+  `kustology-sem-v3` despite the breaking changes above. The lockstep bump rule
+  is about *released* versions: `v3` already covers this whole unreleased
+  window, the only release tag is `v0.1.0`, and bumping again inside one window
+  would churn the tag while informing nobody. Reasoning recorded next to the
+  constant.
 
 - The `ruff` job lints `examples/` as well as `src tests scripts`; the six
   pre-existing `I001` findings there are fixed. `examples/` was already

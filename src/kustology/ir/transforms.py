@@ -158,6 +158,14 @@ _VOLATILE_FIELDS = frozenset({
 # field set + transforms + dump format) so a future change can ship a new
 # tag without silently invalidating stored hashes. Keep in lockstep with
 # ``IR_SCHEMA_VERSION`` in ``kustology.ir`` — bump together.
+#
+# The lockstep rule is about *released* versions. ``v3`` covers everything in
+# the current ``[Unreleased]`` section: the tag exists so a consumer holding
+# stored hashes learns they are stale, and no consumer has seen ``v3`` yet —
+# the only release tag is ``v0.1.0``, and ``release.yml`` fires on ``v*``.
+# Bumping again inside one unreleased window would churn the tag while
+# informing nobody. Bump on the next change *after* a release, not on the
+# next change.
 SEMANTIC_HASH_SCHEME = "kustology-sem-v3"
 
 
