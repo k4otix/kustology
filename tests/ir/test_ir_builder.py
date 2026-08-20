@@ -469,41 +469,59 @@ def test_macro_expand_models_its_inner_pipeline(ir_builder):
         ("in~", False, "inclusion"),
         ("!in", True, "exclusion"),
         ("!in~", False, "exclusion"),
+        ("has_any", False, "inclusion"),
+        ("has_all", False, "inclusion"),
     ],
 )
-def test_set_membership_case_sensitivity_follows_the_operator(
+def test_set_membership_records_its_operator(
     ir_builder, op, case_sensitive, polarity
 ):
-    """``case_sensitive`` was hardcoded False for every membership operator.
+    """``op`` is the source of truth; polarity and case_sensitive are derived.
 
-    KQL ``in`` is case-*sensitive*; only the tilde forms are not. So the
-    field was constant *and* wrong for half its inputs, and
-    ``canonical_form`` rendered ``X in ("a")`` as ``X in~ ("a")`` -- a
-    different predicate.
+    Without it, ``polarity`` and ``case_sensitive`` were the only
+    discriminators -- four states for six operators -- so ``in~``,
+    ``has_any`` and ``has_all`` were one indistinguishable node.
     """
     from kustology.ir import SetMembership, find_all
 
     ir = ir_builder.build(f'T | where C {op} ("a", "b")')
     m = next(iter(find_all(ir, SetMembership)))
+    assert m.op == op
     assert m.case_sensitive is case_sensitive
     assert m.polarity == polarity
 
 
-def test_case_sensitive_membership_canonicalizes_without_a_tilde(ir_builder):
+@pytest.mark.parametrize(
+    "left, right",
+    [
+        # Opposite operators: OR of term matches vs AND of term matches.
+        ('T | where C has_any ("a", "b")', 'T | where C has_all ("a", "b")'),
+        # Term match vs whole-value equality.
+        ('T | where C has_any ("a")', 'T | where C in~ ("a")'),
+    ],
+)
+def test_distinct_membership_operators_do_not_collide(ir_builder, left, right):
+    """``semantic_hash``'s contract is that different operators do not collide.
+
+    These pairs did, because nothing on the node recorded which operator
+    produced it. ``has_any`` and ``has_all`` are semantically opposite.
+    """
+    a, b = ir_builder.build(left), ir_builder.build(right)
+    assert a.semantic_hash != b.semantic_hash
+
+
+def test_membership_operator_is_read_without_semantic_analysis(ir_builder):
+    """``op`` comes from ``Operator.ToString()``, which a syntax-only parse
+    has. ``ReferencedSymbol.OperatorKind`` would also identify the operator
+    but is None unless the binder ran, which would make ``op`` depend on
+    whether a schema was supplied.
+    """
+    from kustology import parse
     from kustology.ir import SetMembership, find_all
 
-    ir = ir_builder.build('T | where C in ("a")')
-    m = next(iter(find_all(ir, SetMembership)))
-    assert m.canonical_form == 'C in ("a")'
-
-
-def test_has_any_is_case_insensitive(ir_builder):
-    """``has_any`` is a term match and case-insensitive, unlike ``in``."""
-    from kustology.ir import SetMembership, find_all
-
-    ir = ir_builder.build('T | where C has_any ("a", "b")')
-    m = next(iter(find_all(ir, SetMembership)))
-    assert m.case_sensitive is False
+    unbound = parse('T | where C has_all ("a")').to_ir()
+    m = next(iter(find_all(unbound, SetMembership)))
+    assert m.op == "has_all"
 
 
 # --- canonical_form coverage -----------------------------------------------

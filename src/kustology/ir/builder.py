@@ -1080,8 +1080,15 @@ class IRBuilder:
             # indistinguishable in the IR and canonical_form rendered a
             # case-sensitive `in` as `in~` -- a different predicate.
             # `has_any` / `has_all` are term matches and always fold case.
-            membership_op = node.Operator.ToString().strip()
+            # `in`, `!in`, `in~` and `!in~` all share the class
+            # `InExpression` and differ only in `.Kind`, so dispatching on the
+            # class name -- as this branch does -- discards the distinction.
+            # `Operator.ToString()` recovers it, and unlike
+            # `ReferencedSymbol.OperatorKind` it is present on a syntax-only
+            # parse, so `op` does not depend on whether a schema was supplied.
+            membership_op = node.Operator.ToString().strip().lower()
             res = SetMembership(
+                op=membership_op,
                 column=self._visit_expr(node.Left),
                 values=self._visit_list(node.Right),
                 polarity="inclusion" if "!" not in membership_op else "exclusion",

@@ -97,6 +97,16 @@ class BinOp(Expr):
 class SetMembership(Expr):
     KIND: ClassVar[str] = "set_membership"
     kind: Literal["set_membership"] = "set_membership"
+    # The literal KQL operator: in, !in, in~, !in~, has_any, has_all.
+    # Source of truth, as on ``BinOp`` -- ``polarity`` and ``case_sensitive``
+    # are derived from it and kept for convenience.
+    #
+    # Without it those two fields were the only discriminators, giving four
+    # states for six operators: ``in~``, ``has_any`` and ``has_all`` collapsed
+    # into one indistinguishable node with an identical ``semantic_hash``,
+    # though ``has_any`` and ``has_all`` are opposites (OR vs AND of term
+    # matches) and ``in~`` compares whole values rather than terms.
+    op: str
     column: AnyExpr
     values: list[AnyExpr]
     polarity: Literal["inclusion", "exclusion"]
