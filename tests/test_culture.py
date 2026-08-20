@@ -1,16 +1,31 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-"""Fractional duration literals must parse identically under every locale.
+"""Fractional numeric literals must parse identically under every locale.
 
-Microsoft's parser reads ``TimespanLiteralExpression.LiteralValue`` lazily,
-using the culture live at property-access time. Under ``de-DE`` the decimal
-point is a group separator, so ``1.5h`` yields fifteen hours and ``2.25s``
-yields three minutes forty-five; under ``fr-FR`` the parse fails to zero.
-The bridge pins InvariantCulture at import to close this.
+Microsoft's parser reads ``LiteralExpression.LiteralValue`` lazily, using the
+culture live at property-access time. Under a comma-decimal locale the
+decimal point is read as a group separator, so the fractional part is
+swallowed and the digits are concatenated:
+
+* ``timespan`` — ``1.5h`` yields fifteen hours, ``2.25s`` three minutes
+  forty-five; under ``fr-FR`` the parse fails to zero.
+* ``real`` — ``1.5`` yields ``15.0``. A predicate like
+  ``| where CpuPct > 1.5`` is silently ten times too strict.
+* ``decimal`` — ``decimal(1.5)`` yields ``15``.
+
+Durations are the loudest case, not the only one: every fractional numeric
+literal kind is affected the same way. The bridge pins InvariantCulture at
+import to close all of them.
 
 These tests pass on an en-US machine even without the fix. Run them under
 ``LANG=de-DE`` to see them fail.
+
+They cover the pin as it stands after import. They do *not* — and cannot —
+cover a host that reassigns ``CultureInfo.DefaultThreadCurrentCulture``
+*after* importing kustology: ``LiteralValue`` is lazy, so that reopens the
+corruption for every literal read afterwards, and no code at this layer can
+prevent it. See ``bridge._pin_invariant_culture``.
 """
 
 import pytest
@@ -27,14 +42,26 @@ FRACTIONAL_CASES = [
     ("1.5d", 1_296_000_000_000),
 ]
 
+REAL_CASES = [
+    ("1.5", 1.5),
+    ("0.25", 0.25),
+    ("1.125", 1.125),
+]
+
+DECIMAL_CASES = [
+    ("1.5", "1.5"),
+    ("2.25", "2.25"),
+]
+
+
+def _single_literal(query: str, net_kind: str):
+    nodes = collect_nodes(parse(query).syntax, lambda n: str(n.Kind) == net_kind)
+    assert len(nodes) == 1, f"expected one {net_kind} in {query!r}"
+    return nodes[0].LiteralValue
+
 
 def _single_timespan_ticks(query: str) -> int:
-    nodes = collect_nodes(
-        parse(query).syntax,
-        lambda n: str(n.Kind) == "TimespanLiteralExpression",
-    )
-    assert len(nodes) == 1, f"expected one timespan literal in {query!r}"
-    return nodes[0].LiteralValue.Ticks
+    return _single_literal(query, "TimespanLiteralExpression").Ticks
 
 
 def test_bridge_pins_invariant_culture():
@@ -57,6 +84,34 @@ def test_fractional_timespan_literal_is_culture_independent(literal, expected_ti
 def test_integer_timespan_literal_unaffected(literal, expected_ticks):
     """Integer literals were always correct — guard against regressing them."""
     assert _single_timespan_ticks(f"T | where X > {literal}") == expected_ticks
+
+
+@pytest.mark.parametrize("literal,expected", REAL_CASES)
+def test_fractional_real_literal_is_culture_independent(literal, expected):
+    """`real` corrupts exactly like `timespan` — `1.5` reads back as `15.0`.
+
+    Documented separately because the README and CHANGELOG framed the defect
+    as a *duration* problem, which would let a consumer writing
+    ``| where CpuPct > 1.5`` conclude they were unaffected.
+    """
+    value = _single_literal(f"T | where CpuPct > {literal}", "RealLiteralExpression")
+    assert value == expected
+
+
+@pytest.mark.parametrize("literal,expected", DECIMAL_CASES)
+def test_fractional_decimal_literal_is_culture_independent(literal, expected):
+    """`decimal` corrupts the same way.
+
+    Rendered through InvariantCulture so this asserts on the *parsed* value
+    rather than on how the ambient culture happens to format it — the two
+    failure modes are distinct and only the former is a data corruption.
+    """
+    from System.Globalization import CultureInfo
+
+    value = _single_literal(
+        f"T | where D > decimal({literal})", "DecimalLiteralExpression",
+    )
+    assert value.ToString(None, CultureInfo.InvariantCulture) == expected
 
 
 def test_pin_survives_a_thread_created_after_import():

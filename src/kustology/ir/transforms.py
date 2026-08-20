@@ -135,8 +135,20 @@ def _merge_at_one_level(ops: list) -> list:
 # Stripped from the dump before hashing. Spans depend on character offsets so
 # would defeat the purpose of a semantic hash; the type-annotation fields
 # (``result_type``, ``result_type_inner``, ``nullable``) are populated by the
-# binder, so including them would make the hash bind-state-dependent — two
-# IRs of the same query, one pre- and one post-bind, would otherwise differ.
+# binder, so leaving them in would make the hash differ between a bound and an
+# unbound parse purely because of the annotations.
+#
+# Stripping these fields does *not* make bind state invisible to the hash, and
+# no field-stripping could. The builder's ``let`` dispatch is bind-dependent by
+# *shape*: ``let A = OtherTable`` yields ``rhs_expr: ColumnRef`` unbound and
+# ``rhs_pipeline: Pipeline(TableRef)`` once the binder proves ``OtherTable`` is
+# a table (see ``IRBuilder._visit_let_statement``). Different nodes, not
+# different field values — so ``semantic_hash`` differs across bind state for a
+# query whose ``let`` aliases a table. That divergence is accepted and
+# documented rather than papered over: the alternative is to treat every bare
+# ``NameReference`` as a table without a schema to prove it, trading an honest
+# difference for a silently wrong answer. Queries with no table-aliasing
+# ``let`` are unaffected.
 _VOLATILE_FIELDS = frozenset({
     "span", "result_type", "result_type_inner", "nullable",
 })

@@ -72,9 +72,17 @@ def _pin_invariant_culture() -> None:
 
     Kusto's ``LiteralValue`` is evaluated lazily on property access, using the
     culture live at that moment — not the one active during ``parse()``. Under
-    ``de-DE`` the decimal point is read as a group separator, so ``1.5h``
-    yields fifteen hours and ``2.25s`` yields three minutes forty-five; under
-    ``fr-FR`` the parse fails to zero. Because the corruption happens inside
+    a comma-decimal locale the decimal point is read as a group separator, so
+    the fractional part is swallowed:
+
+    * ``timespan`` — ``1.5h`` yields fifteen hours, ``2.25s`` three minutes
+      forty-five; under ``fr-FR`` the parse fails to zero.
+    * ``real`` — ``1.5`` yields ``15.0``, so ``| where CpuPct > 1.5`` becomes
+      ten times too strict.
+    * ``decimal`` — ``decimal(1.5)`` yields ``15``.
+
+    Durations are the loudest case, not the only one: every fractional numeric
+    literal kind is affected identically. Because the corruption happens inside
     caller code, arbitrarily far from any kustology call, a pin scoped around
     our own entry points would not close it — only a process-wide pin does.
 
@@ -87,6 +95,21 @@ def _pin_invariant_culture() -> None:
     This is a deliberate process-global effect of importing kustology, with no
     opt-out. An escape hatch would let a host silently reintroduce 10x and 100x
     duration errors, which is worse than the co-tenancy cost it would avoid.
+
+    **Residual risk — a host that changes .NET's culture after importing
+    kustology re-opens the corruption, and nothing at this layer can stop it.**
+    The pin runs once, at import. Assigning
+    ``CultureInfo.DefaultThreadCurrentCulture`` or
+    ``Thread.CurrentThread.CurrentCulture`` afterwards — directly, or via any
+    other .NET-interop library in the same process — governs every
+    ``LiteralValue`` that has not yet been read. Because the value is computed
+    on first access and cached, that includes literals in a tree parsed while
+    the pin was still in force but not yet touched; only literals already read
+    keep their correct value. Measured after a post-import switch to
+    ``de-DE``: an unread ``1.5h`` reads back as ``15:00:00``, ``1.5`` as
+    ``15.0``, ``decimal(1.5)`` as ``15``. A host doing this must restore
+    invariant culture before touching parsed values; kustology cannot detect
+    or defend against it.
     """
     from System.Globalization import CultureInfo
     from System.Threading import Thread

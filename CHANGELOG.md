@@ -8,14 +8,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- **Culture no longer corrupts duration literals (tier 1).** Importing
-  `kustology` now pins .NET's culture to invariant, process-wide. Microsoft's
-  parser evaluates `LiteralValue` lazily on property access, so the culture
-  live in *caller* code decided the parsed value: under `de-DE` the decimal
-  point was read as a group separator (`1.5h` → 15 hours, `2.25s` → 3m45s)
-  and under `fr-FR` the parse failed to zero. Integer literals were
-  unaffected, which is why the previous suite passed green under `de-DE`. A
-  `de-DE`/`fr-FR` CI matrix now guards it. No opt-out.
+- **Culture no longer corrupts fractional numeric literals (tier 1).**
+  Importing `kustology` now pins .NET's culture to invariant, process-wide.
+  Microsoft's parser evaluates `LiteralValue` lazily on property access, so
+  the culture live in *caller* code decided the parsed value: under `de-DE`
+  the decimal point was read as a group separator and the fractional part was
+  swallowed. This was never limited to durations — `timespan` (`1.5h` → 15
+  hours, `2.25s` → 3m45s), `real` (`1.5` → `15.0`, making
+  `| where CpuPct > 1.5` ten times too strict) and `decimal`
+  (`decimal(1.5)` → `15`) all corrupt identically; under `fr-FR` a duration
+  parsed to zero. Integer literals were unaffected, which is why the previous
+  suite passed green under `de-DE`. A `de-DE`/`fr-FR` CI matrix now guards it.
+  No opt-out. **Residual risk:** the pin runs once, at import — a host that
+  changes .NET's culture afterwards re-opens the corruption for every
+  `LiteralValue` not yet read, and nothing at this layer can prevent that.
+  See `bridge._pin_invariant_culture`.
 - **`literal_kind` is read from the .NET node (tier 2).** It was re-inferred
   from the Python type of `LiteralValue`, so `real` reported as `int` and
   `datetime`, `timespan` and `guid` all reported as `string`.
@@ -25,16 +32,36 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `semantic_hash`, making the hash differ across machines for the same query.
 - **`LetBinding` is populated (tier 2).** The builder set only `name`, `span`
   and a hardcoded `category="alias"`, leaving `rhs_expr`, `rhs_pipeline`,
-  `inner_tables` and `inner_time_exprs` permanently empty.
+  `inner_tables` and `inner_time_exprs` permanently empty. Every tabular
+  right-hand-side shape is covered, including the two that a first pass
+  missed: the parenthesized form `let X = ( T | where … );` — the dominant
+  Microsoft Sentinel idiom, which arrives wrapped in a
+  `ParenthesizedExpression` — and operator-rooted right-hand sides
+  (`union`, `range`, `search`, `print`, `find`, `datatable`).
+- **The corpus coverage gates walk `let` bindings (tier 2).** Both
+  `tests/ir/test_complex_harness.py` and `scripts/mine_corpus.py` inspected
+  only `QueryIR.main_pipeline`, so a gap reachable only through a `let`
+  right-hand side reported green. That is why the unpopulated tabular `let`
+  above survived review. Walking the bindings surfaced one further real gap,
+  fixed below.
+- **A bare tabular subquery in expression position is modeled (tier 2).**
+  `| where User in ((Suspicious | project User))` collapsed the entire inner
+  query into a single `UnknownExpr` blob of raw text. It now builds a
+  `SubqueryExpr`, so the subtree is reachable by `walk` / `find_all`.
 
 ### Added
 
 - `iter_elements()` (tier 1) — unwraps the `SeparatedElement` wrappers that
   .NET list properties yield, and passes plain `SyntaxList` through unchanged.
 - `LiteralExpr.ticks` (tier 2) — exact .NET ticks for `datetime` and
-  `timespan` literals; `ticks // 10` gives exact microseconds.
+  `timespan` literals. `ticks // 10` converts to exact microseconds — down to
+  `1microsecond`, but not below it: `2tick` is 2 ticks and `timedelta` cannot
+  represent 200ns. This field is the only lossless form.
 - `LetFunction` (tier 2) — parameter names and body span for `let`-declared
   functions. The body is not modeled.
+- `SubqueryExpr` (tier 2) — a bare pipeline in expression position, i.e. the
+  value set of a membership test. Mirrors `MaterializeExpr` / `ToScalarExpr`;
+  carries the inner `Pipeline`.
 - `literal_kind` gains `"decimal"`.
 - README section documenting the syntax-tree traps.
 
@@ -52,6 +79,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Breaking (tier 2, pre-1.0)
 
+- **Generic traversal now descends into `let` right-hand sides.** Populating
+  `LetBinding.rhs_pipeline` changes what `walk()` and `find_all()` return for
+  any query with a tabular `let` — the binding's whole subtree is now part of
+  the IR. On `let Base = SecurityEvent | where EventID == 1; Base | count`,
+  `find_all(ir, TableRef)` yields `['SecurityEvent', 'Base']` where it
+  previously yielded `['Base']`. A lineage or table-inventory analyzer built
+  on `find_all` will change its answers — usually to the correct ones, but
+  silently. `to_llm_dict()` payloads grow correspondingly. Deduplicate, or
+  scope the walk to `ir.main_pipeline`, if you need the old shape.
+- **`semantic_hash` can differ between a bound and an unbound parse of a
+  query whose `let` aliases a table.** `let A = OtherTable` builds
+  `rhs_expr: ColumnRef` unbound and `rhs_pipeline: Pipeline(TableRef)` once
+  the binder proves `OtherTable` is a table, so the IR *shape* — not just
+  bind-time annotations — depends on whether a schema was supplied, and the
+  volatile-field stripping that keeps `result_type` out of the hash cannot
+  undo it. Accepted rather than fixed: the only way to make the shapes match
+  without a schema is to assume any bare name on a `let` right-hand side is a
+  table, which trades a documented difference for a silently wrong answer.
+  Queries with no table-aliasing `let` hash identically bound or unbound.
+  Compare hashes only across parses made the same way.
 - `literal_kind` returns different values for `long`, `real`, `decimal`,
   `datetime`, `timespan`, `guid` and `null` literals.
 - `LiteralExpr.value` changes format for `datetime` and `timespan`.

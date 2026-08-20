@@ -75,6 +75,16 @@ class SchemaAttacher:
         self.schemas: dict[str, dict[str, str]] = dict(schemas or {})
 
     def enrich(self, ir: QueryIR) -> QueryIR:
+        """Enrich ``ir.main_pipeline`` in place and mark the IR attached.
+
+        Scope boundary: ``ir.let_bindings`` are *not* walked, so a tabular
+        binding's ``rhs_pipeline.result_schema`` stays ``None`` and the
+        ``ColumnRef`` nodes inside it keep ``table=None``. Extending the walk
+        there requires threading let-bound names through this class's scope
+        model so a later ``let`` (or the main pipeline) sees an earlier one's
+        output columns — a behavior change, not a loop addition. See the note
+        on ``LetBinding.rhs_pipeline``.
+        """
         self._walk_pipeline(ir.main_pipeline)
         ir.schema_attached = True
         return ir

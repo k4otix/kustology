@@ -91,9 +91,12 @@ inverts the predicate. Both put the column in `.Left` and the bounds in
 `parse(q, schema=...)` binds, and they all resolve. It is all-or-nothing.
 
 **Read `TimeSpan.Ticks`, not `TotalSeconds`.** `TotalSeconds` is a float and
-loses sub-second exactness. `ticks // 10` gives exact microseconds, which is
-what makes `1microsecond` and `2tick` round-trip. On Tier 2, `LiteralExpr.ticks`
-carries this directly.
+loses sub-second exactness. A tick is 100ns, so `ticks // 10` converts to exact
+microseconds — enough to round-trip `1microsecond` (10 ticks → 1µs) through a
+`datetime.timedelta`. It does **not** round-trip anything finer: `2tick` is 2
+ticks, `2 // 10 == 0`, and `timedelta`'s resolution is one microsecond, so 200ns
+cannot be represented at all. Read `ticks` itself to preserve sub-microsecond
+literals. On Tier 2, `LiteralExpr.ticks` carries the raw tick count directly.
 
 **Unary minus wraps a positive literal.** `-1h` parses as a
 `UnaryMinusExpression` over a `TimespanLiteralExpression` whose value is
@@ -104,9 +107,29 @@ Read the sign from the parent. Tier 2 models this as
 **Importing kustology pins .NET's culture to invariant, process-wide.** This
 is deliberate and has no opt-out. Microsoft's parser evaluates `LiteralValue`
 lazily on property access, using the culture live at that moment, so under a
-comma-decimal locale `1.5h` parses as fifteen hours and under `fr-FR` it
-parses as zero. Because the corruption happens in caller code, only a
+comma-decimal locale the decimal point is read as a group separator and the
+fractional part is swallowed. This is **not** limited to durations — every
+fractional numeric literal kind is affected the same way:
+
+| literal | written | read back under `de-DE` without the pin |
+| --- | --- | --- |
+| `timespan` | `1.5h` | `15:00:00` (fifteen hours) |
+| `real` | `1.5` | `15.0` — a `where CpuPct > 1.5` filter becomes 10x too strict |
+| `decimal` | `decimal(1.5)` | `15` |
+
+Under `fr-FR` a duration parses to zero instead. Because the corruption
+happens in caller code, arbitrarily far from any kustology call, only a
 process-global pin closes it. `CurrentUICulture` is left untouched.
+
+**Residual risk:** the pin runs once, at import. A host that assigns
+`CultureInfo.DefaultThreadCurrentCulture` or
+`Thread.CurrentThread.CurrentCulture` *afterwards* — directly, or through
+another .NET-interop library sharing the process — re-opens the corruption for
+every `LiteralValue` not yet read, including literals in a tree parsed while
+the pin was still in force (the value is computed on first access and cached,
+so only already-read literals keep their correct value). Nothing at this layer
+can detect or prevent that; restore invariant culture before reading parsed
+values.
 
 ## Prerequisites
 
