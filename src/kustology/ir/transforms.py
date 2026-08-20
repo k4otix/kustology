@@ -146,7 +146,7 @@ _VOLATILE_FIELDS = frozenset({
 # field set + transforms + dump format) so a future change can ship a new
 # tag without silently invalidating stored hashes. Keep in lockstep with
 # ``IR_SCHEMA_VERSION`` in ``kustology.ir`` — bump together.
-SEMANTIC_HASH_SCHEME = "kustology-sem-v1"
+SEMANTIC_HASH_SCHEME = "kustology-sem-v2"
 
 
 def compute_semantic_hash(node: BaseModel) -> str:
@@ -154,7 +154,7 @@ def compute_semantic_hash(node: BaseModel) -> str:
 
     Accepts any IR ``BaseModel`` subtree — a full :class:`QueryIR`, a
     standalone :class:`Pipeline`, an :class:`Expr` subtree — and returns
-    a scheme-tagged hash like ``kustology-sem-v1:<64 hex chars>``.
+    a scheme-tagged hash like ``kustology-sem-v2:<64 hex chars>``.
 
     Two subtrees with the same semantic content collide:
 

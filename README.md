@@ -45,6 +45,69 @@ code wants to work with.
 | **Schema binding** | `parse(query, schema=...)` runs Microsoft's binder — semantic diagnostics plus symbol resolution accessible via AST methods | `SchemaAttacher` materializes those binding results into Pydantic fields and computes `Pipeline.result_schema` |
 | **Best for** | Formatting / linting, IDE integrations, extracting referenced tables/columns/functions/operators, surgical table renames | Lineage and anti-pattern analyzers, JSON-serializable query representations for APIs and UIs, schema-aware column flow, LLM-fed query graphs |
 
+## Working with Microsoft's syntax tree
+
+Tier 1 is a thin projection: you get Microsoft's nodes, with Microsoft's
+shapes. These are the places that shape surprises people.
+
+**`node.Kind` is a .NET enum, not a string.** It has no `__format__`, so any
+f-string format spec raises `TypeError`. Call `str()` on it — always:
+
+```python
+f"{node.Kind:<30}"       # TypeError: unsupported format string
+f"{str(node.Kind):<30}"  # fine
+```
+
+**List-valued properties yield `SeparatedElement` wrappers.**
+`ProjectOperator.Expressions`, `QueryBlock.Statements` and
+`FunctionParameters.Parameters` return `SyntaxList[SeparatedElement[T]]`; the
+wrapper carries the trailing comma alongside the expression. Its `str()` reads
+almost like the expression's, so a missing unwrap looks correct in printed
+output while every `.Kind` check silently fails to match — the wrapper's
+`Kind` is `SeparatedElement`, never the expression's. Use `iter_elements`,
+which also passes through plain `SyntaxList[T]` such as
+`SummarizeOperator.Parameters`:
+
+```python
+from kustology import iter_elements, parse
+
+for expr in iter_elements(project_operator.Expressions):
+    print(str(expr.Kind))   # NameReference, not SeparatedElement
+```
+
+**`BinaryExpression` is one generic class; the operator lives in `Kind`.**
+All six comparisons share the class, so branching on type will not separate
+them. Branch on `str(node.Kind)` (`GreaterThanExpression`, `EqualExpression`,
+`NotEqualExpression`, ...) or read `node.Operator.ToString().strip()`.
+
+**`!between` shares `BetweenExpression` with `between`.** The negation exists
+only in `Kind` (`NotBetweenExpression`), so branching on class silently
+inverts the predicate. Both put the column in `.Left` and the bounds in
+`.Right` as an `ExpressionCouple` with `.First` / `.Second`.
+
+**Symbols require a schema — there is no partial binding.** `parse(q)` calls
+`KustoCode.Parse`, which does no semantic analysis: `has_semantics` is
+`False` and every `ReferencedSymbol` is `None`, built-in functions included.
+`parse(q, schema=...)` binds, and they all resolve. It is all-or-nothing.
+
+**Read `TimeSpan.Ticks`, not `TotalSeconds`.** `TotalSeconds` is a float and
+loses sub-second exactness. `ticks // 10` gives exact microseconds, which is
+what makes `1microsecond` and `2tick` round-trip. On Tier 2, `LiteralExpr.ticks`
+carries this directly.
+
+**Unary minus wraps a positive literal.** `-1h` parses as a
+`UnaryMinusExpression` over a `TimespanLiteralExpression` whose value is
+`+01:00:00` — correct KQL grammar, the same way every language parses `-1`.
+Read the sign from the parent. Tier 2 models this as
+`UnaryOp(op="-", operand=LiteralExpr(...))`.
+
+**Importing kustology pins .NET's culture to invariant, process-wide.** This
+is deliberate and has no opt-out. Microsoft's parser evaluates `LiteralValue`
+lazily on property access, using the culture live at that moment, so under a
+comma-decimal locale `1.5h` parses as fifteen hours and under `fr-FR` it
+parses as zero. Because the corruption happens in caller code, only a
+process-global pin closes it. `CurrentUICulture` is left untouched.
+
 ## Prerequisites
 
 - **Python 3.10+**

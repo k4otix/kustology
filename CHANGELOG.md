@@ -6,12 +6,76 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Culture no longer corrupts duration literals (tier 1).** Importing
+  `kustology` now pins .NET's culture to invariant, process-wide. Microsoft's
+  parser evaluates `LiteralValue` lazily on property access, so the culture
+  live in *caller* code decided the parsed value: under `de-DE` the decimal
+  point was read as a group separator (`1.5h` → 15 hours, `2.25s` → 3m45s)
+  and under `fr-FR` the parse failed to zero. Integer literals were
+  unaffected, which is why the previous suite passed green under `de-DE`. A
+  `de-DE`/`fr-FR` CI matrix now guards it. No opt-out.
+- **`literal_kind` is read from the .NET node (tier 2).** It was re-inferred
+  from the Python type of `LiteralValue`, so `real` reported as `int` and
+  `datetime`, `timespan` and `guid` all reported as `string`.
+- **`LiteralExpr.value` is culture-independent (tier 2).** Datetimes render
+  as ISO 8601 round-trip and timespans in invariant constant form. The
+  previous bare `ToString()` rendered through the ambient culture and reached
+  `semantic_hash`, making the hash differ across machines for the same query.
+- **`LetBinding` is populated (tier 2).** The builder set only `name`, `span`
+  and a hardcoded `category="alias"`, leaving `rhs_expr`, `rhs_pipeline`,
+  `inner_tables` and `inner_time_exprs` permanently empty.
+
+### Added
+
+- `iter_elements()` (tier 1) — unwraps the `SeparatedElement` wrappers that
+  .NET list properties yield, and passes plain `SyntaxList` through unchanged.
+- `LiteralExpr.ticks` (tier 2) — exact .NET ticks for `datetime` and
+  `timespan` literals; `ticks // 10` gives exact microseconds.
+- `LetFunction` (tier 2) — parameter names and body span for `let`-declared
+  functions. The body is not modeled.
+- `literal_kind` gains `"decimal"`.
+- README section documenting the syntax-tree traps.
+
 ### Changed
 
 - `.NET` runtime discovery and the .NET-boundary member probes now log at
   `DEBUG` instead of failing silently. Enable `logging` for `kustology.bridge`
   to see which candidate `dotnet` roots were tried before the
   "Failed to initialize the .NET runtime" error is raised.
+- `get_time_range()` is renamed `find_time_expressions()` on both the module
+  and `KustoQuery`. The old names remain as `DeprecationWarning` aliases with
+  identical behavior. The function returns a source-ordered discovery list —
+  including bare `now()`, bare operands and `!between` operands — not a
+  resolved range.
+
+### Breaking (tier 2, pre-1.0)
+
+- `literal_kind` returns different values for `long`, `real`, `decimal`,
+  `datetime`, `timespan`, `guid` and `null` literals.
+- `LiteralExpr.value` changes format for `datetime` and `timespan`.
+- `semantic_hash` changes for any query containing a datetime, timespan or
+  real literal, or a `let` statement. This is the point — it was previously
+  machine-dependent.
+- `LetBinding.category` is removed. Nothing read it, every binding carried
+  the same value, and it entered `semantic_hash` without being stripped as
+  volatile. Which `rhs_*` field is populated already carries the distinction.
+  Stored IR JSON containing `category` now fails `extra="forbid"` on load.
+- `IR_SCHEMA_VERSION` bumps `0.1` → `0.2`. This branch's field-shape changes
+  (`LetBinding.category` removed, `LiteralExpr.ticks` and `LetFunction`
+  added, `literal_kind` and `LiteralExpr.value` changed) are exactly what the
+  tag exists to flag: a consumer comparing the tag on stored IR JSON can now
+  refuse to load a payload from before this change instead of deserializing
+  it into a shape that no longer matches.
+- `SEMANTIC_HASH_SCHEME` bumps `kustology-sem-v1` → `kustology-sem-v2` in
+  lockstep with `IR_SCHEMA_VERSION`. The dump format feeding the hash
+  changed, so `semantic_hash` now differs for any query containing a
+  datetime, timespan, real or decimal literal, or a `let` statement, even
+  though nothing about the query changed. Bumping the scheme tag makes that
+  visible — a hash stored under `kustology-sem-v1:` no longer collides with
+  one computed under `kustology-sem-v2:`, instead of silently comparing
+  unequal with no signal that the canonicalization rules moved.
 
 ### Internal
 
