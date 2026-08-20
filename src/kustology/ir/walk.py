@@ -6,7 +6,8 @@
 The IR is acyclic. ``walk`` is depth-first, pre-order, and yields only
 pydantic ``BaseModel`` descendants — primitive values (strings, ints,
 enums, ``None``) are skipped, since they're read via attribute access on
-the node that owns them.
+the node that owns them. Container fields are unwrapped to any depth, so
+a model reached only through ``list[tuple[...]]`` is still visited.
 
 ``find_all`` is the type-filtered convenience wrapper most analyzers use.
 """
@@ -28,8 +29,9 @@ def walk(
     """Yield every ``BaseModel`` descendant of ``node`` (including the
     root) in depth-first, pre-order.
 
-    Descends into list-valued and dict-valued fields. Assumes the tree is
-    acyclic — the IR builder never produces cycles.
+    Descends into list-, tuple- and dict-valued fields, and through
+    nested containers such as ``list[tuple[Expr, Expr]]``. Assumes the
+    tree is acyclic — the IR builder never produces cycles.
 
     With ``predicate``, only nodes for which ``predicate(node)`` returns
     truthy are yielded; traversal still descends into every subtree, so a
@@ -46,16 +48,29 @@ def walk(
     if predicate is None or predicate(node):
         yield node
     for name in type(node).model_fields:
-        value = getattr(node, name)
-        if isinstance(value, list):
-            items: object = value
-        elif isinstance(value, dict):
-            items = value.values()
-        else:
-            items = (value,)
-        for item in items:  # type: ignore[attr-defined]
-            if isinstance(item, BaseModel):
-                yield from walk(item, predicate)
+        for item in _models_in(getattr(node, name)):
+            yield from walk(item, predicate)
+
+
+def _models_in(value: object) -> Iterator[BaseModel]:
+    """Yield every ``BaseModel`` directly held by ``value``.
+
+    Descends list, tuple and dict containers recursively, so a field typed
+    ``list[tuple[Expr, Expr]]`` (``CaseExpr.branches``) is reached as
+    readily as a plain ``list[Expr]``. Nesting the containers is what
+    matters: a tuple sitting inside a list is not a ``BaseModel``, so a
+    walker that only unwraps one level treats the whole arm as a scalar
+    and silently skips it.
+    """
+    if isinstance(value, BaseModel):
+        yield value
+        return
+    if isinstance(value, dict):
+        value = value.values()
+    elif not isinstance(value, (list, tuple)):
+        return
+    for item in value:
+        yield from _models_in(item)
 
 
 def find_all(node: BaseModel, type_: type[T]) -> Iterator[T]:

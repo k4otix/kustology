@@ -116,3 +116,45 @@ def test_walk_with_predicate_filters_yielded_nodes():
 
     # Predicate yields nothing → empty iterator, no crash.
     assert list(walk(ir, lambda n: False)) == []
+
+
+def test_walk_descends_tuple_valued_fields():
+    """``CaseExpr.branches`` is ``list[tuple[Expr, Expr]]``.
+
+    The walker descended list- and dict-valued fields but not tuples, so
+    every expression inside a ``case(...)`` arm was invisible to
+    ``walk``/``find_all`` — including whole sub-pipelines, had one been
+    nested there. Only the ``default`` arm, a plain field, was reachable.
+    """
+    from kustology.ir import CaseExpr
+
+    ir = IRBuilder().build(
+        "DeviceProcessEvents "
+        "| extend Risk = case(FileName == 'a.exe', AccountName, "
+        "FileName == 'b.exe', DeviceId, ProcessId)"
+    )
+    branches = list(find_all(ir, CaseExpr))
+    assert len(branches) == 1
+
+    names = [n.name for n in find_all(ir, ColumnRef)]
+    # Two predicate refs + two value refs + the default, plus nothing lost.
+    assert names.count("FileName") == 2
+    assert "AccountName" in names
+    assert "DeviceId" in names
+    assert "ProcessId" in names
+
+
+def test_walk_descends_tuples_of_non_models_without_error():
+    """``ExternalDataExpr.columns`` is ``list[tuple[str, str]]``.
+
+    Tuple descent must skip plain values the same way list descent does,
+    rather than tripping over a tuple that holds no models.
+    """
+    ir = IRBuilder().build(
+        'DeviceProcessEvents | where FileName in '
+        '((externaldata(n:string, v:string) [@"https://example/x.csv"]))'
+    )
+    # Traversal completes and the root is still yielded exactly once.
+    nodes = list(walk(ir))
+    assert nodes[0] is ir
+    assert all(isinstance(n, BaseModel) for n in nodes)
