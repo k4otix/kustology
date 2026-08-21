@@ -995,7 +995,10 @@ class IRBuilder:
                 lhs_name = visit_name(expr_node.Name)
                 rhs_name = visit_name(sel_node.Name)
                 if lhs_name in ("$left", "$right") or is_table_symbol(getattr(expr_node, "ReferencedSymbol", None)):
-                    res = ColumnRef(name=rhs_name, table=lhs_name, span=span)
+                    side = lhs_name[1:] if lhs_name in ("$left", "$right") else None
+                    res = ColumnRef(
+                        name=rhs_name, table=lhs_name, join_side=side, span=span,
+                    )
                 else:
                     res = PathExpr(
                         expression=self._visit_expr(expr_node),

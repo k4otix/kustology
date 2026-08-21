@@ -35,7 +35,11 @@ parse resolves columns through them — so in
 `let Base = SecurityEvent | …; Base | project Account`, `Account` carries the
 type from `SecurityEvent` and the provenance `Base`. `find_all(ir, TableRef)`
 therefore answers "which tables does this query read"; use
-`find_all(ir, LetRef)` for the aliases.
+`find_all(ir, LetRef)` for the aliases. An alias can shadow a real table name
+(`let SecurityEvent = SecurityEvent | …` is a common Sentinel idiom), so
+`ColumnRef.table` is a scope name rather than a guaranteed table name — read
+`result_type` rather than re-deriving types from it, and see
+`SchemaAttacher.enrich`'s docstring for telling the two apart when you must.
 
 ## Choosing a tier
 

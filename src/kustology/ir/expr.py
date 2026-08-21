@@ -72,8 +72,18 @@ class ColumnRef(Expr):
     kind: Literal["column_ref"] = "column_ref"
     name: str
     # "$left"/"$right" in join on-clauses, concrete table name when resolved,
-    # None when the binder hasn't placed it.
+    # None when the binder hasn't placed it. Reading through a `let` alias
+    # reports the alias, not the table behind it -- see
+    # ``SchemaAttacher.enrich``. Binder-populated, so it is stripped before
+    # ``semantic_hash``: the same query text must hash one way whether or not
+    # a schema was supplied.
     table: str | None = None
+    # Which side of a join the reference was written against, when the query
+    # said so with `$left.` / `$right.`. Separate from ``table`` because the
+    # binder *overwrites* that sentinel with the table it resolves to, so a
+    # bound parse would otherwise lose the side entirely -- and the side is
+    # semantic: `$left.a == $left.b` is not the join `$left.a == $right.b`.
+    join_side: Literal["left", "right"] | None = None
 
 
 class FuncCall(Expr):

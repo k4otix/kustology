@@ -1,0 +1,83 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Eddie Allan
+
+"""``semantic_hash`` must not depend on whether a schema was supplied.
+
+``QueryIR.semantic_hash`` is computed at build time, before
+``SchemaAttacher`` runs, so the shipped value is bind-invariant by
+accident of ordering. ``QueryIR.semantic_hash``'s own docstring tells
+consumers to call :func:`compute_semantic_hash` again after mutating the
+IR — and *that* path sees the binder's output. Every field the binder
+populates must therefore be volatile, or the same query text hashes two
+ways depending on whether the caller happened to pass a schema.
+
+The one accepted exception is the ``let``-aliases-a-table shape
+divergence, pinned in ``test_let_bindings.py`` — that is a difference in
+which node the builder emits, not in a field's value, and no amount of
+field-stripping can hide it.
+"""
+
+import pytest
+
+from kustology import parse
+from kustology.ir import ColumnRef, compute_semantic_hash, find_all
+
+SCHEMA = {
+    "T": {"a": "string", "b": "string", "k": "string"},
+    "U": {"b": "string", "k": "string"},
+    "SecurityEvent": {"Account": "string", "EventID": "int"},
+}
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        pytest.param("T | where a == 'x' | project a, k", id="plain-table"),
+        pytest.param(
+            "let Base = SecurityEvent | where EventID > 4624;\n"
+            "Base | where Account != ''",
+            id="let-alias",
+        ),
+        pytest.param("T | join U on $left.a == $right.b", id="join"),
+    ],
+)
+def test_recomputed_hash_is_the_same_bound_and_unbound(query):
+    """The consumer-visible bug: following ``semantic_hash``'s own advice to
+    refresh the hash makes it depend on whether a schema was passed."""
+    bound = parse(query, schema=SCHEMA).to_ir()
+    unbound = parse(query).to_ir()
+
+    assert compute_semantic_hash(bound) == compute_semantic_hash(unbound)
+
+
+def test_join_side_is_recorded_separately_from_resolved_table():
+    """``table`` alone cannot carry the join side: the binder overwrites the
+    ``$left`` / ``$right`` sentinel with the concrete table it resolves to,
+    so the side is gone from a bound parse. It needs its own field."""
+    query = "T | join U on $left.a == $right.b"
+
+    unbound = {c.name: c for c in find_all(parse(query).to_ir(), ColumnRef)}
+    bound = {
+        c.name: c
+        for c in find_all(parse(query, schema=SCHEMA).to_ir(), ColumnRef)
+    }
+
+    assert unbound["a"].join_side == "left"
+    assert unbound["b"].join_side == "right"
+    # Survives binding, even though `table` itself is rewritten to T / U.
+    assert bound["a"].join_side == "left"
+    assert bound["b"].join_side == "right"
+    assert (bound["a"].table, bound["b"].table) == ("T", "U")
+
+
+def test_join_side_keeps_semantically_different_join_keys_apart():
+    """Regression guard for the cost of making ``table`` volatile.
+
+    ``$left.a == $left.b`` compares two columns of the left table to each
+    other; ``$left.a == $right.b`` is an actual join key. Nothing else in
+    the IR distinguishes them, so if the side is not hashed they collide.
+    """
+    same_side = parse("T | join U on $left.a == $left.b").to_ir()
+    across = parse("T | join U on $left.a == $right.b").to_ir()
+
+    assert compute_semantic_hash(same_side) != compute_semantic_hash(across)
