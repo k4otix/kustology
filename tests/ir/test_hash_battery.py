@@ -32,6 +32,56 @@ schema binding, since none of these pairs need one, and binding roughly
 doubles the cost of each case for no discriminating power (see
 ``test_semantic_hash_bind_invariance.py`` for the bind-state axis).
 
+One category needs a caveat rather than a claim of coverage. WS2 fix #1
+(datetime literals UTC-normalized in ``literal_value_and_ticks`` so
+``semantic_hash`` stops depending on the host timezone, commit ``1ae3488``)
+has no dedicated pair below that discriminates the buggy code from the
+fixed code on every host. ``tz-offset-vs-zulu-same-instant`` asserts that
+``datetime(2024-01-01T05:00:00Z)`` and ``datetime(2024-01-01T00:00:00-05:00)``
+hash alike, which is true and worth keeping as a same-instant sanity pin,
+but it cannot fail either way, on any host: probing the raw .NET node
+directly (bypassing this library's normalization entirely) shows both
+spellings parse through ``DateTime.Parse`` to ``Kind=Local`` with
+identical raw ``.Ticks`` -- ``638396640000000000`` for both -- before
+``literal_value_and_ticks`` ever runs. That is not an artifact of this
+host's offset; it follows from how .NET parses *any* explicit-offset
+literal: the text is first resolved to its UTC instant using the offset
+written in it, then re-projected onto the host's current offset to
+produce the ``Local`` value. Two spellings of the same instant resolve to
+the same UTC instant by definition, and re-projecting one UTC instant
+through one host offset has exactly one answer -- so any two
+explicit-offset spellings of one instant collapse to identical raw ticks
+on every host, buggy code or fixed. No pair built from two explicit-offset
+spellings can discriminate this fix, and that holds structurally, not just
+on the checkout where it was checked.
+
+``naive-vs-zulu-datetime`` does discriminate, but only conditionally: it
+pairs an ``Unspecified``-kind literal (never touched by the ``Local``
+half of the bug) against a ``Local``-kind one, and the pre-fix code reads
+the ``Local`` literal's raw, host-offset-shifted ticks, which differ from
+the ``Unspecified`` literal's ticks exactly when the host's current UTC
+offset is nonzero. It has real teeth on this repository's usual dev/CI
+timezone (EDT/EST, UTC-5 in January) but would pass by accident -- not
+because the fix is doing anything -- on a host whose current offset is
+zero, since a ``Local`` value parsed there already has the correct ticks
+without ``ToUniversalTime()``. Pairing the naive literal against a
+non-``Z`` explicit offset instead does not fix this: ``Z`` already parses
+to ``Kind=Local`` exactly like any other offset suffix (same probe), so
+it would exercise the identical branch and inherit the identical
+host-dependency rather than a new one.
+
+Fix #1's only guard that is sound on every host is
+``tests/ir/test_literals.py::test_datetime_literal_is_utc_and_tz_independent``,
+which re-parses the same query in a real ``TZ=Asia/Tokyo`` subprocess and
+asserts the hash does not move -- an actual cross-timezone comparison,
+which a single-process pair here structurally cannot perform. The
+datetime pairs in this file are still worth keeping: ``datetime-value``
+catches a broken literal-value comparison outright (though it never
+touches the ``Kind`` bug, since both its literals are bare/``Unspecified``),
+and both ``MUST_EQUAL`` datetime pairs still pin that the two ``Kind``
+branches produce a matching, self-consistent representation. None of them,
+individually or together, substitutes for that subprocess test.
+
 Two things are deliberately absent:
 
 * WS4 will append its own discriminators here later (sort direction,
@@ -88,6 +138,8 @@ MUST_DIFFER = [
     ("contains-vs-contains-cs", 'T | where x contains "a"', 'T | where x contains_cs "a"'),
     ("startswith-vs-endswith", 'T | where x startswith "a"', 'T | where x endswith "a"'),
     ("startswith-vs-startswith-cs", 'T | where x startswith "a"', 'T | where x startswith_cs "a"'),
+    ("endswith-vs-endswith-cs", 'T | where x endswith "a"', 'T | where x endswith_cs "a"'),
+    ("hasprefix-vs-hassuffix", 'T | where x hasprefix "a"', 'T | where x hassuffix "a"'),
     ("has-negated", 'T | where x has "a"', 'T | where x !has "a"'),
     ("in-vs-not-in", 'T | where x in ("a")', 'T | where x !in ("a")'),
     ("in-vs-in-tilde", 'T | where x in ("a","b")', 'T | where x in~ ("a","b")'),
@@ -167,9 +219,12 @@ MUST_EQUAL = [
     ("quote-style", "T | where x == 'y'", 'T | where x == "y"'),
     ("timespan-1h-vs-60m", "T | where d > ago(1h)", "T | where d > ago(60m)"),
     ("naive-vs-zulu-datetime", "T | where d > datetime(2024-01-01)", "T | where d > datetime(2024-01-01T00:00:00Z)"),
-    # TZ: an explicit non-UTC offset must normalize to the same UTC instant
-    # as its Z-suffixed spelling -- distinct from naive-vs-zulu above, which
-    # exercises the Unspecified-kind branch rather than an explicit offset.
+    # Same-instant sanity pin, NOT a guard for fix #1's host-timezone
+    # independence: both spellings parse to Kind=Local with identical raw
+    # .Ticks before this library's normalization ever runs, on any host, so
+    # this pair cannot fail either way. See the module docstring for why
+    # that is provable rather than merely observed, and for the real guard
+    # (test_literals.py::test_datetime_literal_is_utc_and_tz_independent).
     (
         "tz-offset-vs-zulu-same-instant",
         "T | where d > datetime(2024-01-01T05:00:00Z)",
