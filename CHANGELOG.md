@@ -102,6 +102,18 @@ release is in `docs/superpowers/reports/`.
   must be *converted* to UTC, `Unspecified` merely *specified* as UTC, since
   KQL datetimes are UTC by definition — so the same query hashed differently
   on a laptop in New York than a CI runner in Tokyo.
+- **The `tolower`/`toupper` equality rewrite only fires against a
+  matching-case literal (tier 2).** `normalize_expressions` unconditionally
+  rewrote `tolower(X) == "Y"` to `X =~ "Y"`, but that is only sound when the
+  literal is already in the folded case: `tolower(X) == "Y"` (capital Y) is
+  always false, since `tolower` never returns anything but lowercase, while
+  `X =~ "Y"` is a case-insensitive match that is often true — so the rewrite
+  made two predicates with different truth values collide on `semantic_hash`.
+  The fix checks the literal against the fold before rewriting, handles the
+  literal on either side of the comparison (normalizing to `X =~ "y"`
+  either way), covers `toupper` symmetrically, and no longer rewrites at all
+  when the other side is not a literal (`tolower(X) == Col` is not
+  equivalent to `X =~ Col` for arbitrary `Col`).
 
 ### Added
 

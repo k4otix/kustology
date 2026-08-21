@@ -53,8 +53,14 @@ def normalize_expressions(root: Pipeline | QueryIR) -> None:
 
     Rewrites (from :mod:`kustology.ir._normalize`):
 
-    * ``tolower(X) == "y"`` → ``X =~ "y"`` (case-insensitive equality)
-    * ``tolower(X) != "y"`` → ``X !~ "y"``
+    * ``tolower(X) == "y"`` → ``X =~ "y"`` (case-insensitive equality), and
+      symmetrically ``toupper(X) == "Y"`` → ``X =~ "Y"`` — only when the
+      literal is already in the folded case, and on either side of the
+      comparison. A literal in the wrong case (``tolower(X) == "Y"``, always
+      false) or a non-literal operand (``tolower(X) == Col``) is left alone,
+      since neither is equivalent to the ``=~`` form.
+    * ``tolower(X) != "y"`` → ``X !~ "y"`` (and the ``toupper`` mirror), under
+      the same case-matching condition
     * Nested ``And`` / ``Or`` operands flattened into a single list
     * ``not(not(X))`` → ``X``
 

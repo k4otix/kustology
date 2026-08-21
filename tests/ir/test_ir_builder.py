@@ -624,6 +624,49 @@ def test_negative_null_tests_are_not_lowered(ir_builder):
     )
 
 
+# --- tolower/toupper equality rewrite is sound (K04) ------------------------
+
+
+def test_tolower_equality_against_mismatched_case_literal_is_not_rewritten(ir_builder):
+    """``tolower(X) == "Y"`` (capital Y) is always false -- ``tolower`` never
+    returns anything but lowercase. ``X =~ "Y"`` is a case-insensitive match
+    that is often true. Folding the first into the second would make
+    hash-based dedup merge two predicates with different truth values."""
+    always_false = ir_builder.build('T | where tolower(X) == "Y"')
+    case_insensitive_match = ir_builder.build('T | where X =~ "Y"')
+    assert always_false.semantic_hash != case_insensitive_match.semantic_hash
+
+
+def test_tolower_equality_against_matching_case_literal_still_rewrites(ir_builder):
+    """The genuinely-equivalent case: the literal is already lowercase, so
+    ``tolower(X) == "y"`` and ``X =~ "y"`` agree for every value of X."""
+    a = ir_builder.build('T | where tolower(X) == "y"')
+    b = ir_builder.build('T | where X =~ "y"')
+    assert a.semantic_hash == b.semantic_hash
+
+
+def test_tolower_equality_rewrites_with_the_literal_on_either_side(ir_builder):
+    a = ir_builder.build('T | where "y" == tolower(X)')
+    b = ir_builder.build('T | where X =~ "y"')
+    assert a.semantic_hash == b.semantic_hash
+
+
+def test_toupper_equality_rewrite_is_symmetric_with_tolower(ir_builder):
+    a = ir_builder.build('T | where toupper(X) == "Y"')
+    b = ir_builder.build('T | where X =~ "Y"')
+    assert a.semantic_hash == b.semantic_hash
+
+
+def test_tolower_equality_against_a_non_literal_is_not_rewritten(ir_builder):
+    """``tolower(X) == Col`` is not equivalent to ``X =~ Col`` -- ``Col`` is
+    not a literal, so there is no fixed case to know the rewrite is sound
+    for. Whatever value ``Col`` holds, some X that fails the exact-lowercase
+    comparison would pass the case-insensitive one."""
+    a = ir_builder.build("T | where tolower(X) == Col")
+    b = ir_builder.build("T | where X =~ Col")
+    assert a.semantic_hash != b.semantic_hash
+
+
 # --- BinOp case sensitivity across the whole string-operator family ---------
 
 
