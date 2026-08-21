@@ -176,7 +176,13 @@ class DistinctOp(Operator):
 class TakeOp(Operator):
     KIND: ClassVar[str] = "take"
     kind: Literal["take"] = "take"
-    count: int
+    # KQL allows any scalar expression here (`let n = 10; T | take n`,
+    # `take toscalar(U | count)`), not just an integer literal, so the field
+    # widens to ``AnyExpr``. ``int`` is listed first so Pydantic validates a
+    # JSON literal ``5`` as a plain ``int`` -- matching existing ``op.count
+    # == 5`` assertions and downstream consumers -- instead of coercing it
+    # into an expression model; the four sibling ops below follow suit.
+    count: int | AnyExpr
 
 
 class SortOp(Operator):
@@ -188,21 +194,21 @@ class SortOp(Operator):
 class TopOp(Operator):
     KIND: ClassVar[str] = "top"
     kind: Literal["top"] = "top"
-    count: int
+    count: int | AnyExpr
     by: AnyExpr
 
 
 class TopHittersOp(Operator):
     KIND: ClassVar[str] = "top_hitters"
     kind: Literal["top_hitters"] = "top_hitters"
-    count: int
+    count: int | AnyExpr
     by: AnyExpr
 
 
 class SampleOp(Operator):
     KIND: ClassVar[str] = "sample"
     kind: Literal["sample"] = "sample"
-    count: int
+    count: int | AnyExpr
 
 
 class SearchOp(Operator):
@@ -413,7 +419,7 @@ class ParseKvOp(Operator):
 class SampleDistinctOp(Operator):
     KIND: ClassVar[str] = "sample_distinct"
     kind: Literal["sample_distinct"] = "sample_distinct"
-    count: int
+    count: int | AnyExpr
     of: AnyExpr
 
 

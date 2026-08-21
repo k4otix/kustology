@@ -19,16 +19,6 @@ from .types import KustoType
 logger = logging.getLogger(__name__)
 
 
-def safe_int(node: Any) -> int:
-    """Parse ``node.ToString()`` as an integer; raise ValueError with context."""
-    try:
-        return int(node.ToString().strip())
-    except (ValueError, AttributeError) as e:
-        raise ValueError(
-            f"Expected integer literal for take/sample/top count, got {node.ToString()!r}: {e}",
-        ) from e
-
-
 def visit_name(node: Any) -> str:
     """Extract a simple-name string from a .NET name node, recursing into wrappers."""
     if not node:

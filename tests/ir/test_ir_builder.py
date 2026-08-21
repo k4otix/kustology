@@ -8,6 +8,7 @@ import logging
 
 import pytest
 
+from kustology import parse
 from kustology.ir import (
     BinOp,
     ColumnRef,
@@ -20,6 +21,7 @@ from kustology.ir import (
     SchemaAttacher,
     Span,
     TableRef,
+    ToScalarExpr,
     UnknownSource,
 )
 
@@ -773,3 +775,57 @@ def test_semantic_info_probe_fallthrough_logs_debug(caplog):
     # Verified against the real message in _builder_helpers.py rather than
     # the brief's proposed text, which matches here (the two agree).
     assert "inner result-type probe fell through" in caplog.text
+
+
+@pytest.mark.parametrize("q", [
+    "let n = 10; T | take n",
+    "T | take toscalar(U | count)",
+    "let n = 5; T | top n by x",
+    "let n = 3; T | sample n",
+])
+def test_non_literal_counts_build(q):
+    """K01: ``safe_int`` used to call ``int(node.ToString())`` on the take /
+    sample / top count and raise ``ValueError`` on anything that wasn't a
+    bare integer literal. But KQL allows any scalar expression there, and
+    ``let n = 10; T | take n`` / ``take toscalar(...)`` are both ordinary,
+    valid queries (the latter is common in real Sentinel hunting queries).
+    Building the IR must not raise, and the count must come through as the
+    visited expression rather than being coerced/defaulted to a number."""
+    ir = parse(q).to_ir()                       # must not raise
+    op = ir.main_pipeline.operators[-1]
+    assert not isinstance(op.count, int)        # an expression, not a number
+
+
+def test_literal_take_count_is_int():
+    """The common case -- a literal count -- must keep returning a plain
+    ``int`` so existing ``op.count == 5`` assertions (and downstream
+    consumers keyed on the field being a number) keep working verbatim;
+    only the non-literal case widens to an expression."""
+    op = parse("T | take 5").to_ir().main_pipeline.operators[0]
+    assert op.count == 5 and isinstance(op.count, int)
+
+
+def test_count_field_round_trips_correct_shape_through_json():
+    """``count: int | AnyExpr`` lists ``int`` first per the repo's
+    union-ordering convention (see ``Pipeline.operators`` for the same
+    rule applied under explicit ``union_mode="left_to_right"``), so a JSON
+    literal ``5`` is meant to validate as a plain ``int`` rather than being
+    coerced into an expression model on deserialization. Round-trip both
+    shapes through the wire format -- ``QueryIR.model_validate_json(ir.
+    model_dump_json())`` -- and confirm each survives as the class it
+    started as; this is the check that would catch a future regression
+    (e.g. an added ``AnyExpr`` member with all-optional fields that could
+    ambiguously match a bare scalar) that the in-memory object built by
+    :meth:`to_ir` alone would not expose."""
+    literal_ir = parse("T | take 5").to_ir()
+    rebuilt_op = QueryIR.model_validate_json(
+        literal_ir.model_dump_json()
+    ).main_pipeline.operators[0]
+    assert rebuilt_op.count == 5
+    assert isinstance(rebuilt_op.count, int)
+
+    expr_ir = parse("T | take toscalar(U | count)").to_ir()
+    rebuilt_expr_op = QueryIR.model_validate_json(
+        expr_ir.model_dump_json()
+    ).main_pipeline.operators[-1]
+    assert isinstance(rebuilt_expr_op.count, ToScalarExpr)

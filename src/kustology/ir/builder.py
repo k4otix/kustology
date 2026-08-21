@@ -28,7 +28,6 @@ from ._builder_helpers import (
     literal_kind_for,
     literal_value_and_ticks,
     map_semantic_info,
-    safe_int,
     to_span,
     visit_name,
 )
@@ -670,10 +669,10 @@ class IRBuilder:
             return DistinctOp(columns=cols, span=span)
 
         if kind == "TakeOperator":
-            return TakeOp(count=safe_int(n.Expression), span=span)
+            return TakeOp(count=self._visit_count(n.Expression), span=span)
 
         if kind == "SampleOperator":
-            return SampleOp(count=safe_int(n.Expression), span=span)
+            return SampleOp(count=self._visit_count(n.Expression), span=span)
 
         if kind == "SortOperator":
             exprs = []
@@ -684,10 +683,12 @@ class IRBuilder:
             return SortOp(expressions=exprs, span=span)
 
         if kind == "TopOperator":
-            return TopOp(count=safe_int(n.Expression), by=self._visit_expr(n.ByExpression), span=span)
+            return TopOp(count=self._visit_count(n.Expression), by=self._visit_expr(n.ByExpression), span=span)
 
         if kind == "TopHittersOperator":
-            return TopHittersOp(count=safe_int(n.Expression), by=self._visit_expr(n.ValueExpression), span=span)
+            return TopHittersOp(
+                count=self._visit_count(n.Expression), by=self._visit_expr(n.ValueExpression), span=span,
+            )
 
         if kind == "SearchOperator":
             return SearchOp(predicate=self._visit_expr(n.Condition) if hasattr(n, "Condition") else None, span=span)
@@ -907,7 +908,7 @@ class IRBuilder:
             return ParseKvOp(target=target, columns=declared, span=span)
 
         if kind == "SampleDistinctOperator":
-            count = safe_int(n.Expression) if hasattr(n, "Expression") else 0
+            count = self._visit_count(n.Expression) if hasattr(n, "Expression") else 0
             # ``Of`` is not a member of any Kusto.Language type; the
             # fallback never fired. tests/test_reflection_audit.py now
             # rejects probes for names the assembly does not have.
@@ -959,6 +960,21 @@ class IRBuilder:
             reason="Operator dispatch fell through — kind not in IRBuilder.HANDLED_OPERATOR_KINDS",
             span=span,
         )
+
+    def _visit_count(self, node: Any) -> int | AnyExpr:
+        """Take/sample/top/top-hitters/sample-distinct count operand.
+
+        KQL allows any scalar expression here, not just an integer literal
+        -- the previous ``safe_int`` helper called ``int(node.ToString())``
+        and raised ``ValueError`` on ordinary, valid queries like
+        ``let n = 10; T | take n`` or ``take toscalar(U | count)``. The
+        literal case still returns a plain ``int`` so existing
+        ``op.count == 5`` assertions (and downstream consumers) keep
+        working; anything else becomes the visited expression.
+        """
+        if str(node.Kind) in ("LongLiteralExpression", "IntLiteralExpression"):
+            return int(node.LiteralValue)
+        return self._visit_expr(node)
 
     # -- expression dispatch ---------------------------------------------
 

@@ -173,6 +173,9 @@ release is in `docs/superpowers/reports/`.
   IR shape changes accordingly. Accepted and documented rather than papered
   over — the alternative is treating every bare name as a table without
   proof.
+- **`TakeOp`/`SampleOp`/`TopOp`/`TopHittersOp`/`SampleDistinctOp.count` is
+  `int | AnyExpr`** (was `int`); `let n = 10; T | take n` and
+  `take toscalar(...)` no longer raise.
 
 ### Internal
 
