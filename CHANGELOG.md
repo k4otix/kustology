@@ -89,8 +89,9 @@ release is in `docs/superpowers/reports/`.
   partition key is `Entity` — so `to_ir()` raised `AttributeError` on valid
   KQL while both kinds sat in `HANDLED_OPERATOR_KINDS` claiming to be
   modelled. `top-hitters N of C by V` has two column operands and
-  `TopHittersOp` had a field for only one: `of` is the column being counted,
-  `by` the optional ranking weight, now `AnyExpr | None`.
+  `TopHittersOp` had a field for only one: `of` is the column being counted
+  and is required, matching `SampleDistinctOp.of`; `by` is the optional
+  ranking weight and widens to `AnyExpr | None`.
 - **`datetime` literal `value`/`ticks`/`semantic_hash` no longer depend on
   the host timezone (tier 2).** `literal_value_and_ticks` rendered a `datetime`
   literal's `.Ticks`/`.ToString()` straight off .NET's `DateTime` without

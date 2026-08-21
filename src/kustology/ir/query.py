@@ -208,12 +208,16 @@ class TopHittersOp(Operator):
     # it from a member that exists on no node -- so both operands were
     # unrepresentable and the operator raised instead of lowering.
     #
-    # ``by`` is genuinely optional: ``ByClause`` is a plain ``None`` when the
-    # clause is absent. ``of`` is grammar-required and the builder always
-    # fills it (the error-tolerant parser synthesizes a missing name node for
-    # ``top-hitters 5``, so it is never ``None`` on a real parse); the default
-    # is there so a payload written against a future shape still validates.
-    of: AnyExpr | None = None
+    # ``of`` is required and ``by`` is not, because the grammar says so and
+    # the parser agrees: ``OfExpression`` is never ``None`` even for a bare
+    # ``T | top-hitters`` (the error-tolerant parser synthesizes a name node
+    # with ``IsMissing`` set), while ``ByClause`` really is a plain ``None``
+    # when the clause is absent. A default on ``of`` would be unreachable
+    # from the builder and would let a hand-written payload validate without
+    # its mandatory operand -- ``extra="forbid"`` rejects unknown keys, not
+    # missing ones. ``SampleDistinctOp.of`` is the same ``N of C`` grammar
+    # slot and is declared the same way.
+    of: AnyExpr
     by: AnyExpr | None = None
 
 

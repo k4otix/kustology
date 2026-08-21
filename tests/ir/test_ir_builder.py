@@ -22,6 +22,7 @@ from kustology.ir import (
     Span,
     TableRef,
     TakeOp,
+    TopHittersOp,
     ToScalarExpr,
     UnknownSource,
 )
@@ -963,3 +964,29 @@ def test_partitionby_builds():
     op = parse("T | __partitionby a (take 1)").to_ir().main_pipeline.operators[0]
     assert op.by.canonical_form == "a"
     assert [o.kind for o in op.right.operators] == ["take"]
+
+
+def test_top_hitters_of_is_required_in_the_wire_format():
+    """``of`` is declared without a default, so a payload that omits it must
+    fail validation rather than round-tripping an operator missing its
+    mandatory operand. ``extra="forbid"`` does not cover this -- it rejects
+    unknown keys, not absent ones -- so the only thing standing between a
+    truncated payload and a silently half-built ``top-hitters`` is the
+    field's requiredness. Assert it directly, and assert the complete
+    payload still validates so this cannot pass by rejecting everything."""
+    from pydantic import ValidationError
+
+    complete = {
+        "kind": "top_hitters",
+        "span": {"text_start": 0, "width": 1},
+        "count": 5,
+        "of": {"kind": "column_ref", "span": {"text_start": 0, "width": 1}, "name": "a"},
+    }
+    op = TopHittersOp.model_validate(complete)
+    assert op.of.name == "a" and op.by is None
+
+    with pytest.raises(ValidationError) as excinfo:
+        TopHittersOp.model_validate({k: v for k, v in complete.items() if k != "of"})
+    # Pin the reason, not just that something failed: a loose `match=` would
+    # also be satisfied by an unrelated error that happened to mention "of".
+    assert [(e["loc"], e["type"]) for e in excinfo.value.errors()] == [(("of",), "missing")]

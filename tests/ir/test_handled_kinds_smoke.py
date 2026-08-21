@@ -10,11 +10,19 @@ branches (``TopHittersOperator``, ``PartitionByOperator``) read .NET members
 that do not exist on their node types and raised ``AttributeError`` on valid
 KQL, while still being listed as handled.
 
-So this file pins one buildable sample per handled kind and asserts two
-things about each: that ``to_ir()`` returns at all, and that the result
-contains no ``UnknownOp`` -- the fallback the builder emits when dispatch
-falls through. A branch that crashes fails the first; a kind that is listed
-as handled but has no dispatch arm fails the second.
+So this file pins one buildable sample per handled kind and asserts three
+things about each: that the query really parses to the kind it is filed
+under, that ``to_ir()`` returns at all, and that the result contains no
+``UnknownOp`` -- the fallback the builder emits when dispatch falls through.
+A branch that crashes fails the second; a kind listed as handled with no
+dispatch arm fails the third.
+
+The first assertion is what stops the file rotting into a set of queries
+that prove nothing. Microsoft's parser is error-tolerant, so a mistyped
+sample still parses, still builds, and still emits no ``UnknownOp`` -- it
+just never produces the operator it is filed under, and the kind goes
+untested behind a green test. Checking the parse tree for the class name
+closes that.
 
 ``test_sample_covers_every_handled_operator_kind`` keeps the two sets in
 lockstep, so adding a kind to the frozenset without a sample here is a
@@ -54,7 +62,38 @@ def test_sample_covers_every_handled_operator_kind():
     assert set(SAMPLES) == set(IRBuilder.HANDLED_OPERATOR_KINDS)
 
 
+def _syntax_class_names(root) -> set[str]:
+    """Every Python class name in a parsed .NET syntax tree.
+
+    ``ChildCount``/``GetChild`` is the generic descent
+    ``scripts/audit_syntax_kinds.py`` uses, and the right one here: the tree
+    is full of structural wrappers (``List``, ``SeparatedElement``) that a
+    field-name walk would have to know about, and ``IRBuilder`` dispatches
+    on the class name too, so this reads the same thing the builder branches
+    on.
+    """
+    seen: set[str] = set()
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if node is None:
+            continue
+        seen.add(type(node).__name__)
+        try:
+            child_count = node.ChildCount
+        except AttributeError:
+            continue                  # a token, not a node
+        stack.extend(node.GetChild(i) for i in range(child_count))
+    return seen
+
+
 @pytest.mark.parametrize("kind,q", sorted(SAMPLES.items()))
 def test_every_handled_operator_builds_without_unknown_op(kind, q):
-    ir = parse(q).to_ir()                        # must not raise
+    query = parse(q)
+    assert kind in _syntax_class_names(query.syntax), (
+        f"{q!r} does not parse to a {kind}, so this sample exercises some "
+        f"other branch and {kind} is untested. The parser is error-tolerant, "
+        f"so a wrong sample still builds cleanly -- fix the KQL."
+    )
+    ir = query.to_ir()                           # must not raise
     assert not list(find_all(ir, UnknownOp)), kind
