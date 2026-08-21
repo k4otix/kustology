@@ -32,6 +32,7 @@ from kustology.ir import (
     QueryIR,
     SchemaAttacher,
     UnknownExpr,
+    UnknownOp,
     UnknownSource,
     walk,
 )
@@ -186,6 +187,10 @@ def verify_query(builder: IRBuilder, attacher: SchemaAttacher,
     for n in walk(ir):
         if type(n) is Operator:
             bare_ops.append("Operator")
+        elif isinstance(n, UnknownOp):
+            # UnknownOp subclasses Operator, so the identity test above never
+            # reaches it -- and it is what the builder emits on fallthrough.
+            bare_ops.append(f"UnknownOp:{n.ast_kind}")
         elif isinstance(n, UnknownExpr):
             unknown_exprs.append(n.ast_kind or "?")
         elif isinstance(n, UnknownSource):

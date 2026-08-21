@@ -69,7 +69,7 @@ def _walk(ir, unknown_exprs: Counter, unknown_sources: Counter, unspecialized_op
     ``main_pipeline`` alone is how an unpopulated tabular ``rhs_pipeline``
     went unreported here.
     """
-    from kustology.ir import Operator, UnknownExpr, UnknownSource, find_all
+    from kustology.ir import Operator, UnknownExpr, UnknownOp, UnknownSource, find_all
 
     for expr in find_all(ir, UnknownExpr):
         unknown_exprs[expr.ast_kind] += 1
@@ -80,11 +80,16 @@ def _walk(ir, unknown_exprs: Counter, unknown_sources: Counter, unspecialized_op
         per_kind_examples["<UnknownSource>"].append(query_name)
 
     for op in find_all(ir, Operator):
-        # Strict identity catches the bare-base-class fallthrough in
-        # _visit_operator; isinstance would match every subclass.
+        # Two shapes of "dispatch fell through". Strict identity catches the
+        # bare-base-class fallthrough (isinstance would match every subclass);
+        # UnknownOp is what _visit_operator actually emits today, and being an
+        # Operator subclass it slipped past an identity-only filter.
         if type(op) is Operator:
             unspecialized_ops["<bare Operator>"] += 1
             per_kind_examples["<bare Operator>"].append(query_name)
+        elif isinstance(op, UnknownOp):
+            unspecialized_ops["<UnknownOp>"] += 1
+            per_kind_examples["<UnknownOp>"].append(f"{query_name}:{op.ast_kind}")
 
 
 def _clone_microsoft(into: Path) -> Path:

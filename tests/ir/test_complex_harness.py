@@ -31,6 +31,7 @@ from kustology.ir import (
     Operator,
     SubqueryExpr,
     UnknownExpr,
+    UnknownOp,
     UnknownSource,
     find_all,
 )
@@ -81,9 +82,15 @@ def _scan(ir):
     """
     return (
         list(find_all(ir, UnknownExpr)),
-        # Strict identity catches the bare-base-class fallthrough in
-        # _visit_operator; isinstance would match every subclass.
-        [op for op in find_all(ir, Operator) if type(op) is Operator],
+        # Two shapes of "dispatch fell through": the bare base class (caught by
+        # strict identity -- isinstance would match every subclass) and the
+        # UnknownOp the builder actually emits today. Filtering on identity
+        # alone left this bucket structurally empty, because UnknownOp *is* an
+        # Operator subclass.
+        [
+            op for op in find_all(ir, Operator)
+            if type(op) is Operator or isinstance(op, UnknownOp)
+        ],
         list(find_all(ir, UnknownSource)),
         _degraded_let_bindings(ir),
     )
@@ -124,7 +131,9 @@ def test_complex_kql_parsing(builder, name, query):
         f"{[u.ast_kind for u in unknowns]}"
     )
     assert not unspecialized, (
-        f"{name}: builder produced {len(unspecialized)} unspecialized Operators"
+        f"{name}: builder produced {len(unspecialized)} undispatched operators "
+        f"(bare Operator / UnknownOp): "
+        f"{[getattr(op, 'ast_kind', type(op).__name__) for op in unspecialized]}"
     )
     assert not unknown_sources, (
         f"{name}: builder produced {len(unknown_sources)} UnknownSource nodes — "
@@ -190,3 +199,21 @@ def test_gate_walks_let_bindings():
     assert [u.ast_kind for u in unknowns] == ["MadeUpExpression"]
     assert len(unknown_sources) == 1
     assert not unspecialized
+
+
+def test_gate_sees_unknown_op():
+    """``T | reduce by X`` is not dispatched by the builder and must trip the gate.
+
+    ``UnknownOp`` subclasses ``Operator``, so the identity test
+    ``type(op) is Operator`` that this gate used never matched it — and the
+    builder stopped emitting bare ``Operator`` when ``UnknownOp`` landed. The
+    bucket has been structurally empty ever since, which is exactly the blind
+    spot the gate exists to prevent.
+    """
+    from kustology.ir import UnknownOp
+
+    ir = IRBuilder().build("T | reduce by X")
+
+    assert list(find_all(ir, UnknownOp)), "reduce should fall through to UnknownOp"
+    _, unknown_ops, *_ = _scan(ir)
+    assert unknown_ops, "the gate must surface UnknownOp, not only bare Operator"

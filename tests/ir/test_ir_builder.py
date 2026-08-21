@@ -320,6 +320,7 @@ def test_misc_operators_dispatch_to_specific_classes(ir_builder):
         GetSchemaOp,
         Operator,
         SerializeOp,
+        UnknownOp,
     )
     cases = [
         ("DeviceProcessEvents | getschema", GetSchemaOp),
@@ -331,8 +332,9 @@ def test_misc_operators_dispatch_to_specific_classes(ir_builder):
         ir = ir_builder.build(query)
         ops = ir.main_pipeline.operators
         matched = any(isinstance(o, expected_cls) for o in ops)
-        assert not any(type(o) is Operator for o in ops), (
-            f"{query!r} produced a bare Operator: {[type(o).__name__ for o in ops]}"
+        assert not any(type(o) is Operator or isinstance(o, UnknownOp) for o in ops), (
+            f"{query!r} produced an undispatched operator: "
+            f"{[type(o).__name__ for o in ops]}"
         )
         # `find` parses as a leading operator in some forms; the bare-Operator
         # check above is the load-bearing assertion for that case.
