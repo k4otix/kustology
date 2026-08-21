@@ -43,6 +43,11 @@ class KustoQuery:
         Uses the binder when the query was parsed with a schema, the syntactic
         walk otherwise. Pass ``force_syntactic=True`` to bypass the binder on a
         bound query (mainly useful for benchmarking and parity checks).
+
+        ``let`` aliases, ``as`` aliases, function parameters and wildcard
+        patterns are not tables and are excluded; the binding's own
+        right-hand side is included — in ``let T = T | where x; T | take 1``
+        the right-hand ``T`` is the real table and the rest is the alias.
         """
         if not force_syntactic and self._code.HasSemantics:
             return get_tables_semantic(self._code)

@@ -7,7 +7,8 @@
 unwraps the ``SeparatedElement`` wrappers that .NET list properties yield;
 :func:`node_to_dict` serializes a .NET syntax node into a recursive
 ``{kind, text, children}`` mapping suitable for JSON or further programmatic
-walking.
+walking; :func:`node_text` reads a node's own source without its leading
+trivia and :func:`node_name` reads the plain identifier a name node denotes.
 """
 
 from __future__ import annotations
@@ -24,7 +25,13 @@ from __future__ import annotations
 from Kusto.Language.Syntax import IncludeTrivia
 
 _NAME_NODE_KINDS = frozenset(
-    {"NameReference", "BracketedName", "TokenName", "WildcardedName"}
+    {
+        "NameReference",
+        "NameDeclaration",
+        "BracketedName",
+        "TokenName",
+        "WildcardedName",
+    }
 )
 
 
@@ -105,11 +112,18 @@ def node_text(node) -> str:
 def node_name(node) -> str:
     """Return the plain identifier a name node denotes, unquoted.
 
-    ``NameReference``, ``BracketedName``, ``TokenName`` and
-    ``WildcardedName`` all expose ``SimpleName`` directly: for
+    ``NameReference``, ``NameDeclaration``, ``BracketedName``, ``TokenName``
+    and ``WildcardedName`` all expose ``SimpleName`` directly: for
     ``['my-table']`` (a ``BracketedName``) it is the unquoted ``my-table``,
     not the bracketed-and-quoted source text ``node_text`` would return. For
     every other node kind this falls back to :func:`node_text`.
+
+    ``NameDeclaration`` is the *declaring* side of a name — the ``X`` in
+    ``let X = ...`` or ``| as X`` — and belongs here for the same reason:
+    analyzers match declarations against references by name, so the two
+    sides must spell a bracketed identifier identically. They did not, and
+    ``let ['weird-name'] = T; ['weird-name'] | take 1`` reported the alias
+    as a second table.
     """
     if str(node.Kind) in _NAME_NODE_KINDS:
         return node.SimpleName

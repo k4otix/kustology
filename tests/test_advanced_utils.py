@@ -64,6 +64,27 @@ def test_referenced_columns_excludes_dollar_join_refs():
     assert {"x", "y"}.issubset(sem_cols)
 
 
+def test_referenced_columns_excludes_wildcard_patterns():
+    """`project-away Foo*` names a pattern; the pattern itself is not a column."""
+    cols = parse("T | project-away Foo* | project-keep * | where x == 1").get_referenced_columns()
+    assert {"*", "Foo*"}.isdisjoint(cols)
+    assert "x" in cols
+
+
+def test_referenced_columns_excludes_a_bracketed_let_alias():
+    """A bracketed `let` name must match its bracketed use site.
+
+    The declaring side is a NameDeclaration and the use side a NameReference
+    wrapping a BracketedName; while the two spelled the identifier
+    differently (``['my-var']`` vs ``my-var``) the let filter missed the
+    alias and reported the scalar as a column.
+    """
+    query = "let ['my-var'] = 5;\nT | project ['my-var'], Account"
+    cols = parse(query).get_referenced_columns(force_syntactic=True)
+    assert "my-var" not in cols
+    assert "Account" in cols
+
+
 def test_referenced_columns_semantic_resolves_aliases():
     """Semantic mode includes both columns and extend-aliases as ColumnSymbols."""
     schema = {"T": {"x": "long", "y": "long"}}

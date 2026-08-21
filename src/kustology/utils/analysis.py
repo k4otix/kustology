@@ -130,12 +130,46 @@ def _is_function_callee(node) -> bool:
     )
 
 
+def _is_wildcard_name(node) -> bool:
+    """True when this NameReference spells a wildcard pattern (``T*``).
+
+    ``union T*`` and ``find in (T*)`` name a *set* of tables by pattern —
+    the binder resolves them to a ``GroupSymbol``, not a ``TableSymbol``.
+    A pattern is not a table name: it cannot be looked up, and renaming it
+    would silently change which tables the query matches.
+    """
+    name = getattr(node, "Name", None)
+    return name is not None and str(name.Kind) == "WildcardedName"
+
+
 def _collect_table_refs(syntax) -> list:
     """Return every (name, NameReference node) that occupies a table-source
-    position. Filters out let-bound names but does NOT deduplicate by name —
-    callers that want a set should dedupe themselves.
+    position. Does NOT deduplicate — callers that want a set should dedupe
+    themselves.
+
+    Four kinds of name occupy a table-source position without being a table,
+    and each is excluded here:
+
+    * a name bound by ``let`` — but see the shadowing rule below;
+    * a name bound by ``| as X``, which is visible for the rest of the query;
+    * a table-typed parameter of a user-defined function, which is visible
+      only inside that function's body (so the exclusion is scoped to it,
+      and a real table sharing the parameter's name is still reported);
+    * a wildcard pattern such as ``union T*``.
+
+    **Shadowing.** In ``let T = T | where ...; T | take 1`` the right-hand
+    side ``T`` is the real table: KQL evaluates a binding's RHS in the scope
+    *outside* its own name, so a ``let`` cannot be recursive. Every later
+    ``T`` is the alias. A flat name-keyed filter gets this exactly backwards
+    and drops both, so the RHS occurrences of the name a statement is itself
+    binding are recorded by source span and exempted from the filter. Names
+    bound by *earlier* ``let`` statements are in scope on a RHS and stay
+    excluded there.
     """
-    let_vars = set()
+    let_vars = set()  # names bound by let statements visited so far
+    exclude = set()  # `as` aliases — visible for the remainder of the query
+    param_scopes = []  # (name, start, end) — function parameters, body-scoped
+    unshadowed = set()  # (TextStart, Width) of let-RHS refs that are tables
     refs = []
 
     class Walker(KustoWalker):
@@ -143,12 +177,37 @@ def _collect_table_refs(syntax) -> list:
             kind = str(node.Kind)
 
             if kind == "LetStatement":
+                rhs = node.GetChild(3)
+                if rhs is not None:
+                    for ref in _unwrap_table_expr(rhs):
+                        # `let_vars` here holds only the *earlier* bindings:
+                        # this statement's own name is added below.
+                        if node_name(ref) not in let_vars:
+                            unshadowed.add((ref.TextStart, ref.Width))
+                        refs.append(ref)
                 name_node = node.GetChild(1)
                 if name_node is not None:
                     let_vars.add(node_name(name_node))
-                rhs = node.GetChild(3)
-                if rhs is not None:
-                    refs.extend(_unwrap_table_expr(rhs))
+                return
+
+            if kind == "FunctionDeclaration":
+                start = node.TextStart
+                end = start + node.Width
+                for param in collect_nodes(
+                    node, lambda n: str(n.Kind) == "FunctionParameter"
+                ):
+                    name_and_type = getattr(param, "NameAndType", None)
+                    if name_and_type is None:
+                        continue
+                    param_name = getattr(name_and_type, "Name", None)
+                    if param_name is not None:
+                        param_scopes.append((node_name(param_name), start, end))
+                return
+
+            if kind == "AsOperator":
+                alias = getattr(node, "Name", None)
+                if alias is not None:
+                    exclude.add(node_name(alias))
                 return
 
             if kind in ("PipeExpression", "ExpressionStatement"):
@@ -176,10 +235,23 @@ def _collect_table_refs(syntax) -> list:
                         refs.extend(_unwrap_table_expr(el))
 
     Walker().visit(syntax)
+
+    def _is_function_parameter(name: str, start: int) -> bool:
+        return any(
+            name == param and body_start <= start < body_end
+            for param, body_start, body_end in param_scopes
+        )
+
     out = []
     for ref in refs:
+        if _is_wildcard_name(ref):
+            continue
         name = node_name(ref)
-        if not name or name in let_vars:
+        if not name or name in exclude:
+            continue
+        if name in let_vars and (ref.TextStart, ref.Width) not in unshadowed:
+            continue
+        if _is_function_parameter(name, ref.TextStart):
             continue
         out.append((name, ref))
     return out
@@ -288,6 +360,10 @@ def get_referenced_columns(kusto_code, force_syntactic: bool = False) -> set[str
             if str(node.Kind) != "NameReference":
                 return
             if _is_function_callee(node):
+                return
+            # A `union T*` pattern is not a column either, and it no longer
+            # lands in `table_names` to be filtered out that way.
+            if _is_wildcard_name(node):
                 return
             name = node_name(node)
             if not name or name in table_names or name in let_vars:

@@ -151,6 +151,32 @@ release is in `docs/superpowers/reports/`.
   `my-table`); every trivia-carrying read in `analysis.py` now goes through
   one of the two. `replace_table` still replaces by `TextStart`/`Width`
   offset, so a leading comment is preserved verbatim in the output.
+- **Aliases, function parameters and wildcards are no longer reported as
+  tables, and a shadowing `let` keeps its right-hand side (tier 1).** The
+  syntactic walk behind `get_referenced_tables()` and `replace_table()`
+  reported four kinds of name that are not tables: the name an `| as X`
+  operator binds, a user-defined function's table-typed parameter
+  (`let f = (T1:(a:long)){ T1 | count }` reported `T1`), and a `union T*`
+  wildcard, which names a pattern the binder resolves to a `GroupSymbol` and
+  which `replace_table` must never rewrite. It also got `let` shadowing
+  backwards: in `let SecurityEvent = SecurityEvent | where a; SecurityEvent
+  | take 1` the right-hand `SecurityEvent` *is* the real table — KQL
+  evaluates a binding's right-hand side outside its own name, so a `let`
+  cannot be recursive — while every later use is the alias. The old
+  name-keyed filter dropped both and returned **no tables at all** for that
+  query, with `replace_table` a silent no-op. The right-hand occurrences of
+  the name a statement is itself binding are now exempted by source span
+  (names bound by *earlier* `let`s stay excluded), and the parameter
+  exclusion is scoped to the declaring function's body, so a real table
+  sharing a parameter's name still resolves. A bracketed `let` name leaked
+  the same way for a different reason: the declaring side is a
+  `NameDeclaration`, which `node_name` did not unwrap, so `let
+  ['weird-name'] = SecurityEvent; ['weird-name'] | take 1` compared
+  `['weird-name']` against `weird-name` and reported the alias as a second
+  table — and, in `get_referenced_columns`, a bracketed scalar `let` as a
+  column. `NameDeclaration` now reads back unquoted like every other name
+  node. Column extraction drops wildcard patterns too, so `project-away
+  Foo*` no longer reports `Foo*` and `project-keep *` no longer reports `*`.
 
 ### Added
 

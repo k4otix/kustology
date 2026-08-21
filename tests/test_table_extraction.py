@@ -125,3 +125,87 @@ def test_let_bound_names_are_still_excluded_in_those_positions():
     """A let alias in an `in (...)` clause is not a table reference."""
     q = "let Local = A | take 1; find in (Local, B) where X == 1"
     assert parse(q).get_referenced_tables() == {"A", "B"}
+
+
+# --- names that occupy a table position but are not tables (K16, K29) ------
+#
+# The syntactic walk reported four kinds of non-table as tables: the name a
+# `let` binds, the name an `as` operator binds, a user-defined function's
+# table-typed parameter, and a `union T*` wildcard pattern. It also got
+# shadowing backwards -- with `let T = T | ...`, the *right-hand side* T is
+# the real table (a binding's RHS is evaluated outside its own name, so KQL
+# has no recursion here) while every later use is the alias, and the flat
+# name-based filter dropped both.
+
+SHADOW_QUERY = "let SecurityEvent = SecurityEvent | where a; SecurityEvent | take 1"
+
+
+def test_let_shadowing_keeps_the_bindings_own_rhs():
+    """`let T = T | ...` reads the real table on the right-hand side."""
+    assert parse(SHADOW_QUERY).get_referenced_tables() == {"SecurityEvent"}
+
+
+def test_let_shadowing_replaces_only_the_rhs():
+    """The alias use sites are not table references, so they must not move."""
+    out = parse(SHADOW_QUERY).replace_table("SecurityEvent", "Z")
+    assert out == "let SecurityEvent = Z | where a; SecurityEvent | take 1"
+
+
+def test_let_alias_in_a_later_binding_rhs_is_not_a_table():
+    """Only the binding's *own* name is unshadowed on its RHS.
+
+    `Local` is in scope inside the second binding's RHS, so it is still an
+    alias there -- the unshadowing rule must not be a blanket bypass.
+    """
+    q = "let Local = A | take 1; let Other = Local | count; Other | take 1"
+    assert parse(q).get_referenced_tables() == {"A"}
+
+
+def test_function_parameter_is_not_a_table():
+    q = "let f = (T1:(a:long)){ T1 | count }; T | invoke f()"
+    assert parse(q).get_referenced_tables() == {"T"}
+
+
+def test_function_parameter_exclusion_is_scoped_to_the_body():
+    """A real table sharing a parameter's name is still reported.
+
+    The parameter is lexically scoped to the function body; the same name
+    used as a source outside it is the table.
+    """
+    q = "let f = (T:(a:long)){ T | count }; T | invoke f()"
+    assert parse(q).get_referenced_tables() == {"T"}
+
+
+def test_as_alias_is_not_a_table():
+    assert parse("T | as X | join (X) on a").get_referenced_tables() == {"T"}
+
+
+def test_wildcard_pattern_is_not_a_table():
+    """`union T*` names a pattern, not a table -- deliberately excluded."""
+    assert parse("union withsource=S T*").get_referenced_tables() == set()
+
+
+def test_bracketed_table_name_is_reported_unquoted():
+    assert parse("['my-table'] | take 1").get_referenced_tables() == {"my-table"}
+
+
+def test_replace_bracketed_table_name():
+    out = parse("['my-table'] | take 1").replace_table("my-table", "Z")
+    assert out == "Z | take 1"
+
+
+# A bracketed *alias* is the other half of that pair. The declaration side of
+# a `let` is a NameDeclaration and the use side is a NameReference wrapping a
+# BracketedName; until NameDeclaration also read back unquoted, the two
+# spellings did not match and the alias escaped the let filter as a table.
+
+BRACKETED_ALIAS_QUERY = "let ['weird-name'] = SecurityEvent;\n['weird-name'] | take 1"
+
+
+def test_bracketed_let_alias_is_not_a_table():
+    assert parse(BRACKETED_ALIAS_QUERY).get_referenced_tables() == {"SecurityEvent"}
+
+
+def test_replace_table_leaves_a_bracketed_let_alias_alone():
+    out = parse(BRACKETED_ALIAS_QUERY).replace_table("weird-name", "Z")
+    assert out == BRACKETED_ALIAS_QUERY
