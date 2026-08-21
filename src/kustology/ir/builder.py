@@ -596,8 +596,11 @@ class IRBuilder:
             )
 
         if kind == "PartitionByOperator":
+            # The partition key is ``Entity``, not ``Expression`` -- the
+            # latter is a member of no PartitionByOperator, so reading it
+            # raised AttributeError on every `__partitionby` query.
             return PartitionOp(
-                by=self._visit_expr(n.Expression),
+                by=self._visit_expr(n.Entity),
                 right=self._visit_pipeline(n.Subquery),
                 span=span,
             )
@@ -686,8 +689,17 @@ class IRBuilder:
             return TopOp(count=self._visit_count(n.Expression), by=self._visit_expr(n.ByExpression), span=span)
 
         if kind == "TopHittersOperator":
+            # `top-hitters N of C [by V]` spreads over three members --
+            # Expression (N), OfExpression (C) and ByClause (whose
+            # .Expression is V). ``ValueExpression`` is a member of no node
+            # in the assembly; reading it raised AttributeError. ByClause is
+            # a plain None when the optional `by` is absent.
+            by_clause = n.ByClause
             return TopHittersOp(
-                count=self._visit_count(n.Expression), by=self._visit_expr(n.ValueExpression), span=span,
+                count=self._visit_count(n.Expression),
+                of=self._visit_expr(n.OfExpression),
+                by=self._visit_expr(by_clause.Expression) if by_clause is not None else None,
+                span=span,
             )
 
         if kind == "SearchOperator":

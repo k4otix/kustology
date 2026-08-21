@@ -82,6 +82,15 @@ release is in `docs/superpowers/reports/`.
   `get_referenced_tables()` returned nothing for them, and `replace_table()`
   returned the query **unchanged with no error** — so a table migration
   silently shipped the old name.
+- **`top-hitters` and `__partitionby` no longer raise; `TopHittersOp` gains
+  `of` (tier 2).** Both builder branches read a .NET member their node type
+  does not have — `TopHittersOperator.ValueExpression`, which exists on no
+  type in the assembly, and `PartitionByOperator.Expression`, where the
+  partition key is `Entity` — so `to_ir()` raised `AttributeError` on valid
+  KQL while both kinds sat in `HANDLED_OPERATOR_KINDS` claiming to be
+  modelled. `top-hitters N of C by V` has two column operands and
+  `TopHittersOp` had a field for only one: `of` is the column being counted,
+  `by` the optional ranking weight, now `AnyExpr | None`.
 
 ### Added
 

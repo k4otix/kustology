@@ -783,11 +783,14 @@ def test_semantic_info_probe_fallthrough_logs_debug(caplog):
     "T | take toscalar(U | count)",
     "let n = 5; T | top n by x",
     "let n = 3; T | sample n",
-    # SampleDistinctOp.count is one of the five widened fields but had no
-    # non-literal coverage; TopHittersOp.count is deliberately absent here
-    # -- `top-hitters n of a by b` still raises AttributeError on
-    # `.ValueExpression` today, a separate K02 crash that Task 1.2 owns.
+    # SampleDistinctOp.count and TopHittersOp.count are the last two of the
+    # five widened fields to get non-literal coverage. TopHittersOp.count
+    # could not be covered when the widening landed -- `top-hitters n of a
+    # by b` raised AttributeError on `.ValueExpression` before K02 was
+    # fixed, so the widening was untestable there until this branch read
+    # real members.
     "let n = 3; T | sample-distinct n of a",
+    "let n = 3; T | top-hitters n of a by b",
 ])
 def test_non_literal_counts_build(q):
     """K01: ``safe_int`` used to call ``int(node.ToString())`` on the take /
@@ -876,3 +879,44 @@ def test_count_field_round_trips_correct_shape_through_json():
     expr_op = TakeOp.model_validate(expr_payload)
     assert isinstance(expr_op.count, ColumnRef)
     assert expr_op.count.name == "n"
+
+
+def test_top_hitters_reads_of_and_by():
+    """K02: the ``TopHittersOperator`` branch read ``n.ValueExpression``, a
+    member that exists on no node in the assembly, so every ``top-hitters``
+    query raised ``AttributeError`` out of ``to_ir()``. The real shape is
+    three separate members -- ``Expression`` (the count), ``OfExpression``
+    (the ``of C`` column being counted) and ``ByClause.Expression`` (the
+    ``by C`` column) -- and the operand the old code was reaching for is
+    the ``of`` column, which ``TopHittersOp`` had no field for at all.
+    Asserting all three distinct operands is what proves the branch reads
+    the node it was handed rather than any one member twice."""
+    op = parse("T | top-hitters 5 of a by b").to_ir().main_pipeline.operators[0]
+    assert op.of.canonical_form == "a"
+    assert op.by.canonical_form == "b"
+    assert op.count == 5
+
+
+def test_top_hitters_without_a_by_clause_builds():
+    """``by`` is optional in the grammar: ``top-hitters 5 of a`` parses with
+    ``ByClause`` as a plain ``None`` (verified on a real parse), so the
+    branch must guard it rather than dereference ``.Expression``. ``of``
+    still has to come through -- a null-guard that dropped both operands
+    would pass a weaker test."""
+    op = parse("T | top-hitters 5 of a").to_ir().main_pipeline.operators[0]
+    assert op.by is None
+    assert op.of.canonical_form == "a"
+    assert op.count == 5
+
+
+def test_partitionby_builds():
+    """K02, same class of bug: the ``PartitionByOperator`` branch read
+    ``n.Expression``. That operator's partition key is ``Entity``; there is
+    no ``Expression`` member, so ``__partitionby`` raised ``AttributeError``
+    too. The subquery pipeline was already read correctly from
+    ``Subquery``, which is why the crash lands on the key rather than the
+    body -- assert both, so a fix that reaches the key by breaking the body
+    does not pass."""
+    op = parse("T | __partitionby a (take 1)").to_ir().main_pipeline.operators[0]
+    assert op.by.canonical_form == "a"
+    assert [o.kind for o in op.right.operators] == ["take"]

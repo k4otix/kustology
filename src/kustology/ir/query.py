@@ -202,7 +202,19 @@ class TopHittersOp(Operator):
     KIND: ClassVar[str] = "top_hitters"
     kind: Literal["top_hitters"] = "top_hitters"
     count: int | AnyExpr
-    by: AnyExpr
+    # ``top-hitters N of C [by V]`` has two column operands, not one: ``of``
+    # is the column whose top values are being found, ``by`` the optional
+    # weight summed to rank them. Only ``by`` existed, and the builder filled
+    # it from a member that exists on no node -- so both operands were
+    # unrepresentable and the operator raised instead of lowering.
+    #
+    # ``by`` is genuinely optional: ``ByClause`` is a plain ``None`` when the
+    # clause is absent. ``of`` is grammar-required and the builder always
+    # fills it (the error-tolerant parser synthesizes a missing name node for
+    # ``top-hitters 5``, so it is never ``None`` on a real parse); the default
+    # is there so a payload written against a future shape still validates.
+    of: AnyExpr | None = None
+    by: AnyExpr | None = None
 
 
 class SampleOp(Operator):
