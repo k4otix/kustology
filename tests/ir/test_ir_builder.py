@@ -4,6 +4,8 @@
 """Core IR builder behaviour: structural hash stability, JSON serialization,
 binder enrichment with an inline schema."""
 
+import logging
+
 import pytest
 
 from kustology.ir import (
@@ -728,3 +730,46 @@ def test_materialize_appears_only_on_a_let_right_hand_side():
         parents, diags = parents_of_materialize(query)
         assert diags > 0, query
         assert [p for p in parents if p != "LetStatement"] == [], query
+
+
+def test_semantic_info_probe_fallthrough_logs_debug(caplog):
+    """`map_semantic_info`'s inner ElementType probe is wrapped in a bare
+    `except Exception`, because .NET member access can raise things other
+    than AttributeError (see the `getattr` gotchas in AGENTS.md). A silent
+    `except: pass` there would make a real binder bug indistinguishable
+    from "no element type" -- both produce `result_type_inner is None`.
+
+    This drives that except clause with a mock node whose `ResultType`
+    reports `ElementType` present (not None, so the probe is entered) but
+    whose `ElementType.Name` raises on access. The outer `result_type`
+    assignment must still happen (only the inner probe is defensive), and
+    the exception must be logged at DEBUG rather than swallowed silently.
+    """
+    from types import SimpleNamespace
+
+    from kustology.ir._builder_helpers import map_semantic_info
+
+    class _Boom:
+        """Stands in for an ElementType symbol whose Name access raises --
+        e.g. a .NET member lookup failure that isn't an AttributeError."""
+
+        @property
+        def Name(self):
+            raise RuntimeError("probe")
+
+    node = SimpleNamespace(
+        ResultType=SimpleNamespace(Name="dynamic", ElementType=_Boom())
+    )
+    expr = LiteralExpr(value="[]", literal_kind="dynamic", span=Span(text_start=0, width=2))
+
+    with caplog.at_level(logging.DEBUG, logger="kustology.ir._builder_helpers"):
+        map_semantic_info(node, expr)
+
+    # The outer probe (ResultType.Name -> "dynamic") is unaffected by the
+    # inner probe's failure -- it's a non-default value, not the field's
+    # declared default, so this line would fail if the outer assignment
+    # were accidentally guarded by the same try/except.
+    assert expr.result_type == KustoType.DYNAMIC
+    # Verified against the real message in _builder_helpers.py rather than
+    # the brief's proposed text, which matches here (the two agree).
+    assert "inner result-type probe fell through" in caplog.text
