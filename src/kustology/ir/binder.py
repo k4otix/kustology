@@ -122,6 +122,28 @@ class SchemaAttacher:
           opaque table.
         * ``let``-declared functions are recorded, not expanded, so a call
           site does not acquire the body's schema.
+        * An alias may shadow a real table name -- ``let SecurityEvent =
+          SecurityEvent | where …`` is a common Sentinel idiom -- so
+          ``ColumnRef.table`` alone cannot say which namespace its string
+          came from.
+
+        Shadowing does not mislead the binder: types come from the binding's
+        own output schema, so ``let SecurityEvent = Other | …`` gives columns
+        read through the alias ``Other``'s types, not the real
+        ``SecurityEvent``'s. Read ``result_type`` and the question does not
+        arise. A consumer that instead re-derives types from the name
+        (``my_schema[col.table][col.name]``) does need to tell the two apart,
+        and *position* is what does it exactly -- a reference inside a
+        binding's body reads real tables, one outside resolves against
+        whatever the ``LetRef`` brought in::
+
+            inner = {id(c) for b in ir.let_bindings if b.rhs_pipeline
+                     for c in find_all(b.rhs_pipeline, ColumnRef)}
+            aliases = {b.name for b in ir.let_bindings}
+            is_alias = id(col) not in inner and col.table in aliases
+
+        Matching on ``aliases`` alone is not enough: under self-shadowing it
+        also flags the binding body's own columns, which read the table.
         """
         self._let_schemas = {}
         for binding in ir.let_bindings:

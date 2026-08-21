@@ -53,6 +53,13 @@ release is in `docs/superpowers/reports/`.
   through the ambient culture and reached `semantic_hash`, making the hash
   machine-dependent; datetimes now render as ISO 8601 round-trip and
   timespans in invariant form.
+- **`semantic_hash` no longer depends on whether a schema was passed
+  (tier 2).** `QueryIR.semantic_hash` is computed at build time so the shipped
+  value was unaffected, but the field's own docstring tells consumers to call
+  `compute_semantic_hash` again after mutating the IR — and that path hashed
+  `ColumnRef.table` and `Pipeline.result_schema`, both binder-populated. The
+  same query text therefore hashed two ways. The one remaining divergence is
+  a difference in IR *shape*, not field values, and is documented above.
 - **`LetBinding` is populated (tier 2).** `rhs_expr`, `rhs_pipeline`,
   `inner_tables` and `inner_time_exprs` were permanently empty, which blocked
   let-resolution entirely. All tabular right-hand-side shapes are covered,
@@ -83,6 +90,13 @@ release is in `docs/superpowers/reports/`.
   it holds with or without a schema.
 - `SetMembership.op` and `Exists.op` (tier 2) — the literal KQL operator,
   following `BinOp.op`.
+- `ColumnRef.join_side` (tier 2) — `"left"` / `"right"` when the query wrote
+  `$left.` / `$right.`, otherwise `None`. `table` could not carry this: the
+  binder overwrites the sentinel with the table it resolves to, so a bound
+  parse lost the side entirely. The distinction is semantic —
+  `$left.a == $left.b` compares two columns of one table, `$left.a ==
+  $right.b` is a join key — and it is what lets `table` be excluded from
+  `semantic_hash` without those two colliding.
 - `SubqueryExpr`, `LetFunction`, `LiteralExpr.ticks` (tier 2), and
   `literal_kind` gains `"decimal"`. `ticks` is the only lossless form for
   `datetime` / `timespan`; `ticks // 10` gives exact microseconds.
@@ -148,7 +162,12 @@ release is in `docs/superpowers/reports/`.
   unreachable.
 - **`ColumnRef.table` and `Pipeline.result_schema` are populated in many more
   places**, including inside `toscalar(...)`, `case()` arms and `let`
-  pipelines. Both are in the hash payload.
+  pipelines. Neither is in the hash payload: both are inferred from the
+  caller's schema rather than stated by the query, so hashing them made the
+  same query text hash two ways depending on whether one was passed. Every
+  field `SchemaAttacher` writes is now stripped before hashing, which shifts
+  every `semantic_hash` value again — still within `kustology-sem-v2`, which
+  covers the whole unreleased window since `v0.1.0`.
 - **`semantic_hash` can differ between a bound and an unbound parse** of a
   query whose `let` aliases a table: the binder proves it is a table and the
   IR shape changes accordingly. Accepted and documented rather than papered

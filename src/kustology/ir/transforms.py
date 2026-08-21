@@ -133,10 +133,25 @@ def _merge_at_one_level(ops: list) -> list:
 
 
 # Stripped from the dump before hashing. Spans depend on character offsets so
-# would defeat the purpose of a semantic hash; the type-annotation fields
-# (``result_type``, ``result_type_inner``) are populated by the
-# binder, so leaving them in would make the hash differ between a bound and an
-# unbound parse purely because of the annotations.
+# would defeat the purpose of a semantic hash; the rest is everything
+# :class:`~kustology.ir.binder.SchemaAttacher` writes -- ``result_type`` /
+# ``result_type_inner`` (annotations), ``table`` (column provenance) and
+# ``result_schema`` (the whole bound schema per pipeline). All four are
+# inferred from the caller's schema, not stated by the query, so leaving any
+# of them in makes the same query text hash two ways depending on whether a
+# schema was passed. That only bites through ``compute_semantic_hash`` --
+# ``QueryIR.semantic_hash`` is computed at build time, before the binder runs
+# -- but that call is exactly what the field's own docstring tells consumers
+# to make after mutating the IR.
+#
+# ``join_side`` is deliberately *not* stripped, and is why it exists as a
+# field at all. ``table`` carries two different things: the source-derived
+# ``$left`` / ``$right`` sentinel, and the table the binder resolves -- which
+# it writes over the sentinel (see ``SchemaAttacher._fill``). Hashing ``table``
+# made the hash bind-dependent; dropping it without recording the side
+# elsewhere collapsed ``$left.a == $left.b`` into ``$left.a == $right.b``,
+# which are different queries. Splitting the two apart is the standing remedy
+# for lossy lowering -- see AGENTS.md.
 #
 # Stripping these fields does *not* make bind state invisible to the hash, and
 # no field-stripping could. The builder's ``let`` dispatch is bind-dependent by
@@ -150,7 +165,7 @@ def _merge_at_one_level(ops: list) -> list:
 # difference for a silently wrong answer. Queries with no table-aliasing
 # ``let`` are unaffected.
 _VOLATILE_FIELDS = frozenset({
-    "span", "result_type", "result_type_inner",
+    "span", "result_type", "result_type_inner", "table", "result_schema",
 })
 
 

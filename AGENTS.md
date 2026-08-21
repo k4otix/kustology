@@ -280,10 +280,16 @@ hashes *visibly* instead of silently returning "these queries differ".
 
 Note `semantic_hash` is not bind-invariant: a `let` aliasing a table resolves to
 `rhs_pipeline` when bound and `rhs_expr` when not, and that is a shape
-difference no volatile-field stripping can hide. `_VOLATILE_FIELDS` strips
-`span` / `result_type` / `result_type_inner` only. This applies to a binding's
+difference no volatile-field stripping can hide. This applies to a binding's
 own right-hand side; the *use* site is bind-independent, since a name bound by
 an earlier `let` is a `LetRef` decided from the statement text alone.
+
+That shape divergence is the *only* one. `_VOLATILE_FIELDS` strips every field
+the binder writes — `span` / `result_type` / `result_type_inner` / `table` /
+`result_schema` — so field *values* never make a query hash two ways. When you
+add a binder-populated field, add it there too, and check first whether it is
+carrying source-derived information that must keep hashing: `ColumnRef.table`
+was, and splitting `join_side` out of it is what let the rest be stripped.
 
 ### `extra="forbid"` on every IR `BaseModel`
 Strict validation: JSON dumps with extra top-level fields fail to
