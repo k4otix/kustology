@@ -191,6 +191,7 @@ def literal_value_and_ticks(node: Any) -> tuple[Any, int | None]:
 
     ``ticks`` is populated for datetime and timespan only.
     """
+    from System import DateTime, DateTimeKind
     from System.Globalization import CultureInfo
 
     raw = node.LiteralValue
@@ -199,6 +200,24 @@ def literal_value_and_ticks(node: Any) -> tuple[Any, int | None]:
 
     net_kind = str(node.Kind)
     if net_kind == "DateTimeLiteralExpression":
+        # .NET's default ``DateTime.Parse`` (what ``LiteralValue`` uses under
+        # the hood) hands back one of two kinds, and they need opposite
+        # treatment. A bare literal like ``datetime(2024-01-01)`` has no
+        # offset in the source text, so it parses as ``Unspecified`` --
+        # correct as-is, since KQL datetimes are UTC by definition; it only
+        # needs the ``Kind`` tag *set*, not the value touched, or ``.Ticks``
+        # would render un-suffixed and collide with nothing. A ``Z``- or
+        # offset-suffixed literal like ``datetime(2024-01-01T00:00:00Z)``
+        # instead parses as ``Local`` -- .NET silently converts it to the
+        # *host's* wall-clock time and stamps it accordingly, so ``.Ticks``
+        # already carries the host's UTC offset baked in and must be
+        # *converted* back to UTC, not just relabelled. Swapping these two
+        # branches would silently shift every non-UTC-offset timestamp by
+        # the host's offset while leaving ones that already said "Z" alone.
+        if raw.Kind == DateTimeKind.Local:
+            raw = raw.ToUniversalTime()
+        elif raw.Kind == DateTimeKind.Unspecified:
+            raw = DateTime.SpecifyKind(raw, DateTimeKind.Utc)
         return raw.ToString("o", CultureInfo.InvariantCulture), raw.Ticks
     if net_kind == "TimespanLiteralExpression":
         return raw.ToString("c", CultureInfo.InvariantCulture), raw.Ticks

@@ -91,6 +91,17 @@ release is in `docs/superpowers/reports/`.
   modelled. `top-hitters N of C by V` has two column operands and
   `TopHittersOp` had a field for only one: `of` is the column being counted,
   `by` the optional ranking weight, now `AnyExpr | None`.
+- **`datetime` literal `value`/`ticks`/`semantic_hash` no longer depend on
+  the host timezone (tier 2).** `literal_value_and_ticks` rendered a `datetime`
+  literal's `.Ticks`/`.ToString()` straight off .NET's `DateTime` without
+  normalizing `Kind`. A `Z`-suffixed literal such as
+  `datetime(2024-01-01T00:00:00Z)` parses through .NET's default
+  `DateTime.Parse` as `DateTimeKind.Local`, so its `.Ticks` already carried
+  the *host's* UTC offset baked in; a bare literal like `datetime(2024-01-01)`
+  parses `Unspecified` instead. The two need opposite treatment — `Local`
+  must be *converted* to UTC, `Unspecified` merely *specified* as UTC, since
+  KQL datetimes are UTC by definition — so the same query hashed differently
+  on a laptop in New York than a CI runner in Tokyo.
 
 ### Added
 
