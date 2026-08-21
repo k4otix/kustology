@@ -1,0 +1,497 @@
+<title>Kustology 0.2.0 Release Review</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #F5F7FA; --surface: #FFFFFF; --ink: #1B2430; --muted: #5B6775; --hair: #D9DFE6;
+    --accent: #1D6F8A; --accent-soft: #E3F0F4;
+    --crit: #B42318; --crit-bg: #FBE9E7; --high: #C4561A; --high-bg: #FCEFE6;
+    --med: #9A6700; --med-bg: #FBF3DC; --low: #5B6775; --low-bg: #EDF0F3; --enh: #1D6F8A; --enh-bg: #E3F0F4;
+    --ok: #1F7A4D; --ok-bg: #E4F3EB; --code-bg: #EEF1F5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0F1317; --surface: #161B21; --ink: #E6EAF0; --muted: #93A0AE; --hair: #2A323C;
+      --accent: #5DB7D3; --accent-soft: #16303A;
+      --crit: #F97066; --crit-bg: #3A1A18; --high: #F9A066; --high-bg: #3A2418;
+      --med: #E2B93B; --med-bg: #332B12; --low: #93A0AE; --low-bg: #20262E; --enh: #5DB7D3; --enh-bg: #16303A;
+      --ok: #4CC38A; --ok-bg: #14301F; --code-bg: #1C232B;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0F1317; --surface: #161B21; --ink: #E6EAF0; --muted: #93A0AE; --hair: #2A323C;
+    --accent: #5DB7D3; --accent-soft: #16303A;
+    --crit: #F97066; --crit-bg: #3A1A18; --high: #F9A066; --high-bg: #3A2418;
+    --med: #E2B93B; --med-bg: #332B12; --low: #93A0AE; --low-bg: #20262E; --enh: #5DB7D3; --enh-bg: #16303A;
+    --ok: #4CC38A; --ok-bg: #14301F; --code-bg: #1C232B;
+  }
+  html { background: var(--bg); }
+  body { background: var(--bg); color: var(--ink); font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif; font-size: 15.5px; line-height: 1.55; margin: 0; padding: 0 1.25rem 5rem; }
+  main { max-width: 76ch; margin: 0 auto; }
+  h1, h2, h3 { font-family: "Archivo", "Helvetica Neue", Arial, sans-serif; letter-spacing: -0.015em; text-wrap: balance; line-height: 1.15; margin: 0; }
+  h1 { font-size: 2.1rem; font-weight: 700; margin-top: 3rem; }
+  h2 { font-size: 1.35rem; font-weight: 600; margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--hair); }
+  h3 { font-size: 1.05rem; font-weight: 600; margin-top: 2rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.8rem; }
+  p { margin: 0.75rem 0; max-width: 70ch; }
+  a { color: var(--accent); }
+  code, pre, .id { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
+  code { font-size: 0.88em; background: var(--code-bg); padding: 0.08em 0.35em; border-radius: 3px; }
+  pre { font-size: 0.8rem; line-height: 1.45; background: var(--code-bg); padding: 0.7rem 0.9rem; border-radius: 4px; overflow-x: auto; margin: 0.5rem 0 0.25rem; white-space: pre; }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .lede { font-size: 1.05rem; color: var(--muted); max-width: 70ch; }
+  .meta { color: var(--muted); font-size: 0.85rem; margin-top: 0.5rem; }
+  .verdict { display: flex; flex-direction: column; gap: 0.75rem; margin: 2rem 0 1rem; padding: 1.1rem 1.25rem; background: var(--surface); border: 1px solid var(--hair); border-radius: 6px; }
+  .verdict strong { font-family: "Archivo", sans-serif; font-size: 1.15rem; }
+  .verdict .tag { color: var(--crit); }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr)); gap: 0.6rem; margin: 1rem 0 0; }
+  .stat { background: var(--surface); border: 1px solid var(--hair); border-radius: 6px; padding: 0.7rem 0.85rem; }
+  .stat .n { font-family: "Archivo", sans-serif; font-size: 1.6rem; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .stat .l { font-size: 0.78rem; color: var(--muted); margin-top: 0.2rem; }
+  .stat.crit .n { color: var(--crit); } .stat.high .n { color: var(--high); } .stat.med .n { color: var(--med); } .stat.ok .n { color: var(--ok); }
+  .toc { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; font-size: 0.88rem; margin: 1.25rem 0 0; }
+  .pill { display: inline-block; font-family: "IBM Plex Mono", monospace; font-size: 0.68rem; font-weight: 500; letter-spacing: 0.05em; text-transform: uppercase; padding: 0.12em 0.5em; border-radius: 999px; vertical-align: middle; white-space: nowrap; }
+  .pill.crit { color: var(--crit); background: var(--crit-bg); } .pill.high { color: var(--high); background: var(--high-bg); }
+  .pill.med { color: var(--med); background: var(--med-bg); } .pill.low { color: var(--low); background: var(--low-bg); }
+  .pill.enh { color: var(--enh); background: var(--enh-bg); } .pill.ok { color: var(--ok); background: var(--ok-bg); }
+  .pill.t1 { color: var(--muted); background: var(--low-bg); }
+  article.f { padding: 1.1rem 0; border-bottom: 1px solid var(--hair); }
+  article.f:last-of-type { border-bottom: none; }
+  article.f header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.45rem 0.6rem; }
+  article.f .id { color: var(--muted); font-size: 0.8rem; }
+  article.f h4 { font-family: "Archivo", sans-serif; font-size: 1rem; font-weight: 600; margin: 0; letter-spacing: -0.01em; flex: 1 1 100%; order: 2; }
+  article.f .where { font-size: 0.8rem; color: var(--muted); margin-top: 0.25rem; }
+  article.f .where code { background: none; padding: 0; color: var(--muted); }
+  article.f p { margin: 0.5rem 0; }
+  .fix { display: grid; grid-template-columns: 3.2rem 1fr; gap: 0.5rem; margin-top: 0.5rem; font-size: 0.95rem; }
+  .fix .k { font-family: "IBM Plex Mono", monospace; font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); padding-top: 0.25rem; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.88rem; margin: 0.75rem 0; }
+  .tw { overflow-x: auto; }
+  th, td { text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--hair); vertical-align: top; }
+  th { font-family: "Archivo", sans-serif; font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+  td.num { font-variant-numeric: tabular-nums; text-align: right; }
+  ul { padding-left: 1.2rem; } li { margin: 0.3rem 0; }
+  .ok-list li { margin: 0.2rem 0; }
+  .note { border-left: 3px solid var(--accent); padding: 0.4rem 0.9rem; background: var(--accent-soft); border-radius: 0 4px 4px 0; margin: 1rem 0; font-size: 0.95rem; }
+  footer { margin-top: 4rem; font-size: 0.82rem; color: var(--muted); border-top: 1px solid var(--hair); padding-top: 1rem; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+<main>
+<h1>Kustology 0.2.0 Release Review</h1>
+<p class="lede">A pre-tag review of <code>main @ 26a5da3</code> covering IR soundness, completeness of representation, attribute population under schemaless and schema-bound parses, Tier 1 correctness, documentation and examples, tests, CI and packaging.</p>
+<p class="meta">Method: a lead pass plus seven independent Opus reviewers (builder, binder, Tier 1/CLI, hash/canonical/LLM view, docs/examples, tests/CI/packaging, and an empirical sweep of 209 queries × 3 build modes). Every finding below was reproduced by running code; overlapping findings are merged and the lead re-verified each high-severity item. Repro scripts: <code>scratchpad/{lead,agentA..G}/</code>.</p>
+
+<div class="verdict">
+  <div><strong><span class="tag">Not ready to tag.</span></strong> The baseline is green — 442 tests, ruff, mypy, SyntaxKind audit, 7 examples, <code>uv lock --check</code>, wheel/sdist build and <code>twine check</code> all pass. None of that sees what follows: three classes of crash on valid KQL, two hash-soundness defects (one of them host-timezone dependence), a family of wrong-answer bugs in the schema binder, a systemic comment-trivia bug across the Tier 1 analyzers, and three release-pipeline gaps.</div>
+  <div class="stats">
+    <div class="stat crit"><div class="n">21</div><div class="l">P0 items — release blockers (K01–K21)</div></div>
+    <div class="stat high"><div class="n">11</div><div class="l">P1 items — high (K22–K32)</div></div>
+    <div class="stat med"><div class="n">6</div><div class="l">P2 items — medium (K33–K38)</div></div>
+    <div class="stat"><div class="n">4</div><div class="l">P3 items — low / enhancement (K39–K42)</div></div>
+    <div class="stat ok"><div class="n">0</div><div class="l">Unknown* nodes on the 33-fixture corpus</div></div>
+    <div class="stat ok"><div class="n">1032 / 1064</div><div class="l">bound ColumnRef types agree with Microsoft (0 contradictions)</div></div>
+  </div>
+  <nav class="toc"><a href="#p0">P0 blockers</a><a href="#p1">P1 high</a><a href="#p2">P2 medium</a><a href="#p3">P3 low / enhancements</a><a href="#arch">Cross-cutting fixes</a><a href="#sweep">Sweep numbers</a><a href="#checklist">Release checklist</a><a href="#ok">Verified OK</a></nav>
+</div>
+
+<h2 id="p0">P0 — release blockers</h2>
+<p>Anything here either raises on valid KQL, returns a wrong answer with no signal, makes <code>semantic_hash</code> unsound, or breaks the release itself.</p>
+
+<h3>Crashes on valid KQL</h3>
+
+<article class="f"><header><span class="id">K01</span><span class="pill crit">Critical</span><h4>Non-literal row counts raise <code>ValueError</code> from <code>safe_int</code></h4></header>
+<div class="where"><code>src/kustology/ir/builder.py</code> Take/Sample/Top/TopHitters/SampleDistinct branches; <code>_builder_helpers.safe_int</code>; <code>TakeOp.count: int</code></div>
+<pre>let n = 10; T | take n          → ValueError: Expected integer literal for take/sample/top count, got ' n'
+T | take toscalar(U | count)    → same          let n = 5; T | top n by x   → same          T | take 5.0 → same</pre>
+<p>All parse with zero diagnostics; <code>let N = toscalar(...); … | take N</code> is idiomatic Sentinel. One such rule aborts a corpus run through <code>to_ir()</code> and the CLI.</p>
+<div class="fix"><span class="k">Fix</span><span>Widen <code>count</code> to <code>int | AnyExpr</code> (or add <code>count_expr</code>) on the five operator models and never raise from the builder; as a floor, degrade to <code>UnknownOp</code>.</span></div></article>
+
+<article class="f"><header><span class="id">K02</span><span class="pill crit">Critical</span><h4>Two operators in <code>HANDLED_OPERATOR_KINDS</code> cannot be built at all</h4></header>
+<div class="where"><code>builder.py:690</code> (<code>n.ValueExpression</code>), <code>builder.py:600-601</code> (<code>n.Expression</code>/<code>n.Subquery</code> on PartitionBy)</div>
+<pre>SecurityEvent | top-hitters 10 of Account by Cnt  → AttributeError: 'TopHittersOperator' object has no attribute 'ValueExpression'
+SecurityEvent | __partitionby Computer (take 1)   → AttributeError: 'PartitionByOperator' object has no attribute 'Expression'</pre>
+<p>The real members are <code>Expression</code> / <code>OfExpression</code> / <code>ByClause.Expression</code> and <code>Entity</code> / <code>Subquery</code>. This is the case-sensitive-member trap AGENTS.md documents, except direct attribute access <em>raises</em> instead of defaulting — and <code>tests/test_reflection_audit.py</code> only scans <code>getattr</code>/<code>hasattr</code>, not <code>ast.Attribute</code>. <code>TopHittersOp</code> also has no field for the <code>of</code> column, so <code>top-hitters 5 of X by Y</code> and <code>top-hitters 5 by Y</code> would still collapse after the one-word fix. Neither operator appears in any fixture or test; ~20 builder branches have zero coverage.</p>
+<div class="fix"><span class="k">Fix</span><span>Read the correct members; add <code>of</code> to <code>TopHittersOp</code>; extend the reflection audit to direct attribute access (it finds exactly these); add a smoke test that builds one query per <code>HANDLED_OPERATOR_KINDS</code> member and asserts a non-<code>UnknownOp</code> result.</span></div></article>
+
+<h3>semantic_hash soundness</h3>
+
+<article class="f"><header><span class="id">K03</span><span class="pill crit">Critical</span><h4><code>semantic_hash</code>, <code>LiteralExpr.value</code> and <code>ticks</code> depend on the host timezone for datetime literals</h4></header>
+<div class="where"><code>src/kustology/ir/_builder_helpers.py:212</code> — <code>raw.ToString("o")</code> / <code>raw.Ticks</code> on a <code>DateTimeKind.Local</code> value</div>
+<pre>T | where d &gt; datetime(2024-01-01T00:00:00Z)
+TZ=UTC              value 2024-01-01T00:00:00.0000000+00:00  ticks 638396640000000000  hash …d453e6903337
+TZ=America/New_York value 2023-12-31T19:00:00.0000000-05:00  ticks 638396460000000000  hash …77e2c5a4f352
+TZ=Asia/Tokyo       value 2024-01-01T09:00:00.0000000+09:00  ticks 638396964000000000  hash …9dd4117f8270
+datetime(2024-01-01) vs datetime(2024-01-01T00:00:00Z)  → different hash on every non-UTC host (same instant in KQL)</pre>
+<p>The culture axis was pinned this release; the timezone axis was not, and it produces exactly the failure the CHANGELOG says was closed ("making the hash machine-dependent"). It also falsifies "<code>ticks</code> is the only lossless form". A dedup index built on one runner will not match one built on another.</p>
+<div class="fix"><span class="k">Fix</span><span><code>ToUniversalTime()</code> when <code>Kind == Local</code>, <code>SpecifyKind(Utc)</code> when <code>Unspecified</code>, before formatting and reading <code>Ticks</code>. Add a <code>TZ=Asia/Tokyo</code> leg to the de-DE/fr-FR CI matrix. Still inside the unreleased <code>kustology-sem-v2</code> window.</span></div></article>
+
+<article class="f"><header><span class="id">K04</span><span class="pill crit">Critical</span><h4><code>normalize_expressions</code> rewrites <code>tolower(X) == R</code> → <code>X =~ R</code> for any R — unsound, and baked into the hash</h4></header>
+<div class="where"><code>src/kustology/ir/_normalize.py:50-57</code>, applied in <code>compute_semantic_hash</code></div>
+<pre>T | where tolower(X) == "Y"    hashes EQUAL to   T | where X =~ "Y"     (always-false vs live predicate)
+T | where tolower(X) == Col    hashes EQUAL to   T | where X =~ Col
+"y" == tolower(X)              not rewritten (asymmetric);  toupper(X) == "y"  no rule at all</pre>
+<div class="fix"><span class="k">Fix</span><span>Fire only when the other operand is a string literal equal to its own <code>.lower()</code> (or itself a <code>tolower(...)</code>); handle the mirrored operand order; add the <code>toupper</code> twin under the same guard. Verified sound and unaffected: <code>not(not(X))</code>, And/Or flattening, and the deliberate absence of <code>not(a == b) → a != b</code>.</span></div></article>
+
+<article class="f"><header><span class="id">K05</span><span class="pill crit">Critical</span><h4>Lossy lowering: semantically different queries produce byte-identical IR and identical <code>semantic_hash</code></h4></header>
+<div class="where"><code>builder.py</code> operator dispatch; <code>query.py</code> models; violates <code>compute_semantic_hash</code>'s documented contract and AGENTS.md "Lossy lowering"</div>
+<div class="tw"><table>
+<tr><th>Collides</th><th>What is lost</th></tr>
+<tr><td><code>sort by x asc</code> / <code>desc</code> / <code>nulls first</code>; <code>top 5 by x asc</code> / <code>desc</code>; <code>order by</code></td><td><code>OrderedExpression</code> is unwrapped twice (<code>builder.py:680</code>, <code>:1081</code>). For <code>top</code>, direction <em>is</em> the selection criterion. The corpus contains <code>sort by … desc</code> but nothing asserts it.</td></tr>
+<tr><td><code>T | fork (where a==1 | count) (where b==2 | count)</code> vs any same-arity fork</td><td><code>ForkExpression</code> is never unwrapped — every branch becomes <code>Pipeline(UnknownSource, [])</code>; branch bodies and names are invisible to <code>walk</code>. Verified: <code>find_all(ir, FilterOp) == []</code> inside the fork.</td></tr>
+<tr><td><code>datatable(a:long)[1,2]</code> vs <code>[3,4]</code> vs <code>datatable(b:long)[…]</code></td><td><code>FuncCallSource(name="datatable", args=[])</code> is a hard-coded constant — schema and every inline row (IOC allow-lists) discarded.</td></tr>
+<tr><td><code>externaldata(…)[…] | where …</code> at pipeline root</td><td>No <code>ExternalDataExpression</code> branch in <code>_visit_pipeline.walk</code>: source becomes <code>ImplicitSource</code> (with operators) or <code>UnknownSource</code> (without); the expression is dropped entirely. On a <code>let</code> RHS it works.</td></tr>
+<tr><td><code>database('d1').T</code> vs <code>database('d2').T</code>; <code>cluster('c1')…</code> vs <code>cluster('c2')…</code></td><td>Qualifier dropped from <code>TableRef</code>; cross-workspace rules over a same-named table collide.</td></tr>
+<tr><td><code>mv-expand x</code> vs <code>to typeof(string)</code> / <code>limit 10</code> / <code>with_itemindex=i</code> / <code>bagexpansion=array</code> / <code>kind=bag</code></td><td><code>MvExpandExpression.ToTypeOf</code>, <code>RowLimitClause</code> and <code>Parameters</code> unread. 8 of 33 fixtures use <code>mv-expand</code>, several with <code>bagexpansion</code>/multi-column <code>to typeof</code>.</td></tr>
+<tr><td><code>parse kind=regex</code> vs <code>kind=simple</code>; <code>parse … b:long</code> vs <code>b</code></td><td>Matching semantics and declared capture type (<code>NameAndTypeDeclaration → ColumnRef</code>) dropped.</td></tr>
+<tr><td><code>union kind=inner</code> vs <code>outer</code>; <code>isfuzzy=true</code>; <code>withsource=S</code></td><td>All parameters dropped; <code>withsource</code> is a real output column. 7 of 33 fixtures use <code>isfuzzy=true</code>.</td></tr>
+<tr><td><code>search kind=case_sensitive</code> vs default; <code>search in (A)</code> vs <code>in (B)</code>; <code>find … project a</code> vs without</td><td><code>SearchOp</code> has no kind or tables field (zero <code>TableRef</code> nodes emitted — README says <code>find_all(ir, TableRef)</code> answers "which tables"); <code>FindOp.tables</code> is populated but as <code>list[str]</code>, also invisible to <code>find_all</code>; <code>project</code>/<code>withsource</code> dropped.</td></tr>
+<tr><td><code>make-series … default=0</code> vs <code>default=1</code>; <code>… on t in range(d1,d2,1h)</code> vs <code>range(d3,d4,1d)</code></td><td><code>default</code>/<code>kind</code> unread; the <code>in range()</code> form leaves <code>range_from/to/step</code> all <code>None</code> — a populated-looking node stating no range.</td></tr>
+<tr><td><code>T | join U on k</code> vs <code>join kind=inner</code> (equal) / <code>kind=innerunique</code> (unequal)</td><td>Builder defaults <code>join_kind="inner"</code>; KQL's default is <strong>innerunique</strong> (different row counts). <code>lookup_kind</code> defaults <code>"inner"</code>; KQL's is <strong>leftouter</strong>. Both fields are <code>str | None</code>.</td></tr>
+<tr><td><code>T | count; U | count</code> vs <code>T | count</code></td><td>Only the first tabular statement is modeled (<code>builder.py:354</code>); second statement gone, zero diagnostics, <code>raw_text</code> still holds it.</td></tr>
+</table></div>
+<div class="fix"><span class="k">Fix</span><span>One coordinated model change: a <code>SortKey(expression, direction, nulls)</code> for <code>SortOp.expressions</code>/<code>TopOp.by</code>; unwrap <code>ForkExpression</code> and record branch names; a <code>DataTableSource</code> (columns + rows) and an <code>ExternalData</code> source variant; <code>TableRef.database/cluster</code>; the missing fields on <code>MvExpandOp</code>/<code>ParseOp</code>/<code>UnionOp</code>/<code>SearchOp</code>/<code>FindOp</code>/<code>MakeSeriesOp</code> populated via the existing <code>extract_named_param</code> plus small clause readers; <code>join_kind</code>/<code>lookup_kind</code> emit <code>None</code> (or the true default) when absent; <code>QueryIR</code> gains <code>additional_pipelines</code> or a diagnostic for multi-statement input. Render the new fields in <code>canonical()</code>. Hints (<code>hint.strategy</code> etc.) may stay excluded — they do not change results (see K50).</span></div></article>
+
+<article class="f"><header><span class="id">K06</span><span class="pill high">High</span><h4>Four more hash-robustness defects</h4></header>
+<div class="where"><code>transforms.py</code> <code>_VOLATILE_FIELDS</code>/<code>_strip_volatile_fields</code>/<code>_normalize_node</code>; <code>llm_view._OMIT_FIELDS</code></div>
+<ul>
+<li><strong>body_span.</strong> <code>LetFunction.body_span</code> is not stripped (only the key <code>span</code> is) — a comment before <code>let f = (x:int){x+1}; T | extend y = f(a)</code> changes the hash; it also leaks into <code>to_llm_dict</code> as <code>{"kind":"Span",…}</code>.</li>
+<li><strong>raw_text trivia.</strong> <code>ScanOp</code>/<code>TopNestedOp</code>/<code>MakeGraphOp</code>/<code>MacroExpandOp</code>/<code>Graph*Op</code>/<code>Unknown*</code> hash <code>raw_text</code> that includes leading whitespace and comments — <code>T | top-nested 3 of a by max(b)</code> ≠ <code>T\n|   top-nested …</code>.</li>
+<li><strong>Key-name stripping.</strong> <code>_strip_volatile_fields</code> deletes keys named <code>table</code>/<code>span</code>/<code>result_type</code>/<code>result_schema</code> from <em>any</em> dict, including user column names in <code>AssertSchemaOp.columns</code>/<code>ParseKvOp.columns</code>: <code>assert-schema (a:long, table:long)</code> ≡ <code>assert-schema (a:long)</code>.</li>
+<li><strong>Root double negation.</strong> <code>normalize_expressions</code> discards the replacement node at the root, so <code>compute_semantic_hash(pred)</code> for <code>not(not(a==1))</code> ≠ for <code>a==1</code>, while the same predicates inside a <code>FilterOp</code> hash equal.</li>
+</ul>
+<div class="fix"><span class="k">Fix</span><span>Strip by model field (walk the copied models and clear volatile attributes) instead of by key name; add <code>body_span</code> to both strip sets; normalize <code>raw_text</code> whitespace/comments at build; have <code>normalize_expressions</code> return the possibly-replaced root and rebind it.</span></div></article>
+
+<h3>Wrong answers on a bound parse (SchemaAttacher)</h3>
+<p>Across the 33 fixtures with an oracle comparison against Microsoft's own <code>code.ResultType</code>: 313 result-schema columns matched, 62 typed <code>unknown</code> where Microsoft knows (all from K13), 0 contradicted types. The targeted minimal repros below show where a wrong value is produced; the uniform heuristic fixture schema cannot trigger them, so the corpus number under-reports.</p>
+
+<article class="f"><header><span class="id">K07</span><span class="pill crit">Critical</span><h4><code>join kind=</code> is ignored by the scope walk — semi/anti joins get wrong columns and a wrong type</h4></header>
+<div class="where"><code>src/kustology/ir/binder.py:244-277</code> never reads <code>op.join_kind</code></div>
+<pre>L{k,a,shared:string} R{k,b,shared:int}
+L | join kind=leftanti  (R) on k   MS: k, a, shared:string          ours: + k1, b:datetime, shared1:int
+L | join kind=rightanti (R) on k   MS: k, b:datetime, shared:int    ours: k, a, shared:STRING, k1, b, shared1</pre>
+<div class="fix"><span class="k">Fix</span><span>Branch on <code>join_kind</code>: left anti/semi keep the left scope untouched; right anti/semi replace it with the RHS entry unrenamed; normalize case and treat <code>None</code> as innerunique.</span></div></article>
+
+<article class="f"><header><span class="id">K08</span><span class="pill crit">Critical</span><h4>Wildcards in <code>project-keep</code> / <code>project-away</code> produce a wrong schema (keep → empty)</h4></header>
+<div class="where"><code>binder.py:363-383</code></div>
+<pre>T | project-keep Foo*   MS: Foo1:string, Foo2:long     ours: {}   (every column dropped)
+T | project-away Foo*   MS: Bar, s, d, t, n            ours: all seven columns kept</pre>
+<div class="fix"><span class="k">Fix</span><span>Detect <code>*</code> and match with <code>fnmatch</code> against the current scope keys; one helper serves both operators.</span></div></article>
+
+<article class="f"><header><span class="id">K09</span><span class="pill crit">Critical</span><h4><code>mv-expand</code> type inference is inverted</h4></header>
+<div class="where"><code>binder.py:418-431</code></div>
+<pre>T | extend arr = pack_array(1,2,3) | mv-expand arr   MS: arr:dynamic   ours: arr:long
+T | mv-expand d to typeof(string)                     MS: d:string      ours: d:dynamic
+T | mv-expand with_itemindex=idx d                    MS: + idx:long    ours: idx absent</pre>
+<div class="fix"><span class="k">Fix</span><span>Drop the <code>result_type_inner</code> branch (a bare <code>mv-expand</code> yields <code>dynamic</code>); model and apply <code>to typeof(T)</code> and <code>with_itemindex</code> (needs K05's fields).</span></div></article>
+
+<article class="f"><header><span class="id">K10</span><span class="pill crit">Critical</span><h4><code>$left.X</code> resolves to the wrong table after more than one join</h4></header>
+<div class="where"><code>binder.py:528-531</code> — <code>expr.table = scope[-2].table</code></div>
+<pre>T{k,b} U{k,u} V{b,v}:  T | join U on k | join V on $left.b == $right.b
+  b  join_side=left   table=U     ← U has no column b; it belongs to T
+T | extend x = 1 | join U on $left.a == $right.a   →  $left.a keeps table="$left" (unresolved)</pre>
+<div class="fix"><span class="k">Fix</span><span>Resolve <code>$left</code> by column name across <code>scope[:n]</code> (the scope before the RHS entry was appended) and <code>$right</code> against the appended entry.</span></div></article>
+
+<article class="f"><header><span class="id">K11</span><span class="pill high">High</span><h4>Bare <code>on k</code> is attributed to the right table; Microsoft binds the left</h4></header>
+<div class="where"><code>binder.py:246</code> + <code>:483-488</code> (<code>matches[-1]</code>)</div>
+<pre>L{k:string} R2{k:long}:  L | join (R2) on k   →  ColumnRef k  table=R2  result_type=string   (self-contradictory)</pre>
+<div class="fix"><span class="k">Fix</span><span>Resolve on-clause bare names against the left scope first; note in the docstring that <code>on Col</code> names both sides.</span></div></article>
+
+<article class="f"><header><span class="id">K12</span><span class="pill crit">Critical</span><h4><code>union</code> collapses conflicting column types and blesses a column Kusto rejects</h4></header>
+<div class="where"><code>binder.py:278-284</code>, merge at <code>:211-224</code> (last wins)</div>
+<pre>SecurityEvent.EventID:int + WindowsEvent.EventID:string
+union isfuzzy=true (SecurityEvent …), (WindowsEvent …)   MS: EventID_int, EventID_string   ours: EventID:string
+… | where EventID == 4624 | project Computer, EventID    MS: two KS142 "EventID unknown"   ours: EventID:string, no problem
+union withsource=Src …                                    MS: Src:string first             ours: absent</pre>
+<div class="fix"><span class="k">Fix</span><span>Emit Microsoft's <code>Name_type</code> split on conflict; prepend the <code>withsource</code> column (needs K05's <code>UnionOp.withsource</code>).</span></div></article>
+
+<article class="f"><header><span class="id">K13</span><span class="pill high">High</span><h4><code>arg_max(x, *)</code> collapses to one <code>unknown</code> column and poisons everything downstream</h4></header>
+<div class="where"><code>binder.py:303-306</code> + <code>builder.py:1344-1349</code></div>
+<pre>T | summarize arg_max(t, *)     MS: t, Foo1, Foo2, Bar, s, d, n   ours: {arg_max_t: unknown}
+… | project s, n                MS: s:string, n:long               ours: s:unknown, n:unknown</pre>
+<p>Accounts for all 62 result-schema divergences in the fixture oracle run; 6 of 33 fixtures use <code>arg_max</code>/<code>arg_min</code>.</p>
+<div class="fix"><span class="k">Fix</span><span>Special-case <code>arg_max</code>/<code>arg_min</code> (ordering column first, then <code>*</code> → all scope columns or the listed ones) — or take the whole answer from the bound operator node (K-ARCH-1).</span></div></article>
+
+<article class="f"><header><span class="id">K14</span><span class="pill high">High</span><h4>Aggregate auto-names diverge from Microsoft's</h4></header>
+<div class="where"><code>builder.py:1349</code> — <code>f"{fname}_{first_col}"</code></div>
+<pre>make_set(s) → make_set_s (MS set_s)   make_list → list_…   make_bag → bag_…   take_any(n) → take_any_n (MS n)   percentile(n,95) → percentile_n (MS percentile_n_95)</pre>
+<p>9 of 33 fixtures use <code>make_set</code>/<code>make_list</code>/<code>make_bag</code>; <code>result_schema</code> and <code>Assignment.name</code> then name a column that does not exist.</p>
+<div class="fix"><span class="k">Fix</span><span>Read the bound summarize node's <code>ResultType.Columns</code> for names; keep the hand-rolled path as the unbound fallback with the special cases corrected.</span></div></article>
+
+<h3>Tier 1 silent wrong answers (the SemVer-stable surface)</h3>
+
+<article class="f"><header><span class="id">K15</span><span class="pill crit">Critical</span><span class="pill t1">Tier 1</span><h4>Comment trivia is glued onto every syntactic name — tables, columns, functions, time expressions, and <code>replace_table</code> silently no-ops</h4></header>
+<div class="where"><code>src/kustology/utils/analysis.py:140,173,272,284,319,370,375,390</code> — <code>node.ToString().strip()</code>; .NET <code>ToString()</code> includes leading trivia</div>
+<pre>"// Failed logon burst\nSecurityEvent | where …"
+  get_referenced_tables()            → {'// Failed logon burst\nSecurityEvent'}        (3 of 33 fixtures affected)
+  replace_table("SecurityEvent","X") → text returned UNCHANGED
+"… | project\n// c\nb"               → columns {'a', '// c\nb'}
+"… a &gt; // c\nago(1d)"                → functions {'// c\nago'};  find_time_expressions() DROPS the ago() call (callee text fails the time-func check) and returns ('// c2\n1h', 54, 2) with width 2
+"T1 | join (\n// rhs\nT2) on a"      → {'// rhs\nT2', 'T1'}</pre>
+<p>Practically every production Sentinel rule opens with a comment block. Zero tests contain a comment. Semantic mode and Tier 2 are unaffected (they read symbols / <code>SimpleName</code>).</p>
+<div class="fix"><span class="k">Fix</span><span>One <code>_node_name()</code> helper (<code>node.SimpleName</code>, <code>Name.SimpleName</code>, or <code>Text[TextStart:TextStart+Width]</code>) routed through all eight sites; a regression test asserting every analyzer returns identical results with and without leading/interior comments.</span></div></article>
+
+<article class="f"><header><span class="id">K16</span><span class="pill high">High</span><span class="pill t1">Tier 1</span><h4>The shadowing idiom <code>let SecurityEvent = SecurityEvent | …</code> yields zero tables syntactically</h4></header>
+<div class="where"><code>analysis.py:137-144, 172-176</code> — the let name filters out the binding's own RHS reference</div>
+<pre>let SecurityEvent = SecurityEvent | where …; SecurityEvent | where EventID == 4688
+  parse(q).get_referenced_tables()        → set()          (bound: {'SecurityEvent'})
+  parse(q).replace_table("SecurityEvent","X") → unchanged   (bound: rewrites the RHS)</pre>
+<div class="fix"><span class="k">Fix</span><span>Filter <code>let</code> <em>uses</em>, not the binding's RHS; document that alias uses are excluded (consistent with Tier 2's <code>LetRef</code>).</span></div></article>
+
+<article class="f"><header><span class="id">K17</span><span class="pill high">High</span><span class="pill t1">Tier 1</span><h4>On a bound parse, tables absent from the schema vanish from <code>get_referenced_tables()</code> and <code>replace_table()</code></h4></header>
+<div class="where"><code>analysis.py:180-190, 206-213</code>; <code>core.py:40-49</code> auto-selects the semantic path</div>
+<pre>schema = {SecurityEvent: …}   union SecurityEvent, SigninLogs | …
+  unbound → {'SecurityEvent','SigninLogs'}     bound → {'SecurityEvent'}     bound replace_table("SigninLogs", …) → unchanged</pre>
+<p>Supplying a schema — presented as the better path — makes the answers worse, and Sentinel schemas are always partially stale.</p>
+<div class="fix"><span class="k">Fix</span><span>Union semantic refs with syntactic refs no semantic node covers (by position), or document loudly on both methods with a <code>force_syntactic</code> hint. For <code>replace_table</code> the union is the only correct answer.</span></div></article>
+
+<article class="f"><header><span class="id">K18</span><span class="pill high">High</span><span class="pill t1">Tier 1</span><h4><code>get_structural_hash</code> collides <code>join kind=inner</code> with <code>kind=leftanti</code> (and every named-parameter value and plugin name)</h4></header>
+<div class="where"><code>analysis.py:339</code> — <code>if "Token" in kind</code> also skips <code>TokenLiteralExpression</code> (the substring match AGENTS.md warns against)</div>
+<pre>join kind=inner == join kind=leftanti     union kind=inner == kind=outer     mv-expand kind=array == kind=bag     evaluate bag_unpack(d) == evaluate pivot(d)</pre>
+<div class="fix"><span class="k">Fix</span><span>Exact-membership test for the token kinds to drop; append <code>TokenLiteralExpression</code> text; rewrite the docstring to say the hash is blind to literals, identifiers, whitespace and comments; add a <code>kind=inner ≠ kind=leftanti</code> test.</span></div></article>
+
+<h3>Packaging and release pipeline</h3>
+
+<article class="f"><header><span class="id">K19</span><span class="pill high">High</span><h4><code>setuptools&gt;=61.0</code> is 16 majors below what the metadata needs — the sdist does not build on older-but-permitted setuptools</h4></header>
+<div class="where"><code>pyproject.toml:2</code>; PEP 639 <code>license = "Apache-2.0"</code> + <code>license-files</code> require setuptools ≥ 77</div>
+<pre>setuptools==76.1.0 → ValueError: invalid pyproject.toml config: `project.license` … metadata-generation-failed
+setuptools==77.0.3 → OK (byte-identical wheel); CI passes only because PyPI serves 84.x</pre>
+<div class="fix"><span class="k">Fix</span><span><code>requires = ["setuptools&gt;=77.0.3"]</code>; drop <code>"wheel"</code>.</span></div></article>
+
+<article class="f"><header><span class="id">K20</span><span class="pill high">High</span><h4><code>release.yml</code> publishes to PyPI without running tests, without a tag↔version guard, and extracts release notes after the irreversible publish</h4></header>
+<div class="where"><code>.github/workflows/release.yml</code> (jobs <code>build</code> → <code>publish</code>); <code>test.yml</code> has no tag trigger</div>
+<p>Tagging <code>v0.2.1</code> on a tree that still says <code>0.2.0</code> publishes 0.2.0 to PyPI (non-recoverable) and then fails on the CHANGELOG lookup. The release SBOM scans the build machine (no path), and <code>pip install build cyclonedx-bom</code> is the one unpinned install in the repo. (The awk release-notes extraction itself is correct — 182 lines, em-dash irrelevant.)</p>
+<div class="fix"><span class="k">Fix</span><span>Make <code>test.yml</code> a <code>workflow_call</code> and gate <code>build</code> on it; first step of <code>build</code>: compare <code>project.version</code> to <code>${GITHUB_REF_NAME#v}</code> and grep the CHANGELOG heading; move notes extraction into <code>build</code>; point <code>cyclonedx-py</code> at the installed wheel's env; pin the tool installs. Maintainer must also confirm the PyPI trusted publisher (workflow file <code>release.yml</code>, environment <code>pypi</code>) and that the GitHub environment exists.</span></div></article>
+
+<article class="f"><header><span class="id">K21</span><span class="pill med">Medium</span><h4>The sdist ships half a test suite that passes vacuously</h4></header>
+<div class="where">setuptools default <code>tests/test*.py</code> rule; no <code>MANIFEST.in</code></div>
+<pre>tar tzf kustology-0.2.0.tar.gz | grep tests/ → 12 top-level files; missing tests/conftest.py, tests/ir/, tests/fixtures/, examples/, scripts/, CHANGELOG.md
+cd sdist &amp;&amp; pytest → 102 passed, 4 skipped (vs 442); test_examples.py skips with an empty parameter set</pre>
+<div class="fix"><span class="k">Fix</span><span><code>MANIFEST.in</code>: either <code>graft tests examples scripts</code> + <code>include CHANGELOG.md</code>, or <code>prune tests</code> and say so. Also <code>prune src/kustology.egg-info</code>.</span></div></article>
+
+<h2 id="p1">P1 — high</h2>
+
+<h3>IR representation</h3>
+
+<article class="f"><header><span class="id">K22</span><span class="pill high">High</span><h4>A <code>let</code>-bound scalar in expression position is a <code>ColumnRef</code></h4></header>
+<div class="where"><code>builder.py:979-981</code>; contrast <code>:530-533</code> where <code>_let_names</code> is consulted for source position</div>
+<pre>let threshold = 5; T | where Count &gt; threshold          → BinOp(ColumnRef(Count), ColumnRef(threshold))
+let list = dynamic([…]); T | where User in (list)      → SetMembership(values=[ColumnRef(list)])
+bound: threshold.table=None result_type=long — indistinguishable from a computed column</pre>
+<p>The dominant Tier 1 / Tier 2 column divergence in the sweep (<code>dt_lookBack</code> ×12, <code>ioc_lookBack</code> ×12, <code>timeframe</code> ×6 …). "Which columns does this rule filter on" is the first-order detection-engineering question.</p>
+<div class="fix"><span class="k">Fix</span><span>Check <code>name in self._let_names</code> in the <code>NameReference</code> branch and emit a scalar let-reference node (a <code>LetValueRef</code> in <code>AnyExpr</code>, or <code>LetRef</code> admitted to the union). Decidable without a schema, like <code>LetRef</code>.</span></div></article>
+
+<article class="f"><header><span class="id">K23</span><span class="pill high">High</span><h4><code>search Col:'x'</code> is reported case-sensitive; KQL defines it as <code>has</code></h4></header>
+<div class="where"><code>builder.py:1104-1111</code> → <code>_is_case_sensitive_op(":")</code> falls through to <code>True</code></div>
+<div class="fix"><span class="k">Fix</span><span>Add <code>":"</code> to the insensitive set (or lower it to <code>has</code>). Related: <code>"matches"</code> is in the insensitive stems while <code>RegexMatch.case_sensitive</code> is hard-coded <code>True</code> — they never disagree today but encode opposite beliefs.</span></div></article>
+
+<article class="f"><header><span class="id">K24</span><span class="pill high">High</span><h4><code>ToScalarExpr.pipeline</code> / <code>SubqueryExpr.pipeline</code> are typed <code>Any</code> — JSON round-trip reloads them as dicts</h4></header>
+<div class="where"><code>expr.py:234, 250</code>; README "Choosing a tier" and <code>llm_view.py</code> claim <code>model_dump_json</code> is lossless</div>
+<pre>ir = parse("T | where x &gt; toscalar(U | summarize max(y))").to_ir()
+rt = QueryIR.model_validate_json(ir.model_dump_json())
+rt == ir → False   walk: 23 → 12 nodes   find_all(rt, ColumnRef) → {'x'}  (y gone)   JSON text byte-identical</pre>
+<div class="fix"><span class="k">Fix</span><span>Type both as <code>"Pipeline | None"</code>; <code>model_rebuild()</code> is already called in <code>query.py</code>. Until then, amend the two "lossless" claims.</span></div></article>
+
+<article class="f"><header><span class="id">K25</span><span class="pill high">High</span><h4>Small builder fidelity gaps</h4></header>
+<ul>
+<li><code>externaldata</code> URI keeps the obfuscation prefix (<code>h'https://x'</code> → <code>"h'https://x"</code>) and only the first of several URIs is kept (<code>builder.py:1224-1227</code>).</li>
+<li><code>'a' 'b'</code> (<code>CompoundStringLiteralExpression</code>) → <code>UnknownExpr</code>; <code>LiteralValue</code> already holds <code>"ab"</code>.</li>
+<li><code>project-reorder *</code> emits <code>ColumnRef(name='*')</code> where <code>arg_max(x, *)</code> emits <code>StarExpr</code>.</li>
+<li><code>union T*</code> → <code>TableRef("T*")</code>; <code>union database('d').*</code> → <code>TableRef("*")</code> — wildcards modeled as table names.</li>
+<li><code>UnknownSource.raw_text</code> is always the constant <code>'unknown'</code>; <code>TableRef.span</code> covers all of <code>database('d').T</code>.</li>
+</ul>
+<div class="fix"><span class="k">Fix</span><span>Strip an optional leading <code>h</code> or read <code>LiteralValue</code>; <code>uris: list[str]</code>; dispatch <code>CompoundStringLiteralExpression</code> to <code>LiteralExpr</code>; <code>StarExpr</code> for bare <code>*</code>; <code>TableRef.is_wildcard</code>; real source text on <code>UnknownSource</code>.</span></div></article>
+
+<article class="f"><header><span class="id">K26</span><span class="pill high">High</span><h4><code>walk</code> / <code>find_all</code> yield the same object twice via <code>LetBinding.inner_time_exprs</code></h4></header>
+<div class="where"><code>walk.py</code> has no visited set; <code>inner_time_exprs</code> aliases nodes already inside <code>rhs_pipeline</code></div>
+<pre>let A = T | where d &gt; ago(1h) | where d &lt; now(); A | take 1   →   [f.name for f in find_all(ir, FuncCall)] == ['ago','now','ago','now']</pre>
+<div class="fix"><span class="k">Fix</span><span>Track <code>id(node)</code> in <code>walk</code>, or drop the alias list in favour of <code>find_all(rhs_pipeline, FuncCall)</code>.</span></div></article>
+
+<h3>Schema attachment — population gaps</h3>
+
+<article class="f"><header><span class="id">K27</span><span class="pill high">High</span><h4>Schemaless parses populate zero types; <code>IRBuilder().build()</code> populates 65% — and the two disagree on diagnostics</h4></header>
+<div class="where"><code>services.parse</code> uses <code>KustoCode.Parse</code>; <code>IRBuilder.__init__</code> defaults to <code>GlobalState.Default</code> + <code>ParseAndAnalyze</code>; README:124-127</div>
+<pre>parse(q).to_ir()        680/680 LiteralExpr and 590/590 FuncCall UNRESOLVED across the 209-query sweep; 0/3177 typed on the fixtures
+IRBuilder().build(q)    2081/3177 typed (literals, built-ins, let scalars) — but 191 false KS204 "unknown table" Error diagnostics
+README: "Symbols require a schema — there is no partial binding … built-in functions included. It is all-or-nothing."  → true of parse(), false of Microsoft's API</pre>
+<div class="fix"><span class="k">Fix</span><span>Let <code>to_ir()</code> on an unbound <code>KustoCode</code> analyze against default globals (filtering KS204), or at minimum set literal <code>result_type</code> from <code>literal_kind</code> at build; make <code>IRBuilder().build</code> and <code>parse().to_ir()</code> agree on diagnostics; rewrite the README paragraph as "Tier 1's <code>parse()</code> is all-or-nothing; Microsoft's <code>ParseAndAnalyze(text, GlobalState.Default)</code> resolves built-ins and literals without tables, which is what <code>IRBuilder</code> uses."</span></div></article>
+
+<article class="f"><header><span class="id">K28</span><span class="pill high">High</span><h4>Cheap result-schema wins the attacher leaves on the table</h4></header>
+<ul>
+<li><code>project</code>/<code>distinct</code>/<code>project-keep</code>/<code>project-reorder</code> write <code>"unknown"</code> when the <code>ColumnRef</code> already carries the binder's type (<code>serialize rn = row_number() | project rn</code> → MS long, ours unknown). Cheapest fix in the review: fall back to <code>c.result_type</code>.</li>
+<li>Typed <code>parse</code> captures (<code>av:long</code>) → <code>string</code>; <code>parse-kv</code> declared columns (already in <code>ParseKvOp.columns</code>) not applied to scope.</li>
+<li><code>print x=1, y='a'</code>, <code>range</code>, <code>datatable</code>, <code>externaldata</code>, <code>getschema</code> (fixed 4 columns), <code>search</code> (adds <code>$table</code>), <code>find</code>, <code>scan declare</code> all reshape scope but are unlisted in the <code>SchemaAttacher</code> taxonomy (<code>search</code> is listed as exact); <code>print x=1</code> yields an <em>empty-but-present</em> <code>result_schema {}</code> — 47 such pipelines in the sweep, indistinguishable from "zero columns".</li>
+<li>Fork branches get a fabricated <code>result_schema</code> inherited from the parent (source <code>UnknownSource</code>, 0 ops); <code>schema_attached=True</code> on an unbound parse with <code>attach_schema=True</code> and no dict.</li>
+<li>After <code>project</code>/<code>summarize</code>/<code>distinct</code>/<code>project-*</code> the scope is anonymous, so <code>T | project a, b | where a &gt; 1</code> gives the second <code>a</code> <code>table=None</code> — 149 uniquely-resolvable columns without provenance in the sweep; ambiguous provenance (<code>union L, R | where k</code>) silently picks last-wins. The README sells "which source table a column came from after joins, renames and let aliases".</li>
+</ul>
+<div class="fix"><span class="k">Fix</span><span>See K-ARCH-1 for the structural answer; the per-item fixes are each a few lines (fall back to <code>result_type</code>; apply declared types; derive fixed shapes; leave <code>result_schema=None</code> when nothing is known; carry a <code>{col: table}</code> map through projections).</span></div></article>
+
+<h3>Tier 1 / CLI</h3>
+
+<article class="f"><header><span class="id">K29</span><span class="pill high">High</span><span class="pill t1">Tier 1</span><h4>Syntactic extraction reports non-tables and drops real columns</h4></header>
+<ul>
+<li>Tables: function parameters (<code>let f = (T1:(a:long)){…}</code> → <code>T1</code>), <code>as</code> aliases, <code>T*</code> wildcards, bracket-quoted <code>['my-table']</code> unstripped (so <code>replace_table</code> needs a different argument bound vs unbound).</li>
+<li>Columns: any column whose name equals a table used anywhere in the query is dropped (<code>T | where T2 &gt; 1 | join (T2) on a</code> → <code>{'a'}</code>); JSON path segments (<code>InitiatedBy.user.userPrincipalName</code> → <code>user</code>, <code>userPrincipalName</code>) reported as columns; names <em>defined</em> by the query (<code>extend x = 1</code>) conflated with columns read — undocumented in both modes.</li>
+</ul>
+<div class="fix"><span class="k">Fix</span><span>Exclude declared parameter and <code>as</code> names; strip bracket quoting; restrict the table-name exclusion to source position (compare <code>TextStart</code>); skip the selector side of <code>PathExpression</code>; document the read/created conflation or add a split.</span></div></article>
+
+<article class="f"><header><span class="id">K30</span><span class="pill high">High</span><span class="pill t1">Tier 1</span><h4>Reflection categories have holes that leak into the analyzers</h4></header>
+<pre>"bin" in time_functions() → False  (only Signatures[0] is read; bin's first overload has no declared return type)  ⇒ find_time_expressions drops bin(TimeGenerated, 1h) despite its docstring
+"tostring" in all_function_names() → False  (dir() shadowed by Object.ToString; also gettype, all)
+46 plugins (bag_unpack, pivot, …) in no category, yet get_referenced_functions() returns them
+aggregate ∩ scalar = {any, hll_merge, merge_tdigest, tdigest_merge}</pre>
+<div class="fix"><span class="k">Fix</span><span>Scan every signature; enumerate <code>Functions.All</code>/<code>Aggregates.All</code>/<code>PlugIns.All</code> instead of <code>dir()</code>; subtract the aggregate set; give <code>find_time_expressions</code> its own temporal-relevant set.</span></div></article>
+
+<article class="f"><header><span class="id">K31</span><span class="pill high">High</span><span class="pill t1">Tier 1</span><h4>CLI contract drift and library hardening</h4></header>
+<ul>
+<li>Missing file / unreadable file / bad <code>--schema</code> JSON → exit 1; README, CHANGELOG and <code>cli.py</code>'s docstring all say 2.</li>
+<li><code>parse</code> and <code>format</code> exit 0 on Error-severity diagnostics; README says 1 for all subcommands (only <code>validate</code> implements it).</li>
+<li><code>format_query("((((")</code> → <code>'(((())))'</code> exit 0; <code>"T | where "</code> grows one space per pass — the .NET formatter repairs invalid input, and the CLI does not validate first.</li>
+<li>The depth guard (<code>_MAX_AST_DEPTH = 1000</code>) can never fire — the Python stack dies at ~988 — and the library's <code>to_dict()</code>/<code>KustoWalker</code>/analyzers have no guard at all.</li>
+<li><code>parse --ir</code> bypasses <code>to_ir()</code> (second parse), has no <code>--schema</code>, so the CLI can never emit an enriched IR; its <code>--json</code> carries no <code>IR_SCHEMA_VERSION</code> envelope although the README tells consumers to tag stored IR.</li>
+<li><code>KUSTOLOGY_MAX_INPUT_BYTES</code> counts characters; <code>parse(text, schema="(a:string)")</code> is typed and documented but raises <code>TypeError</code>.</li>
+</ul>
+<div class="fix"><span class="k">Fix</span><span>Catch <code>OSError</code>/<code>JSONDecodeError</code> → 2; check diagnostics in <code>parse</code>/<code>format</code> (or narrow the README to <code>validate</code>); refuse to format on Error diagnostics; lower the cap to ~300 and move it into <code>walker.py</code>; add <code>--schema</code> to <code>parse</code> and route through <code>parse(...).to_ir()</code>; wrap CLI IR JSON in <code>{ir_schema_version, semantic_hash_scheme, ir}</code>; read bytes from <code>stream.buffer</code>; drop the string-schema sentence or implement it.</span></div></article>
+
+<h3>Tests and gates</h3>
+
+<article class="f"><header><span class="id">K32</span><span class="pill high">High</span><h4>The safety nets have holes exactly where this release's risk is</h4></header>
+<ul>
+<li>All three corpus gates filter with <code>type(op) is Operator</code> — structurally blind to <code>UnknownOp</code>, the builder's actual fallback (<code>test_complex_harness.py:86</code>, <code>mine_corpus.py:85</code>, <code>verify_corpus.py</code>).</li>
+<li><code>verify_corpus.py</code> unconditionally returns 0, is not in CI, and CHANGELOG 0.1.0 advertises it as a 200-query regression gate.</li>
+<li><code>IR_SCHEMA_VERSION</code> is guarded by nothing (suite green with <code>"9.9-BOGUS"</code>); <code>SEMANTIC_HASH_SCHEME</code> is.</li>
+<li>~20 <code>_visit_operator</code> branches have zero coverage (PartitionBy, ProjectByNames, Sample, SampleDistinct, TopHitters, As, ExecuteAndCache, Invoke, Facet, Fork, AssertSchema, Graph*, Scan, TopNested, MakeGraph, Evaluate fallback); <code>cli.py</code> measures 0% (subprocess tests).</li>
+<li><code>test_binder.py</code> (39 tests) asserts column names/order, never types, and nothing compares to <code>code.ResultType</code>; the "canonical_form covers every shape" test covers 6 of 23 types; no test contains a comment; DEBUG logging and the "lacks new required field" <code>extra=forbid</code> direction are untested.</li>
+</ul>
+<div class="fix"><span class="k">Fix</span><span>Add <code>find_all(ir, UnknownOp)</code> to the gates with a self-test (<code>T | reduce by X</code>); make <code>verify_corpus.py</code> fail on an empty corpus and non-empty findings or demote its CHANGELOG claim; pin <code>IR_SCHEMA_VERSION</code> with a lockstep assertion; one real-parse test per operator branch; in-process CLI tests; a parametrized oracle harness (<code>result_schema == code.ResultType.Columns</code>, ~40 lines exist in <code>scratchpad/agentB/oracle.py</code>); a test iterating <code>Expr.__subclasses__()</code> for <code>canonical()</code>.</span></div></article>
+
+<h2 id="p2">P2 — medium</h2>
+
+<article class="f"><header><span class="id">K33</span><span class="pill med">Medium</span><h4>Eight raw-text-only operators are undocumented anywhere a consumer looks</h4></header>
+<p><code>ScanOp</code>, <code>TopNestedOp</code>, <code>MakeGraphOp</code>, <code>MacroExpandOp</code>, <code>GraphMatchOp</code>, <code>GraphMarkComponentsOp</code>, <code>GraphShortestPathsOp</code>, <code>GraphToTableOp</code> have no docstrings; README/CHANGELOG/ARCHITECTURE never mention the boundary (the only statement is a one-line code comment). <code>scan</code> and <code>top-nested</code> are how sequence and per-group-top-N detections are written. Contrast <code>LetFunction</code>'s exemplary boundary docstring. Related: <code>let</code>-declared function bodies are unmodeled, so <code>Brute_Force_Attack_against_GitHub_Account.kql</code> — whose logic lives in <code>let aadFunc = (tableName:string){…}</code> — yields 1 operator and 4 ColumnRefs in Tier 2 against 16 columns and 8 functions in Tier 1.</p>
+<div class="fix"><span class="k">Fix</span><span>A shared class docstring in the <code>LetFunction</code> register, one README line listing the eight, a CHANGELOG note. Consider modeling let-function bodies as a <code>Pipeline</code>/expression in 0.3.</span></div></article>
+
+<article class="f"><header><span class="id">K34</span><span class="pill med">Medium</span><h4><code>canonical_form</code> and the hash disagree about what "canonical" means</h4></header>
+<ul>
+<li>No parentheses: <code>a and (b or c)</code> and <code>(a and b) or c</code> render identically (<code>"a and b or c"</code>); <code>(x+y)*z</code> ≡ <code>x+y*z</code>. The hash is structural so it is correct — but <code>to_llm_dict</code> attaches this string to every non-leaf Expr (1,638 of them across the fixtures) as the subtree summary, and a model reads the wrong precedence.</li>
+<li>No string escaping: <code>f("a\", \"b")</code> renders as two arguments; bools/null render as Python <code>True</code>/<code>None</code>, which also defeats <code>llm_view</code>'s redundant-form check so every bool literal ships a wrong <code>canonical_form</code>.</li>
+<li><code>canonical()</code> sorts And/Or operands and <code>SetMembership</code> values; the hash preserves source order — so <code>where A and B</code> vs <code>where B and A</code> (the most common cosmetic fork of a Sentinel rule) do <em>not</em> dedup while the library's own canonical string says they are identical. AGENTS.md overstates ("and other commutative ops" — <code>BinOp</code> never sorts).</li>
+<li><code>let</code> alias names enter the hash (alpha-renaming breaks dedup); <code>h"x"</code> ≡ <code>"x"</code>; typed nulls collapse (<code>real(null)</code> ≡ <code>datetime(null)</code>) — each undocumented.</li>
+<li>The terminal <code>"?"</code> fallback in <code>canonical()</code> is unguarded — a new <code>Expr</code> subclass degrades silently, exactly the regression 0.2.0 records fixing.</li>
+</ul>
+<div class="fix"><span class="k">Fix</span><span>Parenthesize by precedence; escape literals and render <code>true</code>/<code>false</code>/<code>null</code>; decide whether the hash sorts commutative operands (recommended: yes, in <code>normalize_in_place</code>) and document the let-name/obfuscation/typed-null choices in <code>compute_semantic_hash</code>'s docstring; add the subclass-coverage test.</span></div></article>
+
+<article class="f"><header><span class="id">K35</span><span class="pill med">Medium</span><h4><code>HANDLED_EXPR_KINDS</code> mixes SyntaxKind names with class names; one dispatch arm is dead</h4></header>
+<p><code>AndExpression</code>/<code>OrExpression</code> are SyntaxKind values, not classes — <code>a and b</code> parses as class <code>BinaryExpression</code>, so <code>builder.py:1073-1079</code> is unreachable; <code>BinaryExpression</code>/<code>LiteralExpression</code>/<code>PrefixUnaryExpression</code> are classes but not SyntaxKinds. The audit script documents the set as class names.</p>
+<div class="fix"><span class="k">Fix</span><span>Delete the dead branch and the two entries; assert every entry resolves in <code>Kusto.Language.Syntax</code>.</span></div></article>
+
+<article class="f"><header><span class="id">K36</span><span class="pill med">Medium</span><h4><code>BinderEnricher</code> is an undocumented, untested alias in <code>__all__</code>; schema-input edge cases leak CLR exceptions</h4></header>
+<pre>{"T": {"c": "LONG"}} → column typed string + RuntimeWarning attributed to kustology (stacklevel)
+{"T": {"c": None}}   → raw System.ArgumentNullException      {"T": ""} → InvalidOperationException
+{"T": "(n:bogus)"}   → n:"unknown", no warning               {"T": {"['my col']": "string"}} → column literally named ['my col']
+result_type uses "unresolved"; TabularSchema.columns uses "unknown" — two sentinels for one idea</pre>
+<div class="fix"><span class="k">Fix</span><span>Remove <code>BinderEnricher</code> (pre-1.0) or document + deprecate; lower-case type names; <code>TypeError</code> for non-str types; warn consistently; <code>stacklevel</code> to the caller; document the sentinel or reuse <code>KustoType.UNRESOLVED.value</code>.</span></div></article>
+
+<article class="f"><header><span class="id">K37</span><span class="pill med">Medium</span><h4>Documents contradict each other or the code</h4></header>
+<ul>
+<li>AGENTS.md: "bump the tags on any breaking field-shape change" vs CONTRIBUTING step 6 / README: "once per release, not once per change" (commit <code>43f3df4</code> established the latter).</li>
+<li>ARCHITECTURE: "Tier 1 — SemVer-stable" vs README/CHANGELOG: "pre-1.0, either tier may break at a minor" — and Tier 1 did break this release (<code>get_time_range</code>).</li>
+<li><code>llm_view.py:12</code> and <code>examples/llm_view.py:7-8</code>: "<code>result_type=unknown</code>"; the default is <code>unresolved</code> — the exact confusion AGENTS.md warns about. <code>llm_view.py</code>'s bullet about renaming <code>kind</code> fields describes code that does not exist.</li>
+<li><code>binder.py:466</code> inline comment "17 of 53 / other 36" vs the class docstring's 18 operators (53−18=35); <code>enrich</code> says "Two boundaries remain" and lists three; the taxonomy lists <code>search</code> as schema-preserving (it adds <code>$table</code>) and omits getschema/scan/find/datatable/externaldata/as.</li>
+<li>AGENTS.md cites <code>MaterializeExpr</code> as a live class in the walker-drift paragraph; the <code>Exists</code> asymmetry (isnull/isempty stay <code>FuncCall</code>) is documented only in a class docstring.</li>
+<li>CHANGELOG: the datetime/ticks claims (K03); "roughly 50% smaller" measures 46%; 0.1.0's "26 expression types" was never true (23); "CI matrix: macOS × Linux × Windows × Python 3.10+" overstates (3.12-only sanity rows); Internal omits the canary workflow and dependabot; no Keep-a-Changelog link-reference footer; <code>verify_corpus.py</code> advertised as a gate.</li>
+<li>PR template lint command omits <code>examples/</code> (CI, CONTRIBUTING and README were updated; the template was missed); README CLI block omits <code>validate --schema/--ignore-unknown-tables</code> and <code>parse --json</code>; README relative links (<code>LICENSE</code>, <code>SECURITY.md</code>, …) 404 on PyPI; bug template asks for a <code>src/</code> path; ARCHITECTURE's <code>scripts/</code> list omits <code>mine_corpus.py</code> and <code>extract_complex_corpus.py</code>; stub-sweep report disposition markers stale (4 of ~24 closed items marked).</li>
+</ul>
+<div class="fix"><span class="k">Fix</span><span>Each is a one-line edit; the corrected wording is in the reviewer transcripts (agent E, items E4–E22).</span></div></article>
+
+<article class="f"><header><span class="id">K38</span><span class="pill med">Medium</span><h4>CI and script hardening</h4></header>
+<ul>
+<li>Python 3.13 is supported by pythonnet 3.0.5 (<code>&lt;3.14</code>) but absent from CI and classifiers; IR tests run only on ubuntu/3.12; <code>requires-python</code> has no upper bound while pythonnet caps at 3.14.</li>
+<li><code>verify_dll.py</code> exits 1 on a network failure — the code reserved for "DLL tampered with" — and has no <code>--offline</code>; neither DLL script pins the target framework (the nupkg ships four DLLs).</li>
+<li><code>dependency-review</code> needs <code>pull-requests: write</code> for its comment; <code>fail-fast: true</code> on the platform matrix; harden-runner <code>audit</code> on <code>publish</code>; pre-commit's pydantic floats; <code>.claude/settings.local.json</code> is ignored only by the user's global gitconfig.</li>
+<li><code>extract_sentinel_schemas.py</code> writes <code>{}</code> before reporting failure; <code>sample_sentinel_corpus.py</code> exits 0 on a bad dir; <code>verify_corpus.py</code> raises a raw <code>UnicodeDecodeError</code>; <code>refresh_dll.py</code>'s "atomic" pin is two plain writes.</li>
+</ul></article>
+
+<h2 id="p3">P3 — low / enhancements</h2>
+
+<article class="f"><header><span class="id">K39</span><span class="pill enh">Enhancement</span><h4>Execution hints are dropped everywhere</h4></header>
+<p><code>hint.strategy</code>, <code>hint.shufflekey</code>, <code>hint.materialized</code>, <code>hint.distribution</code>, <code>partition hint.strategy</code> — correct for result-equality hashing, but invisible for cost review. A uniform <code>hints: dict[str, str]</code> on <code>Operator</code>, excluded from the hash, would cover them all.</p></article>
+
+<article class="f"><header><span class="id">K40</span><span class="pill enh">Enhancement</span><h4>Flags that carry no meaning on some nodes</h4></header>
+<p><code>BinOp.case_sensitive=True</code> and <code>polarity="inclusion"</code> on <code>+</code>/<code>-</code>/<code>*</code>/numeric comparisons invite a consumer to read a meaningless flag; <code>isnull</code>/<code>isempty</code> stay <code>FuncCall</code> while <code>isnotnull</code>/<code>isnotempty</code> become <code>Exists</code> (lower all four with polarity, or none). Make <code>case_sensitive</code> <code>bool | None</code>.</p></article>
+
+<article class="f"><header><span class="id">K41</span><span class="pill low">Low</span><span class="pill t1">Tier 1</span><h4>Tier 1 API polish</h4></header>
+<ul>
+<li><code>get_operator_chain</code> (main pipeline only; element 0 is the source <code>NameReference</code>) vs <code>get_operator_stats</code> (whole AST) — undocumented scope difference; <code>__repr__</code> counts the source as an operator; three kind vocabularies (<code>where</code> / <code>FilterOperator</code> / <code>FilterOp</code>) with no mapping table.</li>
+<li><code>KustoQuery</code> has no <code>diagnostics</code> property (callers re-parse); <code>replace_table</code>, <code>get_structural_hash</code> and five other methods have no docstrings; <code>replace_table</code> neither validates nor quotes <code>new_name</code> (<code>"my-new-table"</code>, <code>""</code> accepted) and never signals "not found".</li>
+<li><code>find_time_expressions</code> double-reports nested calls (<code>startofday(now())</code> and <code>now()</code>); <code>PackageNotFoundError</code> leaks into the <code>kustology</code> namespace; <code>get_referenced_tables</code>'s docstring is silent on let aliases; <code>compute_semantic_hash</code>'s docstring omits the documented bind-state divergence.</li>
+</ul></article>
+
+<article class="f"><header><span class="id">K42</span><span class="pill enh">Enhancement</span><h4>Examples under-demonstrate the release</h4></header>
+<ul>
+<li><code>walk_ir.py</code> parses unbound, so the headline let-enrichment (<code>Account:string ← Base</code>) never shows; its <code>LetBinding</code> branch has no <code>rhs_function</code> arm.</li>
+<li><code>find_all_demo.py</code> joins <code>on DeviceId</code>, so <code>join_side</code> is never exercised and <code>result_type</code> is never printed.</li>
+<li><code>llm_view.py</code>'s query has no <code>let</code>, join or temporal literal, and builds the IR with a four-line manual <code>IRBuilder</code>+<code>SchemaAttacher</code> sequence where <code>parse(q, schema).to_ir()</code> is the documented one-liner.</li>
+<li>No example shows <code>semantic_hash</code> dedup, <code>SetMembership.op</code>/<code>Exists.op</code>, <code>ticks</code>/<code>literal_kind</code>, or the <code>Finding</code> analyzer protocol; <code>linter.py</code> has no lint rules and never shows a semantic diagnostic; <code>query_analysis.py</code> prints a <code>"TEXAS"→"OHIO"</code> claim about a literal its query does not contain; <code>walk_tree.py</code> uses the <code>"Token" in kind</code> substring pattern AGENTS.md forbids (its own <code>TokenName</code> entry is dead code); <code>binding_comparison.py</code> hardcodes "22 columns".</li>
+</ul>
+<p>All seven examples run, use only public API, carry SPDX headers, and <code>IR_EXAMPLES</code> matches exactly — the gap is illustrative value, not correctness.</p></article>
+
+<h2 id="arch">Cross-cutting fixes that close many items at once</h2>
+<div class="note"><strong>K-ARCH-1 — Read Microsoft's answer on bound parses.</strong> Every bound operator node exposes its own <code>ResultType</code> <code>TableSymbol</code> (e.g. <code>SummarizeOperator.ResultType → [set_s:dynamic, n:long, percentile_n_95:long, t:datetime, …]</code>). K07, K08, K09, K12, K13, K14 and most of K28 re-derive by hand what the DLL already computed exactly. Populate <code>Pipeline.result_schema</code> from the last operator's <code>ResultType.Columns</code> when the parse is bound; keep the scope walk strictly as the dict-only/unbound fallback. It also makes the library track Microsoft across DLL upgrades instead of drifting.</div>
+<div class="note"><strong>K-ARCH-2 — One coordinated model change for K05 + K22 + K24.</strong> <code>SortKey</code>; fork branches; <code>DataTableSource</code>/external-data source; <code>TableRef.database/cluster/is_wildcard</code>; the missing operator fields; a scalar let-reference node; <code>Pipeline | None</code> on the two <code>Any</code> fields; <code>join_kind</code>/<code>lookup_kind</code> defaults. All land under the same <code>IR_SCHEMA_VERSION 0.2</code> / <code>kustology-sem-v2</code> bump since nothing has been released in this window.</div>
+<div class="note"><strong>K-ARCH-3 — Hash hygiene (K03, K04, K06).</strong> UTC-normalize datetimes; gate the <code>tolower</code> rewrite; strip volatile fields by model field; normalize <code>raw_text</code>; return the replaced root; decide on commutative sorting. Then add a <code>TZ</code> leg to the locale matrix and a minimal-pair collision battery to the tests (both reviewers left one in their scratch dirs).</div>
+<div class="note"><strong>K-ARCH-4 — Tier 1 name helper (K15, K16, K29).</strong> Replace every <code>node.ToString().strip()</code> identity read in <code>analysis.py</code> with one helper that uses <code>SimpleName</code> or the <code>TextStart/Width</code> slice, and add comment-bearing queries to the test corpus.</div>
+<div class="note"><strong>K-ARCH-5 — Gate integrity (K02, K32).</strong> Reflection audit over <code>ast.Attribute</code>; a build-every-HANDLED-kind smoke test; <code>UnknownOp</code> in the corpus gates; an oracle harness against <code>code.ResultType</code>; pin <code>IR_SCHEMA_VERSION</code>.</div>
+
+<h2 id="sweep">Empirical sweep — numbers</h2>
+<div class="tw"><table>
+<tr><th>Metric (209 queries × 3 build modes)</th><th>Result</th></tr>
+<tr><td>Queries raising exceptions</td><td>4 — <code>top-hitters</code>, <code>__partitionby</code> ×2, one deliberate syntax error</td></tr>
+<tr><td><code>UnknownExpr</code> / <code>UnknownOp</code></td><td>0 / 0 in every mode (builder dispatch is complete on real Sentinel syntax)</td></tr>
+<tr><td><code>UnknownSource</code></td><td>15 instances in 3 queries (root <code>externaldata</code>, <code>fork</code> ×2), all <code>raw_text='unknown'</code></td></tr>
+<tr><td><code>canonical_form</code> containing <code>"?"</code></td><td>4, all regex string literals — 0 real fallthroughs</td></tr>
+<tr><td>Literal fidelity (value type / <code>literal_kind</code> / <code>ticks</code> / ISO / invariant timespan) over 680 literals</td><td>0 problems (<code>1.5h</code>, <code>1microsecond</code>, <code>2tick</code>, <code>-1h</code>, <code>decimal(1.5)</code>, <code>guid()</code>, <code>h"…"</code>, <code>@"raw\path"</code>, multiline)</td></tr>
+<tr><td>Span problems</td><td>0 out-of-range, 0 negative width</td></tr>
+<tr><td>Schemaless <code>result_type</code></td><td>680/680 literals and 590/590 function calls UNRESOLVED (K27)</td></tr>
+<tr><td>Bound <code>ColumnRef</code> wrong type</td><td>0 (1032/1064 agree with Microsoft; 32 are Microsoft's own ErrorSymbol)</td></tr>
+<tr><td>Bound <code>ColumnRef.table is None</code> where uniquely knowable</td><td>149, all downstream of project/summarize/join (K28)</td></tr>
+<tr><td>Empty-but-present <code>result_schema {}</code></td><td>47 pipelines (K28)</td></tr>
+<tr><td>JSON round-trip failures</td><td>8 (4 queries × 2 modes), all <code>ToScalarExpr</code>/<code>SubqueryExpr</code> (K24)</td></tr>
+<tr><td><code>semantic_hash</code> bound vs unbound</td><td>1 divergence in 209 — the documented <code>let X = Table</code> shape; 0 between <code>parse().to_ir()</code> and <code>IRBuilder().build()</code></td></tr>
+<tr><td><code>to_llm_dict</code> → <code>json.dumps</code></td><td>205/205 OK; every node carries <code>kind</code>; 46.2% smaller than <code>model_dump_json</code> on the fixtures</td></tr>
+<tr><td><code>IRBuilder().build()</code> diagnostics</td><td>225, of which 191 are false KS204 "unknown table" (vs 0 for <code>parse().to_ir()</code>)</td></tr>
+<tr><td>Tier 1 vs Tier 2 parity divergences (tables / columns / functions)</td><td>14 / 96 / 60 — K15, K22, K29 and the dropped regions (fork, scan, let-function bodies) explain them all</td></tr>
+</table></div>
+
+<h2 id="checklist">Release checklist</h2>
+<div class="tw"><table>
+<tr><th>Item</th><th>Status</th></tr>
+<tr><td>pyproject 0.2.0 / CHANGELOG [0.2.0] / uv.lock / VERSION.txt 12.3.2 ↔ <code>[tool.kustology]</code> / DLL hash vs nuget.org <code>lib/net6.0</code></td><td><span class="pill ok">OK</span></td></tr>
+<tr><td><code>IR_SCHEMA_VERSION="0.2"</code>, <code>SEMANTIC_HASH_SCHEME="kustology-sem-v2"</code>; CHANGELOG date = today; <code>[Unreleased]</code> present and empty</td><td><span class="pill ok">OK</span> (but IR_SCHEMA_VERSION unguarded — K32)</td></tr>
+<tr><td>pytest / ruff (src tests scripts examples) / mypy / SyntaxKind audit / baseline JSON current / <code>uv lock --check</code> / <code>git status</code> clean</td><td><span class="pill ok">OK</span></td></tr>
+<tr><td><code>python -m build</code>, wheel contents (DLL, VERSION.txt, py.typed, licenses, all modules; no tests/fixtures), clean-venv install with and without <code>[ir]</code>, <code>twine check</code>, metadata and classifiers</td><td><span class="pill ok">OK</span></td></tr>
+<tr><td>K01 / K02 crashes on valid KQL</td><td><span class="pill crit">Block</span></td></tr>
+<tr><td>K03 timezone-dependent hash; K04 unsound rewrite; K05 collisions (at least sort/top direction, fork, join default)</td><td><span class="pill crit">Block</span></td></tr>
+<tr><td>K07–K12 wrong bound schema/provenance</td><td><span class="pill crit">Block</span> (or ship with explicit CHANGELOG boundaries)</td></tr>
+<tr><td>K15–K18 Tier 1 trivia / shadowing / partial-schema / structural-hash</td><td><span class="pill crit">Block</span> — Tier 1 is the stabilization-track surface</td></tr>
+<tr><td>K19 setuptools floor; K20 release workflow (tests, tag guard, notes order)</td><td><span class="pill crit">Block</span></td></tr>
+<tr><td>K21 sdist contents; K32 gate integrity; K37 doc contradictions</td><td><span class="pill high">Before tag</span></td></tr>
+<tr><td>PyPI trusted publisher (workflow <code>release.yml</code>, environment <code>pypi</code>) and GitHub environment exist</td><td><span class="pill med">Maintainer to verify</span></td></tr>
+</table></div>
+<p>After K-ARCH-2 the IR shape changes again; that is fine under the "one bump per release" rule since <code>v0.2.0</code> is untagged — but the CHANGELOG's Breaking section will need the new fields listed.</p>
+
+<h2 id="ok">Verified OK</h2>
+<ul class="ok-list">
+<li>JSON round-trip byte-identical and <code>semantic_hash</code>-stable for all 33 fixtures; <code>union_mode="left_to_right"</code> ordering holds; <code>extra="forbid"</code> rejects every 0.1-shaped dump tested.</li>
+<li>String/comparison operator family: every <code>has</code>/<code>contains</code>/<code>startswith</code>/<code>endswith</code>/<code>_cs</code>/negated/<code>=~</code>/<code>!~</code> variant gives the right <code>op</code>, <code>polarity</code> and <code>case_sensitive</code> and hashes distinctly; <code>SetMembership</code> six ops, <code>Between</code> polarity, <code>join_side</code> (<code>$left.a == $left.b</code> ≠ <code>$left.a == $right.b</code>).</li>
+<li>Literals: <code>literal_kind</code> exact for all kinds incl. typed nulls; <code>ticks</code> exact to <code>2tick</code>; <code>-1h</code> → <code>UnaryOp</code>; <code>h'secret'</code> decodes; <code>'a'</code> ≡ <code>"a"</code>; <code>@"a\b"</code> ≡ <code>"a\\b"</code>; <code>1h</code> ≡ <code>60m</code>.</li>
+<li>Order-sensitivity where it must be (<code>project a,b</code> vs <code>b,a</code>; <code>x-2</code> vs <code>2-x</code>; <code>(a+b)*c</code> vs <code>a+b*c</code>; <code>a&lt;b</code> vs <code>b&gt;a</code>) and equivalence where it must be (whitespace, comments, quote style, parens, consecutive filters, and/or flattening, double negation).</li>
+<li>Bound <code>Expr.result_type</code> never contradicts Microsoft; inner/innerunique/leftouter/rightouter/fullouter join suffixing, lookup key-drop, summarize aggregate types, extend override, project-* explicit forms, distinct, count, make-series, parse untyped captures, chained <code>let</code> threading, self- and cross-shadowing, nested scopes (toscalar, case arms, subquery-in-in, mv-apply) — all exact against the oracle.</li>
+<li>Bind invariance: 50 hand-written + 209 sweep queries, only the documented <code>let X = Table</code> shape diverges; build-time hash equals recomputed hash 33/33 bound and unbound; <code>_VOLATILE_FIELDS</code> covers everything <code>SchemaAttacher</code> writes.</li>
+<li><code>merge_consecutive_filters</code> / <code>normalize_expressions</code> idempotent, order-independent, correct across every nested-pipeline kind; <code>walk</code> node count equals the <code>model_dump</code> dict count 33/33; <code>to_llm_dict</code> collapsed operators are valid KQL for all 38 tested.</li>
+<li>Tier 1: table extraction positions (join/union/lookup/find/search/database()/cluster()/materialize/toscalar/mv-apply/fork/partition/facet/datatable/print/range) correct in both modes absent comments; <code>replace_table</code> never touches a same-named string literal, column, or partial match and preserves formatting; <code>validate()</code>, <code>iter_elements</code>, <code>KustoWalker</code>/<code>collect_nodes</code>, deprecation warnings (both sites, tested), <code>format_query</code> on valid input, missing-pydantic path (exit 2 + install hint), <code>bridge.py</code> import hygiene (no handlers, no prints), <code>__all__</code> integrity.</li>
+<li>Culture pin: mutation-proven — reverting it fails 11 tests under de-DE and fr-FR; the matrix guard against ICU-missing vacuity is present and runs everywhere.</li>
+<li>Tests: no tautological or default-only assertions found; 20 of 24 headline fixes have strong real-parse guards; base install without pydantic passes 106 tests with clean labelled skips.</li>
+<li>Docs: 61 README/CHANGELOG snippets executed — all pass except the partial-binding sentence, the "lossless" claim, the missing-file exit code and the datetime literal claim; every follow-up in both handoff documents (F1–F4, D1–D5) is genuinely closed; every ARCHITECTURE/AGENTS symbol resolves; SECURITY.md's DLL verification reproduces (<code>lib/net6.0</code> hash match).</li>
+</ul>
+
+<footer>Review of <code>k4otix/kustology</code> <code>main @ 26a5da3</code>, 2026-08-20. Repository left untouched; all repro scripts and machine-readable sweep output (<code>agentG/report.json</code>) live under the session scratchpad.</footer>
+</main>
