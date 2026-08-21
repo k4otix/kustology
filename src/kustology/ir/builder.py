@@ -908,7 +908,17 @@ class IRBuilder:
             return ParseKvOp(target=target, columns=declared, span=span)
 
         if kind == "SampleDistinctOperator":
-            count = self._visit_count(n.Expression) if hasattr(n, "Expression") else 0
+            # ``Expression`` is unreachable-missing on a real parse (it's a
+            # required grammar element, unlike ``OfExpression`` below), but
+            # now that ``count`` accepts ``AnyExpr`` the "missing" case can
+            # say so explicitly instead of fabricating a literal ``0`` --
+            # indistinguishable from a real ``sample-distinct 0 of x`` --
+            # matching the ``UnknownExpr`` sentinel convention used for
+            # ``of`` three lines below.
+            count = self._visit_count(n.Expression) if hasattr(n, "Expression") else UnknownExpr(
+                span=span, raw_text="?", ast_kind="None",
+                reason="Missing sample-distinct count",
+            )
             # ``Of`` is not a member of any Kusto.Language type; the
             # fallback never fired. tests/test_reflection_audit.py now
             # rejects probes for names the assembly does not have.

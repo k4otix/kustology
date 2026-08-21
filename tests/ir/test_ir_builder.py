@@ -21,6 +21,7 @@ from kustology.ir import (
     SchemaAttacher,
     Span,
     TableRef,
+    TakeOp,
     ToScalarExpr,
     UnknownSource,
 )
@@ -782,6 +783,11 @@ def test_semantic_info_probe_fallthrough_logs_debug(caplog):
     "T | take toscalar(U | count)",
     "let n = 5; T | top n by x",
     "let n = 3; T | sample n",
+    # SampleDistinctOp.count is one of the five widened fields but had no
+    # non-literal coverage; TopHittersOp.count is deliberately absent here
+    # -- `top-hitters n of a by b` still raises AttributeError on
+    # `.ValueExpression` today, a separate K02 crash that Task 1.2 owns.
+    "let n = 3; T | sample-distinct n of a",
 ])
 def test_non_literal_counts_build(q):
     """K01: ``safe_int`` used to call ``int(node.ToString())`` on the take /
@@ -808,15 +814,34 @@ def test_literal_take_count_is_int():
 def test_count_field_round_trips_correct_shape_through_json():
     """``count: int | AnyExpr`` lists ``int`` first per the repo's
     union-ordering convention (see ``Pipeline.operators`` for the same
-    rule applied under explicit ``union_mode="left_to_right"``), so a JSON
-    literal ``5`` is meant to validate as a plain ``int`` rather than being
-    coerced into an expression model on deserialization. Round-trip both
-    shapes through the wire format -- ``QueryIR.model_validate_json(ir.
-    model_dump_json())`` -- and confirm each survives as the class it
-    started as; this is the check that would catch a future regression
-    (e.g. an added ``AnyExpr`` member with all-optional fields that could
-    ambiguously match a bare scalar) that the in-memory object built by
-    :meth:`to_ir` alone would not expose."""
+    rule applied under explicit ``union_mode="left_to_right"``). This test
+    has two parts.
+
+    The first round-trips both shapes through the wire format end to end
+    -- ``QueryIR.model_validate_json(ir.model_dump_json())`` on real
+    builder output -- and confirms each survives as the class it started
+    as. That covers the pipeline this repo actually runs, but says nothing
+    about *why* it works, and an earlier investigation showed the "why" is
+    not declaration order: reordering the union to ``AnyExpr | int`` and
+    rerunning this same round trip left it passing, because every
+    ``AnyExpr`` member is a dict-shaped, ``extra="forbid"`` ``BaseModel``
+    keyed by a ``kind`` discriminator, and a bare JSON integer can never
+    satisfy one -- Pydantic's smart union mode already picks correctly
+    regardless of declared order for *this* type combination. So
+    declaration order is not a behavioural surface worth pinning (asserting
+    it via ``__annotations__``/``get_type_hints`` would just encode an
+    implementation detail that provably doesn't affect outcomes).
+
+    The second part is the actual tripwire for the union surface: it
+    hand-writes both payload shapes -- independent of anything the IR
+    builder produces -- and validates them directly against ``TakeOp``. A
+    bare integer must resolve to ``int``, not get wrapped/coerced into an
+    expression model; a ``kind``-tagged object must resolve to that
+    expression class, not get flattened to a number or silently dropped.
+    This is what would fail if a future Pydantic version, or a
+    ``model_config`` change, started coercing in either direction -- the
+    risk that actually matters here, as opposed to declaration order.
+    """
     literal_ir = parse("T | take 5").to_ir()
     rebuilt_op = QueryIR.model_validate_json(
         literal_ir.model_dump_json()
@@ -829,3 +854,25 @@ def test_count_field_round_trips_correct_shape_through_json():
         expr_ir.model_dump_json()
     ).main_pipeline.operators[-1]
     assert isinstance(rebuilt_expr_op.count, ToScalarExpr)
+
+    literal_payload = {
+        "kind": "take",
+        "span": {"text_start": 0, "width": 1},
+        "count": 5,
+    }
+    literal_op = TakeOp.model_validate(literal_payload)
+    assert literal_op.count == 5
+    assert isinstance(literal_op.count, int)
+
+    expr_payload = {
+        "kind": "take",
+        "span": {"text_start": 0, "width": 1},
+        "count": {
+            "kind": "column_ref",
+            "span": {"text_start": 0, "width": 1},
+            "name": "n",
+        },
+    }
+    expr_op = TakeOp.model_validate(expr_payload)
+    assert isinstance(expr_op.count, ColumnRef)
+    assert expr_op.count.name == "n"
