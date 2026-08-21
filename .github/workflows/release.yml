@@ -13,7 +13,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  tests:
+    uses: ./.github/workflows/test.yml
+    secrets: inherit
+
   build:
+    needs: tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -34,15 +39,43 @@ jobs:
       - name: Verify bundled DLL matches NuGet before building
         run: python scripts/verify_dll.py
 
+      # workflow_dispatch runs may target a branch, not a version tag, so this
+      # step (and the release-notes extraction below) only make sense — and
+      # only have a CHANGELOG section to find — on an actual `v*` tag push.
+      - name: Verify tag matches project version and CHANGELOG
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          PROJECT=$(python -c 'import tomllib;print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')
+          test "$VERSION" = "$PROJECT" || { echo "tag $GITHUB_REF_NAME != pyproject $PROJECT"; exit 1; }
+          grep -q "^## \[$VERSION\]" CHANGELOG.md || { echo "CHANGELOG has no [$VERSION] section"; exit 1; }
+
       - name: Build and Generate SBOM
         run: |
           python -m pip install --upgrade pip
-          python -m pip install build cyclonedx-bom
+          python -m pip install build==1.5.0 cyclonedx-bom==7.3.0
           python -m build
 
-          # Install the built wheel so cyclonedx can map the true dependency tree
-          python -m pip install dist/*.whl
-          cyclonedx-py environment --output-format JSON --output-file release-sbom.json
+          # Install the built wheel into a fresh venv (not this job's own
+          # build/cyclonedx-bom tooling environment) so the SBOM describes
+          # exactly what PyPI will ship.
+          python -m venv /tmp/release-venv
+          /tmp/release-venv/bin/pip install dist/*.whl
+          cyclonedx-py environment "$(/tmp/release-venv/bin/python -c 'import sys;print(sys.prefix)')" \
+            --output-format JSON --output-file release-sbom.json
+
+      - name: Extract release notes for ${{ github.ref_name }}      # moved here from publish
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { p=1; next }
+            p && /^## \[/             { exit }
+            p                         { print }
+          ' CHANGELOG.md > release-notes.md
+          test -s release-notes.md || { echo "No CHANGELOG section for $VERSION"; exit 1; }
+          echo "--- release-notes.md ($(wc -l < release-notes.md) lines) ---"
+          cat release-notes.md
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -51,6 +84,8 @@ jobs:
           path: |
             dist/
             release-sbom.json
+            release-notes.md
+          if-no-files-found: warn
 
   publish:
     needs: build
@@ -89,18 +124,6 @@ jobs:
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
         with:
           attestations: true
-
-      - name: Extract release notes for ${{ github.ref_name }}
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          awk -v ver="$VERSION" '
-            $0 ~ "^## \\[" ver "\\]" { p=1; next }
-            p && /^## \[/             { exit }
-            p                         { print }
-          ' CHANGELOG.md > release-notes.md
-          test -s release-notes.md || { echo "No CHANGELOG section for $VERSION"; exit 1; }
-          echo "--- release-notes.md ($(wc -l < release-notes.md) lines) ---"
-          cat release-notes.md
 
       - name: Create GitHub Release
         env:
