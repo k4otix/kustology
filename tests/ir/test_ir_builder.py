@@ -1003,3 +1003,78 @@ def test_top_hitters_of_is_required_in_the_wire_format():
     # Pin the reason, not just that something failed: a loose `match=` would
     # also be satisfied by an unrelated error that happened to mention "of".
     assert [(e["loc"], e["type"]) for e in excinfo.value.errors()] == [(("of",), "missing")]
+
+
+# --- volatile source text must not reach semantic_hash (K06) ---------------
+
+
+def test_a_comment_before_a_let_function_does_not_change_the_hash(ir_builder):
+    """``LetFunction.body_span`` is a character offset into the source, so a
+    comment anywhere ahead of the body shifts it. The volatile-field strip
+    dropped keys named ``span`` from the dumped payload, and ``body_span`` is
+    not one of them -- so the same declaration hashed two ways depending on
+    what preceded it in the file."""
+    plain = ir_builder.build("let f = (x:int){x+1}; T | extend y = f(a)")
+    commented = ir_builder.build("// c\nlet f = (x:int){x+1}; T | extend y = f(a)")
+
+    # Pin that the offsets genuinely differ, so the equality below is a claim
+    # about the hash rather than about two identical IRs.
+    assert plain.let_bindings[0].rhs_function.body_span.text_start == 15
+    assert commented.let_bindings[0].rhs_function.body_span.text_start == 20
+
+    assert plain.semantic_hash == commented.semantic_hash
+
+
+def test_reformatting_a_raw_text_operator_does_not_change_the_hash(ir_builder):
+    """The handful of operators the IR keeps as source text (``scan``,
+    ``top-nested``, the ``graph-*`` family) recorded ``node.ToString()``,
+    which includes the node's *leading trivia* -- every space, newline and
+    comment between the previous token and this one. Two spellings of one
+    operator therefore hashed differently."""
+    plain = ir_builder.build("T | top-nested 3 of a by max(b)")
+    spaced = ir_builder.build("T\n|   top-nested 3 of a by max(b)")
+    commented = ir_builder.build("T | top-nested 3 // c\n of a by max(b)")
+
+    # The recorded text is the operator itself -- no leading blank, no comment.
+    assert plain.main_pipeline.operators[0].raw_text == "top-nested 3 of a by max(b)"
+
+    assert plain.semantic_hash == spaced.semantic_hash
+    assert plain.semantic_hash == commented.semantic_hash
+
+
+def test_a_url_inside_raw_text_still_separates_two_scan_operators(ir_builder):
+    """Guard on the whitespace normalization applied to ``raw_text`` before
+    hashing: ``//`` is a comment introducer *and* the middle of every URL a
+    detection rule ever matches on. Comments are already gone by this point
+    (the builder records ``IncludeTrivia.Minimal``), so the normalizer must
+    not go looking for them again -- stripping from ``//`` to end-of-line
+    would truncate both operators to ``Url == "http:`` and collide them."""
+    a = ir_builder.build(
+        "T | scan declare (x:string='') with (step s: Url == \"http://a\" => x = \"y\")"
+    )
+    b = ir_builder.build(
+        "T | scan declare (x:string='') with (step s: Url == \"http://b\" => x = \"y\")"
+    )
+
+    assert 'Url == "http://a"' in a.main_pipeline.operators[0].raw_text
+    assert a.semantic_hash != b.semantic_hash
+
+
+def test_double_negation_collapses_at_the_root_of_a_bare_expr(ir_builder):
+    """``normalize_expressions`` collapses ``not(not(X))`` by *returning* the
+    replacement, and only a parent field assignment installed it. At the root
+    of the tree there is no parent, so ``compute_semantic_hash`` threw the
+    replacement away and hashed the un-collapsed shape -- the collapse worked
+    for a whole ``QueryIR`` and not for the predicate on its own."""
+    from kustology.ir import Not, compute_semantic_hash
+
+    negated = ir_builder.build("T | where not(not(A > 1))")
+    plain = ir_builder.build("T | where A > 1")
+    pred_not_not = negated.main_pipeline.operators[0].predicate
+    pred_plain = plain.main_pipeline.operators[0].predicate
+
+    # The double negation really is still in the IR -- the builder is faithful.
+    assert isinstance(pred_not_not, Not)
+    assert isinstance(pred_not_not.operand, Not)
+
+    assert compute_semantic_hash(pred_not_not) == compute_semantic_hash(pred_plain)

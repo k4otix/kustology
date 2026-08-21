@@ -340,3 +340,19 @@ def test_dispatch_survives_a_class_rename():
     out2 = {"polarity": "exclusion", "op": "!in~"}
     _collapse_polarity_into_op(out2, RenamedSetMembership)
     assert out2 == {"op": "!in~"}
+
+
+def test_body_span_is_omitted_from_a_let_function():
+    """``_OMIT_FIELDS`` matched the name ``span`` exactly, so ``LetFunction``
+    -- the one model whose span field is called ``body_span`` -- shipped a
+    raw character offset into the LLM view that every other node was spared.
+    """
+    ir = IRBuilder().build("let f = (x:int){x+1}; T | extend y = f(a)")
+    fn = to_llm_dict(ir)["let_bindings"][0]["rhs_function"]
+
+    # The node is really there, so the missing key below is a strip and not
+    # an absent function.
+    assert fn["kind"] == "let_function"
+    assert fn["parameters"] == ["x"]
+
+    assert "body_span" not in fn

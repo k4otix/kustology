@@ -130,8 +130,16 @@ from .transforms import compute_semantic_hash
 logger = logging.getLogger(__name__)
 
 # Bridge import above already triggered AddReference("Kusto.Language").
+#
+# ``IncludeTrivia`` selects how much of the whitespace and comments around a
+# node ``ToString()`` renders. The no-argument overload is ``All``, which
+# prepends the node's *leading* trivia -- so a ``raw_text`` recorded that way
+# carries the newline, indentation and ``// comment`` that happened to sit
+# between the previous token and this one. ``Minimal`` renders the node's own
+# source: no leading trivia, interior comments dropped to a line break.
 from Kusto.Language.Syntax import (
     ExpressionStatement,
+    IncludeTrivia,
     LetStatement,
 )
 
@@ -949,11 +957,11 @@ class IRBuilder:
 
         # Preserve-raw-text ops for elaborate state-machine operators.
         if kind == "ScanOperator":
-            return ScanOp(raw_text=node.ToString(), span=span)
+            return ScanOp(raw_text=node.ToString(IncludeTrivia.Minimal), span=span)
         if kind == "TopNestedOperator":
-            return TopNestedOp(raw_text=node.ToString(), span=span)
+            return TopNestedOp(raw_text=node.ToString(IncludeTrivia.Minimal), span=span)
         if kind == "MakeGraphOperator":
-            return MakeGraphOp(raw_text=node.ToString(), span=span)
+            return MakeGraphOp(raw_text=node.ToString(IncludeTrivia.Minimal), span=span)
         if kind == "MacroExpandOperator":
             # The body is a ``StatementList``. The previous probe read
             # ``Subquery`` then ``Body``; neither is a member of
@@ -966,18 +974,18 @@ class IRBuilder:
                     if expr is not None:
                         inner = self._visit_pipeline(expr)
                         break
-            return MacroExpandOp(raw_text=node.ToString(), pipeline=inner, span=span)
+            return MacroExpandOp(raw_text=node.ToString(IncludeTrivia.Minimal), pipeline=inner, span=span)
         if kind == "GraphMatchOperator":
-            return GraphMatchOp(raw_text=node.ToString(), span=span)
+            return GraphMatchOp(raw_text=node.ToString(IncludeTrivia.Minimal), span=span)
         if kind == "GraphMarkComponentsOperator":
-            return GraphMarkComponentsOp(raw_text=node.ToString(), span=span)
+            return GraphMarkComponentsOp(raw_text=node.ToString(IncludeTrivia.Minimal), span=span)
         if kind == "GraphShortestPathsOperator":
-            return GraphShortestPathsOp(raw_text=node.ToString(), span=span)
+            return GraphShortestPathsOp(raw_text=node.ToString(IncludeTrivia.Minimal), span=span)
         if kind == "GraphToTableOperator":
-            return GraphToTableOp(raw_text=node.ToString(), span=span)
+            return GraphToTableOp(raw_text=node.ToString(IncludeTrivia.Minimal), span=span)
 
         return UnknownOp(
-            raw_text=node.ToString(),
+            raw_text=node.ToString(IncludeTrivia.Minimal),
             ast_kind=kind,
             reason="Operator dispatch fell through — kind not in IRBuilder.HANDLED_OPERATOR_KINDS",
             span=span,
@@ -1273,7 +1281,7 @@ class IRBuilder:
 
         if not res:
             res = UnknownExpr(
-                span=span, raw_text=node.ToString(),
+                span=span, raw_text=node.ToString(IncludeTrivia.Minimal),
                 ast_kind=kind, reason="Unsupported expression type",
             )
 

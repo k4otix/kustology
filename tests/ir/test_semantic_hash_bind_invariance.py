@@ -81,3 +81,25 @@ def test_join_side_keeps_semantically_different_join_keys_apart():
     across = parse("T | join U on $left.a == $right.b").to_ir()
 
     assert compute_semantic_hash(same_side) != compute_semantic_hash(across)
+
+
+def test_a_column_named_table_is_not_erased_from_the_hash():
+    """Volatile fields are stripped by *model field*, not by key name.
+
+    The strip used to run over the dumped JSON and delete every key called
+    ``table`` / ``span`` / ``result_schema`` at any depth. ``AssertSchemaOp``
+    carries its declaration as ``dict[str, str]``, so a column a query
+    literally names ``table`` was a key at exactly that depth and vanished --
+    the asserted schema ``(a:long, table:long)`` hashed the same as
+    ``(a:long)``, which is a different assertion about the data.
+    """
+    with_extra = parse("T | assert-schema (a:long, table:long)").to_ir()
+    without = parse("T | assert-schema (a:long)").to_ir()
+
+    # The column really is in the IR; only the hash payload lost it.
+    assert with_extra.main_pipeline.operators[0].columns == {
+        "a": "long", "table": "long",
+    }
+    assert without.main_pipeline.operators[0].columns == {"a": "long"}
+
+    assert compute_semantic_hash(with_extra) != compute_semantic_hash(without)

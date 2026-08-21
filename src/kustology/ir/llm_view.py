@@ -10,9 +10,10 @@ being fed to a language model:
   ``KIND`` constant — the wire format uses snake_case KQL-aligned labels.
 * Fields holding their declared default (``result_type=unknown``,
   ``result_type_inner=None``, empty lists/dicts) are dropped.
-* ``span`` and ``schema_attached`` are stripped — character offsets aren't
-  useful without source-text triangulation, and ``schema_attached`` is
-  inferrable from whether ``result_schema`` is populated.
+* ``span`` (and ``LetFunction.body_span``) and ``schema_attached`` are
+  stripped — character offsets aren't useful without source-text
+  triangulation, and ``schema_attached`` is inferrable from whether
+  ``result_schema`` is populated.
 * Enum values are unwrapped to their string form.
 * ``canonical_form`` on ``ColumnRef`` / ``LiteralExpr`` leaves is dropped
   when it's a literal restatement of ``name`` / ``value``; survives on
@@ -47,7 +48,12 @@ from .expr import Between, BinOp, ColumnRef, LiteralExpr, SetMembership
 # ``result_schema`` already conveys.
 # ``ticks`` is the machine-exact companion to ``value``; an LLM reads the
 # rendered value, so emitting both is noise.
-_OMIT_FIELDS = {"span", "schema_attached", "ticks"}
+#
+# ``body_span`` is here because the set matches field names exactly, and
+# ``LetFunction`` is the one model whose span field is not called ``span``.
+# Matching on a ``_span`` suffix instead would be the same trap one rename
+# later; an explicit name is checkable.
+_OMIT_FIELDS = {"span", "body_span", "schema_attached", "ticks"}
 
 
 def to_llm_dict(node: Any) -> Any:

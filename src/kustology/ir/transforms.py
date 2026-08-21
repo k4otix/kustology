@@ -23,12 +23,14 @@ import json
 from typing import Any
 
 from pydantic import BaseModel
+from pydantic_core import PydanticUndefined
 
 from ._normalize import normalize_in_place
 from .expr import And, Expr
 from .query import FilterOp, Pipeline, QueryIR
+from .spans import Span
 from .types import KustoType
-from .walk import find_all
+from .walk import find_all, walk
 
 
 def merge_consecutive_filters(root: Pipeline | QueryIR) -> None:
@@ -48,7 +50,7 @@ def merge_consecutive_filters(root: Pipeline | QueryIR) -> None:
         pipeline.operators = _merge_at_one_level(pipeline.operators)
 
 
-def normalize_expressions(root: Pipeline | QueryIR) -> None:
+def normalize_expressions(root: Any) -> Any:
     """Apply semantic-preserving expression rewrites everywhere in ``root``.
 
     Rewrites (from :mod:`kustology.ir._normalize`):
@@ -69,10 +71,24 @@ def normalize_expressions(root: Pipeline | QueryIR) -> None:
     deep. The function descends into sub-pipelines, expression children,
     list-valued fields, and tuple branches alike.
 
-    Mutates ``root`` in place. Build a deep copy via
-    ``model_copy(deep=True)`` first if you need to keep the original.
+    Mutates ``root`` in place and returns the root to keep working with —
+    normally ``root`` itself, but ``not(not(X))`` replaces a node rather than
+    editing it, and at the root of the tree there is no parent field to
+    install the replacement into. Rebind (``ir = normalize_expressions(ir)``)
+    when ``root`` may be a bare ``Expr``; a ``Pipeline`` or ``QueryIR`` root
+    is never replaced, so existing call sites that ignore the return value
+    stay correct.
+
+    Operand order is left exactly as the query wrote it. This is a faithful
+    public transform, not a canonicalizer: reordering a user's ``and`` chain
+    would move their spans out of source order for no benefit they asked for.
+    ``compute_semantic_hash`` sorts commutative operands on its own private
+    copy instead.
+
+    Build a deep copy via ``model_copy(deep=True)`` first if you need to keep
+    the original.
     """
-    _normalize_node(root)
+    return _normalize_node(root)
 
 
 def _normalize_node(node: Any) -> Any:
@@ -138,8 +154,22 @@ def _merge_at_one_level(ops: list) -> list:
     return out
 
 
-# Stripped from the dump before hashing. Spans depend on character offsets so
-# would defeat the purpose of a semantic hash; the rest is everything
+# Cleared on the hash's deep copy before it is dumped. Keyed by **model field
+# name**, matched against ``type(node).model_fields`` at every node — not by
+# key path, and deliberately not by key name in the dumped JSON. Dropping
+# dictionary keys from the payload was both too broad and too narrow: too
+# broad because ``AssertSchemaOp.columns`` is a ``dict[str, str]`` of the
+# user's own column names, so ``assert-schema (a:long, table:long)`` lost the
+# column literally called ``table`` and hashed identically to ``(a:long)``;
+# too narrow because ``LetFunction.body_span`` is a span whose field is not
+# named ``span``, so source offsets kept reaching the digest.
+#
+# To extend: add the field name here. It applies to every model that declares
+# a field of that name, which is the intent — ``result_schema`` is meant to be
+# cleared on ``Pipeline`` and on anything else that grows one.
+#
+# Spans depend on character offsets so would defeat the purpose of a semantic
+# hash; the rest is everything
 # :class:`~kustology.ir.binder.SchemaAttacher` writes -- ``result_type`` /
 # ``result_type_inner`` (annotations), ``table`` (column provenance) and
 # ``result_schema`` (the whole bound schema per pipeline). All four are
@@ -171,8 +201,65 @@ def _merge_at_one_level(ops: list) -> list:
 # difference for a silently wrong answer. Queries with no table-aliasing
 # ``let`` are unaffected.
 _VOLATILE_FIELDS = frozenset({
-    "span", "result_type", "result_type_inner", "table", "result_schema",
+    "span", "body_span", "result_type", "result_type_inner", "table",
+    "result_schema",
 })
+
+# ``span`` and ``body_span`` are required and have no default, so unlike the
+# other volatile fields there is nothing to clear them *to*. A zero span is
+# the answer rather than ``None``: it keeps the copy a valid IR. Pydantic 2.13
+# does not object to serializing ``None`` through a ``Span``-typed field --
+# checked, it emits ``null`` with no warning -- but the payload it produces no
+# longer validates back, and the copy is a live IR that ``walk`` and
+# ``model_dump`` both traverse before it is thrown away. A real ``Span`` that
+# is identical at every node costs nothing and leaves no invalid state behind.
+#
+# One instance is shared by every node on the copy. The copy is dumped and
+# discarded inside ``compute_semantic_hash``, so the aliasing is never
+# observable; nothing mutates a ``Span`` in place.
+_ZERO_SPAN = Span(text_start=0, width=0)
+
+
+def _normalize_raw_text(text: str) -> str:
+    """Collapse runs of whitespace in a ``raw_text`` field to single spaces.
+
+    The handful of operators the IR keeps as source text (``scan``,
+    ``top-nested``, the ``graph-*`` family, and the ``Unknown*`` fallbacks)
+    hash that text directly, so ``| top-nested 3 of a`` and
+    ``|   top-nested\\n3 of a`` were two different queries as far as the
+    digest was concerned.
+
+    Comments are *not* stripped here, and must not be: the builder records
+    ``ToString(IncludeTrivia.Minimal)``, which already drops every comment in
+    and around the node, so there is nothing left to remove — while ``//`` is
+    also the middle of every URL a detection rule matches on. A regex from
+    ``//`` to end-of-line would truncate ``Url == "http://a"`` and
+    ``Url == "http://b"`` to the same text and collide two different queries,
+    which is the exact defect class this strip exists to close.
+    """
+    return " ".join(text.split())
+
+
+def _clear_volatile(root: BaseModel) -> None:
+    """Clear every volatile field on ``root`` and its descendants, in place.
+
+    Intended for the hash's private deep copy — it rewrites node state.
+    """
+    for node in walk(root):
+        fields = type(node).model_fields
+        for name in _VOLATILE_FIELDS & fields.keys():
+            if name in ("span", "body_span"):
+                object.__setattr__(node, name, _ZERO_SPAN)
+            else:
+                # Back to the declared default, so a cleared field is
+                # indistinguishable from one the binder never touched.
+                # A field with no default (none currently) clears to None.
+                default = fields[name].default
+                object.__setattr__(
+                    node, name, None if default is PydanticUndefined else default,
+                )
+        if "raw_text" in fields:
+            object.__setattr__(node, "raw_text", _normalize_raw_text(node.raw_text))
 
 
 # Scheme prefix declares the version of the canonicalization rules (volatile
@@ -221,7 +308,10 @@ def compute_semantic_hash(node: BaseModel) -> str:
     canonical = node.model_copy(deep=True)
     if isinstance(canonical, (Pipeline, QueryIR)):
         merge_consecutive_filters(canonical)
-    normalize_expressions(canonical)
+    # Rebind: a bare ``Not(Not(X))`` root is *replaced* by ``X``, and there is
+    # no parent field for the replacement to be installed into.
+    canonical = normalize_expressions(canonical)
+    _clear_volatile(canonical)
     if isinstance(canonical, QueryIR):
         payload: Any = {
             "let_bindings": [lb.model_dump(mode="json") for lb in canonical.let_bindings],
@@ -229,19 +319,7 @@ def compute_semantic_hash(node: BaseModel) -> str:
         }
     else:
         payload = canonical.model_dump(mode="json")
-    cleaned = _strip_volatile_fields(payload)
     digest = hashlib.sha256(
-        json.dumps(cleaned, sort_keys=True).encode()
+        json.dumps(payload, sort_keys=True).encode()
     ).hexdigest()
     return f"{SEMANTIC_HASH_SCHEME}:{digest}"
-
-
-def _strip_volatile_fields(obj: Any) -> Any:
-    if isinstance(obj, dict):
-        return {
-            k: _strip_volatile_fields(v) for k, v in obj.items()
-            if k not in _VOLATILE_FIELDS
-        }
-    if isinstance(obj, list):
-        return [_strip_volatile_fields(v) for v in obj]
-    return obj

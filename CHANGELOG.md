@@ -115,6 +115,22 @@ release is in `docs/superpowers/reports/`.
   either way), covers `toupper` symmetrically, and no longer rewrites at all
   when the other side is not a literal (`tolower(X) == Col` is not
   equivalent to `X =~ Col` for arbitrary `Col`).
+- **Volatile fields are stripped from `semantic_hash` by model field, not by
+  key name (tier 2).** The strip ran over the dumped JSON and deleted every
+  key called `span` / `table` / `result_schema` at any depth, which was both
+  too broad and too narrow. Too broad: `AssertSchemaOp.columns` is a
+  `dict[str, str]` of the query's own column names, so
+  `assert-schema (a:long, table:long)` lost the column literally named
+  `table` and hashed identically to `assert-schema (a:long)`. Too narrow:
+  `LetFunction.body_span` is a span whose field is not called `span`, so a
+  comment ahead of a `let`-declared function shifted its offset and changed
+  the hash, and `raw_text` — recorded for `scan`, `top-nested` and the
+  `graph-*` family — carried the node's leading whitespace and comments
+  verbatim. The builder now records `ToString(IncludeTrivia.Minimal)`, the
+  hash normalizes `raw_text` whitespace on its private copy, and a bare
+  `Expr` root of the form `not(not(X))` finally collapses (the replacement
+  was computed and discarded, since only a parent field assignment installed
+  it). `to_llm_dict` drops `body_span` too.
 
 ### Added
 
