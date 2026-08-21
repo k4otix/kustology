@@ -232,8 +232,13 @@ release is in `docs/superpowers/reports/`.
   unchanged and still leaves a user's operand order exactly as written; the
   sort runs on the hash's own deep copy. `let` names are replaced by their
   declaration index (`$let0`, `$let1`, …), so which binding a reference
-  points at is still hashed. Still `kustology-sem-v2`, which covers the whole
-  unreleased window since `v0.1.0`.
+  points at is still hashed. One further equivalence falls out of the sort
+  composing with the existing consecutive-filter merge: a run of `| where`
+  operators becomes a single `and` whose operands are then sorted, so
+  `| where A | where B`, `| where B | where A` and `| where B and A` are now
+  all one digest. Only *consecutive* filters merge — `| where A | take 5`
+  and `| take 5 | where A` still hash apart. Still `kustology-sem-v2`, which
+  covers the whole unreleased window since `v0.1.0`.
 
 ### Internal
 

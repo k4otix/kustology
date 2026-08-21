@@ -317,9 +317,23 @@ volatile field is one name in the frozenset; nothing else changes.
 
 `raw_text` is not in the set but is normalized on the same copy: the builder
 records `ToString(IncludeTrivia.Minimal)` (no leading trivia, comments gone),
-and `_normalize_raw_text` collapses the remaining whitespace. Do not add a
-`//`-comment strip there — `Minimal` already removed them, and `//` is also
-the middle of every URL a rule matches on.
+and `_normalize_raw_text` folds line breaks. The rule is **newlines collapse,
+interior spacing does not** — and both halves of that are load-bearing,
+because `raw_text` is source text and some of what looks like formatting in
+it is data:
+
+- A run of spaces can be inside a **string literal**, where it is part of the
+  value: `Msg == "error  occurred"` and `Msg == "error occurred"` are
+  different predicates. `" ".join(text.split())` merged them. Outside a
+  literal there is nothing left to collapse anyway — the DLL already
+  normalized it, recording `top-nested 3  of  a` as `top-nested 3 of a`.
+  Newlines are the safe thing to fold precisely because a KQL string literal
+  cannot contain a raw one.
+- Do not add a `//`-comment strip either — `Minimal` already removed them,
+  and `//` is also the middle of every URL a rule matches on.
+
+Both boundaries have tests. Widening the function fails the first; adding a
+comment strip fails the second.
 
 ### `extra="forbid"` on every IR `BaseModel`
 Strict validation: JSON dumps with extra top-level fields fail to

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any
 
 from pydantic import BaseModel
@@ -50,7 +51,7 @@ def merge_consecutive_filters(root: Pipeline | QueryIR) -> None:
         pipeline.operators = _merge_at_one_level(pipeline.operators)
 
 
-def normalize_expressions(root: Any) -> Any:
+def normalize_expressions(root: Expr | Pipeline | QueryIR) -> Expr | Pipeline | QueryIR:
     """Apply semantic-preserving expression rewrites everywhere in ``root``.
 
     Rewrites (from :mod:`kustology.ir._normalize`):
@@ -221,7 +222,8 @@ _ZERO_SPAN = Span(text_start=0, width=0)
 
 
 def _normalize_raw_text(text: str) -> str:
-    """Collapse runs of whitespace in a ``raw_text`` field to single spaces.
+    """Fold line breaks (and their surrounding indent) in ``raw_text`` to a
+    single space. Nothing else is touched.
 
     The handful of operators the IR keeps as source text (``scan``,
     ``top-nested``, the ``graph-*`` family, and the ``Unknown*`` fallbacks)
@@ -229,15 +231,29 @@ def _normalize_raw_text(text: str) -> str:
     ``|   top-nested\\n3 of a`` were two different queries as far as the
     digest was concerned.
 
-    Comments are *not* stripped here, and must not be: the builder records
-    ``ToString(IncludeTrivia.Minimal)``, which already drops every comment in
-    and around the node, so there is nothing left to remove — while ``//`` is
-    also the middle of every URL a detection rule matches on. A regex from
-    ``//`` to end-of-line would truncate ``Url == "http://a"`` and
-    ``Url == "http://b"`` to the same text and collide two different queries,
-    which is the exact defect class this strip exists to close.
+    The rule is deliberately narrow, because ``raw_text`` is source text and
+    two of the things that look like formatting in it are data:
+
+    * **Interior spacing is not collapsed.** A run of spaces can be *inside a
+      string literal*, where it is part of the value: a rule matching
+      ``"error  occurred"`` (two spaces) and one matching ``"error occurred"``
+      are different predicates, and collapsing every whitespace run merged
+      them. Outside a literal there is nothing left to collapse anyway —
+      ``IncludeTrivia.Minimal`` has already normalized it, and records
+      ``top-nested 3  of  a`` as ``top-nested 3 of a``. Newlines are the safe
+      case precisely because a KQL string literal cannot contain a raw one,
+      so this rule can never reach inside a literal.
+    * **Comments are not stripped.** ``Minimal`` already drops every comment
+      in and around the node, so there is nothing to remove — while ``//`` is
+      also the middle of every URL a detection rule matches on. A regex from
+      ``//`` to end-of-line would truncate ``Url == "http://a"`` and
+      ``Url == "http://b"`` to the same text.
+
+    Both boundaries are pinned by tests; widening this function back to
+    ``" ".join(text.split())`` fails the first, and adding a comment strip
+    fails the second.
     """
-    return " ".join(text.split())
+    return re.sub(r"\s*\n\s*", " ", text).strip()
 
 
 def _clear_volatile(root: BaseModel) -> None:
@@ -282,13 +298,35 @@ def _canonicalize_let_names(ir: QueryIR) -> None:
 
     ``$`` cannot appear in a KQL identifier, so a canonical name can never
     collide with one the query chose. Runs on the hash's deep copy only.
+
+    Declarations are renamed by **position**, not by looking their old name up
+    in a map, because names are not unique: KQL diagnoses a redeclaration
+    (``KS201``) but the error-tolerant builder still emits both bindings, and
+    ``compute_semantic_hash`` also accepts hand-built IR with no parser in the
+    loop at all. A name-keyed map gives two same-named bindings one canonical
+    name, and ``$letN`` stops meaning "the Nth declaration".
+
+    References resolve against the bindings **visible where they are
+    written** -- a binding's own right-hand side sees only the bindings
+    declared before it, the main pipeline sees them all. That is what keeps a
+    shadowed reference pointing at the binding it actually reads, instead of
+    at the one currently being defined.
     """
-    renames = {binding.name: f"$let{i}" for i, binding in enumerate(ir.let_bindings)}
-    if not renames:
+    if not ir.let_bindings:
         return
-    for node in walk(ir):
+    # Name -> canonical name, rebuilt as each declaration comes into scope.
+    visible: dict[str, str] = {}
+    for i, binding in enumerate(ir.let_bindings):
+        canonical = f"$let{i}"
+        # The right-hand side is resolved *before* this binding enters scope.
+        for node in walk(binding):
+            if node is not binding and isinstance(node, _LET_NAME_MODELS):
+                object.__setattr__(node, "name", visible.get(node.name, node.name))
+        visible[binding.name] = canonical
+        object.__setattr__(binding, "name", canonical)
+    for node in walk(ir.main_pipeline):
         if isinstance(node, _LET_NAME_MODELS):
-            object.__setattr__(node, "name", renames.get(node.name, node.name))
+            object.__setattr__(node, "name", visible.get(node.name, node.name))
 
 
 def _sort_commutative(root: BaseModel) -> None:
@@ -378,13 +416,21 @@ def compute_semantic_hash(node: BaseModel) -> str:
       the values were written in carries no meaning
     * ``let X = …; X | take 1`` vs ``let Y = …; Y | take 1`` — a ``let`` name
       is a local label, replaced by its declaration index (``$let0``, …)
+    * ``| where A | where B`` vs ``| where B | where A``, and either against
+      ``| where B and A`` — the merge and the sort *compose*: consecutive
+      filters become one ``And`` and that ``And``'s operands are then sorted,
+      so the order of a run of filters stops mattering as well as its
+      grouping. This falls out of the two rules above rather than being a
+      rule of its own, which is why it is easy to miss.
 
     Two subtrees with different literal values, operators, identifiers,
     or operator sequences do *not* collide. Nor do the near-misses of the
     rules above: ``A < B`` and ``B < A`` are opposite predicates and only
-    genuinely commutative operands are sorted, and the ``let`` rename is
+    genuinely commutative operands are sorted; the ``let`` rename is
     positional, so reading from the first binding and reading from the
-    second stay apart.
+    second stay apart; and only a run of *consecutive* filters merges, so
+    ``| where A | take 5`` and ``| take 5 | where A`` — which return
+    different rows — still hash apart.
 
     The hash operates on a deep copy of ``node`` — does not mutate the
     input, and the result reflects the IR shape at call time. Stale if

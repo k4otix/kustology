@@ -1060,6 +1060,31 @@ def test_a_url_inside_raw_text_still_separates_two_scan_operators(ir_builder):
     assert a.semantic_hash != b.semantic_hash
 
 
+def test_interior_spacing_in_a_raw_text_string_literal_is_not_collapsed(ir_builder):
+    """The same trap as the URL guard above, one step narrower.
+
+    Collapsing *every* whitespace run flattens the run that sits **inside a
+    string literal**, where it is data rather than formatting -- so a rule
+    matching ``"error  occurred"`` and one matching ``"error occurred"``
+    became the same query. Only a newline-and-its-surrounding-indent may be
+    collapsed: KQL string literals cannot contain a raw newline, so that rule
+    can never reach inside one. Interior spacing outside a literal needs no
+    handling at all, because ``IncludeTrivia.Minimal`` has already normalized
+    it (``top-nested 3  of  a`` is recorded as ``top-nested 3 of a``).
+    """
+    a = ir_builder.build(
+        "T | scan declare (x:string='') with (step s: Msg == \"error  occurred\" => x = \"y\")"
+    )
+    b = ir_builder.build(
+        "T | scan declare (x:string='') with (step s: Msg == \"error occurred\" => x = \"y\")"
+    )
+
+    assert 'Msg == "error  occurred"' in a.main_pipeline.operators[0].raw_text
+    assert 'Msg == "error occurred"' in b.main_pipeline.operators[0].raw_text
+
+    assert a.semantic_hash != b.semantic_hash
+
+
 def test_double_negation_collapses_at_the_root_of_a_bare_expr(ir_builder):
     """``normalize_expressions`` collapses ``not(not(X))`` by *returning* the
     replacement, and only a parent field assignment installed it. At the root
@@ -1194,6 +1219,45 @@ def test_let_canonicalization_is_positional_not_a_blanket_erasure(ir_builder):
     assert second.main_pipeline.source.name == "Y"
 
     assert first.semantic_hash != second.semantic_hash
+
+
+def test_a_shadowed_let_name_still_canonicalizes_by_declaration_index(ir_builder):
+    """``$letN`` has to mean "the Nth declaration" unconditionally, and a
+    name-keyed rename map cannot deliver that: two bindings sharing a name
+    share a key, and the later one wins for both.
+
+    Reaching this through the parser needs a redeclaration, which Kusto
+    *does* diagnose (``KS201``) -- so this is not a shape a clean query
+    produces. It still matters, for two reasons. The IR is deliberately
+    error-tolerant: it builds the query anyway and ``semantic_hash`` hashes
+    it anyway, so "the parser complained" is not a guard. And
+    ``compute_semantic_hash`` is public and accepts hand-built IR, where no
+    parser is in the loop to enforce unique names at all.
+
+    The two queries below are the same query modulo renaming -- bind
+    ``T | where a == 1``, filter that by ``b == 2``, take 1 -- written once
+    with distinct names and once with the second binding shadowing the first.
+    Under a name-keyed map both declarations became ``$let1``, so the second
+    binding's body appeared to read from *itself* rather than from the first,
+    and the two spellings hashed apart. Renaming declarations by position and
+    resolving each reference against the bindings visible where it is written
+    fixes both halves.
+    """
+    distinct = ir_builder.build("let x = T | where a == 1; let y = x | where b == 2; y | take 1")
+    shadowed = ir_builder.build("let x = T | where a == 1; let x = x | where b == 2; x | take 1")
+
+    # The premise, pinned rather than assumed: the redeclaration is what
+    # Kusto objects to (and the only extra thing it objects to), and the
+    # builder emits two bindings sharing one name plus LetRefs into them
+    # regardless.
+    extra = [d.code for d in shadowed.diagnostics if d.code not in
+             [c.code for c in distinct.diagnostics]]
+    assert extra == ["KS201"]
+    assert [b.name for b in shadowed.let_bindings] == ["x", "x"]
+    assert shadowed.let_bindings[1].rhs_pipeline.source.name == "x"
+    assert shadowed.main_pipeline.source.name == "x"
+
+    assert distinct.semantic_hash == shadowed.semantic_hash
 
 
 @pytest.mark.xfail(
