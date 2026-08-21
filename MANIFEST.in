@@ -1,0 +1,6 @@
+graft tests
+graft examples
+graft scripts
+include CHANGELOG.md ARCHITECTURE.md AGENTS.md CONTRIBUTING.md SECURITY.md
+prune src/kustology.egg-info
+global-exclude __pycache__ *.py[cod] .coverage
