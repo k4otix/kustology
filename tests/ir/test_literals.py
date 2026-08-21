@@ -100,16 +100,51 @@ def test_datetime_literal_is_utc_and_tz_independent():
     (the pre-fix behaviour) makes ``value``, ``ticks``, and therefore
     ``semantic_hash`` depend on the timezone of whatever machine parsed the
     query. Re-running the same parse in a subprocess pinned to a different
-    timezone (``Asia/Tokyo``) proves the fixed hash does not move."""
+    timezone (``Asia/Tokyo``) proves the fixed hash does not move for either
+    the ``Local``-kind (``Z``-suffixed) literal or the ``Unspecified``-kind
+    (bare) one -- covering both branches separately matters because
+    ``ToUniversalTime()`` is a no-op on an ``Unspecified`` value when the
+    host zone already happens to be UTC, so a regression in that branch
+    alone could still pass a same-zone comparison."""
+    import System
+
     q = "T | where d > datetime(2024-01-01T00:00:00Z)"
+    naive_q = "T | where d > datetime(2024-01-01)"
     lit = next(l for l in find_all(parse(q).to_ir(), LiteralExpr) if l.literal_kind == "datetime")
+    # Non-vacuous even on a host whose CoreCLR ignores TZ entirely: this is
+    # an absolute value the unfixed (pre-Kind-normalization) code could
+    # never have produced on any host, since it always rendered whatever
+    # Kind/Ticks LiteralValue happened to hand back unconverted.
     assert lit.value == "2024-01-01T00:00:00.0000000Z" and lit.ticks == 638396640000000000
     here = parse(q).to_ir().semantic_hash
-    other = subprocess.run(
-        [sys.executable, "-c", f"from kustology import parse; print(parse({q!r}).to_ir().semantic_hash)"],
-        env={**os.environ, "TZ": "Asia/Tokyo"}, capture_output=True, text=True, check=True,
-    ).stdout.strip()
+    naive_here = parse(naive_q).to_ir().semantic_hash
+    parent_tz = System.TimeZoneInfo.Local.Id
+
+    child = subprocess.run(
+        [sys.executable, "-c", (
+            "from kustology import parse\n"
+            "import System\n"
+            "print(System.TimeZoneInfo.Local.Id)\n"
+            f"print(parse({q!r}).to_ir().semantic_hash)\n"
+            f"print(parse({naive_q!r}).to_ir().semantic_hash)\n"
+        )],
+        env={**os.environ, "TZ": "Asia/Tokyo"}, capture_output=True, text=True, check=False,
+    )
+    assert child.returncode == 0, f"subprocess failed (exit {child.returncode}):\n{child.stderr}"
+    child_tz, other, naive_other = child.stdout.strip().splitlines()
+
+    # Prove the child really did run in a different zone -- on a platform
+    # where CoreCLR ignores TZ (e.g. Windows, which reads the OS zone
+    # instead), the comparisons below would otherwise silently degrade into
+    # a same-config comparison that cannot catch a regression.
+    assert child_tz != parent_tz, (
+        f"TZ=Asia/Tokyo did not change System.TimeZoneInfo.Local.Id "
+        f"(stayed {child_tz!r} in both processes) -- this platform's "
+        f"CoreCLR does not honor TZ, so this test cannot exercise a "
+        f"different timezone and is not meaningful evidence here"
+    )
     assert here == other
+    assert naive_here == naive_other
 
 
 def test_naive_and_zulu_datetime_hash_equal():

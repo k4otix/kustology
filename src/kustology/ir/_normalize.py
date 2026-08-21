@@ -89,7 +89,7 @@ def normalize_in_place(expr: Any) -> Any:
                 # symmetric) and must produce the same canonical form/hash.
                 expr.left, expr.right = fold.args[0], other
                 break
-    if isinstance(expr, And):
+    elif isinstance(expr, And):
         flat: list = []
         for o in expr.operands:
             if isinstance(o, And):

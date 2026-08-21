@@ -633,9 +633,16 @@ def test_tolower_equality_against_mismatched_case_literal_is_not_rewritten(ir_bu
     returns anything but lowercase. ``X =~ "Y"`` is a case-insensitive match
     that is often true. Folding the first into the second would make
     hash-based dedup merge two predicates with different truth values."""
+    from kustology.ir import BinOp, FuncCall, find_all
+
     always_false = ir_builder.build('T | where tolower(X) == "Y"')
     case_insensitive_match = ir_builder.build('T | where X =~ "Y"')
     assert always_false.semantic_hash != case_insensitive_match.semantic_hash
+    # Pin that no rewrite happened at all, not just that the hash landed
+    # somewhere different -- inequality alone is also satisfied by a future
+    # rewrite that is wrong in a new way.
+    assert [f.name for f in find_all(always_false, FuncCall)] == ["tolower"]
+    assert next(iter(find_all(always_false, BinOp))).op == "=="
 
 
 def test_tolower_equality_against_matching_case_literal_still_rewrites(ir_builder):
@@ -663,9 +670,15 @@ def test_tolower_equality_against_a_non_literal_is_not_rewritten(ir_builder):
     not a literal, so there is no fixed case to know the rewrite is sound
     for. Whatever value ``Col`` holds, some X that fails the exact-lowercase
     comparison would pass the case-insensitive one."""
+    from kustology.ir import BinOp, FuncCall, find_all
+
     a = ir_builder.build("T | where tolower(X) == Col")
     b = ir_builder.build("T | where X =~ Col")
     assert a.semantic_hash != b.semantic_hash
+    # Pin that no rewrite happened at all, not just that the hash landed
+    # somewhere different.
+    assert [f.name for f in find_all(a, FuncCall)] == ["tolower"]
+    assert next(iter(find_all(a, BinOp))).op == "=="
 
 
 # --- BinOp case sensitivity across the whole string-operator family ---------

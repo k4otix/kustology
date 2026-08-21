@@ -185,7 +185,9 @@ def literal_value_and_ticks(node: Any) -> tuple[Any, int | None]:
     depend on the host locale. Explicit format specifiers remove the
     dependency and, for datetimes, make the value round-trippable:
 
-    * ``"o"`` — ISO 8601 round-trip, e.g. ``2024-01-01T00:00:00.0000000``
+    * ``"o"`` — ISO 8601 round-trip, e.g. ``2024-01-01T00:00:00.0000000Z``
+      (every datetime literal is Kind-normalized to UTC before rendering, so
+      the ``Z`` suffix is unconditional -- see the datetime branch below)
     * ``"c"`` — invariant TimeSpan constant form, tick-precise, e.g.
       ``1.12:00:00`` and ``00:00:00.0000002``
 
