@@ -131,6 +131,26 @@ release is in `docs/superpowers/reports/`.
   `Expr` root of the form `not(not(X))` finally collapses (the replacement
   was computed and discarded, since only a parent field assignment installed
   it). `to_llm_dict` drops `body_span` too.
+- **Leading comments no longer corrupt table, column and function names
+  (tier 1).** Every syntactic analyzer in `utils/analysis.py`
+  (`get_referenced_tables`, `get_referenced_columns`, `get_referenced_functions`,
+  `find_time_expressions`, `replace_table`) read a node's name with
+  `node.ToString().strip()`, but Microsoft's `ToString()` with no argument
+  includes the node's *leading trivia* — whitespace and comments both. On
+  `// lead\nSecurityEvent | …` the extracted table name was the literal
+  string `'// lead\nSecurityEvent'`, comment and newline included. Real
+  Sentinel detection rules are full of leading comments, so this landed on
+  exactly the queries the library exists to analyse: three files in this
+  repo's own fixture corpus (`ADFSRemoteHTTPNetworkConnection.kql`,
+  `Cross_tenantAccessSettingsOrganizationOutboundCollaborationSettingsChanged.kql`,
+  `IPEntity_AzureFirewall.kql`) reported a table name containing a comment.
+  `utils/walker.py` gains `node_text` (`ToString(IncludeTrivia.Minimal)`, for
+  reading an expression's own text) and `node_name` (`.SimpleName` for
+  `NameReference`/`BracketedName`/`TokenName`/`WildcardedName` nodes, so a
+  bracketed identifier like `['my-table']` reads as the unquoted
+  `my-table`); every trivia-carrying read in `analysis.py` now goes through
+  one of the two. `replace_table` still replaces by `TextStart`/`Width`
+  offset, so a leading comment is preserved verbatim in the output.
 
 ### Added
 

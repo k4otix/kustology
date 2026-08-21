@@ -12,6 +12,21 @@ walking.
 
 from __future__ import annotations
 
+# Bridge import elsewhere in the package (``kustology.bridge``) already
+# triggered ``clr.AddReference("Kusto.Language")`` by the time this module is
+# reachable via ``kustology.utils`` — see AGENTS.md.
+#
+# ``IncludeTrivia`` selects how much of the whitespace and comments around a
+# node ``ToString()`` renders. The no-argument overload is ``All``, which
+# prepends the node's *leading* trivia — so ``node.ToString()`` on
+# ``// lead\nSecurityEvent`` returns the comment and newline as part of the
+# text. ``Minimal`` renders the node's own source with no leading trivia.
+from Kusto.Language.Syntax import IncludeTrivia
+
+_NAME_NODE_KINDS = frozenset(
+    {"NameReference", "BracketedName", "TokenName", "WildcardedName"}
+)
+
 
 class KustoWalker:
     """Base class for manual AST traversal. Override pre_visit / post_visit."""
@@ -73,3 +88,29 @@ def node_to_dict(node):
         if child is not None:
             result["children"].append(node_to_dict(child))
     return result
+
+
+def node_text(node) -> str:
+    """Return ``node``'s own source text, without leading trivia.
+
+    ``node.ToString()`` (no argument) is ``ToString(IncludeTrivia.All)``,
+    which prepends whitespace *and comments* that precede the node — so
+    ``// lead\\nSecurityEvent`` reads back as the table name. ``Minimal``
+    renders only the node's own text; interior comments collapse to a
+    line break rather than vanishing, so this is a read, not a rewrite.
+    """
+    return node.ToString(IncludeTrivia.Minimal)
+
+
+def node_name(node) -> str:
+    """Return the plain identifier a name node denotes, unquoted.
+
+    ``NameReference``, ``BracketedName``, ``TokenName`` and
+    ``WildcardedName`` all expose ``SimpleName`` directly: for
+    ``['my-table']`` (a ``BracketedName``) it is the unquoted ``my-table``,
+    not the bracketed-and-quoted source text ``node_text`` would return. For
+    every other node kind this falls back to :func:`node_text`.
+    """
+    if str(node.Kind) in _NAME_NODE_KINDS:
+        return node.SimpleName
+    return node_text(node)

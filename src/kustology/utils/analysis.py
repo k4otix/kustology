@@ -6,7 +6,13 @@ import warnings
 
 from ..bridge import ColumnSymbol, FunctionSymbol, TableSymbol
 from .schema_state import build_global_state  # re-exported
-from .walker import KustoWalker, iter_elements, node_to_dict  # re-exported
+from .walker import (  # re-exported
+    KustoWalker,
+    iter_elements,
+    node_name,
+    node_text,
+    node_to_dict,
+)
 
 __all__ = [
     "KustoWalker",
@@ -23,6 +29,8 @@ __all__ = [
     "get_tables_syntactic",
     "get_time_range",
     "iter_elements",
+    "node_name",
+    "node_text",
     "node_to_dict",
     "replace_table",
 ]
@@ -137,7 +145,7 @@ def _collect_table_refs(syntax) -> list:
             if kind == "LetStatement":
                 name_node = node.GetChild(1)
                 if name_node is not None:
-                    let_vars.add(name_node.ToString().strip())
+                    let_vars.add(node_name(name_node))
                 rhs = node.GetChild(3)
                 if rhs is not None:
                     refs.extend(_unwrap_table_expr(rhs))
@@ -170,7 +178,7 @@ def _collect_table_refs(syntax) -> list:
     Walker().visit(syntax)
     out = []
     for ref in refs:
-        name = ref.ToString().strip()
+        name = node_name(ref)
         if not name or name in let_vars:
             continue
         out.append((name, ref))
@@ -269,7 +277,7 @@ def get_referenced_columns(kusto_code, force_syntactic: bool = False) -> set[str
             if str(node.Kind) == "LetStatement":
                 name_node = node.GetChild(1)
                 if name_node is not None:
-                    let_vars.add(name_node.ToString().strip())
+                    let_vars.add(node_name(name_node))
 
     LetCollector().visit(kusto_code.Syntax)
 
@@ -281,7 +289,7 @@ def get_referenced_columns(kusto_code, force_syntactic: bool = False) -> set[str
                 return
             if _is_function_callee(node):
                 return
-            name = node.ToString().strip()
+            name = node_name(node)
             if not name or name in table_names or name in let_vars:
                 return
             # `$left` / `$right` and other `$`-prefixed names are KQL macros.
@@ -316,7 +324,7 @@ def get_referenced_functions(kusto_code, force_syntactic: bool = False) -> set[s
         return funcs
 
     return {
-        node.ToString().strip()
+        node_name(node)
         for node in collect_nodes(
             syntax,
             lambda n: str(n.Kind) == "NameReference" and _is_function_callee(n),
@@ -367,12 +375,12 @@ def find_time_expressions(kusto_code) -> list[tuple[str, int, int]]:
             callee = node.GetChild(0)
             if callee is None:
                 return
-            if callee.ToString().strip() not in _TIME_FUNCS:
+            if node_name(callee) not in _TIME_FUNCS:
                 return
             start = node.TextStart
             end = start + node.Width
             fn_ranges.append((start, end))
-            out.append((node.ToString().strip(), start, node.Width))
+            out.append((node_text(node), start, node.Width))
 
     FnPass().visit(kusto_code.Syntax)
 
@@ -387,7 +395,7 @@ def find_time_expressions(kusto_code) -> list[tuple[str, int, int]]:
             end = start + node.Width
             if _within_function(start, end):
                 return
-            out.append((node.ToString().strip(), start, node.Width))
+            out.append((node_text(node), start, node.Width))
 
     LiteralPass().visit(kusto_code.Syntax)
 
