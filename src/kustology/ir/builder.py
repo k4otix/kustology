@@ -284,7 +284,7 @@ class IRBuilder:
         "SimpleNamedExpression", "CompoundNamedExpression", "BracketedExpression",
         "PrefixUnaryExpression", "StarExpression", "LiteralExpression",
         "DynamicExpression",
-        "AndExpression", "OrExpression", "OrderedExpression", "BinaryExpression",
+        "OrderedExpression", "BinaryExpression",
         "InExpression", "HasAnyExpression", "HasAllExpression",
         "BetweenExpression", "FunctionCallExpression", "MaterializeExpression",
         # MaterializeExpression is handled, but by ``_visit_pipeline`` --
@@ -1069,14 +1069,6 @@ class IRBuilder:
             # LiteralValue is the JSON body as a string; consumers can json.loads.
             body = node.LiteralValue if hasattr(node, "LiteralValue") else node.ToString()
             res = LiteralExpr(value=str(body), literal_kind="dynamic", span=span)
-
-        elif kind in ("AndExpression", "OrExpression"):
-            left = self._visit_expr(node.Left)
-            right = self._visit_expr(node.Right)
-            if kind == "AndExpression":
-                res = And(operands=[left, right], span=span)
-            else:
-                res = Or(operands=[left, right], span=span)
 
         elif kind == "OrderedExpression":
             res = self._visit_expr(node.Expression)

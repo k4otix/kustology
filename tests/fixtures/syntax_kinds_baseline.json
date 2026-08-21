@@ -1116,7 +1116,6 @@
     ]
   },
   "handled_expr_kinds": [
-    "AndExpression",
     "BetweenExpression",
     "BinaryExpression",
     "BracketedExpression",
@@ -1134,7 +1133,6 @@
     "NameAndTypeDeclaration",
     "NameDeclaration",
     "NameReference",
-    "OrExpression",
     "OrderedExpression",
     "ParenthesizedExpression",
     "PathExpression",
