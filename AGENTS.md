@@ -209,12 +209,28 @@ invariant or that exercise enrichment-free IR should pass
 `UNKNOWN` — distinct from `UnknownExpr` (which means "IR builder
 couldn't model this shape").
 
-### `Expr.canonical_form` normalizes operand order
-For `And(left, right)` (and other commutative ops), `canonical_form`
-sorts operands alphabetically. So the source-order predicate
-`State == "TEXAS" and EventType == "Tornado"` renders as
-`EventType == "Tornado" and State == "TEXAS"`. Worth knowing when
-diffing IR output against AST text.
+### Three orderings coexist; only one of them is the IR's
+The IR keeps a commutative operand list in **source order**, always. The
+builder writes it that way and `normalize_expressions` — a faithful public
+transform — leaves it that way, because callers apply it to their own IR
+alongside spans that still have to line up with the source.
+
+Two consumers reorder for their own purposes, and they do not use the same
+key:
+
+- `Expr.canonical_form` sorts `And`/`Or` operands and `in (...)` values
+  **alphabetically by rendered string**, so `State == "TEXAS" and EventType ==
+  "Tornado"` renders as `EventType == "Tornado" and State == "TEXAS"`. Worth
+  knowing when diffing IR output against AST text.
+- `compute_semantic_hash` sorts the same three places on its own deep copy, by
+  each operand's **dumped JSON** (`_sort_commutative`). The dump is the
+  stronger key — two operands tie only when every field matches — and it is
+  why the sort has to run *after* `_clear_volatile`, so span offsets cannot
+  order the list, and bottom-up, so a parent is keyed on children that are
+  already canonical.
+
+Do not "unify" these by sorting in the builder or in `normalize_expressions`.
+The IR's job is to be faithful; canonicalization is the hash's job.
 
 ### `UnknownExpr` / `UnknownSource` / `UnknownOp` are deliberate fallbacks
 The builder emits one of these when it can't model a shape, rather than
@@ -284,12 +300,26 @@ difference no volatile-field stripping can hide. This applies to a binding's
 own right-hand side; the *use* site is bind-independent, since a name bound by
 an earlier `let` is a `LetRef` decided from the statement text alone.
 
-That shape divergence is the *only* one. `_VOLATILE_FIELDS` strips every field
-the binder writes — `span` / `result_type` / `result_type_inner` / `table` /
-`result_schema` — so field *values* never make a query hash two ways. When you
-add a binder-populated field, add it there too, and check first whether it is
-carrying source-derived information that must keep hashing: `ColumnRef.table`
-was, and splitting `join_side` out of it is what let the rest be stripped.
+That shape divergence is the *only* one. `_VOLATILE_FIELDS` names every field
+the binder writes — `result_type` / `result_type_inner` / `table` /
+`result_schema` — plus the source offsets, `span` and `body_span`, so field
+*values* never make a query hash two ways. When you add a binder-populated
+field, add it there too, and check first whether it is carrying source-derived
+information that must keep hashing: `ColumnRef.table` was, and splitting
+`join_side` out of it is what let the rest be stripped.
+
+The set is keyed by **model field name**, cleared by `_clear_volatile` walking
+the hash's deep copy — not by key name in the dumped JSON, which is what it
+used to be. Filtering the dump is both too broad and too narrow: it deleted
+`AssertSchemaOp.columns` entries for a column the query named `table`, and it
+never saw `LetFunction.body_span`, whose field is not called `span`. A new
+volatile field is one name in the frozenset; nothing else changes.
+
+`raw_text` is not in the set but is normalized on the same copy: the builder
+records `ToString(IncludeTrivia.Minimal)` (no leading trivia, comments gone),
+and `_normalize_raw_text` collapses the remaining whitespace. Do not add a
+`//`-comment strip there — `Minimal` already removed them, and `//` is also
+the middle of every URL a rule matches on.
 
 ### `extra="forbid"` on every IR `BaseModel`
 Strict validation: JSON dumps with extra top-level fields fail to

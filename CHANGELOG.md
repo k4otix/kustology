@@ -225,6 +225,15 @@ release is in `docs/superpowers/reports/`.
 - **`TakeOp`/`SampleOp`/`TopOp`/`TopHittersOp`/`SampleDistinctOp.count` is
   `int | AnyExpr`** (was `int`); `let n = 10; T | take n` and
   `take toscalar(...)` no longer raise.
+- **`semantic_hash` now sorts `and`/`or` operands and `in (...)` values, and
+  is invariant under renaming `let` bindings.** Queries that differ only in
+  those three ways used to produce different digests and now collide, which
+  is the point — they mean the same thing. `normalize_expressions` is
+  unchanged and still leaves a user's operand order exactly as written; the
+  sort runs on the hash's own deep copy. `let` names are replaced by their
+  declaration index (`$let0`, `$let1`, …), so which binding a reference
+  points at is still hashed. Still `kustology-sem-v2`, which covers the whole
+  unreleased window since `v0.1.0`.
 
 ### Internal
 

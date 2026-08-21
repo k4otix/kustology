@@ -1078,3 +1078,136 @@ def test_double_negation_collapses_at_the_root_of_a_bare_expr(ir_builder):
     assert isinstance(pred_not_not.operand, Not)
 
     assert compute_semantic_hash(pred_not_not) == compute_semantic_hash(pred_plain)
+
+
+# --- semantic_hash is canonical over commutative shapes (K34) ---------------
+
+
+def test_and_operand_order_does_not_change_the_hash(ir_builder):
+    """``and`` is commutative, so ``a == 1 and b == 2`` and its mirror are the
+    same predicate. The hash dumped the operand list in source order, so a
+    rule author who reordered a conjunction got a new digest for a query that
+    had not changed meaning."""
+    a = ir_builder.build("T | where a == 1 and b == 2")
+    b = ir_builder.build("T | where b == 2 and a == 1")
+
+    # The IR itself stays in source order -- the sort lives on the hash's
+    # private copy, not in the builder or in ``normalize_expressions``.
+    assert [o.left.name for o in a.main_pipeline.operators[0].predicate.operands] == ["a", "b"]
+    assert [o.left.name for o in b.main_pipeline.operators[0].predicate.operands] == ["b", "a"]
+
+    assert a.semantic_hash == b.semantic_hash
+
+
+def test_nested_or_inside_an_and_sorts_bottom_up(ir_builder):
+    """The sort key is the child's own dumped JSON, so a parent can only be
+    ordered correctly once its children are.
+
+    This pair is chosen to discriminate: both mean
+    ``(a or b) and (a or z)``, and the sibling ``(a or z)`` sorts *between*
+    the two spellings of the other operand -- ``(a or b)`` before it,
+    ``(b or a)`` after. A top-down sort therefore keys the ``And`` on an
+    operand it has not canonicalized yet, puts the two ``And``s in opposite
+    orders, and leaves them different once the ``Or``s are fixed. Ordering the
+    walk so every descendant is sorted before its ancestor is what makes them
+    agree; a pair whose operands do not straddle like this passes either way
+    and would prove nothing.
+    """
+    a = ir_builder.build("T | where (b == 1 or a == 1) and (a == 1 or z == 1)")
+    b = ir_builder.build("T | where (a == 1 or z == 1) and (a == 1 or b == 1)")
+
+    assert [type(o).__name__ for o in a.main_pipeline.operators[0].predicate.operands] == [
+        "Or", "Or",
+    ]
+    assert [
+        o.left.name for o in a.main_pipeline.operators[0].predicate.operands[0].operands
+    ] == ["b", "a"]
+
+    assert a.semantic_hash == b.semantic_hash
+
+
+def test_in_list_value_order_does_not_change_the_hash(ir_builder):
+    """``x in ("a", "b")`` is a set test; the order the set was written in
+    carries no meaning."""
+    a = ir_builder.build('T | where x in ("a", "b")')
+    b = ir_builder.build('T | where x in ("b", "a")')
+
+    assert [v.value for v in a.main_pipeline.operators[0].predicate.values] == ["a", "b"]
+    assert [v.value for v in b.main_pipeline.operators[0].predicate.values] == ["b", "a"]
+
+    assert a.semantic_hash == b.semantic_hash
+
+
+def test_a_non_commutative_operator_is_not_sorted(ir_builder):
+    """The boundary on the sort: only ``and`` / ``or`` operands and ``in``
+    values commute. ``a < b`` and ``b < a`` are opposite predicates, and a
+    sort applied to ``BinOp`` operands would have merged them."""
+    a = ir_builder.build("T | where a < b")
+    b = ir_builder.build("T | where b < a")
+
+    assert a.semantic_hash != b.semantic_hash
+
+
+def test_normalize_expressions_does_not_reorder_operands(ir_builder):
+    """The public transform stays faithful to the query as written. It is
+    documented as semantic-preserving *rewrites*, and callers use it on their
+    own IR alongside spans that still have to line up with the source; the
+    canonical ordering belongs to the hash's private copy."""
+    from kustology.ir import normalize_expressions
+
+    ir = ir_builder.build("T | where b == 2 and a == 1")
+    normalize_expressions(ir)
+
+    assert [o.left.name for o in ir.main_pipeline.operators[0].predicate.operands] == ["b", "a"]
+
+
+def test_renaming_a_tabular_let_binding_does_not_change_the_hash(ir_builder):
+    """A ``let`` name is a local label. Two rules that differ only in whether
+    the analyst called the intermediate result ``X`` or ``Y`` are the same
+    query, and a dedup keyed on the hash has to see that."""
+    a = ir_builder.build("let X = T | where a == 1; X | take 1")
+    b = ir_builder.build("let Y = T | where a == 1; Y | take 1")
+
+    # The names really are different and really are in the IR, at both the
+    # declaration and the use site.
+    assert a.let_bindings[0].name == "X"
+    assert a.main_pipeline.source.name == "X"
+    assert b.let_bindings[0].name == "Y"
+    assert b.main_pipeline.source.name == "Y"
+
+    assert a.semantic_hash == b.semantic_hash
+
+
+def test_let_canonicalization_is_positional_not_a_blanket_erasure(ir_builder):
+    """Names are replaced by their *declaration index*, so which binding a
+    reference points at is preserved. Erasing the names outright -- or
+    mapping them all to one token -- would collapse these two queries, which
+    select different rows."""
+    first = ir_builder.build(
+        "let X = T | where a == 1; let Y = T | where b == 2; X | take 1"
+    )
+    second = ir_builder.build(
+        "let X = T | where a == 1; let Y = T | where b == 2; Y | take 1"
+    )
+
+    assert first.main_pipeline.source.name == "X"
+    assert second.main_pipeline.source.name == "Y"
+
+    assert first.semantic_hash != second.semantic_hash
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="Task 4.6 introduces LetValueRef; until then a scalar let reference "
+           "is lowered as a ColumnRef, which _canonicalize_let_names does not "
+           "rename because a real column of that name would be a different query",
+)
+def test_renaming_a_scalar_let_binding_does_not_change_the_hash(ir_builder):
+    """The remaining gap. ``n`` in ``where a > n`` builds a ``ColumnRef``, so
+    the binding's name is canonicalized at the declaration and left alone at
+    the use site, and the two queries still hash apart. Task 4.6 gives the
+    scalar reference its own node; delete this marker there."""
+    a = ir_builder.build("let n = 5; T | where a > n")
+    b = ir_builder.build("let m = 5; T | where a > m")
+
+    assert a.semantic_hash == b.semantic_hash

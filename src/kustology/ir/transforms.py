@@ -26,8 +26,8 @@ from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 
 from ._normalize import normalize_in_place
-from .expr import And, Expr
-from .query import FilterOp, Pipeline, QueryIR
+from .expr import And, Expr, Or, SetMembership
+from .query import FilterOp, LetBinding, LetRef, Pipeline, QueryIR
 from .spans import Span
 from .types import KustoType
 from .walk import find_all, walk
@@ -262,6 +262,81 @@ def _clear_volatile(root: BaseModel) -> None:
             object.__setattr__(node, "raw_text", _normalize_raw_text(node.raw_text))
 
 
+# Every model carrying a ``let``-bound name in a ``name`` field. Append to
+# this tuple when a new one lands -- Task 4.6's ``LetValueRef``, the node a
+# scalar ``let`` reference will build instead of today's ``ColumnRef``, is the
+# next one. Nothing else needs to change: ``_canonicalize_let_names`` walks by
+# isinstance against the whole tuple.
+_LET_NAME_MODELS: tuple[type[BaseModel], ...] = (LetBinding, LetRef)
+
+
+def _canonicalize_let_names(ir: QueryIR) -> None:
+    """Rename every ``let`` binding to ``$let<i>`` by declaration index.
+
+    A ``let`` name is a local label with no meaning outside the query, so
+    ``let X = …; X | take 1`` and ``let Y = …; Y | take 1`` are the same
+    query and must hash alike. The rename is *positional* rather than a
+    blanket erasure precisely so the rest stays distinguishable: with two
+    bindings in play, reading from the first and reading from the second are
+    different queries, and ``$let0`` / ``$let1`` keeps them apart.
+
+    ``$`` cannot appear in a KQL identifier, so a canonical name can never
+    collide with one the query chose. Runs on the hash's deep copy only.
+    """
+    renames = {binding.name: f"$let{i}" for i, binding in enumerate(ir.let_bindings)}
+    if not renames:
+        return
+    for node in walk(ir):
+        if isinstance(node, _LET_NAME_MODELS):
+            object.__setattr__(node, "name", renames.get(node.name, node.name))
+
+
+def _sort_commutative(root: BaseModel) -> None:
+    """Sort the operands of every commutative node into a canonical order.
+
+    ``and`` / ``or`` operands and the value list of a set-membership test are
+    the only places in the IR where source order carries no meaning. Sorting
+    them makes ``a and b`` and ``b and a`` one digest. Nothing else is
+    touched: ``a < b`` and ``b < a`` are opposite predicates, so a sort over
+    ``BinOp`` operands would merge two queries that disagree.
+
+    Two ordering dependencies, both load-bearing:
+
+    * The key is the child's dumped JSON, so this must run *after*
+      ``_clear_volatile`` -- otherwise the spans inside each operand order the
+      list by where it happened to be written, which is the opposite of the
+      point.
+    * Children must be sorted before their parents, since a parent's key is
+      computed from a child's dump. ``walk`` is pre-order, so iterating it
+      reversed visits every descendant before its ancestor. It bites when a
+      sibling's key falls *between* the two spellings of an operand:
+      ``(b or a) and (a or z)`` and ``(a or z) and (a or b)`` are the same
+      predicate, but top-down the first ``And`` keys on ``(b or a)`` and the
+      second on ``(a or b)``, which sort to opposite sides of ``(a or z)`` --
+      so the two ``And``s end up in opposite orders and stay different once
+      the ``Or``s are fixed.
+
+    Runs on the hash's deep copy only -- the public ``normalize_expressions``
+    leaves the query's own order alone.
+    """
+    for node in reversed(list(walk(root))):
+        if isinstance(node, (And, Or)):
+            node.operands = sorted(node.operands, key=_operand_sort_key)
+        elif isinstance(node, SetMembership):
+            node.values = sorted(node.values, key=_operand_sort_key)
+
+
+def _operand_sort_key(child: BaseModel) -> str:
+    """Total order over IR subtrees: their own canonical JSON dump.
+
+    ``sort_keys=True`` makes it independent of field declaration order, and
+    dumping the whole subtree rather than a rendered form means two operands
+    only tie when every field matches -- in which case their order genuinely
+    does not matter.
+    """
+    return json.dumps(child.model_dump(mode="json"), sort_keys=True)
+
+
 # Scheme prefix declares the version of the canonicalization rules (volatile
 # field set + transforms + dump format) so a future change can ship a new
 # tag without silently invalidating stored hashes. Keep in lockstep with
@@ -291,14 +366,25 @@ def compute_semantic_hash(node: BaseModel) -> str:
 
     Two subtrees with the same semantic content collide:
 
-    * Whitespace / formatting differences (same AST → same IR)
+    * Whitespace / formatting differences, comments included (same AST → same
+      IR, plus ``raw_text`` and every span cleared before the dump)
     * ``tolower(X) == "y"`` vs ``X =~ "y"`` (normalize_expressions)
     * ``| where A | where B`` vs ``| where A and B`` (merge_consecutive_filters)
     * Nested ``and`` grouping vs flat chain (normalize_expressions)
     * ``not(not(X))`` collapse (normalize_expressions)
+    * ``A and B`` vs ``B and A``, and the same for ``or`` — commutative
+      operands are sorted into a canonical order
+    * ``X in ("a", "b")`` vs ``X in ("b", "a")`` — a set test, so the order
+      the values were written in carries no meaning
+    * ``let X = …; X | take 1`` vs ``let Y = …; Y | take 1`` — a ``let`` name
+      is a local label, replaced by its declaration index (``$let0``, …)
 
     Two subtrees with different literal values, operators, identifiers,
-    or operator sequences do *not* collide.
+    or operator sequences do *not* collide. Nor do the near-misses of the
+    rules above: ``A < B`` and ``B < A`` are opposite predicates and only
+    genuinely commutative operands are sorted, and the ``let`` rename is
+    positional, so reading from the first binding and reading from the
+    second stay apart.
 
     The hash operates on a deep copy of ``node`` — does not mutate the
     input, and the result reflects the IR shape at call time. Stale if
@@ -312,6 +398,10 @@ def compute_semantic_hash(node: BaseModel) -> str:
     # no parent field for the replacement to be installed into.
     canonical = normalize_expressions(canonical)
     _clear_volatile(canonical)
+    if isinstance(canonical, QueryIR):
+        _canonicalize_let_names(canonical)
+    # After ``_clear_volatile``, so the sort key cannot see a span offset.
+    _sort_commutative(canonical)
     if isinstance(canonical, QueryIR):
         payload: Any = {
             "let_bindings": [lb.model_dump(mode="json") for lb in canonical.let_bindings],
