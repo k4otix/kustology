@@ -318,7 +318,13 @@ def is_table_symbol(sym: Any) -> bool:
 
 
 def read_to_typeof(node: Any) -> str | None:
-    """The type named by an ``mv-expand``/``mv-apply`` ``to typeof(T)`` clause.
+    """The type named by an expression's ``to typeof(T)`` clause, if any.
+
+    Called on an ``MvExpandExpression``. ``MvApplyExpression`` carries the
+    same ``ToTypeOf`` member and is *not* read yet -- ``mv-apply a to
+    typeof(long) on (…)`` still builds the same IR as ``mv-apply a on (…)``
+    -- so the reader is written against the member rather than the node
+    class, and wiring the second caller is a model change away.
 
     ``MvExpandExpression.ToTypeOf`` is a ``ToTypeOfClause`` whose ``TypeOf``
     is the whole ``typeof(string)`` literal expression -- rendering *that*
