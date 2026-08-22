@@ -230,3 +230,45 @@ def test_union_withsource_reaches_the_hash():
 
 def test_union_isfuzzy_reaches_the_hash():
     assert _hash("union isfuzzy=true T, U") != _hash("union T, U")
+
+
+# -- search ---------------------------------------------------------------
+
+def test_search_records_a_written_kind():
+    (op,) = _ops("search kind=case_sensitive in (A, B) 'x'")
+    assert op.search_kind == "case_sensitive"
+
+
+def test_search_records_the_tables_it_searches():
+    (op,) = _ops("search kind=case_sensitive in (A, B) 'x'")
+    assert [t.name for t in op.tables] == ["A", "B"]
+
+
+def test_searched_tables_are_reachable_as_table_refs():
+    from kustology.ir import TableRef, find_all
+    ir = _ir("search in (A, B) 'x'")
+    assert [t.name for t in find_all(ir, TableRef)] == ["A", "B"]
+
+
+def test_a_let_bound_name_in_search_in_is_a_let_ref():
+    from kustology.ir import LetRef
+    ir = _ir("let A = T | take 1; search in (A) 'x'")
+    (op,) = ir.main_pipeline.operators
+    assert isinstance(op.tables[0], LetRef)
+
+
+def test_search_qualified_table_keeps_its_database():
+    (op,) = _ops("search in (database('d').T) 'x'")
+    assert (op.tables[0].name, op.tables[0].database) == ("T", "d")
+
+
+def test_search_kind_reaches_the_hash():
+    assert _hash("search kind=case_sensitive 'x'") != _hash("search 'x'")
+
+
+def test_searched_table_reaches_the_hash():
+    assert _hash("search in (A) 'x'") != _hash("search in (B) 'x'")
+
+
+def test_search_scope_reaches_the_hash():
+    assert _hash("search in (A) 'x'") != _hash("search 'x'")

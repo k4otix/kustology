@@ -622,6 +622,14 @@ release is in `docs/superpowers/reports/`.
   wildcard table, or an unmodelled source. `to_llm_dict` caps
   `DataTableSource.rows` at 20 and adds a `rows_omitted` count, since real
   IOC datatables run to thousands of rows; `model_dump_json` stays complete.
+- **`SearchOp` gains `tables` and `search_kind`.** `search in (A) 'x'` and
+  `search in (B) 'x'` search different tables, and the in-clause was not
+  read at all, so both built a `SearchOp` holding only the term. Entries are
+  `TableRef` — or `LetRef` when an earlier `let` bound the name — so
+  `find_all(ir, TableRef)` now reports what a scoped `search` reads, and a
+  qualifier (`database('d').T`) or a wildcard (`T*`) survives. `search_kind`
+  stays optional: unlike `join` or `union kind`, its documented values have
+  shifted across Kusto versions, so there is no default this DLL pins.
 - **`UnionOp` gains a required `union_kind` plus `is_fuzzy` and
   `withsource`.** `union kind=inner` and `union kind=outer` return
   *different columns* — the intersection of the inputs' schemas against

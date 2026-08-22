@@ -575,14 +575,7 @@ class IRBuilder:
                 # being dropped on the way to the bare name.
                 qualified = extract_qualified_table_ref(n)
                 if qualified is not None and qualified[2]:
-                    cluster, database, tbl, is_wildcard = qualified
-                    source = TableRef(
-                        name=tbl,
-                        database=database,
-                        cluster=cluster,
-                        is_wildcard=is_wildcard,
-                        span=to_span(n),
-                    )
+                    source = self._visit_table_ref(n)
                     return
 
             if kind == "FunctionCallExpression":
@@ -630,32 +623,11 @@ class IRBuilder:
             if (kind in ("TableReference", "NameReference") or "Reference" in kind) and isinstance(
                 source, UnknownSource
             ):
-                name = ""
-                name_node = None
-                if hasattr(n, "Name"):
-                    name_node = n.Name
-                    name = visit_name(name_node)
-                elif hasattr(n, "SimpleName"):
-                    name = n.SimpleName.strip()
-                else:
-                    name = n.ToString().strip()
-                if name.lower() not in ("and", "or", "in", "in~", "has", "has_any", "not", "search"):
-                    # A name an earlier ``let`` bound is an alias, not a
-                    # table. The distinction is decidable from the let
-                    # statements alone -- no schema, no binder -- so it holds
-                    # identically for a bound and an unbound parse.
-                    if name in self._let_names:
-                        source = LetRef(name=name, span=to_span(n))
-                    else:
-                        # `union T*` names a set of tables; the bracketed
-                        # literal `union ['T*']` names one table that happens
-                        # to be called `T*`. Only the name node's Kind
-                        # separates them.
-                        source = TableRef(
-                            name=name,
-                            is_wildcard=is_wildcarded_name(name_node),
-                            span=to_span(n),
-                        )
+                ref = self._visit_table_ref(n)
+                if ref.name.lower() not in (
+                    "and", "or", "in", "in~", "has", "has_any", "not", "search",
+                ):
+                    source = ref
 
         walk(node)
         # Operators-but-no-explicit-source means the source is implicit (parent
@@ -663,6 +635,52 @@ class IRBuilder:
         if isinstance(source, UnknownSource) and operators:
             source = ImplicitSource(span=to_span(node))
         return Pipeline(source=source, operators=operators)
+
+    def _visit_table_ref(self, node: Any) -> TableRef | LetRef:
+        """A table named in a *naming* position, wherever the grammar puts one.
+
+        Three positions share this reading and used to read it three ways:
+        the pipeline's own source, ``search in (A, B)`` and
+        ``find in (T, U)``. The last two recorded a bare string -- ``find``
+        with ``el.ToString().strip()``, which is ``IncludeTrivia.All``, so
+        ``find in (// note`` ↵ ``T)`` hashed differently from ``find in (T)``
+        -- and neither could express a qualifier, a wildcard or a ``let``
+        alias, all three of which change what the query reads.
+
+        The three distinctions this preserves are the ones
+        :class:`~kustology.ir.query.TableRef` documents: ``database('d').T``
+        names a table in another database, ``T*`` names a *set* of tables
+        where ``['T*']`` names one table called that, and a name an earlier
+        ``let`` bound is an alias rather than anything the cluster holds.
+        """
+        span = to_span(node)
+        if str(type(node).__name__) == "PathExpression":
+            qualified = extract_qualified_table_ref(node)
+            if qualified is not None and qualified[2]:
+                cluster, database, tbl, is_wildcard = qualified
+                return TableRef(
+                    name=tbl,
+                    database=database,
+                    cluster=cluster,
+                    is_wildcard=is_wildcard,
+                    span=span,
+                )
+        name_node = getattr(node, "Name", None)
+        if name_node is not None:
+            name = visit_name(name_node)
+        elif hasattr(node, "SimpleName"):
+            name = str(node.SimpleName).strip()
+        else:
+            # ``node_text`` (``IncludeTrivia.Minimal``) rather than
+            # ``ToString()``: the no-argument overload prepends the node's
+            # leading trivia, which puts a preceding comment in the table
+            # name and from there into ``semantic_hash``.
+            name = _node_text(node).strip()
+        if name in self._let_names:
+            return LetRef(name=name, span=span)
+        return TableRef(
+            name=name, is_wildcard=is_wildcarded_name(name_node), span=span,
+        )
 
     def _visit_datatable(self, node: Any) -> DataTableSource:
         """Build a :class:`DataTableSource` from a ``DataTableExpression``.
@@ -851,7 +869,19 @@ class IRBuilder:
             )
 
         if kind == "SearchOperator":
-            return SearchOp(predicate=self._visit_expr(n.Condition) if hasattr(n, "Condition") else None, span=span)
+            # ``in (A, B)`` scopes the search to those tables; without it the
+            # search covers the whole database, which is a different query.
+            search_tables: list[Any] = []
+            search_in = getattr(n, "InClause", None)
+            if search_in is not None and hasattr(search_in, "Expressions"):
+                for el in _iter_elements(search_in.Expressions):
+                    search_tables.append(self._visit_table_ref(el))
+            return SearchOp(
+                predicate=self._visit_expr(n.Condition) if hasattr(n, "Condition") else None,
+                search_kind=extract_named_param(n, "kind"),
+                tables=search_tables,
+                span=span,
+            )
 
         if kind == "UnionOperator":
             pipes = []

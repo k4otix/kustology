@@ -355,9 +355,33 @@ class SampleOp(Operator):
 
 
 class SearchOp(Operator):
+    """``search`` — a term match across columns, optionally scoped to tables.
+
+    ``tables`` is the ``in (A, B)`` scope, which decides *what is searched*:
+    ``search in (A) 'x'`` and ``search in (B) 'x'`` read different tables and
+    used to build the same node, since the in-clause was not read at all.
+    Entries are :class:`TableRef`, or :class:`LetRef` when an earlier ``let``
+    bound the name -- the same reading the pipeline's own source position
+    gets, so a qualifier (``database('d').T``) and a wildcard (``T*``) survive
+    here too.
+
+    ``search_kind`` is the ``kind=case_sensitive`` modifier. It stays
+    optional rather than taking an effective default: unlike ``join`` or
+    ``union kind``, the parameter's documented values have shifted across
+    Kusto versions (``case_sensitive`` / ``case_insensitive``), and stamping
+    a default we cannot pin to the grammar in the DLL would assert something
+    the query did not say. An unwritten ``kind`` and a written one still hash
+    apart, which is the direction that matters.
+    """
+
     KIND: ClassVar[str] = "search"
     kind: Literal["search"] = "search"
     predicate: AnyExpr | None = None
+    search_kind: str | None = None
+    # Left-to-right, as ``Pipeline.source`` is: both classes are a bare
+    # ``name`` plus a ``span``, so only the ``kind`` literal tells a dumped
+    # ``LetRef`` from a ``TableRef`` on the way back in.
+    tables: list[Annotated[TableRef | LetRef, Field(union_mode="left_to_right")]] = []
 
 
 class UnionOp(Operator):
