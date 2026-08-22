@@ -377,10 +377,57 @@ class MakeSeriesOp(Operator):
     step: AnyExpr | None = None
 
 
+class MvExpandColumn(BaseModel):
+    """One expanded column of ``mv-expand``, with its declared element type.
+
+    ``mv-expand a to typeof(string)`` tells KQL the expanded rows are
+    strings, which changes the output column's type and therefore what
+    downstream operators can do with it. The builder unwrapped the parser's
+    ``MvExpandExpression`` to its inner expression and dropped the
+    ``ToTypeOf`` clause, so the typed and untyped forms built identical IR.
+
+    ``to_typeof`` is the type as the query wrote it (``string``, ``long``),
+    not a resolved :class:`~kustology.ir.types.KustoType` -- the same
+    reasoning as :class:`~kustology.ir.expr.TypedNameDecl.declared_type`.
+    It is genuinely optional: an unwritten ``to typeof(...)`` leaves the
+    expanded column ``dynamic``, which is not a value the clause can state.
+    """
+
+    model_config = {"extra": "forbid"}
+    KIND: ClassVar[str] = "mv_expand_column"
+    kind: Literal["mv_expand_column"] = "mv_expand_column"
+    expression: AnyExpr
+    to_typeof: str | None = None
+    span: Span
+
+
 class MvExpandOp(Operator):
+    """``mv-expand`` — one output row per element of a dynamic column.
+
+    Every modifier here changes the rows the operator returns and every one
+    of them used to be discarded, so ``mv-expand a``,
+    ``mv-expand a limit 10`` and ``mv-expand with_itemindex=i a`` were one
+    node with one ``semantic_hash``.
+
+    All four are optional with a ``None``/absent default rather than an
+    effective one (D8). ``limit`` and ``with_itemindex`` have no unwritten
+    value at all — no limit is not a limit of any number, and an unwritten
+    index column adds no column. ``kind``/``bagexpansion`` are two spellings
+    of one modifier whose unwritten behaviour is ``bag``, but they are
+    recorded separately and left unstamped precisely because they are two
+    spellings: substituting the default into both would claim the query said
+    something it did not, and picking one field to carry it would make the
+    other's absence ambiguous.
+    """
+
     KIND: ClassVar[str] = "mv_expand"
     kind: Literal["mv_expand"] = "mv_expand"
-    columns: list[AnyExpr]
+    columns: list[MvExpandColumn]
+    # ``limit N``. ``int`` first for the same reason as ``TakeOp.count``.
+    row_limit: int | AnyExpr | None = None
+    with_item_index: str | None = None
+    bag_expansion: str | None = None
+    expand_kind: str | None = None
 
 
 class RenderOp(Operator):

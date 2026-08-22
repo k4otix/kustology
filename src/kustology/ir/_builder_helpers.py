@@ -303,8 +303,51 @@ def is_table_symbol(sym: Any) -> bool:
         return False
 
 
-def extract_named_param(node: Any, param_name: str, default: str) -> str:
-    """Walk an operator's NamedParameter list looking for ``param_name=value``."""
+def read_to_typeof(node: Any) -> str | None:
+    """The type named by an ``mv-expand``/``mv-apply`` ``to typeof(T)`` clause.
+
+    ``MvExpandExpression.ToTypeOf`` is a ``ToTypeOfClause`` whose ``TypeOf``
+    is the whole ``typeof(string)`` literal expression -- rendering *that*
+    node would record ``"typeof(string)"``, so the type name comes from its
+    ``Types`` list, confirmed with ``dir()`` on a real parse. The clause text
+    is the fallback for a shape the parser recovers differently.
+
+    ``node_text`` (``IncludeTrivia.Minimal``) rather than ``ToString()``,
+    which is ``IncludeTrivia.All``: the latter would put a comment written
+    before the type into the recorded type string and from there into
+    ``semantic_hash``.
+    """
+    from ..utils.walker import iter_elements, node_text
+
+    clause = getattr(node, "ToTypeOf", None)
+    if clause is None:
+        return None
+    type_of = getattr(clause, "TypeOf", None)
+    types = getattr(type_of, "Types", None) if type_of is not None else None
+    if types is not None and getattr(types, "Count", 0):
+        rendered = ", ".join(
+            text for text in (node_text(el).strip() for el in iter_elements(types)) if text
+        )
+        if rendered:
+            return rendered
+    text = node_text(clause).strip()
+    if "typeof(" in text:
+        return text.split("typeof(", 1)[1].strip().rstrip(")").strip()
+    return text or None
+
+
+def extract_named_param(
+    node: Any, param_name: str, default: str | None = None,
+) -> str | None:
+    """Walk an operator's NamedParameter list looking for ``param_name=value``.
+
+    ``default`` is what the caller wants when the parameter is not written.
+    It is ``str | None`` rather than ``str`` because the two answers are
+    different statements: ``join`` has an effective default to substitute
+    (``innerunique``, decision D8) while ``mv-expand``'s ``with_itemindex``
+    has none -- an unwritten index column is not an index column named
+    anything.
+    """
     params = getattr(node, "Parameters", None)
     if not params or not getattr(params, "Count", 0):
         return default

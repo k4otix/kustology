@@ -32,6 +32,7 @@ from ._builder_helpers import (
     map_semantic_info,
     read_external_data,
     read_row_schema,
+    read_to_typeof,
     to_span,
     visit_name,
 )
@@ -99,6 +100,7 @@ from .query import (
     MakeGraphOp,
     MakeSeriesOp,
     MvApplyOp,
+    MvExpandColumn,
     MvExpandOp,
     Operator,
     ParseKvOp,
@@ -882,11 +884,33 @@ class IRBuilder:
             )
 
         if kind == "MvExpandOperator":
-            cols = []
+            # Each element is an ``MvExpandExpression``: the column plus its
+            # optional ``to typeof(...)``. Unwrapping to ``.Expression`` --
+            # what this branch used to do -- discarded the declared element
+            # type, and the operator's own modifiers (``limit``,
+            # ``with_itemindex``, ``bagexpansion``, ``kind``) were never read
+            # at all, so six different queries built one node.
+            mv_cols: list[Any] = []
             if hasattr(n, "Expressions"):
                 for mve in _iter_elements(n.Expressions):
-                    cols.append(self._visit_expr(mve.Expression))
-            return MvExpandOp(columns=cols, span=span)
+                    mv_cols.append(MvExpandColumn(
+                        expression=self._visit_expr(mve.Expression),
+                        to_typeof=read_to_typeof(mve),
+                        span=to_span(mve),
+                    ))
+            row_limit_clause = getattr(n, "RowLimitClause", None)
+            limit_node = (
+                getattr(row_limit_clause, "RowLimit", None)
+                if row_limit_clause is not None else None
+            )
+            return MvExpandOp(
+                columns=mv_cols,
+                row_limit=self._visit_count(limit_node) if limit_node is not None else None,
+                with_item_index=extract_named_param(n, "with_itemindex"),
+                bag_expansion=extract_named_param(n, "bagexpansion"),
+                expand_kind=extract_named_param(n, "kind"),
+                span=span,
+            )
 
         if kind == "MvApplyOperator":
             assigns = []

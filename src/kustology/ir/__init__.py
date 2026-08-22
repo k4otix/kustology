@@ -41,7 +41,8 @@ from .query import (
     GraphToTableOp, GraphWhereEdgesOp,
     GraphWhereNodesOp, ImplicitSource,
     InvokeOp, JoinOp, LetBinding, LetFunction, LetRef, LookupOp, MacroExpandOp,
-    MakeGraphOp, MakeSeriesOp, MvApplyOp, MvExpandOp, Operator, ParseKvOp,
+    MakeGraphOp, MakeSeriesOp, MvApplyOp, MvExpandColumn, MvExpandOp,
+    Operator, ParseKvOp,
     ParseOp, ParseWhereOp, PartitionOp, Pipeline, PrintOp, ProjectAwayOp,
     ProjectByNamesOp, ProjectKeepOp, ProjectOp, ProjectRenameOp,
     ProjectReorderOp, QueryIR, RangeOp, RenderOp, ReorderKey,
@@ -72,7 +73,7 @@ __all__ = [
     "Finding", "AnalyzerFn", "Severity",
     # Top-level / container
     "QueryIR", "Pipeline", "LetBinding", "LetFunction", "Diagnostic", "Assignment",
-    "ForkBranch", "ReorderKey", "SortKey", "Span",
+    "ForkBranch", "MvExpandColumn", "ReorderKey", "SortKey", "Span",
     "KustoType", "TabularSchema",
     # Expressions
     "Expr", "AnyExpr", "ColumnRef", "BinOp", "SetMembership", "Between",

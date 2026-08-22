@@ -57,6 +57,12 @@ def test_capture_type_reaches_the_hash():
     assert _hash("T | parse a with 'x' b:long") != _hash("T | parse a with 'x' b:string")
 
 
+def test_typed_capture_is_reachable_through_find_all():
+    from kustology.ir import find_all
+    ir = _ir("T | parse a with 'x' b:long")
+    assert [d.declared_type for d in find_all(ir, TypedNameDecl)] == ["long"]
+
+
 def test_typed_capture_gives_the_binder_the_declared_type():
     """The declared type is the column's type -- nothing to infer.
 
@@ -67,3 +73,73 @@ def test_typed_capture_gives_the_binder_the_declared_type():
         "T | parse a with 'x' b:long", schema={"T": {"a": "string"}},
     ).to_ir()
     assert ir.main_pipeline.result_schema.columns["b"] == "long"
+
+
+# -- mv-expand ------------------------------------------------------------
+
+_MV_ALL = (
+    "T | mv-expand kind=array with_itemindex=i bagexpansion=bag "
+    "a to typeof(string) limit 10"
+)
+
+
+def test_mv_expand_records_the_expanded_column():
+    (op,) = _ops(_MV_ALL)
+    (col,) = op.columns
+    assert col.expression.name == "a"
+
+
+def test_mv_expand_records_the_declared_element_type():
+    (op,) = _ops(_MV_ALL)
+    assert op.columns[0].to_typeof == "string"
+
+
+def test_mv_expand_records_the_row_limit():
+    (op,) = _ops(_MV_ALL)
+    assert op.row_limit == 10
+
+
+def test_mv_expand_records_with_itemindex():
+    (op,) = _ops(_MV_ALL)
+    assert op.with_item_index == "i"
+
+
+def test_mv_expand_records_bagexpansion():
+    (op,) = _ops(_MV_ALL)
+    assert op.bag_expansion == "bag"
+
+
+def test_mv_expand_records_its_kind():
+    (op,) = _ops(_MV_ALL)
+    assert op.expand_kind == "array"
+
+
+def test_mv_expand_modifiers_all_reach_the_hash():
+    """Each modifier alone must move the digest, and off a common base.
+
+    Comparing the four spellings pairwise is what catches a field that is
+    modelled but not hashed: three of them could still collapse onto the
+    bare form if only one pair were checked.
+    """
+    variants = {
+        "bare": _hash("T | mv-expand a"),
+        "typed": _hash("T | mv-expand a to typeof(string)"),
+        "limited": _hash("T | mv-expand a limit 10"),
+        "indexed": _hash("T | mv-expand with_itemindex=i a"),
+        "bagged": _hash("T | mv-expand bagexpansion=bag a"),
+        "kinded": _hash("T | mv-expand kind=array a"),
+    }
+    assert len(set(variants.values())) == len(variants), variants
+
+
+def test_mv_expand_element_type_is_a_value_not_a_flag():
+    assert _hash("T | mv-expand a to typeof(string)") != _hash(
+        "T | mv-expand a to typeof(long)"
+    )
+
+
+def test_mv_expand_still_binds_the_expanded_column():
+    ir = parse(
+        "T | mv-expand a | where a == 'x'", schema={"T": {"a": "dynamic"}},
+    ).to_ir()
+    assert "a" in ir.main_pipeline.result_schema.columns

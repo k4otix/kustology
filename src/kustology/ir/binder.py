@@ -456,10 +456,20 @@ class SchemaAttacher:
             return
         if isinstance(op, MvExpandOp):
             current = self._scope_columns(scope)
-            for c in op.columns:
+            for col in op.columns:
+                # ``col`` is an ``MvExpandColumn`` wrapper, not the
+                # expression: it carries the ``to typeof(...)`` the query
+                # wrote. Handing the wrapper to ``_fill`` would reach for
+                # ``result_type`` on a node that has none.
+                c = col.expression
                 self._fill(c, scope)
                 name = self._extract_target_name(c)
                 if not name:
+                    continue
+                if col.to_typeof:
+                    # The query states the expanded element's type, so there
+                    # is nothing to infer from the binder's dynamic<T>.
+                    current[name] = col.to_typeof
                     continue
                 inner = getattr(c, "result_type_inner", None)
                 if inner is not None:

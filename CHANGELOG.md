@@ -622,6 +622,20 @@ release is in `docs/superpowers/reports/`.
   wildcard table, or an unmodelled source. `to_llm_dict` caps
   `DataTableSource.rows` at 20 and adds a `rows_omitted` count, since real
   IOC datatables run to thousands of rows; `model_dump_json` stays complete.
+- **`MvExpandOp.columns` is `list[MvExpandColumn]`** (was `list[AnyExpr]`),
+  and the operator gains `row_limit`, `with_item_index`, `bag_expansion` and
+  `expand_kind`. Every modifier `mv-expand` takes was discarded, so
+  `mv-expand a`, `mv-expand a to typeof(string)`, `mv-expand a limit 10`,
+  `mv-expand with_itemindex=i a`, `mv-expand bagexpansion=bag a` and
+  `mv-expand kind=array a` — six queries returning different rows — built
+  one node and shared one `semantic_hash`. Reach the expanded expression
+  through `.expression`; `.to_typeof` carries the declared element type as
+  written, and the binder now uses it for the post-expand column type
+  instead of inferring `dynamic`. All four operator-level fields stay
+  optional: D8's effective-default rule applies where KQL has one value to
+  substitute, and `limit`/`with_itemindex` have none, while
+  `kind`/`bagexpansion` are two spellings of one modifier (stamping `bag`
+  into both would claim the query said something it did not).
 - **Typed name declarations are a `TypedNameDecl`, not a `ColumnRef`.** A
   `name:type` in expression position — the typed capture of
   `parse a with 'x' b:long`, a typed column of `find … project a:string` —
