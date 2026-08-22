@@ -1000,10 +1000,13 @@ def test_a_bare_on_key_resolves_against_the_left_side():
     assert key.table == "L"
 
 
-def test_a_bare_on_key_only_the_right_side_has_still_resolves():
-    ir = _fallback("L | lookup (R) on k")
+def test_lookups_bare_on_key_resolves_to_the_left_side_too():
+    """``lookup`` drops the right side's key outright, so the left is the
+    only side whose column survives -- the same answer for a stronger
+    reason."""
     from kustology.ir import ColumnRef, LookupOp, find_all
 
+    ir = _fallback("L | lookup (R) on k")
     lookup = next(
         op for op in ir.main_pipeline.operators if isinstance(op, LookupOp)
     )
@@ -1479,3 +1482,24 @@ def test_another_evaluate_plugin_leaves_the_scope_alone():
     """The must-not-change direction: only ``bag_unpack`` has a known rule."""
     ir = _fallback("T | evaluate autocluster()")
     assert _names(ir) == ["k", "a", "t", "d", "s", "g"]
+
+
+def test_search_provenance_survives_an_authoritative_result_schema():
+    """``search`` keeps its rule on a bound parse, as ``join`` does.
+
+    It has an implicit source, so the pre-operator scope is empty and the
+    overlay would file every column it emits as anonymous -- a following
+    ``where a > 1`` would report no table for a column that plainly comes
+    from ``T``.
+    """
+    from kustology import parse
+    from kustology.ir import ColumnRef, FilterOp, find_all
+
+    schemas = {"T": {"k": "string", "a": "long"}}
+    ir = parse("search in (T) 'x' | where a > 1", schema=schemas).to_ir()
+    search_op = ir.main_pipeline.operators[0]
+    assert search_op.result_schema is not None, "premise: Microsoft answered"
+    where = next(
+        op for op in ir.main_pipeline.operators if isinstance(op, FilterOp)
+    )
+    assert {c.table for c in find_all(where, ColumnRef)} == {"T"}

@@ -778,14 +778,17 @@ class SchemaAttacher:
             # ours, so the expressions are filled first and the scope is
             # then overlaid rather than replaced.
             #
-            # ``join`` / ``lookup`` / ``union`` keep their hand-rolled rule
-            # even here, for two things the overlay cannot recover: ``on``
-            # clauses resolve against a scope that includes the right side
-            # (``$left`` / ``$right`` depend on it), and the per-side
-            # ``ScopeEntry`` it appends is what gives a right-hand column a
-            # table at all. The overlay then corrects the names and types
-            # that rule guesses at -- which is the whole point of the task.
-            if isinstance(op, (JoinOp, LookupOp, UnionOp)):
+            # ``join`` / ``lookup`` / ``union`` / ``search`` keep their
+            # hand-rolled rule even here, for things the overlay cannot
+            # recover: ``on`` clauses resolve against a scope that includes
+            # the right side (``$left`` / ``$right`` depend on it), the
+            # per-side ``ScopeEntry`` a join appends is what gives a
+            # right-hand column a table at all, and ``search`` has an
+            # implicit source, so without its rule the pre-operator scope is
+            # empty and every column it emits would be filed as anonymous.
+            # The overlay then corrects the names and types those rules guess
+            # at -- which is the whole point of the task.
+            if isinstance(op, (JoinOp, LookupOp, UnionOp, SearchOp)):
                 self._walk_operator_rules(op, scope)
             else:
                 self._fill_children(op, scope, inherited=scope)
