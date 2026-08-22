@@ -529,6 +529,15 @@ release is in `docs/superpowers/reports/`.
   for `$left.k == $right.k`, where both sides have a `k` — resolves to the
   left, the side whose column the engine keeps; the general ambiguity rule
   would have answered `None`.
+- **Enriching one IR twice with different schemas takes the second (tier
+  2).** An operator-less pipeline has nothing to read its output shape off,
+  so the walk fell back to `Pipeline.result_schema` — the builder's record of
+  Microsoft's reading of the source. But the walk *writes* that same field,
+  so a second `SchemaAttacher(...).enrich(ir)` read the first call's answer
+  and ignored the new schema entirely. `QueryIR.schema_attached` now decides:
+  on a fresh IR the field is the builder's and is used, and once an `enrich`
+  has run the shape is re-derived from the source. Introduced in this
+  release's per-operator binder work, so no released version is affected.
 - **Six public `KustoQuery` members gained docstrings (tier 1).**
   `get_operator_chain`, `get_referenced_columns`, `get_referenced_functions`,
   `get_structural_hash`, `syntax` and `text` delegated in silence, so

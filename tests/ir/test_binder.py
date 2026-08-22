@@ -1004,3 +1004,57 @@ def test_a_bare_on_key_only_the_right_side_has_still_resolves():
     )
     (key,) = [c for e in lookup.on for c in find_all(e, ColumnRef)]
     assert key.table == "L"
+
+
+# Re-enriching one IR: the builder's schema is the only carry-over ------------
+
+
+def test_enriching_twice_with_different_schemas_takes_the_second():
+    """An operator-less pipeline read its *own* ``result_schema`` back.
+
+    ``_walk_pipeline`` prefers the last operator's schema and, with no
+    operators, the pipeline's own — which the builder sets from Microsoft's
+    reading of the source. But a previous ``enrich`` writes that same field,
+    so the second call read the first call's answer and the new schema was
+    ignored. With an operator present the same sequence is correct, which is
+    what makes the bug invisible to almost every test.
+    """
+    first = {"T": {"a": "long", "s": "string"}}
+    second = {"T": {"a": "real", "s": "guid"}}
+
+    ir = IRBuilder().build("T")
+    assert not ir.main_pipeline.operators, "premise: the operator-less branch"
+    SchemaAttacher(first).enrich(ir)
+    assert ir.main_pipeline.result_schema.columns == {"a": "long", "s": "string"}
+    SchemaAttacher(second).enrich(ir)
+    assert ir.main_pipeline.result_schema.columns == {"a": "real", "s": "guid"}
+
+
+def test_enriching_twice_refreshes_an_operator_less_let_binding():
+    """Same shape one level down, where it also decides the *name*'s schema.
+
+    ``enrich`` reads each binding's ``result_schema`` to register what the
+    alias holds, so a stale one is not confined to the binding — every
+    column the main pipeline resolves through ``M`` gets the previous
+    schema's type.
+    """
+    first = {"T": {"a": "long"}}
+    second = {"T": {"a": "real"}}
+
+    ir = IRBuilder().build("let M = materialize(T); M | project a")
+    binding = ir.let_bindings[0]
+    assert not binding.rhs_pipeline.operators, "premise: the operator-less branch"
+    SchemaAttacher(first).enrich(ir)
+    assert binding.rhs_pipeline.result_schema.columns == {"a": "long"}
+    assert ir.main_pipeline.result_schema.columns == {"a": "long"}
+    SchemaAttacher(second).enrich(ir)
+    assert binding.rhs_pipeline.result_schema.columns == {"a": "real"}
+    assert ir.main_pipeline.result_schema.columns == {"a": "real"}
+
+
+def test_enriching_twice_already_worked_with_an_operator_present():
+    """The must-not-change direction: the operator branch was never stale."""
+    ir = IRBuilder().build("T | where a > 1")
+    SchemaAttacher({"T": {"a": "long"}}).enrich(ir)
+    SchemaAttacher({"T": {"a": "real"}}).enrich(ir)
+    assert ir.main_pipeline.result_schema.columns == {"a": "real"}

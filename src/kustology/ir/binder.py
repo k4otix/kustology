@@ -56,7 +56,7 @@ from .query import (
     UnionOp,
 )
 from .types import KustoType
-from .walk import _models_in
+from .walk import _models_in, find_all
 
 # Join kinds that emit one side's columns only. ``anti``/``leftantisemi`` and
 # ``rightantisemi`` are Microsoft's own aliases -- the parser lists all twelve
@@ -193,6 +193,9 @@ class SchemaAttacher:
         # every nested pipeline walk, so a join inside an ``on`` clause
         # cannot leak its sides to the enclosing one or vice versa.
         self._join_sides: tuple[list[ScopeEntry], list[ScopeEntry]] | None = None
+        # {id(pipeline): the schema the *builder* left on it}, snapshotted
+        # at ``enrich`` entry. Empty outside a call.
+        self._builder_schemas: dict[int, TabularSchema | None] = {}
 
     def enrich(self, ir: QueryIR) -> QueryIR:
         """Enrich the whole IR in place and mark it attached.
@@ -239,19 +242,42 @@ class SchemaAttacher:
         also flags the binding body's own columns, which read the table.
         """
         self._let_schemas = {}
-        for binding in ir.let_bindings:
-            if binding.rhs_pipeline is None:
-                continue
-            self._walk_pipeline(binding.rhs_pipeline)
-            schema = binding.rhs_pipeline.result_schema
-            if schema is not None:
-                self._let_schemas[binding.name] = dict(schema.columns)
-        self._walk_pipeline(ir.main_pipeline)
-        # Later tabular statements are pipelines like any other; skipping them
-        # would leave the same column resolved in statement one and unresolved
-        # in statement two.
-        for pipeline in ir.additional_pipelines:
-            self._walk_pipeline(pipeline)
+        # A pipeline with no operators has nothing to read its output shape
+        # off, so ``_walk_pipeline`` falls back to ``Pipeline.result_schema``
+        # -- the builder's record of what Microsoft made of the source. But
+        # ``_walk_pipeline`` also *writes* that field, so on a second
+        # ``enrich`` of the same IR it was reading the previous call's answer
+        # and the new schema was ignored entirely: ``SchemaAttacher(A)`` then
+        # ``SchemaAttacher(B)`` on ``IRBuilder().build("T")`` kept A's types.
+        # Snapshotting before anything is walked is not enough on its own,
+        # because by the second call the field *is* the first call's output.
+        # ``schema_attached`` is the record of whether that has happened: on
+        # an IR fresh from the builder it is False and the field is the
+        # builder's, and once an ``enrich`` has run it is True and there is
+        # no builder value left to read, so the walk derives the shape from
+        # the source itself.
+        self._builder_schemas = (
+            {} if ir.schema_attached
+            else {id(p): p.result_schema for p in find_all(ir, Pipeline)}
+        )
+        try:
+            for binding in ir.let_bindings:
+                if binding.rhs_pipeline is None:
+                    continue
+                self._walk_pipeline(binding.rhs_pipeline)
+                schema = binding.rhs_pipeline.result_schema
+                if schema is not None:
+                    self._let_schemas[binding.name] = dict(schema.columns)
+            self._walk_pipeline(ir.main_pipeline)
+            # Later tabular statements are pipelines like any other; skipping
+            # them would leave the same column resolved in statement one and
+            # unresolved in statement two.
+            for pipeline in ir.additional_pipelines:
+                self._walk_pipeline(pipeline)
+        finally:
+            # A direct ``_walk_pipeline`` call after this one is not part of
+            # any enrich, and must not consult a snapshot taken for one.
+            self._builder_schemas = {}
         ir.schema_attached = True
         return ir
 
@@ -346,13 +372,15 @@ class SchemaAttacher:
         # join's output by side rather than by the order the engine emits.
         #
         # With no operators there is nothing to read it off, and the value
-        # the builder left on the pipeline -- Microsoft's reading of the
-        # source -- stands in. When the builder had no answer either, that
-        # slot holds whatever a previous walk of this pipeline computed,
-        # which is the same merge this one would redo.
+        # the *builder* left on the pipeline -- Microsoft's reading of the
+        # source -- stands in. That comes from the snapshot taken at
+        # ``enrich`` entry rather than from the live field, which this method
+        # overwrites: reading the field made a second ``enrich`` of the same
+        # IR hand back the first one's answer and ignore the new schema.
+        # Outside an ``enrich`` the snapshot is empty and the merge answers.
         authoritative = (
             pipeline.operators[-1].result_schema if pipeline.operators
-            else pipeline.result_schema
+            else self._builder_schemas.get(id(pipeline))
         )
         if authoritative is not None:
             pipeline.result_schema = TabularSchema(
