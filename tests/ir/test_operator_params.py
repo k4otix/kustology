@@ -189,3 +189,44 @@ def test_parse_flags_reach_the_hash():
     assert _hash("T | parse kind=regex flags='i' a with 'x' b") != _hash(
         "T | parse kind=regex a with 'x' b"
     )
+
+
+# -- union ----------------------------------------------------------------
+
+_UNION_ALL = "union kind=inner withsource=S isfuzzy=true T, U"
+
+
+def test_union_records_a_written_kind():
+    (op,) = _ops(_UNION_ALL)
+    assert op.union_kind == "inner"
+
+
+def test_union_records_withsource():
+    (op,) = _ops(_UNION_ALL)
+    assert op.withsource == "S"
+
+
+def test_union_records_isfuzzy_as_a_bool():
+    (op,) = _ops(_UNION_ALL)
+    assert op.is_fuzzy is True
+
+
+def test_bare_union_records_kqls_effective_kind():
+    (op,) = _ops("union T, U")
+    assert op.union_kind == "outer"
+
+
+def test_union_kind_reaches_the_hash():
+    assert _hash("union kind=inner T, U") != _hash("union kind=outer T, U")
+
+
+def test_bare_union_hashes_as_its_effective_kind():
+    assert _hash("union T, U") == _hash("union kind=outer T, U")
+
+
+def test_union_withsource_reaches_the_hash():
+    assert _hash("union withsource=S T, U") != _hash("union T, U")
+
+
+def test_union_isfuzzy_reaches_the_hash():
+    assert _hash("union isfuzzy=true T, U") != _hash("union T, U")

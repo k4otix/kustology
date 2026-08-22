@@ -361,9 +361,29 @@ class SearchOp(Operator):
 
 
 class UnionOp(Operator):
+    """``union`` — concatenate the rows of two or more tables.
+
+    ``union_kind`` decides the *output schema*: ``outer`` keeps every column
+    any input has, ``inner`` keeps only the columns they all share. Two
+    queries differing in it return different columns, and the builder read
+    neither, so they shared a node and a hash.
+
+    Required with no default, holding KQL's effective value ``"outer"`` for
+    a bare ``union`` — see :class:`ParseOp.parse_kind` for why the field is
+    declared this way rather than defaulted.
+
+    ``withsource=C`` adds a column naming the source table of each row and
+    ``isfuzzy=true`` downgrades a missing table from an error to a warning;
+    both change the result, and both are genuinely optional (no column and
+    no fuzziness are not values either parameter can state).
+    """
+
     KIND: ClassVar[str] = "union"
     kind: Literal["union"] = "union"
     pipelines: list["Pipeline"]
+    union_kind: str
+    is_fuzzy: bool = False
+    withsource: str | None = None
 
 
 class MakeSeriesOp(Operator):

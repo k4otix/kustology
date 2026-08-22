@@ -225,6 +225,19 @@ _CASE_INSENSITIVE_OP_STEMS = (
 )
 
 
+def _as_bool(value: str | None) -> bool:
+    """Read a boolean named parameter (``isfuzzy=true``) as a Python bool.
+
+    ``extract_named_param`` returns the parameter's rendered value, and for
+    a boolean literal that is .NET's ``"True"`` / ``"False"`` rather than
+    KQL's own lowercase spelling. Both are accepted, along with the ``1`` /
+    ``0`` form the grammar also admits; anything else -- including an
+    unwritten parameter -- is ``False``, which is the operator's behaviour
+    when the flag is absent.
+    """
+    return value is not None and value.strip().lower() in ("true", "1")
+
+
 def _is_tabular_let_rhs(net_kind: str) -> bool:
     """True when a ``let`` RHS of this .NET node kind is a tabular expression.
 
@@ -845,7 +858,14 @@ class IRBuilder:
             if hasattr(n, "Expressions"):
                 for el in _iter_elements(n.Expressions):
                     pipes.append(self._visit_pipeline(el))
-            return UnionOp(pipelines=pipes, span=span)
+            return UnionOp(
+                pipelines=pipes,
+                # KQL's effective default, never None -- see UnionOp.
+                union_kind=extract_named_param(n, "kind", default="outer") or "outer",
+                is_fuzzy=_as_bool(extract_named_param(n, "isfuzzy")),
+                withsource=extract_named_param(n, "withsource"),
+                span=span,
+            )
 
         if kind == "MakeSeriesOperator":
             aggs = []

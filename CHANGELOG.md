@@ -622,6 +622,13 @@ release is in `docs/superpowers/reports/`.
   wildcard table, or an unmodelled source. `to_llm_dict` caps
   `DataTableSource.rows` at 20 and adds a `rows_omitted` count, since real
   IOC datatables run to thousands of rows; `model_dump_json` stays complete.
+- **`UnionOp` gains a required `union_kind` plus `is_fuzzy` and
+  `withsource`.** `union kind=inner` and `union kind=outer` return
+  *different columns* — the intersection of the inputs' schemas against
+  their union — and neither the kind, the `withsource=C` provenance column
+  nor `isfuzzy=true` was read, so four different queries built one node.
+  `union_kind` carries KQL's effective default `"outer"` (D8) and is
+  declared required for the same reason as `parse_kind`.
 - **`ParseOp` and `ParseWhereOp` gain a required `parse_kind` and an
   optional `flags`.** `parse kind=simple`, `kind=regex` and `kind=relaxed`
   are three different matching engines and the builder read none of them,
