@@ -1457,3 +1457,25 @@ def test_a_join_whose_right_side_is_a_union_appends_it_once():
         ("k1", "string"), ("a1", "long"), ("shared1", "string"),
         ("b", "real"),
     ]
+
+
+# evaluate bag_unpack: the packed column is consumed --------------------------
+
+
+def test_evaluate_bag_unpack_drops_the_packed_column():
+    """``EvaluateOp`` had no scope rule, so the scope passed through whole.
+
+    A plug-in can add columns the binder cannot enumerate, which is why
+    Microsoft leaves the symbol *open* here -- but it still knows
+    ``bag_unpack(d)`` consumes ``d``, and reports the other five columns. The
+    keys the bag adds stay unknown to both of us; keeping ``d`` was a
+    divergence on the part Microsoft did answer.
+    """
+    ir = _fallback("T | evaluate bag_unpack(d)")
+    assert _names(ir) == ["k", "a", "t", "s", "g"]
+
+
+def test_another_evaluate_plugin_leaves_the_scope_alone():
+    """The must-not-change direction: only ``bag_unpack`` has a known rule."""
+    ir = _fallback("T | evaluate autocluster()")
+    assert _names(ir) == ["k", "a", "t", "d", "s", "g"]

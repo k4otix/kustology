@@ -600,6 +600,11 @@ release is in `docs/superpowers/reports/`.
   source leaves, so `SecurityEvent | join (union A, B) on Account` appended
   no right-hand columns at all. The right scope is merged into the single row
   set it is, keeping per-column provenance.
+- **`evaluate bag_unpack(d)` drops the packed column (tier 2).** `evaluate`
+  had no scope rule, so the column the plug-in consumes stayed in scope. The
+  keys the bag adds are unknowable — which is why Microsoft leaves the symbol
+  open — but that `d` is gone is not, and it was the half of the answer the
+  binder did give. Every other plug-in still passes the scope through.
 - **Six public `KustoQuery` members gained docstrings (tier 1).**
   `get_operator_chain`, `get_referenced_columns`, `get_referenced_functions`,
   `get_structural_hash`, `syntax` and `text` delegated in silence, so

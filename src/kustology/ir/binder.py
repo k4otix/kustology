@@ -38,6 +38,7 @@ from .query import (
     CountOp,
     DataTableSource,
     DistinctOp,
+    EvaluateOp,
     ExtendOp,
     ExternalDataSource,
     FilterOp,
@@ -1087,6 +1088,25 @@ class SchemaAttacher:
             # ``count`` discards the input schema for a single long column;
             # ``count as N`` names it.
             self._set_scope(scope, {op.as_name or "Count": KustoType.LONG.value})
+            return
+        if isinstance(op, EvaluateOp):
+            # A plug-in can add columns nobody can enumerate, which is why
+            # Microsoft leaves the symbol open for every ``evaluate``. It
+            # still knows what the call *consumes*, though: ``bag_unpack(d)``
+            # replaces ``d`` with the bag's keys, so ``d`` is gone from the
+            # output. Keeping it was a divergence on the half of the answer
+            # the binder did give. Every other plug-in passes the scope
+            # through, which is what the fallthrough already does.
+            self._fill_children(op, scope, inherited=scope)
+            if aggregate_function_name(op.func) == "bag_unpack":
+                packed = next(
+                    (a.name for a in op.func.args if isinstance(a, ColumnRef)),
+                    None,
+                )
+                if packed:
+                    current = self._scope_columns(scope)
+                    current.pop(packed, None)
+                    self._set_scope(scope, current)
             return
         if isinstance(op, SerializeOp):
             # ``serialize`` alone preserves the schema; ``serialize rn =

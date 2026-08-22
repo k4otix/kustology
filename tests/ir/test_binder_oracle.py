@@ -142,12 +142,6 @@ CORPUS_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "complex_quer
 # turns a fixed case into a failure here rather than letting it sit as a
 # silent xpass.
 XFAIL_5_3: dict[str, str] = {
-    "evaluate-bag-unpack": (
-        "Task 5.3: `evaluate bag_unpack(d)` drops the packed column `d` and "
-        "adds the bag's keys. Microsoft's symbol is open (it cannot "
-        "enumerate the keys) but it does drop `d`; EvaluateOp has no scope "
-        "rule at all, so ours keeps `d` and adds nothing."
-    ),
     "ADFSRemoteHTTPNetworkConnection": (
         "Task 5.3: an `evaluate` mid-pipeline opens every symbol after it, "
         "and three fallback rules then diverge at once — the walk keeps "
