@@ -253,10 +253,45 @@ MUST_DIFFER = [
     # wildcard on a table name was not read.
     ("datatable-rows", "datatable(a:long)[1,2] | count", "datatable(a:long)[3,4] | count"),
     ("datatable-schema", "datatable(a:long)[1] | count", "datatable(b:long)[1] | count"),
+    # The schema is a (name, type) list and the pair above varies only the
+    # name, so it would stay green if the type half stopped being read.
+    # `assert-schema` already treats the type as worth its own case.
+    (
+        "datatable-column-type",
+        "datatable(a:long)[1] | count",
+        "datatable(a:int)[1] | count",
+    ),
     (
         "externaldata-uris",
         'externaldata(a:string)["https://x/1.csv"] | count',
         'externaldata(a:string)["https://x/2.csv"] | count',
+    ),
+    # `uris` was the only externaldata field with a pair, so the other three
+    # reached the digest unguarded. `columns` is the same name-vs-type point
+    # as the datatable pair above; one case covers both halves here because
+    # the reader is shared (`read_row_schema`) and pinned per-half there.
+    (
+        "externaldata-format",
+        'externaldata(a:string)["https://x/1.csv"] with (format="csv") | count',
+        'externaldata(a:string)["https://x/1.csv"] with (format="json") | count',
+    ),
+    (
+        "externaldata-columns",
+        'externaldata(a:string)["https://x/1.csv"] | count',
+        'externaldata(b:string)["https://x/1.csv"] | count',
+    ),
+    # A real collision until this review round, and the corpus fixture
+    # `ExternalData_CsvFeed.kql` writes the very modifier that was dropped:
+    # `ignoreFirstRecord` skips the CSV header, so the feed yields one fewer
+    # row. Only `format` was read out of the with-clause, and a source node
+    # has no `raw_text` for the rest to survive in.
+    (
+        "externaldata-ignore-first-record",
+        (
+            'externaldata(a:string)["https://x/1.csv"] '
+            'with (format="csv", ignoreFirstRecord=true) | count'
+        ),
+        'externaldata(a:string)["https://x/1.csv"] with (format="csv") | count',
     ),
     ("database-qualifier", 'database("d1").T | count', 'database("d2").T | count'),
     (
@@ -276,6 +311,15 @@ MUST_DIFFER = [
     ("parse-kind", "T | parse x with 'a' y", "T | parse kind=regex x with 'a' y"),
     ("parse-flags", "T | parse kind=regex flags='i' x with 'a' y", "T | parse kind=regex x with 'a' y"),
     ("parse-where-kind", "T | parse-where x with 'a' y", "T | parse-where kind=regex x with 'a' y"),
+    # `parse-where` duplicates `ParseOp`'s fields on its own class and reads
+    # them at its own call site, so each half of the duplication needs its
+    # own pair. The `kind` half was pinned a commit before this one and the
+    # `flags` half one line below it in the builder was not.
+    (
+        "parse-where-flags",
+        "T | parse-where kind=regex flags='i' x with 'a' y",
+        "T | parse-where kind=regex x with 'a' y",
+    ),
     ("union-kind", "union kind=inner A, B", "union kind=outer A, B"),
     ("union-withsource", "union withsource=S A, B", "union A, B"),
     ("union-isfuzzy", "union isfuzzy=true A, B", "union A, B"),
@@ -306,6 +350,13 @@ MUST_DIFFER = [
     ("lookup-default-vs-inner", "T | lookup U on a", "T | lookup kind=inner U on a"),
     ("find-scope-tables", "find in (A) where x == 1", "find in (B) where x == 1"),
     ("find-withsource", "find withsource=S in (A) where x == 1", "find in (A) where x == 1"),
+    # `project` is the third field the FindOp bullet announces and was the
+    # one with no pair; it selects which columns come back.
+    (
+        "find-project",
+        "find in (A) where x == 1 project a",
+        "find in (A) where x == 1 project b",
+    ),
     # TypedNameDecl: the declaration's Type child was never read, so a typed
     # capture and an untyped one were one node.
     ("typed-capture-vs-untyped", "T | parse x with 'a' b:long", "T | parse x with 'a' b"),
@@ -317,7 +368,21 @@ MUST_DIFFER = [
     ("second-statement-dropped", "T | count; U | count", "T | count"),
     # 4.6 -- LetValueRef. A let-bound scalar lowered to a ColumnRef, so a
     # query-local constant and a real column of that name were one node.
-    ("let-scalar-vs-column", "let n = 5; T | where a > n", "T | where a > n"),
+    #
+    # Both sides declare a binding, and only the *resolution* of `n` in the
+    # predicate varies: on the left `n` is the name just bound, on the right
+    # the binding is called `z` so `n` can only be a column of `T`. Holding
+    # the binding count fixed is the whole point. The pair this replaces was
+    # `let n = 5; T | where a > n` against a bare `T | where a > n`, which
+    # differs for a reason that has nothing to do with the field it claimed
+    # to guard -- `let n = 5; T | where a > 1` and `T | where a > 1` already
+    # hash apart on the presence of the binding alone, so it stayed green
+    # under a full revert of the use site to `ColumnRef`.
+    (
+        "let-scalar-vs-column",
+        "let n = 5; T | where a > n",
+        "let z = 5; T | where a > n",
+    ),
     # 4.7 -- typed nested pipelines. `pipeline` was declared `Any`, so the
     # subtree survived in memory but reloaded as a plain dict, and the
     # span-stripping walk never reached inside it -- a stored IR did not
@@ -396,6 +461,13 @@ MUST_EQUAL = [
     # "inner" the builder used to assume.
     ("sort-bare-is-desc", "T | sort by a", "T | sort by a desc"),
     ("top-bare-is-desc", "T | top 5 by a", "T | top 5 by a desc"),
+    # The same default reached through the *other* branch of the same
+    # expression: `sort by a nulls first` has an Ordering node with no
+    # direction keyword, where a bare `sort by a` has no Ordering node at
+    # all. One `or "desc"` serves both, so the two pairs above -- which only
+    # exercise the missing-node path -- would both stay green if the
+    # keyword-absent path stopped defaulting.
+    ("sort-nulls-only-is-desc", "T | sort by a nulls first", "T | sort by a desc nulls first"),
     ("mv-expand-bare-is-bag", "T | mv-expand a", "T | mv-expand kind=bag a"),
     ("parse-bare-is-simple", "T | parse x with 'a' y", "T | parse kind=simple x with 'a' y"),
     # `parse-where` is a separate operator class carrying its own copy of the
