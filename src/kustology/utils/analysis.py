@@ -5,6 +5,7 @@ import hashlib
 import warnings
 
 from ..bridge import ColumnSymbol, FunctionSymbol, TableSymbol
+from ..reflection import syntax_kinds as _syntax_kinds
 from .schema_state import build_global_state  # re-exported
 from .walker import (  # re-exported
     KustoWalker,
@@ -73,6 +74,25 @@ except Exception:  # pragma: no cover — defensive
     })
 
 _STRUCTURAL_NOISE_KINDS = frozenset({"List", "SeparatedElement"})
+
+# Every SyntaxKind that names a *token* — punctuation, keywords, identifiers.
+# Derived once from the enum, as a closed set: substring-matching "Token" also
+# catches ``TokenLiteralExpression`` (the value half of ``kind=inner``) and
+# ``TokenName``, neither of which is a token. See :func:`get_structural_hash`.
+_TOKEN_KINDS = frozenset(k for k in _syntax_kinds() if k.endswith("Token"))
+
+
+def _is_token_kind(kind: str) -> bool:
+    """True when ``kind`` names a token rather than a node.
+
+    ``syntax_kinds()`` returns empty rather than raising if enum reflection
+    fails; falling back to the suffix test keeps the hash's meaning stable
+    instead of silently folding every token kind into it.
+    """
+    if _TOKEN_KINDS:
+        return kind in _TOKEN_KINDS
+    return kind.endswith("Token")  # pragma: no cover — reflection failed
+
 
 _TIME_LITERAL_KINDS = frozenset({
     "DateTimeLiteralExpression", "TimespanLiteralExpression",
@@ -453,10 +473,45 @@ def get_referenced_functions(kusto_code, force_syntactic: bool = False) -> set[s
     }
 
 
+def _is_plugin_callee(node) -> bool:
+    """True when this NameReference names the plug-in of an ``evaluate``.
+
+    ``evaluate bag_unpack(d)`` parses as a plain ``FunctionCallExpression``
+    directly under the ``EvaluateOperator``, so the plug-in name is an
+    ordinary identifier in the tree with nothing to mark it as a plug-in.
+    The grandparent's kind is what distinguishes it.
+    """
+    parent = node.Parent
+    if parent is None or str(parent.Kind) != "FunctionCallExpression":
+        return False
+    if not _is_function_callee(node):
+        return False
+    grandparent = parent.Parent
+    return grandparent is not None and str(grandparent.Kind) == "EvaluateOperator"
+
+
 def get_structural_hash(kusto_code) -> str:
-    """SHA256 over the AST shape — dedupes queries that differ only in literal
-    values or whitespace. Not a logical-equivalence hash: parenthesization and
-    other cosmetic rewrites may still produce different hashes.
+    """SHA256 over the AST shape — a "same query modulo the data" fingerprint.
+
+    **Blind to** literal values (``x == 1`` and ``x == 5`` hash alike),
+    identifiers (table, column and ordinary function names — ``Alpha | where
+    beta == 1`` matches ``Gamma | where delta == 1``, and ``tolower(x)``
+    matches ``toupper(x)``), whitespace, and comments. Not a
+    logical-equivalence hash either: parenthesization and other cosmetic
+    rewrites still change it.
+
+    **Sensitive to** the keyword value of every named parameter and to the
+    plug-in an ``evaluate`` names — ``join kind=inner`` versus
+    ``kind=leftanti``, ``union kind=inner`` versus ``kind=outer``,
+    ``evaluate bag_unpack(d)`` versus ``evaluate pivot(d)``. Those are not
+    cosmetic: they select the operator's semantics, and folding them together
+    made this hash claim two genuinely different queries were one shape.
+
+    The exception inside that sensitivity is a named parameter whose value is
+    an ordinary literal — ``union isfuzzy=true`` and ``isfuzzy=false``, or
+    ``parse flags='i'`` and ``flags='m'`` — which stays invisible, because
+    blindness to literals is the property this hash exists for. Only the
+    enumerated-keyword values (a ``TokenLiteralExpression``) are kept.
     """
     parts = []
 
@@ -465,7 +520,15 @@ def get_structural_hash(kusto_code) -> str:
             kind = str(node.Kind)
             if kind in _STRUCTURAL_NOISE_KINDS:
                 return
-            if "Token" in kind:
+            if _is_token_kind(kind):
+                return
+            if kind == "TokenLiteralExpression":
+                # `kind=inner` / `hint.strategy=shuffle`: the value is one of a
+                # closed set of keywords, not data.
+                parts.append(f"{kind}:{node_text(node)}")
+                return
+            if kind == "NameReference" and _is_plugin_callee(node):
+                parts.append(f"{kind}:{node_name(node)}")
                 return
             parts.append(kind)
 

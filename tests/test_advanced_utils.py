@@ -100,6 +100,57 @@ def test_structural_hash_ignores_literal_values():
     assert h1 != h3
 
 
+def test_structural_hash_distinguishes_join_kind():
+    """`kind=inner` and `kind=leftanti` are different queries, not one shape.
+
+    The parameter value is a ``TokenLiteralExpression``, whose *kind* string
+    contains "Token" — so a walker that skips every kind containing "Token"
+    threw the value away and hashed an inner join identically to an anti-join.
+    """
+    inner = parse("T | join kind=inner (U) on a").get_structural_hash()
+    leftanti = parse("T | join kind=leftanti (U) on a").get_structural_hash()
+    assert inner != leftanti
+
+
+def test_structural_hash_distinguishes_union_kind():
+    inner = parse("union kind=inner A, B").get_structural_hash()
+    outer = parse("union kind=outer A, B").get_structural_hash()
+    assert inner != outer
+
+
+def test_structural_hash_distinguishes_evaluate_plugin():
+    """`bag_unpack` expands a dynamic column; `pivot` reshapes the whole table.
+
+    The plug-in name is an ordinary ``NameReference`` — not a
+    ``TokenLiteralExpression`` — so retaining named-parameter values is not
+    enough on its own to tell these two apart.
+    """
+    bag_unpack = parse("T | evaluate bag_unpack(d)").get_structural_hash()
+    pivot = parse("T | evaluate pivot(d)").get_structural_hash()
+    assert bag_unpack != pivot
+
+
+def test_structural_hash_still_ignores_whitespace_and_literals():
+    """The boundary the fix must not cross: same shape, different text."""
+    base = parse("T | join kind=inner (U) on a | where x == 1").get_structural_hash()
+    respaced = parse(
+        "T\n| join   kind=inner (U) on a\n| where x == 5"
+    ).get_structural_hash()
+    assert base == respaced
+
+
+def test_structural_hash_still_ignores_identifiers():
+    """Table, column and ordinary function names stay outside the hash."""
+    assert (
+        parse("Alpha | where beta == 1").get_structural_hash()
+        == parse("Gamma | where delta == 1").get_structural_hash()
+    )
+    assert (
+        parse("T | extend a = tolower(x)").get_structural_hash()
+        == parse("T | extend a = toupper(x)").get_structural_hash()
+    )
+
+
 def test_find_time_expressions_returns_tuples_in_source_order():
     query = "T | where TimeGenerated > ago(1h) | extend n = now()"
     times = parse(query).find_time_expressions()

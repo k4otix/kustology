@@ -194,6 +194,21 @@ release is in `docs/superpowers/reports/`.
   fixture rules against a deliberately half-complete schema lost a table in
   13 of them before this change and none after. `get_tables_semantic()` is
   unchanged and still strictly the binder's answer.
+- **`get_structural_hash()` no longer collapses `kind=inner` into
+  `kind=leftanti` (tier 1).** The walker skipped every syntax kind whose
+  name *contains* "Token", which is true of `TokenLiteralExpression` — the
+  node holding the value half of a named parameter. So the value was
+  discarded along with the punctuation, and an inner join hashed identically
+  to an anti-join, `union kind=inner` to `kind=outer`, and
+  `mv-expand bagexpansion=array` to `bagexpansion=bag`. The plug-in an
+  `evaluate` names was lost the same way for a different reason — it is an
+  ordinary identifier in the tree — so `evaluate bag_unpack(d)` and
+  `evaluate pivot(d)` shared a hash. Named-parameter keyword values and
+  `evaluate` plug-in names are now part of the hash; literals, identifiers,
+  whitespace and comments still are not, and the docstring now states both
+  halves of that boundary. **Stored hashes from 0.2-dev are invalidated** —
+  the token-kind exclusion is now matched by suffix, so `TokenName` nodes
+  changed the digest of every query as well.
 
 ### Added
 
