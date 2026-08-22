@@ -11,13 +11,18 @@ same `main()` function, so testing the module form covers both.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 
 import kustology
 
 
-def _run(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
+def _run(
+    *args: str,
+    stdin: str | None = None,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, "-m", "kustology.cli", *args],
         input=stdin,
@@ -26,6 +31,7 @@ def _run(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
         encoding="utf-8",
         timeout=30,
         check=False,
+        env=None if env is None else {**os.environ, **env},
     )
 
 
@@ -65,12 +71,61 @@ def test_format_default_input_is_stdin():
     assert "| take" in result.stdout
 
 
-def test_format_invalid_input_returns_clean_error():
-    """Empty input must never surface a Python traceback to the user."""
+def test_format_empty_input_is_not_an_error():
+    """Empty input has no diagnostics, so it succeeds — and must never
+    surface a Python traceback."""
     result = _run("format", stdin="")
-    assert result.returncode in (0, 1), f"unexpected exit code {result.returncode}"
+    assert result.returncode == 0, result.stderr
     assert "Traceback" not in result.stderr, result.stderr
     assert "Traceback" not in result.stdout, result.stdout
+
+
+def test_format_refuses_input_it_could_not_parse():
+    """End-to-end shape of the exit-1 contract: `T | where` has an Error
+    diagnostic, so the shipped entry point writes nothing to stdout and
+    exits 1 rather than emitting the formatter's half-parsed `'T | where '`."""
+    result = _run("format", stdin="T | where")
+    assert result.returncode == 1, result.stderr
+    assert result.stdout == ""
+    assert "KS006" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_parse_refuses_input_it_could_not_parse():
+    result = _run("parse", stdin="T | where")
+    assert result.returncode == 1, result.stderr
+    assert result.stdout == ""
+
+
+def test_missing_file_is_a_usage_error():
+    """Exit 2 through the real entry point, not just through `main()` —
+    the docstring's contract is what a shell script branches on."""
+    result = _run("format", "/no/such/path/does-not-exist.kql")
+    assert result.returncode == 2, result.stderr
+    assert "FileNotFoundError" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_input_ceiling_counts_bytes_on_real_stdin():
+    """The in-process suite fakes `sys.stdin` with a `TextIOWrapper`; this
+    runs the same 20-character/28-byte payload through the interpreter's own
+    `sys.stdin.buffer`, so the byte accounting is proved on the real object
+    and not only on the double. Cap 22 rejects it, cap 28 lets it through."""
+    payload = 'T | where a== "日本語だ"'
+    assert (len(payload), len(payload.encode("utf-8"))) == (20, 28)
+
+    tight = _run(
+        "format", stdin=payload, env={"KUSTOLOGY_MAX_INPUT_BYTES": "22"}
+    )
+    assert tight.returncode == 2, tight.stderr
+    assert "22-byte input ceiling" in tight.stderr
+    assert tight.stdout == ""
+
+    loose = _run(
+        "format", stdin=payload, env={"KUSTOLOGY_MAX_INPUT_BYTES": "28"}
+    )
+    assert loose.returncode == 0, loose.stderr
+    assert "日本語だ" in loose.stdout
 
 
 def test_validate_clean_query_exits_0():
@@ -152,7 +207,10 @@ def test_parse_ast_json_shape():
 
 
 def test_parse_ir_json_requires_extras():
-    """`--ir --json` emits the IR when pydantic is present, else exits 2 with a hint."""
+    """`--ir --json` emits the versioned envelope when pydantic is present,
+    else exits 2 with a hint. The IR itself moved under the `"ir"` key when
+    the envelope was added; a consumer reading the top level now finds the
+    two version tags instead."""
     try:
         import pydantic  # noqa: F401
         have_ir = True
@@ -162,9 +220,12 @@ def test_parse_ir_json_requires_extras():
     result = _run("parse", "--ir", "--json", stdin="StormEvents | take 5")
     if have_ir:
         assert result.returncode == 0, result.stderr
-        ir = json.loads(result.stdout)
-        assert "main_pipeline" in ir
-        assert "operators" in ir["main_pipeline"]
+        payload = json.loads(result.stdout)
+        assert set(payload) == {"ir_schema_version", "semantic_hash_scheme", "ir"}
+        from kustology.ir import IR_SCHEMA_VERSION, SEMANTIC_HASH_SCHEME
+        assert payload["ir_schema_version"] == IR_SCHEMA_VERSION
+        assert payload["semantic_hash_scheme"] == SEMANTIC_HASH_SCHEME
+        assert "operators" in payload["ir"]["main_pipeline"]
     else:
         assert result.returncode == 2
         assert "[ir]" in result.stderr or "pydantic" in result.stderr

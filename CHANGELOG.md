@@ -255,6 +255,30 @@ release is in `docs/superpowers/reports/`.
   `time_functions()` 24 → 28, `string_functions()` 66 → 68,
   `scalar_functions()` 335 → 328, `all_function_names()` 482 → 532,
   `aggregate_functions()` unchanged at 61.
+- **The CLI honours its documented exit codes (tier 1).** `cli.py`'s
+  docstring has always promised `0` success, `1` the input had errors, `2` a
+  usage error, and the code decided between them by whichever exception
+  happened to escape. A missing file and a malformed `--schema` JSON both
+  reached the bare `except Exception` and reported `1` — the code that means
+  "we read your query and it had errors", for a query that was never read;
+  and `parse` printed the AST of input carrying Error-severity diagnostics
+  and exited `0`, so a script checking only the status code treated
+  `T | where` as a good parse. Both file and schema failures are now `2` and
+  an Error diagnostic is `1`, in every subcommand.
+- **`KUSTOLOGY_MAX_INPUT_BYTES` counts bytes (tier 1).** The ceiling read
+  through a decoded text stream, so `len(data)` counted *characters*: a
+  20-character query occupying 28 bytes passed a 22-byte cap. The read now
+  goes through `sys.stdin.buffer`, and file inputs open binary.
+- **Deeply nested input no longer raises `RecursionError` out of the library
+  (tier 1).** `KustoQuery.to_dict()`, `KustoWalker.visit` and everything
+  built on them (`collect_nodes` and every analyzer above it) recursed once
+  per AST level with no cap, and 1200 nested parentheses nest the tree past
+  2400 levels — deeper than CPython's own 1000-frame limit. The CLI carried
+  a local cap of 1000 that could never be reached for the same reason. The
+  cap is now `walker.MAX_AST_DEPTH = 300`, enforced in the walker where all
+  three paths share it: `node_to_dict` emits `{"kind", "text", "children":
+  [], "truncated": true}` at the cap and `visit` stops descending, so
+  adversarial input degrades to a marked partial answer.
 
 ### Added
 
@@ -299,6 +323,17 @@ release is in `docs/superpowers/reports/`.
   shared query now contains one — demonstrating `LetBinding.rhs_pipeline` and
   the `TableRef` / `LetRef` split against the AST equivalent.
   `examples/find_all_demo.py` shows the same split via `find_all`.
+- `kustology parse --schema PATH` (tier 1) — the same JSON schema file
+  `validate --schema` takes, now on `parse`. It binds the parse, and
+  `to_ir()` auto-attaches on a bound parse, so `parse --ir --schema` emits an
+  IR with column types, table provenance and `schema_attached: true` instead
+  of an unenriched skeleton. `--ast` accepts it too; binding does not change
+  the syntax tree.
+- `parse --ir --json` emits a versioned envelope (tier 1):
+  `{"ir_schema_version", "semantic_hash_scheme", "ir"}`. Both tags are the
+  consumer's compatibility contract and neither was reachable from the CLI,
+  so a stored payload could not be checked against the IR shape that
+  produced it. The IR itself moved under `"ir"`.
 
 ### Changed
 
@@ -307,6 +342,19 @@ release is in `docs/superpowers/reports/`.
   every time-related expression, not a resolved range, and the old name led a
   consumer to use it as a lookback extractor.
 - .NET runtime discovery and boundary member probes log at `DEBUG`.
+- `format` refuses input the parser rejected. It used to print whatever
+  Microsoft's formatter returned for a broken query — `'T | where '` for the
+  truncated `T | where` — and exit `0`, so a shell redirect wrote a query the
+  parser had already rejected to a file. It now writes nothing to stdout,
+  reports the diagnostics on stderr and exits `1`; `parse` does the same. The
+  gate is unbound, so an unknown table is still fine.
+- `parse --ast --json` node text no longer carries the node's leading
+  trivia. The CLI had its own copy of the tree serializer that differed from
+  `walker.node_to_dict` in exactly this respect — the `where` token of
+  `| where x == 1` serialized as `" where"` and the pipe token as `"\n|"`.
+  Both emitters now render the library's dict, so the CLI's JSON is
+  `KustoQuery.to_dict()` output. Kinds and tree shape are unchanged, and the
+  text form's output is byte-identical.
 
 ### Breaking (tier 2, pre-1.0)
 

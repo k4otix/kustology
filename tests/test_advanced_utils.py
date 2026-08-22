@@ -380,3 +380,93 @@ def test_collect_nodes_visits_every_node_when_predicate_is_constant():
     kinds = {str(n.Kind) for n in everything}
     assert "CountOperator" in kinds
     assert "PipeExpression" in kinds
+
+
+# --- AST depth cap -------------------------------------------------------
+#
+# `MAX_AST_DEPTH` lives in `kustology.utils.walker` and bounds both the
+# `node_to_dict` serializer and `KustoWalker.visit`. Before it existed the
+# only cap was a CLI-local constant of 1000 that CPython's own 1000-frame
+# recursion limit made unreachable, so `KustoQuery.to_dict()` on deeply
+# nested input raised `RecursionError` out of the library.
+
+_PAREN_BOMB = "T | where " + "(" * 1200 + "1" + ")" * 1200
+
+
+def _walk_depths(node, depth=0):
+    """Yield ``(depth, node)`` for every node of a ``node_to_dict`` tree."""
+    yield depth, node
+    for child in node["children"]:
+        yield from _walk_depths(child, depth + 1)
+
+
+def test_to_dict_truncates_instead_of_raising_recursion_error():
+    """1200 nested parens nest the AST past 2400 levels. `to_dict()` used to
+    raise `RecursionError`; it now returns a tree capped at `MAX_AST_DEPTH`
+    whose deepest nodes carry `truncated: True` and no children."""
+    import json as _json
+
+    from kustology.utils.walker import MAX_AST_DEPTH
+
+    data = parse(_PAREN_BOMB).to_dict()
+
+    measured = list(_walk_depths(data))
+    assert max(d for d, _ in measured) == MAX_AST_DEPTH
+    truncated = [(d, n) for d, n in measured if n.get("truncated")]
+    assert truncated, "expected a truncation marker at the cap"
+    assert {d for d, _ in truncated} == {MAX_AST_DEPTH}
+    assert all(n["children"] == [] and n["text"] for _, n in truncated)
+    assert '"truncated": true' in _json.dumps(data, indent=2)
+
+
+def test_to_dict_of_an_ordinary_query_carries_no_truncation_marker():
+    """Control for the cap: a real query nests ~17 levels, so nothing is
+    marked truncated and the key is absent everywhere. Without this, a
+    `node_to_dict` that truncated at depth 0 would pass the test above."""
+    data = parse(
+        'StormEvents | where EventType == "Tornado" | summarize C=count() by State'
+    ).to_dict()
+
+    def flatten(d):
+        yield d
+        for c in d["children"]:
+            yield from flatten(c)
+
+    nodes = list(flatten(data))
+    assert len(nodes) > 20
+    assert all("truncated" not in n for n in nodes)
+
+
+def test_kusto_walker_stops_descending_at_the_depth_cap():
+    """`KustoWalker.visit` recurses too, so `collect_nodes` and every
+    analyzer built on it hit the same wall. The cap makes the walk finish;
+    the depth it reaches pins that it stopped at `MAX_AST_DEPTH` rather than
+    bailing out early or running away."""
+    from kustology.utils.walker import MAX_AST_DEPTH, KustoWalker
+
+    class DepthProbe(KustoWalker):
+        def __init__(self):
+            self.deepest = 0
+            self.visited = 0
+
+        def pre_visit(self, node):
+            self.visited += 1
+
+        def visit(self, node, depth=0):
+            self.deepest = max(self.deepest, depth)
+            super().visit(node, depth)
+
+    probe = DepthProbe()
+    probe.visit(parse(_PAREN_BOMB).syntax)
+    assert probe.deepest == MAX_AST_DEPTH
+    assert probe.visited > 300
+
+
+def test_kusto_walker_still_reaches_the_leaves_of_an_ordinary_query():
+    """Control: the cap must not shorten a normal walk. `collect_nodes` on a
+    shallow query still finds the operator that lives at its deepest point."""
+    from kustology.utils.analysis import collect_nodes
+
+    code = parse("T | where x == 1 | project x, y | take 5").syntax
+    kinds = {str(n.Kind) for n in collect_nodes(code, lambda n: True)}
+    assert {"FilterOperator", "ProjectOperator", "TakeOperator"} <= kinds

@@ -8,8 +8,15 @@ Subcommands: version, format, validate, parse.
 Exit codes:
   0 — success.
   1 — input had errors (parse failure, Error-severity diagnostic).
-  2 — usage error (bad flags, missing file, missing optional extra,
-      input exceeded the size ceiling).
+  2 — usage error (bad flags, missing or unreadable file, malformed
+      ``--schema`` JSON, missing optional extra, input exceeded the size
+      ceiling).
+
+The distinction between 1 and 2 is "your query is wrong" versus "your
+invocation is wrong", and it is what a CI job branches on: an unreadable
+path or an unparseable ``--schema`` says nothing about the KQL. Both
+``format`` and ``parse`` run the validator before they emit anything, so
+neither writes output derived from a query the parser rejected.
 """
 from __future__ import annotations
 
@@ -20,6 +27,7 @@ import sys
 
 from . import __version__
 from .services import format_query, parse, validate
+from .utils.walker import MAX_AST_DEPTH, node_to_dict
 
 # Bound the bytes we'll read from stdin or a file. KQL queries are not large;
 # a 10 MB ceiling means a deliberately oversized payload (CI webhook abuse,
@@ -51,25 +59,34 @@ def _add_io_arguments(p: argparse.ArgumentParser) -> None:
 
 
 def _read_capped(stream, limit: int, source: str) -> str:
-    """Read up to ``limit`` bytes from a text stream; raise if exceeded.
+    """Read up to ``limit`` **bytes** from ``stream``, then decode as UTF-8.
+
+    The ceiling is named in bytes and has to mean bytes: a decoded text
+    stream's ``read(n)`` counts *characters*, so measuring it lets a
+    multibyte payload occupy several times the ceiling in memory — which is
+    the one thing the ceiling exists to prevent. We therefore read through
+    ``stream.buffer``, the undecoded byte stream behind ``sys.stdin``, and
+    treat a stream that has no ``.buffer`` as already binary (that is how
+    the file paths open it).
 
     Reads ``limit + 1`` so we can distinguish "exactly limit bytes" from
     "overflowed." The +1 is bounded, not the entire stream.
     """
-    data = stream.read(limit + 1)
+    raw = getattr(stream, "buffer", stream)
+    data: bytes = raw.read(limit + 1)
     if len(data) > limit:
         raise _InputTooLargeError(
             f"{source} exceeded the {limit}-byte input ceiling "
             "(override via KUSTOLOGY_MAX_INPUT_BYTES)."
         )
-    return data
+    return data.decode("utf-8")
 
 
 def _read_input(args: argparse.Namespace) -> str:
     limit = _max_input_bytes()
     if args.file in (None, "-"):
         return _read_capped(sys.stdin, limit, "stdin")
-    with open(args.file, encoding="utf-8") as f:
+    with open(args.file, "rb") as f:
         return _read_capped(f, limit, args.file)
 
 
@@ -122,6 +139,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--json", action="store_true",
         help="Emit JSON instead of human-readable text.",
     )
+    parse_p.add_argument(
+        "--schema", metavar="PATH",
+        help="Path to a JSON schema file ({table: {column: type}}). Binds the "
+             "parse, which fills the IR's column types and table provenance. "
+             "The --ast tree is unaffected by binding.",
+    )
 
     return parser
 
@@ -131,8 +154,36 @@ def _cmd_version() -> int:
     return 0
 
 
+def _format_diagnostic(d: dict) -> str:
+    severity = d.get("severity", "?")
+    code = d.get("code") or ""
+    code_str = f"[{code}]" if code else ""
+    start = d.get("start", 0)
+    length = d.get("length", 0)
+    return f"{start}+{length} {severity}{code_str} {d.get('message', '')}\n"
+
+
+def _report_error_diagnostics(body: str) -> bool:
+    """Write any Error-severity diagnostics to stderr; True if there were any.
+
+    ``format`` and ``parse`` both derive their output from the parse tree, so
+    emitting it for input the parser rejected hands the caller something that
+    looks like a result and is not one — the formatter returns ``'T | where '``
+    for the truncated ``T | where``, and a shell redirect writes that to a
+    file. The gate is unbound (parser diagnostics only): a table the schema
+    does not describe is a schema gap, not a malformed query, and ``validate``
+    is the subcommand for asking about that.
+    """
+    errors = [d for d in validate(body) if d.get("severity") == "Error"]
+    for d in errors:
+        sys.stderr.write(_format_diagnostic(d))
+    return bool(errors)
+
+
 def _cmd_format(args: argparse.Namespace) -> int:
     body = _read_input(args)
+    if _report_error_diagnostics(body):
+        return 1
     sys.stdout.write(format_query(body))
     if not body.endswith("\n"):
         sys.stdout.write("\n")
@@ -143,7 +194,7 @@ def _load_schema(path: str | None) -> dict | None:
     if not path:
         return None
     limit = _max_input_bytes()
-    with open(path, encoding="utf-8") as f:
+    with open(path, "rb") as f:
         body = _read_capped(f, limit, path)
     return _json.loads(body)
 
@@ -161,85 +212,41 @@ def _cmd_validate(args: argparse.Namespace) -> int:
         sys.stdout.write("\n")
     else:
         for d in diags:
-            severity = d.get("severity", "?")
-            code = d.get("code") or ""
-            start = d.get("start", 0)
-            length = d.get("length", 0)
-            msg = d.get("message", "")
-            code_str = f"[{code}]" if code else ""
-            sys.stdout.write(f"{start}+{length} {severity}{code_str} {msg}\n")
+            sys.stdout.write(_format_diagnostic(d))
     has_error = any(d.get("severity") == "Error" for d in diags)
     return 1 if has_error else 0
 
 
-# Hard cap on AST recursion depth for the CLI emitters. KQL grammar nests
-# real queries to <50 levels; >1000 is adversarial input (e.g. a paren bomb)
-# and we'd rather emit a truncation marker than blow the Python stack.
-_MAX_AST_DEPTH = 1000
+def _ast_dict_to_text(node: dict, indent: int = 0) -> str:
+    """Render a :func:`~kustology.utils.walker.node_to_dict` tree as text.
 
-
-def _node_kind(node) -> str:
-    """Return ``str(node.Kind)`` — the SyntaxKind enum value, the same form
-    ``scripts/audit_syntax_kinds.py`` uses. Falls back to the Python class
-    name if Kind isn't accessible (leaf-token edge case)."""
-    try:
-        return str(node.Kind)
-    except AttributeError:
-        return type(node).__name__
-
-
-def _ast_to_dict(node, depth: int = 0) -> dict:
-    """Recursively convert a .NET syntax node into a {kind, text, children} dict.
-
-    Iterative would be cleaner, but the resulting tree is recursive by shape
-    anyway; bounded recursion is the right tool. Past ``_MAX_AST_DEPTH`` we
-    emit a truncation marker rather than recurse further.
+    The CLI used to carry its own ``_ast_to_dict`` / ``_ast_to_text`` pair
+    alongside the library's serializer. Three copies of one traversal meant
+    three depth caps to keep honest, and they had already drifted: the CLI's
+    dict left each node's leading trivia in ``text`` where the library's
+    stripped it. Both emitters now render the library's dict, so the JSON and
+    the text form describe the same tree by construction and the depth cap is
+    enforced once, in the walker.
     """
-    text = str(node.ToString())
-    if depth >= _MAX_AST_DEPTH:
-        return {"kind": _node_kind(node), "text": text, "children": [],
-                "truncated": True}
-    children = []
-    try:
-        cc = node.ChildCount
-        for i in range(cc):
-            c = node.GetChild(i)
-            if c is not None:
-                children.append(_ast_to_dict(c, depth + 1))
-    except AttributeError:
-        pass  # Leaf nodes don't expose ChildCount.
-    return {"kind": _node_kind(node), "text": text, "children": children}
-
-
-def _ast_to_text(node, indent: int = 0, depth: int = 0) -> str:
-    try:
-        text = str(node.ToString()).strip()
-    except AttributeError:
-        text = ""
-    label = _node_kind(node)
-    if depth >= _MAX_AST_DEPTH:
-        return " " * indent + f"{label}  (truncated at depth {depth})\n"
-    if text:
-        out = " " * indent + f"{label}  {text!r}\n"
-    else:
-        out = " " * indent + label + "\n"
-    try:
-        cc = node.ChildCount
-        for i in range(cc):
-            c = node.GetChild(i)
-            if c is not None:
-                out += _ast_to_text(c, indent + 2, depth + 1)
-    except AttributeError:
-        pass
+    label = node["kind"]
+    text = node["text"]
+    if node.get("truncated"):
+        return " " * indent + f"{label}  (truncated at depth {MAX_AST_DEPTH})\n"
+    out = " " * indent + (f"{label}  {text!r}\n" if text else label + "\n")
+    for child in node["children"]:
+        out += _ast_dict_to_text(child, indent + 2)
     return out
 
 
 def _cmd_parse(args: argparse.Namespace) -> int:
     body = _read_input(args)
+    schema = _load_schema(args.schema)
+    if _report_error_diagnostics(body):
+        return 1
 
     if args.mode == "ir":
         try:
-            from .ir import IRBuilder
+            from .ir import IR_SCHEMA_VERSION, SEMANTIC_HASH_SCHEME
         except ImportError as e:
             sys.stderr.write(
                 "kustology parse --ir requires the [ir] extras (pydantic). "
@@ -247,22 +254,34 @@ def _cmd_parse(args: argparse.Namespace) -> int:
             )
             sys.stderr.write(f"({e})\n")
             return 2
-        ir = IRBuilder().build(body)
+        # Going through `parse().to_ir()` rather than `IRBuilder().build()`
+        # is what makes `--schema` mean anything here: `to_ir()` auto-attaches
+        # the schema on a bound parse, so the IR carries column types and
+        # table provenance instead of an unenriched skeleton.
+        ir = parse(body, schema=schema).to_ir()
         if args.json:
-            sys.stdout.write(ir.model_dump_json(indent=2))
+            # Envelope, not the bare dump: both version tags are the
+            # consumer's compatibility contract, and a stored payload that
+            # names neither cannot be checked against the IR shape that
+            # produced it.
+            payload = {
+                "ir_schema_version": IR_SCHEMA_VERSION,
+                "semantic_hash_scheme": SEMANTIC_HASH_SCHEME,
+                "ir": _json.loads(ir.model_dump_json()),
+            }
+            sys.stdout.write(_json.dumps(payload, indent=2))
             sys.stdout.write("\n")
         else:
             sys.stdout.write(repr(ir))
             sys.stdout.write("\n")
         return 0
 
-    q = parse(body)
-    root = q.syntax
+    tree = node_to_dict(parse(body, schema=schema).syntax)
     if args.json:
-        sys.stdout.write(_json.dumps(_ast_to_dict(root), indent=2))
+        sys.stdout.write(_json.dumps(tree, indent=2))
         sys.stdout.write("\n")
     else:
-        sys.stdout.write(_ast_to_text(root))
+        sys.stdout.write(_ast_dict_to_text(tree))
     return 0
 
 
@@ -284,6 +303,14 @@ def main(argv: list[str] | None = None) -> int:
         raise
     except _InputTooLargeError as e:
         sys.stderr.write(f"error: {e}\n")
+        return 2
+    except (OSError, _json.JSONDecodeError) as e:
+        # Both are failures of the *invocation*: a path we could not open,
+        # or a --schema file that is not JSON. Neither says anything about
+        # the KQL, so neither may borrow exit 1 from the query that was
+        # never read. FileNotFoundError used to land in the handler below
+        # and report 1.
+        sys.stderr.write(f"error: {type(e).__name__}: {e}\n")
         return 2
     except Exception as e:
         sys.stderr.write(f"error: {type(e).__name__}: {e}\n")

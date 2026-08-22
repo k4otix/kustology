@@ -92,3 +92,36 @@ def test_unknown_scalar_type_falls_back_with_warning():
         issubclass(w.category, RuntimeWarning) and "not_a_real_type" in str(w.message)
         for w in captured
     )
+
+
+def test_top_level_schema_string_is_rejected_naming_the_dict_form():
+    """`parse(q, schema="(a:string)")` was documented and typed as supported
+    and has never worked: `build_global_state` requires a mapping. The type
+    alias and the docstring both said otherwise, so the only way to find out
+    was the `TypeError`. Pin the raise *and* that the message points at the
+    form that does work — the per-table string `{"T": "(a:string)"}`."""
+    with pytest.raises(TypeError) as exc_info:
+        parse("T | count", schema="(a:string)")
+    message = str(exc_info.value)
+    assert "dict" in message
+    assert "str" in message
+
+    # The form the message points at parses fine, which is what makes the
+    # rejection a documentation bug rather than a missing feature.
+    assert parse("T | count", schema={"T": "(a:string)"}).has_semantics
+
+
+def test_schema_like_alias_no_longer_advertises_a_bare_string():
+    """`SchemaLike` is the public annotation on `parse` and `validate`. It
+    included `str`, so a type checker green-lit the call that raises."""
+    import types
+    import typing
+
+    from kustology.services import SchemaLike, validate
+    from kustology.services import parse as parse_service
+
+    assert set(typing.get_args(SchemaLike)) == {dict, types.NoneType}
+    assert typing.get_type_hints(parse_service)["schema"] == SchemaLike
+    assert typing.get_type_hints(validate)["schema"] == SchemaLike
+    for fn in (parse_service, validate):
+        assert "schema string" not in fn.__doc__, fn.__name__

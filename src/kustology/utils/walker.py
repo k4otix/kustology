@@ -9,6 +9,8 @@ unwraps the ``SeparatedElement`` wrappers that .NET list properties yield;
 ``{kind, text, children}`` mapping suitable for JSON or further programmatic
 walking; :func:`node_text` reads a node's own source without its leading
 trivia and :func:`node_name` reads the plain identifier a name node denotes.
+
+Both recursive helpers stop at :data:`MAX_AST_DEPTH`.
 """
 
 from __future__ import annotations
@@ -24,6 +26,21 @@ from __future__ import annotations
 # text. ``Minimal`` renders the node's own source with no leading trivia.
 from Kusto.Language.Syntax import IncludeTrivia
 
+# Hard ceiling on how far the recursive helpers here descend. Both
+# :func:`node_to_dict` and :meth:`KustoWalker.visit` are recursive, so the
+# AST's depth is the Python stack's depth, and the .NET parser will happily
+# build a tree thousands of levels deep from a few kilobytes of parentheses.
+# CPython's own limit is 1000 frames, so an uncapped walk raises
+# ``RecursionError`` out of the middle of the library — from
+# ``KustoQuery.to_dict()``, from ``collect_nodes``, from anything built on
+# them — where a caller cannot do anything useful with it.
+#
+# 300 is comfortably inside the frame budget (the emitters and JSON
+# serialization stack on top of the walk) and comfortably above real KQL: a
+# large Sentinel rule nests ~17 levels, and even a 100-operator pipe chain,
+# which nests left-associatively one level per operator, reaches 108.
+MAX_AST_DEPTH = 300
+
 _NAME_NODE_KINDS = frozenset(
     {
         "NameReference",
@@ -36,16 +53,24 @@ _NAME_NODE_KINDS = frozenset(
 
 
 class KustoWalker:
-    """Base class for manual AST traversal. Override pre_visit / post_visit."""
+    """Base class for manual AST traversal. Override pre_visit / post_visit.
 
-    def visit(self, node):
+    The walk stops descending at :data:`MAX_AST_DEPTH`. A node at the cap is
+    still visited — ``pre_visit`` and ``post_visit`` both run for it — but
+    its children are not, so adversarially nested input degrades to a
+    partial answer instead of a ``RecursionError`` thrown from inside
+    whichever analyzer happened to be running.
+    """
+
+    def visit(self, node, depth: int = 0):
         if node is None:
             return
         self.pre_visit(node)
-        for i in range(node.ChildCount):
-            child = node.GetChild(i)
-            if child is not None:
-                self.visit(child)
+        if depth < MAX_AST_DEPTH:
+            for i in range(node.ChildCount):
+                child = node.GetChild(i)
+                if child is not None:
+                    self.visit(child, depth + 1)
         self.post_visit(node)
 
     def pre_visit(self, node):
@@ -85,15 +110,25 @@ def iter_elements(syntax_list):
         yield getattr(item, "Element", item)
 
 
-def node_to_dict(node):
-    """Recursively convert a .NET syntax node into ``{kind, text, children}``."""
+def node_to_dict(node, depth: int = 0, max_depth: int = MAX_AST_DEPTH):
+    """Recursively convert a .NET syntax node into ``{kind, text, children}``.
+
+    At ``max_depth`` the node is emitted with an empty ``children`` list and
+    an extra ``"truncated": True`` key, and the walk stops. The key is absent
+    on every node that was serialized in full, so a consumer can tell a leaf
+    from a cut-off subtree — ``"truncated" in node`` is the test, and a tree
+    that fit entirely never carries it.
+    """
     if node is None:
         return None
     result = {"kind": str(node.Kind), "text": node.ToString().strip(), "children": []}
+    if depth >= max_depth:
+        result["truncated"] = True
+        return result
     for i in range(node.ChildCount):
         child = node.GetChild(i)
         if child is not None:
-            result["children"].append(node_to_dict(child))
+            result["children"].append(node_to_dict(child, depth + 1, max_depth))
     return result
 
 

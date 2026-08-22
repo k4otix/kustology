@@ -78,9 +78,20 @@ class KustoQuery:
         return get_operator_stats(self._code)
 
     def to_dict(self) -> dict:
+        """Serialize the syntax tree to a recursive ``{kind, text, children}``.
+
+        Descent stops at :data:`kustology.utils.walker.MAX_AST_DEPTH`; a node
+        at the cap is emitted with no children and an extra
+        ``"truncated": True``. Without the cap this raised ``RecursionError``
+        on deeply nested input, since the AST's depth is the Python stack's
+        depth and a few kilobytes of parentheses outrun CPython's frame
+        limit. Real queries never reach it — nothing in the fixture corpus
+        nests past 20 levels — so the key is absent from ordinary output.
+        """
         return node_to_dict(self.syntax)
 
     def to_json(self, indent: int = 2) -> str:
+        """``to_dict()`` as JSON, including its truncation marker if any."""
         return json.dumps(self.to_dict(), indent=indent)
 
     def get_referenced_columns(self, force_syntactic: bool = False) -> set[str]:

@@ -3,7 +3,13 @@
 
 from .bridge import FormattingOptions, KustoCode, KustoCodeService
 
-SchemaLike = dict | str | None
+# A schema is a mapping of table name to column spec. `str` used to be in
+# this union and never worked: `build_global_state` raises `TypeError` on
+# anything that isn't a dict, so `parse(q, schema="(a:string)")` was a
+# type-checked call that could only fail at runtime. The single-table string
+# form is a *value* inside the mapping — `{"T": "(a:string)"}` — not a
+# substitute for it.
+SchemaLike = dict | None
 
 # Binder code emitted when a name doesn't refer to any known table/variable/function.
 _UNKNOWN_TABLE_CODE = "KS204"
@@ -15,8 +21,10 @@ def parse(query_text: str, schema: SchemaLike = None):
 
     When ``schema`` is provided the query is bound (semantic analysis runs);
     callers can use ``KustoQuery.has_semantics`` to check.
-    Schema may be either a dict ``{"Table": {"col": "type", ...}}`` or a Kusto
-    schema string ``"(col:type, ...)"`` (single-table form).
+    Schema is a dict mapping table name to a column spec:
+    ``{"Table": {"col": "type", ...}}``, ``{"Table": "(col:type, ...)"}`` or
+    ``{"Table": ["col", ...]}`` — see
+    :func:`kustology.utils.analysis.build_global_state`.
     """
     from .core import KustoQuery
     from .utils.analysis import build_global_state
@@ -52,6 +60,8 @@ def validate(
     query is bound and semantic diagnostics (unresolved columns, type errors) are
     included. Set ``ignore_unknown_tables=True`` to suppress KS204 ("name does
     not refer to any known table") diagnostics for tables outside the schema.
+
+    ``schema`` takes the same dict-of-tables shapes :func:`parse` accepts.
     """
     from .utils.analysis import build_global_state
 
