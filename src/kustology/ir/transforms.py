@@ -375,7 +375,18 @@ def _sort_commutative(root: BaseModel) -> None:
       point.
     * Children must be sorted before their parents, since a parent's key is
       computed from a child's dump. ``walk`` is pre-order, so iterating it
-      reversed visits every descendant before its ancestor. It bites when a
+      reversed visits every descendant before its ancestor -- with one
+      caveat worth stating, because ``walk`` yields a shared object only at
+      the *first* path that reaches it. A node an index field aliases
+      (``LetBinding.inner_time_exprs`` holds the same objects as
+      ``rhs_pipeline``) is positioned by whichever field is declared first,
+      and if the index came first the node would be yielded above its real
+      parent and sorted after it. Nothing hits that today: the only aliasing
+      fields hold ``FuncCall`` and ``TableRef``, which this function never
+      sorts, and they are declared after ``rhs_pipeline`` anyway. A new
+      index field over ``And``/``Or``/``SetMembership`` would need a
+      genuinely post-order traversal here rather than a reversed pre-order.
+      It bites when a
       sibling's key falls *between* the two spellings of an operand:
       ``(b or a) and (a or z)`` and ``(a or z) and (a or b)`` are the same
       predicate, but top-down the first ``And`` keys on ``(b or a)`` and the
