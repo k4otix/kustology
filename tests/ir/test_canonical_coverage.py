@@ -63,14 +63,15 @@ it is a member of `AnyExpr` (the permissive tail of the union) and is
 exported, and a base class that is legal to construct is legal to serialize.
 """
 
+import importlib
 import inspect
+import pkgutil
 import typing
 
 import pydantic
 
 import kustology.ir as ir_pkg
 from kustology.ir import expr as E
-from kustology.ir import query as Q
 from kustology.ir._normalize import canonical
 
 
@@ -98,21 +99,34 @@ def _anyexpr_member_names() -> set[str]:
     return out
 
 
-def _public_models(module) -> set[type]:
-    """Every public pydantic model *defined in* `module`.
+def _public_models() -> set[type]:
+    """Every public pydantic model defined anywhere in `kustology.ir`.
 
-    Filtered by `__module__` so a class the module merely imported (the
-    `expr` classes `query` uses in its own annotations) is attributed to the
-    module that defines it and counted exactly once.
+    Filtered by `__module__` so a class a module merely imported (the `expr`
+    classes `query` uses in its own annotations) is attributed to the module
+    that defines it and counted exactly once.
+
+    The submodule list comes from `pkgutil`, not from a pair of imports.
+    Naming `expr` and `query` by hand made this function the very thing the
+    module docstring rails against -- a hand-maintained list -- and it was
+    already incomplete: it saw 99 models where the package defines 101,
+    missing `Span` (in `spans`) and `Finding` (in `analyzers`). Both are
+    exported, so the guard could not have caught either one going missing.
+    A model in a submodule nobody thought to import is exactly the case
+    this test exists for.
     """
-    return {
-        obj
-        for name, obj in vars(module).items()
-        if not name.startswith("_")
-        and inspect.isclass(obj)
-        and issubclass(obj, pydantic.BaseModel)
-        and obj.__module__ == module.__name__
-    }
+    out: set[type] = set()
+    for info in pkgutil.iter_modules(ir_pkg.__path__):
+        mod = importlib.import_module(f"{ir_pkg.__name__}.{info.name}")
+        for name, obj in vars(mod).items():
+            if (
+                not name.startswith("_")
+                and inspect.isclass(obj)
+                and issubclass(obj, pydantic.BaseModel)
+                and obj.__module__ == mod.__name__
+            ):
+                out.add(obj)
+    return out
 
 
 def test_every_expr_subclass_has_a_render_branch():
@@ -163,7 +177,7 @@ def test_every_ir_model_is_exported():
     only a consumer trying to import the name finds out.
     """
     exported = set(ir_pkg.__all__)
-    models = _public_models(E) | _public_models(Q)
+    models = _public_models()
     missing = sorted(c.__name__ for c in models if c.__name__ not in exported)
     assert missing == [], f"kustology.ir.__all__ does not export: {missing}"
 

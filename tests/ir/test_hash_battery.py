@@ -140,12 +140,8 @@ import pytest
 from kustology import parse
 from kustology.ir import (
     FilterOp,
-    Operator,
-    UnknownExpr,
-    UnknownOp,
-    UnknownSource,
     compute_semantic_hash,
-    find_all,
+    walk,
 )
 
 
@@ -555,34 +551,43 @@ def test_double_negation_collapses_at_a_bare_expr_root():
     ids=lambda q: q[:60],
 )
 def test_no_battery_pair_discriminates_on_an_unmodelled_blob(query):
-    """Every query in this file must build IR with no ``Unknown*`` node.
+    """Every query in this file must build IR that carries no source text.
 
     A ``MUST_DIFFER`` pair proves nothing if the builder did not model
-    either side. ``UnknownExpr``, ``UnknownOp``, ``UnknownSource`` and
-    ``ScanOp``/``TopNestedOp`` all carry a ``raw_text`` field, ``raw_text``
-    is in the digest payload, and two queries that differ in *any* text
-    therefore hash apart the moment one of them falls through to a
-    fallback. So a discriminator written against an unhandled shape passes
-    for a reason that has nothing to do with the field it claims to guard,
-    and would keep passing if that field were deleted tomorrow.
+    either side. ``raw_text`` is in the digest payload for every node below
+    the root -- only ``QueryIR``'s own copy is excluded -- so two queries
+    differing in *any* text hash apart the moment one of them reaches a node
+    that records its own source. A discriminator written against such a
+    shape passes for a reason that has nothing to do with the field it
+    claims to guard, and would keep passing if that field were deleted
+    tomorrow.
 
     That is not hypothetical here: ``project-reorder x asc`` was an
     ``UnknownExpr`` for part of this workstream, and its direction pair
     would have passed green through the regression it was meant to catch.
-    Asserting the whole battery is fallback-free is cheaper than reasoning
+    Asserting the whole battery is text-free is cheaper than reasoning
     about it pair by pair, and it holds for the pre-WS4 cases too.
+
+    The check is **not** limited to the ``Unknown*`` classes, and the
+    difference is the point. Eight modelled operators also record their own
+    source -- ``ScanOp``, ``TopNestedOp``, ``MacroExpandOp``, ``MakeGraphOp``
+    and the four ``graph-*`` operators -- because they are dispatched but
+    only partly modelled. Nothing in the battery reaches one today, so
+    naming them in prose (which this docstring used to do while the
+    assertion checked three classes by name) protected nobody: the first
+    pair written against ``scan`` or ``graph-match`` would have discriminated
+    on ``raw_text`` and passed. Deriving the set from ``model_fields``
+    instead means a node added to the partly-modelled list is covered from
+    the moment it is defined, the same rule the rest of this suite follows.
     """
     ir = parse(query).to_ir()
-    unknown_exprs = [u.ast_kind for u in find_all(ir, UnknownExpr)]
-    undispatched = [
-        getattr(op, "ast_kind", type(op).__name__)
-        for op in find_all(ir, Operator)
-        if type(op) is Operator or isinstance(op, UnknownOp)
-    ]
-    unknown_sources = [s.raw_text for s in find_all(ir, UnknownSource)]
-    assert not (unknown_exprs or undispatched or unknown_sources), (
-        f"{query!r} did not lower cleanly -- UnknownExpr={unknown_exprs}, "
-        f"undispatched operators={undispatched}, "
-        f"UnknownSource={unknown_sources}. A battery pair built on a "
-        f"fallback discriminates on its raw_text, not on the modelled field."
+    carriers = sorted(
+        f"{type(n).__name__}({n.raw_text!r})"
+        for n in walk(ir)
+        if n is not ir and "raw_text" in type(n).model_fields and n.raw_text
+    )
+    assert not carriers, (
+        f"{query!r} did not lower cleanly -- these nodes carry their own "
+        f"source text into the digest: {carriers}. A battery pair built on "
+        f"one of them discriminates on that text, not on the modelled field."
     )
