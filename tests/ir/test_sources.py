@@ -318,12 +318,17 @@ def test_wildcard_and_literal_table_hash_differently(builder):
 
 
 def test_wildcard_source_resolves_to_an_empty_binder_scope(builder):
-    """A wildcard names a set, so no single table's columns are in scope."""
+    """A wildcard names a set, so no single table's columns are in scope.
+
+    The result is ``None`` rather than an empty schema: nothing determined
+    what this arm emits, and ``columns == {}`` would say it emits none. A
+    schema entry literally called ``T*`` is a coincidence, not a match, so
+    the wildcard resolving against it would be the wrong kind of answer.
+    """
     ir = builder.build("union T*")
     SchemaAttacher({"T*": {"a": "long"}}).enrich(ir)
     inner = ir.main_pipeline.operators[0].pipelines[0]
-    assert inner.result_schema is not None
-    assert inner.result_schema.columns == {}
+    assert inner.result_schema is None
 
 
 def test_qualified_table_still_looks_up_on_the_bare_name(builder):

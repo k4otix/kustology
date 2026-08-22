@@ -528,14 +528,19 @@ def test_let_threading_follows_a_chain(builder, attacher):
 
 def test_let_threading_does_not_resolve_a_forward_reference(builder, attacher):
     """A binding naming one declared later is not a LetRef at all, so there
-    is nothing to thread -- it stays an opaque table."""
+    is nothing to thread -- it stays an opaque table.
+
+    Its ``result_schema`` is ``None``: nothing determined what the binding
+    emits. An empty ``TabularSchema`` would state that it emits no columns,
+    which is a different and false claim.
+    """
     ir = builder.build(
         "let Early = Later | take 1; "
         "let Later = DeviceProcessEvents | take 1; "
         "Early | project AccountName"
     )
     attacher.enrich(ir)
-    assert ir.let_bindings[0].rhs_pipeline.result_schema.columns == {}
+    assert ir.let_bindings[0].rhs_pipeline.result_schema is None
 
 
 def test_scalar_binding_is_untouched_by_threading(builder, attacher):
@@ -1200,3 +1205,194 @@ def test_unaffected_aggregate_names_stay_as_they_were():
     assert _names(_fallback("T | summarize any(a)")) == ["any_a"]
     assert _names(_fallback("T | summarize hll(a)")) == ["hll_a"]
     assert _names(_fallback("T | summarize c = count() by k")) == ["k", "c"]
+
+
+# K28: schema-replacing operators the fallback had no rule for ----------------
+
+
+def _syntactic(query: str, schemas: dict | None = None):
+    """Enrich an IR built from a *syntactic-only* parse.
+
+    ``getschema`` / ``print`` / ``range`` / ``count`` return the same columns
+    whatever their input, so Microsoft closes their symbols even against
+    globals that know no tables and the builder records the answer. That is
+    the right outcome and it means the unbound-``to_ir`` path cannot reach
+    the hand-rolled rule for them. ``KustoCode.Parse`` produces a tree with
+    no semantics at all, which can.
+    """
+    from kustology.bridge import KustoCode
+
+    ir = IRBuilder().build_from_code(KustoCode.Parse(query))
+    assert all(
+        op.result_schema is None for op in ir.main_pipeline.operators
+    ), "premise: a syntactic-only parse leaves the fallback rules to answer"
+    return SchemaAttacher(schemas if schemas is not None else FALLBACK_SCHEMA).enrich(ir)
+
+
+def test_search_scopes_to_its_tables_and_adds_the_table_column():
+    """``search in (T) 'x'`` had no scope rule, so it produced nothing.
+
+    The operator replaces the scope with the searched tables' columns and
+    prepends ``$table``, which names the table each row came from.
+    """
+    ir = _fallback("search in (T) 'x'")
+    assert _columns(ir) == [
+        ("$table", "string"), ("k", "string"), ("a", "long"),
+        ("t", "datetime"), ("d", "dynamic"), ("s", "string"), ("g", "guid"),
+    ]
+
+
+def test_search_over_several_tables_splits_a_type_conflict():
+    """The same rule ``union`` uses: ``T.a`` is a long and ``U.a`` a string."""
+    ir = _fallback("search in (T, U) 'x'")
+    assert _names(ir) == [
+        "$table", "k", "a_long", "a_string", "t", "d", "s", "g", "z",
+    ]
+
+
+def test_an_unqualified_search_covers_every_table_it_was_given():
+    """``search 'x'`` names no table, so the schema dict is the database.
+
+    Microsoft closes this one against table-less globals -- with no tables to
+    search, ``$table`` is the whole answer -- so the syntactic path is the
+    one that reaches the rule.
+    """
+    ir = _syntactic("search 'x'", {"L": {"k": "string"}, "R": {"b": "real"}})
+    assert _names(ir) == ["$table", "k", "b"]
+
+
+def test_search_columns_keep_their_table():
+    ir = _fallback("search in (T) 'x' | where a > 1")
+    assert _tables(ir)["a"] == {"T"}
+
+
+def test_parse_kv_adds_its_declared_columns():
+    """``ParseKvOp.columns`` is populated and was being ignored."""
+    ir = _fallback("T | parse-kv s as (n:long, m:string)")
+    assert _columns(ir)[-2:] == [("n", "long"), ("m", "string")]
+
+
+def test_getschema_replaces_the_scope_with_its_fixed_four_columns():
+    ir = _syntactic("T | getschema")
+    assert _columns(ir) == [
+        ("ColumnName", "string"), ("ColumnOrdinal", "long"),
+        ("DataType", "string"), ("ColumnType", "string"),
+    ]
+
+
+def test_print_derives_its_columns_from_the_printed_expressions():
+    ir = _syntactic("print x = 1, y = 'a', z = 1.5")
+    assert _columns(ir) == [("x", "long"), ("y", "string"), ("z", "real")]
+
+
+def test_an_unnamed_print_column_is_named_by_its_position():
+    ir = _syntactic("print x = 1, 2")
+    assert _names(ir) == ["x", "print_1"]
+
+
+def test_range_names_one_column_typed_by_its_start():
+    assert _columns(_syntactic("range n from 1 to 10 step 1")) == [("n", "long")]
+    assert _columns(
+        _syntactic(
+            "range n from datetime(2020-01-01) to datetime(2020-01-05) step 1d"
+        )
+    ) == [("n", "datetime")]
+
+
+# K28: "nothing is known" is None, not an empty schema ------------------------
+
+
+def test_a_pipeline_the_walk_learned_nothing_about_has_no_result_schema():
+    """``result_schema = {}`` is a claim: "this emits no columns".
+
+    A query over a table nobody described emits an unknown set of columns,
+    which is a different statement, and stamping ``{}`` made the two
+    indistinguishable to a consumer.
+    """
+    ir = _fallback("Unknown | take 1", {})
+    assert ir.main_pipeline.result_schema is None
+
+
+def test_an_operator_that_really_emits_nothing_still_says_so():
+    """The must-not-change direction. ``project-away *`` genuinely produces
+    an empty schema, and that is a determination, not an absence."""
+    ir = _fallback("T | project-away *")
+    assert ir.main_pipeline.result_schema is not None
+    assert ir.main_pipeline.result_schema.columns == {}
+
+
+def test_an_unmodelled_sub_pipeline_does_not_inherit_the_enclosing_scope():
+    """A branch the builder could not model is not a branch that emits the
+    input unchanged, so it gets no schema rather than the caller's.
+
+    ``UnknownSource`` with no operators is the builder's "I could not model
+    this at all"; every other implicit-source sub-pipeline (``mv-apply``,
+    ``partition``, ``fork``, ``facet``) does run against the enclosing rows
+    and does inherit.
+    """
+    from kustology.ir.binder import ScopeEntry
+    from kustology.ir.query import Pipeline, UnknownSource
+    from kustology.ir.spans import Span
+
+    span = Span(text_start=0, width=1)
+    branch = Pipeline(source=UnknownSource(raw_text="?", span=span), operators=[])
+    attacher = SchemaAttacher(FALLBACK_SCHEMA)
+    inherited = [ScopeEntry(table="T", columns={"a": "long"})]
+
+    assert attacher._walk_pipeline(branch, inherited) == []
+    assert branch.result_schema is None
+
+
+def test_project_falls_back_to_the_type_the_binder_already_resolved():
+    """The walk is not the only thing that knows a column's type.
+
+    ``evaluate`` opens the symbol, so ``project`` gets no authoritative
+    schema and the fallback answers -- but the binder still typed the
+    ``ColumnRef`` from the parse-time schema. Reporting ``unknown`` for a
+    column whose type is right there on the node discards it.
+    """
+    from kustology import parse
+    from kustology.ir import ColumnRef, KustoType, ProjectOp, find_all
+
+    schemas = {"T": {"k": "string", "a": "long", "d": "dynamic"}}
+    ir = parse(
+        "T | evaluate bag_unpack(d) | project a", schema=schemas,
+    ).to_ir(attach_schema=False)
+    project = next(
+        op for op in ir.main_pipeline.operators if isinstance(op, ProjectOp)
+    )
+    assert project.result_schema is None, "premise: evaluate opened the symbol"
+    (ref,) = find_all(project, ColumnRef)
+    assert ref.result_type == KustoType.LONG, "premise: the binder typed it"
+
+    # An attacher that knows nothing about ``T`` -- the schema is on the IR,
+    # not in this dict.
+    SchemaAttacher({}).enrich(ir)
+    assert ir.main_pipeline.result_schema.columns == {"a": "long"}
+
+
+# K28: schema_attached means a schema was actually available ------------------
+
+
+def test_schema_attached_stays_false_when_no_schema_was_available():
+    """``enrich`` set the flag unconditionally, so an attacher with no
+    schemas, over an IR the binder could not type either, still reported the
+    IR as enriched -- the flag said "these types are real" about nothing."""
+    ir = IRBuilder().build("Unknown | take 1")
+    SchemaAttacher().enrich(ir)
+    assert ir.schema_attached is False
+
+
+def test_schema_attached_is_true_for_a_schema_dict():
+    ir = IRBuilder().build("Unknown | take 1")
+    SchemaAttacher({"Unknown": {"a": "long"}}).enrich(ir)
+    assert ir.schema_attached is True
+
+
+def test_schema_attached_is_true_when_the_binder_answered():
+    """``count`` closes its symbol whatever the source is, so the IR carries
+    a real schema even though the attacher was given none."""
+    ir = IRBuilder().build("Unknown | count")
+    assert ir.main_pipeline.operators[-1].result_schema is not None
+    SchemaAttacher().enrich(ir)
+    assert ir.schema_attached is True

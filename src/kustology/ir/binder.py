@@ -40,15 +40,18 @@ from .query import (
     ExtendOp,
     ExternalDataSource,
     FilterOp,
+    GetSchemaOp,
     JoinOp,
     LetRef,
     LookupOp,
     MakeSeriesOp,
     MvExpandOp,
     Operator,
+    ParseKvOp,
     ParseOp,
     ParseWhereOp,
     Pipeline,
+    PrintOp,
     ProjectAwayOp,
     ProjectByNamesOp,
     ProjectKeepOp,
@@ -56,10 +59,13 @@ from .query import (
     ProjectRenameOp,
     ProjectReorderOp,
     QueryIR,
+    RangeOp,
+    SearchOp,
     SummarizeOp,
     TableRef,
     TabularSchema,
     UnionOp,
+    UnknownSource,
 )
 from .types import KustoType
 from .walk import _models_in, find_all
@@ -202,6 +208,10 @@ class SchemaAttacher:
         # {id(pipeline): the schema the *builder* left on it}, snapshotted
         # at ``enrich`` entry. Empty outside a call.
         self._builder_schemas: dict[int, TabularSchema | None] = {}
+        # Did an operator in the pipeline being walked *determine* the output
+        # columns? Set by the two places that replace the scope wholesale.
+        # An empty scope nobody determined is "unknown", not "no columns".
+        self._scope_determined = False
 
     def enrich(self, ir: QueryIR) -> QueryIR:
         """Enrich the whole IR in place and mark it attached.
@@ -284,7 +294,15 @@ class SchemaAttacher:
             # A direct ``_walk_pipeline`` call after this one is not part of
             # any enrich, and must not consult a snapshot taken for one.
             self._builder_schemas = {}
-        ir.schema_attached = True
+        # ``schema_attached`` is a claim that the types in this IR came from
+        # somewhere real. It was set unconditionally, so an attacher with no
+        # schemas over an IR the binder could not type either still reported
+        # the IR as enriched. Either source counts: the dict handed to this
+        # attacher, or the binder's own per-operator answer, which a bound
+        # parse leaves on the tree.
+        ir.schema_attached = bool(self.schemas) or any(
+            op.result_schema is not None for op in find_all(ir, Operator)
+        )
         return ir
 
     def _table_schema(self, name: str | None) -> dict[str, str]:
@@ -346,6 +364,13 @@ class SchemaAttacher:
         ``toscalar(...)`` and ``materialize(...)`` are uncorrelated in KQL,
         and seeding them would invent provenance the query never expressed.
         """
+        if isinstance(pipeline.source, UnknownSource) and not pipeline.operators:
+            # The builder could not model this at all. Seeding it from the
+            # enclosing scope -- which every other implicit-source
+            # sub-pipeline wants -- would state that the unmodelled branch
+            # emits the enclosing columns, which is a guess about a shape we
+            # have already admitted we do not understand.
+            return []
         source_entry = self._source_entry(pipeline)
         if inherited is not None and not source_entry.table and not source_entry.columns:
             scope: list[ScopeEntry] = [
@@ -362,12 +387,16 @@ class SchemaAttacher:
         # not reach into it, and neither does the "left side first" rule for
         # a bare key name.
         outer_sides = self._join_sides
+        outer_determined = self._scope_determined
         self._join_sides = None
+        self._scope_determined = False
         try:
             for op in pipeline.operators:
                 self._walk_operator(op, scope)
+            determined = self._scope_determined
         finally:
             self._join_sides = outer_sides
+            self._scope_determined = outer_determined
         # Snapshot final scope so downstream consumers don't re-walk operators.
         #
         # The last operator's own ``result_schema`` is preferred when it has
@@ -392,6 +421,16 @@ class SchemaAttacher:
             pipeline.result_schema = TabularSchema(
                 columns=dict(authoritative.columns)
             )
+        elif not determined and not any(e.columns for e in scope):
+            # Nothing in this pipeline said what it emits and no source
+            # described any columns, so the honest answer is "unknown", which
+            # is ``None``. Stamping ``TabularSchema(columns={})`` says
+            # something different and false -- "this emits no columns" -- and
+            # ``T | project-away *``, which really does emit none, then reads
+            # identically to a query over a table nobody described. That case
+            # is what ``determined`` separates: an operator replaced the
+            # scope, so the emptiness is a result rather than an absence.
+            pipeline.result_schema = None
         else:
             merged: dict[str, str] = {}
             for entry in scope:
@@ -447,6 +486,7 @@ class SchemaAttacher:
         if origins is None:
             carried = self._column_origins(scope)
             origins = {n: carried[n] for n in columns if n in carried}
+        self._scope_determined = True
         scope.clear()
         scope.append(ScopeEntry(table=None, columns=columns, origins=origins))
 
@@ -470,6 +510,16 @@ class SchemaAttacher:
             if name:
                 patterns.append(name)
         return patterns
+
+    def _expr_type(self, expr: Expr | None) -> str:
+        """The type ``expr`` resolved to, or ``"unknown"``.
+
+        ``_fill`` must have run first -- it is what types a literal from its
+        ``literal_kind``, which is the only thing a syntactic-only parse
+        knows about ``print x = 1``.
+        """
+        kt = getattr(expr, "result_type", KustoType.UNRESOLVED)
+        return kt.value if kt != KustoType.UNRESOLVED else "unknown"
 
     def _extract_target_name(self, expr) -> str | None:
         """Pull a bare column name from a ColumnRef / Assignment / similar."""
@@ -515,6 +565,7 @@ class SchemaAttacher:
         # anonymous bucket and keeps its provenance in ``origins``. Adding a
         # fresh table entry for it instead would reorder the merged scope,
         # which ``project-keep`` / ``project-away`` read as column order.
+        self._scope_determined = True
         anon_origins: dict[str, str | None] = {}
         for name, type_name in columns.items():
             table = origin.get(name)
@@ -718,6 +769,7 @@ class SchemaAttacher:
                         )
                         for e in rhs_scope[:1]
                     ]
+                    self._scope_determined = True
                     scope.clear()
                     scope.extend(kept)
                     return
@@ -810,7 +862,12 @@ class SchemaAttacher:
                     kt = getattr(c.expr, "result_type", KustoType.UNRESOLVED)
                     kept[c.name] = kt.value if kt != KustoType.UNRESOLVED else "unknown"
                 elif isinstance(c, ColumnRef):
-                    kept[c.name] = current.get(c.name, "unknown")
+                    # The walk is not the only thing that can know the type:
+                    # after an operator that opened the symbol the scope goes
+                    # stale, but the binder still typed the node from the
+                    # parse-time schema. Reporting ``unknown`` for a type
+                    # sitting on the reference throws it away.
+                    kept[c.name] = current.get(c.name) or self._expr_type(c)
                 else:
                     name = self._extract_target_name(c)
                     if name:
@@ -988,6 +1045,70 @@ class SchemaAttacher:
             # ``count`` discards the input schema for a single long column;
             # ``count as N`` names it.
             self._set_scope(scope, {op.as_name or "Count": KustoType.LONG.value})
+            return
+        if isinstance(op, ParseKvOp):
+            # ``parse-kv s as (n:long, m:string)`` states its own output
+            # columns, and ``ParseKvOp.columns`` already records them -- the
+            # rule simply never read the field.
+            self._fill(op.target, scope)
+            if op.columns:
+                scope.append(ScopeEntry(table=None, columns=dict(op.columns)))
+            return
+        if isinstance(op, GetSchemaOp):
+            # ``getschema`` describes its input rather than passing it
+            # through, so its output is the same four columns for every
+            # query. ``ColumnOrdinal`` is a **long**, not an int -- read off
+            # the binder rather than off the documentation.
+            self._set_scope(scope, {
+                "ColumnName": KustoType.STRING.value,
+                "ColumnOrdinal": KustoType.LONG.value,
+                "DataType": KustoType.STRING.value,
+                "ColumnType": KustoType.STRING.value,
+            })
+            return
+        if isinstance(op, PrintOp):
+            printed: dict[str, str] = {}
+            for index, c in enumerate(op.columns):
+                inner = c if isinstance(c, Expr) else getattr(c, "expr", c)
+                self._fill(inner, scope)
+                # An unnamed term is named by its *position* in the list, not
+                # by how many unnamed terms preceded it: ``print x = 1, 2``
+                # is ``x`` and ``print_1``.
+                name = c.name if isinstance(c, Assignment) else f"print_{index}"
+                printed[name] = self._expr_type(inner)
+            self._set_scope(scope, printed)
+            return
+        if isinstance(op, RangeOp):
+            # ``range n from 1 to 10 step 1`` emits one column, typed by the
+            # range's own bounds -- a datetime range gives a datetime column.
+            for e in (op.start, op.end, op.step):
+                self._fill(e, scope)
+            self._set_scope(scope, {op.column: self._expr_type(op.start)})
+            return
+        if isinstance(op, SearchOp):
+            # ``search`` replaces the scope with the searched tables' columns
+            # and prepends ``$table``, naming the table each row came from.
+            # Named tables scope it; an unqualified ``search`` covers every
+            # table the caller described, which is the schema-dict analogue
+            # of "every table in the database".
+            self._fill(op.predicate, scope)
+            names = [t.name for t in op.tables if isinstance(t, TableRef)]
+            if not names:
+                names = list(self.schemas)
+            searched = [
+                ScopeEntry(table=n, columns=dict(self._table_schema(n)))
+                for n in names
+            ]
+            self._split_union_type_conflicts(searched)
+            self._scope_determined = True
+            scope[:] = [
+                ScopeEntry(
+                    table=None,
+                    columns={"$table": KustoType.STRING.value},
+                    origins={"$table": None},
+                ),
+                *searched,
+            ]
             return
 
         # No bespoke scope rule for this operator kind. Fill provenance on

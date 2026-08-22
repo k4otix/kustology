@@ -559,6 +559,34 @@ release is in `docs/superpowers/reports/`.
   aggregate list, and from the corrected rules otherwise. `Assignment.name`
   is hashed, so a length check and a skip-list keep the name identical bound
   and unbound — asserted across the whole oracle matrix and corpus.
+- **`search`, `parse-kv`, `getschema`, `print` and `range` reshape the
+  fallback scope (tier 2).** None of them had a rule, so the scope after them
+  was the scope before them. `search in (T) 'x'` produced nothing at all —
+  it has an implicit source — where the engine returns `$table` plus the
+  searched tables' columns (splitting a type conflict across tables exactly
+  as `union` does). `parse-kv`'s declared columns were recorded on
+  `ParseKvOp.columns` and never read. `getschema` / `print` / `range` matter
+  only where the parse carries no semantics at all, since Microsoft closes
+  their symbols even against table-less globals; `getschema`'s
+  `ColumnOrdinal` is a `long`, read off the binder rather than transcribed.
+- **`result_schema` is `None` when nothing is known, not an empty schema
+  (tier 2).** `TabularSchema(columns={})` is a claim — "this emits no
+  columns" — and the walk stamped it on every pipeline it could say nothing
+  about, so a query over an undescribed table read identically to
+  `T | project-away *`, which really does emit none. The two are now
+  distinguished by whether an operator determined the output. A sub-pipeline
+  the builder could not model (`UnknownSource`, no operators) additionally
+  stops inheriting the enclosing scope, which would have claimed it emits
+  the enclosing columns.
+- **`schema_attached` is only true when a schema was available (tier 2).**
+  `enrich` set it unconditionally, so an attacher with no schemas over an IR
+  the binder could not type either still reported the IR as enriched. Either
+  source counts now: the dict handed to the attacher, or the binder's own
+  per-operator answer on a bound parse.
+- **`project` keeps a type the binder already resolved (tier 2).** An
+  operator that opens the symbol (`evaluate`) leaves the scope stale, and
+  `project` then reported `unknown` for a column whose type was sitting on
+  the `ColumnRef`.
 - **Six public `KustoQuery` members gained docstrings (tier 1).**
   `get_operator_chain`, `get_referenced_columns`, `get_referenced_functions`,
   `get_structural_hash`, `syntax` and `text` delegated in silence, so
