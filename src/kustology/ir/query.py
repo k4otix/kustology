@@ -660,9 +660,18 @@ class RangeOp(Operator):
 
 
 class LookupOp(Operator):
+    """``lookup`` — enrich the left table from a dimension table.
+
+    ``lookup_kind`` is required and carries KQL's effective default
+    ``"leftouter"`` for an unwritten ``kind=`` (D8). The builder used to
+    substitute ``"inner"``, which is a *different* operator: ``leftouter``
+    keeps left rows with no match and ``inner`` drops them, so a bare
+    ``lookup`` was recorded as the one thing it is not.
+    """
+
     KIND: ClassVar[str] = "lookup"
     kind: Literal["lookup"] = "lookup"
-    lookup_kind: str | None = None
+    lookup_kind: str
     right: "Pipeline"
     # KQL ``on Foo`` is sugar for ``on $left.Foo == $right.Foo``; both surface
     # here as ``AnyExpr`` (a bare ``ColumnRef`` or a full equality ``BinOp``).
@@ -931,9 +940,23 @@ class Pipeline(BaseModel):
 
 
 class JoinOp(Operator):
+    """``join`` — combine rows from two tables on a condition.
+
+    ``join_kind`` is required and carries KQL's effective default
+    ``"innerunique"`` for an unwritten ``kind=`` (D8). That default is not
+    ``inner``: ``innerunique`` deduplicates the *left* side's join keys
+    first, so a bare ``join`` and ``join kind=inner`` return different row
+    counts from the same data. The builder substituted ``"inner"``, which
+    both mislabelled every bare join and collapsed it onto the explicit
+    ``kind=inner`` spelling in the hash.
+
+    Required with no pydantic default so ``to_llm_dict`` renders it -- see
+    :class:`ParseOp.parse_kind`.
+    """
+
     KIND: ClassVar[str] = "join"
     kind: Literal["join"] = "join"
-    join_kind: str | None = None
+    join_kind: str
     right: Pipeline
     # KQL ``on Foo`` is sugar for ``on $left.Foo == $right.Foo``; both surface
     # here as ``AnyExpr`` (a bare ``ColumnRef`` or a full equality ``BinOp``).

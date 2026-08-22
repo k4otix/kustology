@@ -622,6 +622,15 @@ release is in `docs/superpowers/reports/`.
   wildcard table, or an unmodelled source. `to_llm_dict` caps
   `DataTableSource.rows` at 20 and adds a `rows_omitted` count, since real
   IOC datatables run to thousands of rows; `model_dump_json` stays complete.
+- **`JoinOp.join_kind` and `LookupOp.lookup_kind` are required, and carry
+  KQL's effective default** (D8): a bare `join` records `"innerunique"`
+  and a bare `lookup` records `"leftouter"`, never `None`. Both previously
+  defaulted to `"inner"`, which is a *different operator* in each case —
+  `innerunique` deduplicates the left side's join keys and `inner` does
+  not; `leftouter` keeps unmatched left rows and `inner` drops them — so
+  every unmodified `join`/`lookup` was both mislabelled and collapsed onto
+  the explicit `kind=inner` spelling in the hash. A bare `join` now hashes
+  identically to `join kind=innerunique` and apart from `join kind=inner`.
 - **`RenderOp` gains `properties`.** Everything inside `render … with (…)`
   — `title`, `ymin`, `series` — was discarded, so every `render timechart`
   was one node however it was configured. The dict also carries the legacy

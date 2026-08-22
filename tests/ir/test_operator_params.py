@@ -421,3 +421,38 @@ def test_render_property_values_reach_the_hash():
     assert _hash('T | render timechart with (title="a")') != _hash(
         'T | render timechart with (title="b")'
     )
+
+
+# -- join / lookup effective defaults (D8) --------------------------------
+
+def test_bare_join_records_kqls_effective_kind():
+    (op,) = _ops("T | join U on k")
+    assert op.join_kind == "innerunique"
+
+
+def test_bare_join_hashes_as_innerunique():
+    assert _hash("T | join U on k") == _hash("T | join kind=innerunique U on k")
+
+
+def test_innerunique_and_inner_are_different_joins():
+    """The pair that makes the default worth recording: KQL's default
+    deduplicates the left side and ``kind=inner`` does not."""
+    assert _hash("T | join U on k") != _hash("T | join kind=inner U on k")
+
+
+def test_written_join_kind_is_kept():
+    (op,) = _ops("T | join kind=leftanti U on k")
+    assert op.join_kind == "leftanti"
+
+
+def test_bare_lookup_records_kqls_effective_kind():
+    (op,) = _ops("T | lookup U on k")
+    assert op.lookup_kind == "leftouter"
+
+
+def test_bare_lookup_hashes_as_leftouter():
+    assert _hash("T | lookup U on k") == _hash("T | lookup kind=leftouter U on k")
+
+
+def test_lookup_kind_reaches_the_hash():
+    assert _hash("T | lookup U on k") != _hash("T | lookup kind=inner U on k")

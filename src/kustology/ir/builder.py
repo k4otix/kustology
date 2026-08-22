@@ -740,7 +740,10 @@ class IRBuilder:
                     for expr_node in _iter_elements(cc.Expressions):
                         on_exprs.append(self._visit_expr(expr_node))
             return JoinOp(
-                join_kind=extract_named_param(n, "kind", default="inner"),
+                # KQL's effective default is ``innerunique``, not ``inner``
+                # -- a different operator. See JoinOp.
+                join_kind=extract_named_param(n, "kind", default="innerunique")
+                or "innerunique",
                 right=rhs,
                 on=on_exprs,
                 span=span,
@@ -755,7 +758,9 @@ class IRBuilder:
                 for expr_node in _iter_elements(cc.Expressions):
                     on_exprs.append(self._visit_expr(expr_node))
             return LookupOp(
-                lookup_kind=extract_named_param(n, "kind", default="inner"),
+                # KQL's effective default -- see LookupOp.
+                lookup_kind=extract_named_param(n, "kind", default="leftouter")
+                or "leftouter",
                 right=rhs,
                 on=on_exprs,
                 span=span,
