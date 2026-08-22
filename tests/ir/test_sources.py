@@ -123,6 +123,23 @@ def test_let_externaldata_rhs_is_a_pipeline(builder):
     assert binding.inner_tables == []
 
 
+def test_externaldata_columns_seed_the_binder_scope(builder):
+    """The declared schema is the feed's schema; no table lookup applies.
+
+    A tabular ``let`` whose right-hand side is an ``externaldata`` therefore
+    registers real columns under its name, which only became possible once
+    the binding took the ``rhs_pipeline`` shape.
+    """
+    ir = builder.build(
+        'let Feed = externaldata(id:string, n:long)["https://x"]; Feed | project id'
+    )
+    SchemaAttacher({}).enrich(ir)
+    assert ir.let_bindings[0].rhs_pipeline.result_schema.columns == {
+        "id": "string", "n": "long",
+    }
+    assert ir.main_pipeline.result_schema.columns == {"id": "string"}
+
+
 def test_externaldata_expression_records_every_uri(builder):
     """The expression-position node keeps the same list-valued field.
 
