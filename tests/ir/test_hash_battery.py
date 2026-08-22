@@ -98,19 +98,30 @@ literals are bare/``Unspecified``), and both ``MUST_EQUAL`` datetime pairs
 still pin that the two ``Kind`` branches produce a matching,
 self-consistent representation.
 
-Two things are deliberately absent:
+The WS4 block at the end of each list is the regression net for a whole
+workstream. Nine tasks closed a family of *lossy lowering* bugs -- the
+builder reached a fully populated node from several different KQL
+constructs, so nothing looked stubbed and the distinction between the
+constructs was simply gone. Every one of them was, by construction, a
+``semantic_hash`` collision, and a collision is the failure mode this file
+exists to catch and the one no other test in the suite is shaped to see:
+the per-task tests assert that a field holds the right value, which stays
+true if a *later* change stops that field reaching the digest. The pairs
+below assert the consequence instead.
 
-* WS4 will append its own discriminators here later (sort direction,
-  ``fork``, ``datatable``, ``union``/``mv-expand``/``parse``/``search``/
-  ``make-series`` params, join default, database qualifier) once the model
-  fields those depend on exist. Writing them now would either fail against
-  today's builder or -- worse -- pass by accident and assert a gap as if it
-  were a guarantee: e.g. ``T | sort by a asc`` and ``T | sort by a desc``
-  currently hash the *same*, because ``OrderedExpression`` drops direction
-  on the floor (``IRBuilder._visit_expr``), and a ``datatable(...)`` literal
-  collapses to a bare ``FuncCallSource`` with no schema or rows recorded.
-  Appending discriminators for those belongs to the task that adds the
-  fields, not this one.
+They are written against the model as it stands rather than as the
+workstream planned it, which is not the same list: ``bag_expansion`` was
+dropped and folded into a required ``expand_kind`` (so ``bagexpansion=array``
+and ``kind=array`` are a ``MUST_EQUAL`` pair, not two discriminators),
+``search_kind`` gained the effective default ``default``, and
+``project-reorder`` grew a ``ReorderKey`` that the original plan did not
+have. Where a field carries KQL's *effective* default (D8) the pairing is
+a ``MUST_EQUAL`` -- a bare ``join`` really does mean ``kind=innerunique`` --
+and the ``MUST_DIFFER`` runs against the spelling that names a different
+operator.
+
+One thing is deliberately absent:
+
 * ``T | where "y" =~ X`` vs ``T | where X =~ "y"`` is not a ``MUST_EQUAL``
   pair. ``canonical()`` sorts commutative operand lists (``and``/``or``/set
   membership) but does not sort a ``BinOp``'s ``left``/``right`` for any
@@ -127,7 +138,15 @@ Two things are deliberately absent:
 import pytest
 
 from kustology import parse
-from kustology.ir import FilterOp, compute_semantic_hash
+from kustology.ir import (
+    FilterOp,
+    Operator,
+    UnknownExpr,
+    UnknownOp,
+    UnknownSource,
+    compute_semantic_hash,
+    find_all,
+)
 
 
 def _hash(query: str) -> str:
@@ -201,6 +220,116 @@ MUST_DIFFER = [
         'T | where tolower(x) == "Y"',
         'T | where x =~ "Y"',
     ),
+    # -----------------------------------------------------------------------
+    # WS4 -- one pair per collision the IR-model workstream closed. Each was
+    # a real collision on this branch's first commit: the two queries mean
+    # different things and hashed the same, because the builder lowered them
+    # onto one node. Grouped by the task that closed it.
+    # -----------------------------------------------------------------------
+    # 4.1 -- SortKey. The builder unwrapped the parser's OrderedExpression
+    # and discarded its ordering clause, so direction and null placement --
+    # which decide the order rows come back in -- reached neither the IR nor
+    # the digest. Three operators share that wrapper.
+    ("sort-direction", "T | sort by a asc", "T | sort by a desc"),
+    ("sort-nulls-placement", "T | sort by a nulls first", "T | sort by a nulls last"),
+    ("order-by-direction", "T | order by a asc", "T | order by a desc"),
+    ("top-by-direction", "T | top 5 by a asc", "T | top 5 by a desc"),
+    ("sort-per-key-direction", "T | sort by a asc, b desc", "T | sort by a desc, b asc"),
+    # 4.1 fix round -- ReorderKey. `project-reorder` is the third consumer of
+    # the same wrapper; with the unwrap gone it fell through to an
+    # UnknownExpr and lost the column identity with it. Its direction is
+    # optional, so unwritten is a third distinct state rather than a default.
+    ("project-reorder-direction", "T | project-reorder a asc", "T | project-reorder a desc"),
+    ("project-reorder-direction-vs-unwritten", "T | project-reorder a", "T | project-reorder a asc"),
+    # 4.2 -- ForkBranch. `ForkOp.pipelines` was declared and never populated:
+    # every branch came back empty, so any two forks were one node and
+    # nothing inside a branch was reachable at all.
+    ("fork-branch-bodies", "T | fork (take 1) (count)", "T | fork (count) (where x == 1)"),
+    ("fork-branch-name", "T | fork a=(count) (take 1)", "T | fork b=(count) (take 1)"),
+    ("fork-branch-order", "T | fork (take 1) (count)", "T | fork (count) (take 1)"),
+    # 4.3 -- source position. Four queries built indistinguishable sources: a
+    # datatable collapsed to a bare FuncCallSource with no schema and no
+    # rows, externaldata had no source class at all, and a qualifier or a
+    # wildcard on a table name was not read.
+    ("datatable-rows", "datatable(a:long)[1,2] | count", "datatable(a:long)[3,4] | count"),
+    ("datatable-schema", "datatable(a:long)[1] | count", "datatable(b:long)[1] | count"),
+    (
+        "externaldata-uris",
+        'externaldata(a:string)["https://x/1.csv"] | count',
+        'externaldata(a:string)["https://x/2.csv"] | count',
+    ),
+    ("database-qualifier", 'database("d1").T | count', 'database("d2").T | count'),
+    (
+        "cluster-qualifier",
+        'cluster("c1").database("d").T | count',
+        'cluster("c2").database("d").T | count',
+    ),
+    # `union T*` names every table matching the pattern; `union ['T*']` names
+    # one table actually called `T*`.
+    ("wildcard-vs-quoted-table", "union T* | count", "union ['T*'] | count"),
+    # 4.4 -- operator parameters. Every modifier below changes the rows the
+    # operator returns and none of them was read.
+    ("mv-expand-to-typeof", "T | mv-expand a to typeof(string)", "T | mv-expand a to typeof(long)"),
+    ("mv-expand-limit", "T | mv-expand a limit 10", "T | mv-expand a limit 20"),
+    ("mv-expand-with-itemindex", "T | mv-expand with_itemindex=i a", "T | mv-expand a"),
+    ("mv-expand-kind", "T | mv-expand kind=array a", "T | mv-expand kind=bag a"),
+    ("parse-kind", "T | parse x with 'a' y", "T | parse kind=regex x with 'a' y"),
+    ("parse-flags", "T | parse kind=regex flags='i' x with 'a' y", "T | parse kind=regex x with 'a' y"),
+    ("parse-where-kind", "T | parse-where x with 'a' y", "T | parse-where kind=regex x with 'a' y"),
+    ("union-kind", "union kind=inner A, B", "union kind=outer A, B"),
+    ("union-withsource", "union withsource=S A, B", "union A, B"),
+    ("union-isfuzzy", "union isfuzzy=true A, B", "union A, B"),
+    ("search-scope-tables", "search in (A) 'x'", "search in (B) 'x'"),
+    ("search-kind", "search kind=case_sensitive 'x'", "search 'x'"),
+    (
+        "make-series-default",
+        (
+            "T | make-series C=count() default=0 on d "
+            "from datetime(2024-01-01) to datetime(2024-01-02) step 1h"
+        ),
+        (
+            "T | make-series C=count() default=1 on d "
+            "from datetime(2024-01-01) to datetime(2024-01-02) step 1h"
+        ),
+    ),
+    (
+        "make-series-in-range-window",
+        "T | make-series C=count() on d in range(datetime(2024-01-01), datetime(2024-01-02), 1h)",
+        "T | make-series C=count() on d in range(datetime(2024-01-01), datetime(2024-01-03), 1h)",
+    ),
+    ("render-with-properties", "T | render timechart with (title='a')", "T | render timechart with (title='b')"),
+    # `join`/`lookup` defaulted to "inner", which is a different operator in
+    # each case -- so every bare join was mislabelled *and* collapsed onto
+    # the explicit kind=inner spelling. See the MUST_EQUAL half for the
+    # effective default each now records.
+    ("join-default-vs-inner", "T | join U on a", "T | join kind=inner U on a"),
+    ("lookup-default-vs-inner", "T | lookup U on a", "T | lookup kind=inner U on a"),
+    ("find-scope-tables", "find in (A) where x == 1", "find in (B) where x == 1"),
+    ("find-withsource", "find withsource=S in (A) where x == 1", "find in (A) where x == 1"),
+    # TypedNameDecl: the declaration's Type child was never read, so a typed
+    # capture and an untyped one were one node.
+    ("typed-capture-vs-untyped", "T | parse x with 'a' b:long", "T | parse x with 'a' b"),
+    ("typed-capture-declared-type", "T | parse x with 'a' b:long", "T | parse x with 'a' b:string"),
+    # 4.5 -- multi-statement queries. The builder read the first tabular
+    # statement and discarded the rest, so `T | count; U | count` built and
+    # hashed exactly as `T | count`.
+    ("second-statement-table", "T | count; U | count", "T | count; V | count"),
+    ("second-statement-dropped", "T | count; U | count", "T | count"),
+    # 4.6 -- LetValueRef. A let-bound scalar lowered to a ColumnRef, so a
+    # query-local constant and a real column of that name were one node.
+    ("let-scalar-vs-column", "let n = 5; T | where a > n", "T | where a > n"),
+    # 4.7 -- typed nested pipelines. `pipeline` was declared `Any`, so the
+    # subtree survived in memory but reloaded as a plain dict, and the
+    # span-stripping walk never reached inside it -- a stored IR did not
+    # reproduce its own hash. These pairs pin that the nested query is in
+    # the digest at all; the MUST_EQUAL half pins that its spans are not.
+    ("toscalar-nested-table", "T | where a > toscalar(U | count)", "T | where a > toscalar(V | count)"),
+    ("subquery-nested-table", "T | where x in ((U | project x))", "T | where x in ((V | project x))"),
+    # 4.8 -- small fidelity gaps.
+    ("compound-string-literal", "T | where x == 'a' 'b'", "T | where x == 'a'"),
+    ("project-reorder-star", "T | project-reorder *, a", "T | project-reorder b, a"),
+    ("isnull-vs-isempty", "T | where isnull(x)", "T | where isempty(x)"),
+    ("isnull-vs-isnotnull", "T | where isnull(x)", "T | where isnotnull(x)"),
 ]
 
 
@@ -254,6 +383,52 @@ MUST_EQUAL = [
     ),
     ("raw-string-vs-escaped", 'T | where x == @"a\\b"', 'T | where x == "a\\\\b"'),
     ("let-alias-rename", "let X = T | where a==1;\nX | take 1", "let Y = T | where a==1;\nY | take 1"),
+    # -----------------------------------------------------------------------
+    # WS4 -- the other half of the workstream. Recording a modifier the query
+    # did not write is its own way to be wrong: it splits one query's two
+    # spellings into two digests. Each pair below is a decision the model
+    # makes about an unwritten or duplicate spelling, pinned so the decision
+    # cannot drift into a split.
+    # -----------------------------------------------------------------------
+    # D8 -- a required field carrying KQL's *effective* default, so the bare
+    # spelling and the explicit one are one query and one digest. The value
+    # is the one KQL actually applies, which for join/lookup is not the
+    # "inner" the builder used to assume.
+    ("sort-bare-is-desc", "T | sort by a", "T | sort by a desc"),
+    ("top-bare-is-desc", "T | top 5 by a", "T | top 5 by a desc"),
+    ("mv-expand-bare-is-bag", "T | mv-expand a", "T | mv-expand kind=bag a"),
+    ("parse-bare-is-simple", "T | parse x with 'a' y", "T | parse kind=simple x with 'a' y"),
+    ("union-bare-is-outer", "union A, B", "union kind=outer A, B"),
+    ("search-bare-is-default", "search 'x'", "search kind=default 'x'"),
+    ("join-bare-is-innerunique", "T | join U on a", "T | join kind=innerunique U on a"),
+    ("lookup-bare-is-leftouter", "T | lookup U on a", "T | lookup kind=leftouter U on a"),
+    # Two spellings of one modifier folded onto one field. Modelling
+    # `bagexpansion=` separately from `kind=` would have split these, which
+    # is why `bag_expansion` was dropped rather than kept alongside.
+    ("mv-expand-bagexpansion-is-kind", "T | mv-expand bagexpansion=array a", "T | mv-expand kind=array a"),
+    # Same shape on `render`: the legacy bare parameter and the `with (...)`
+    # clause land in the same properties dict.
+    ("render-with-clause-vs-bare-param", "T | render columnchart kind=stacked", "T | render columnchart with (kind=stacked)"),
+    # `hints` is the one field in this release that is source-derived and
+    # still excluded from the digest: a hint asks the engine to execute the
+    # query differently, not to return different rows.
+    ("join-hint-excluded", "T | join hint.strategy=shuffle U on a", "T | join U on a"),
+    # `FindOp.tables` was read with the no-argument ToString() overload,
+    # which is IncludeTrivia.All, so a comment written before a table name
+    # became part of the name and changed the digest. Last known site of a
+    # defect class fixed in four other readers earlier in this release.
+    ("find-table-comment", "find in (// note\nT) where x == 1", "find in (T) where x == 1"),
+    # A let-bound name is a local label: the hash renames every binding to
+    # its declaration index. That rename could not reach a use site lowered
+    # to a ColumnRef, so the declaration was canonicalized while the use
+    # site kept the name the query wrote. LetValueRef closes the split.
+    ("let-scalar-name-rename", "let n = 5; T | where a > n", "let m = 5; T | where a > m"),
+    # Typing `pipeline` is what lets the span-stripping walk reach inside a
+    # nested query, so formatting within one stops reaching the digest.
+    ("toscalar-nested-whitespace", "T | where a > toscalar(U | count)", "T | where a >  toscalar(U   | count)"),
+    # Adjacent string literals are one literal in KQL, and the parser has
+    # already concatenated them by the time LiteralValue is read.
+    ("compound-string-is-concatenation", "T | where x == 'a' 'b'", "T | where x == 'ab'"),
 ]
 
 
@@ -294,7 +469,40 @@ def test_double_negation_collapses_at_a_bare_expr_root():
     )
 
 
-# WS4 appends its own MUST_DIFFER / MUST_EQUAL cases below this line once the
-# model fields they depend on exist: sort direction, fork, datatable, union/
-# mv-expand/parse/search/make-series params, join default, database
-# qualifier. See the module docstring for why they are not here yet.
+@pytest.mark.parametrize(
+    "query",
+    sorted({q for _, a, b in MUST_DIFFER + MUST_EQUAL for q in (a, b)}),
+    ids=lambda q: q[:60],
+)
+def test_no_battery_pair_discriminates_on_an_unmodelled_blob(query):
+    """Every query in this file must build IR with no ``Unknown*`` node.
+
+    A ``MUST_DIFFER`` pair proves nothing if the builder did not model
+    either side. ``UnknownExpr``, ``UnknownOp``, ``UnknownSource`` and
+    ``ScanOp``/``TopNestedOp`` all carry a ``raw_text`` field, ``raw_text``
+    is in the digest payload, and two queries that differ in *any* text
+    therefore hash apart the moment one of them falls through to a
+    fallback. So a discriminator written against an unhandled shape passes
+    for a reason that has nothing to do with the field it claims to guard,
+    and would keep passing if that field were deleted tomorrow.
+
+    That is not hypothetical here: ``project-reorder x asc`` was an
+    ``UnknownExpr`` for part of this workstream, and its direction pair
+    would have passed green through the regression it was meant to catch.
+    Asserting the whole battery is fallback-free is cheaper than reasoning
+    about it pair by pair, and it holds for the pre-WS4 cases too.
+    """
+    ir = parse(query).to_ir()
+    unknown_exprs = [u.ast_kind for u in find_all(ir, UnknownExpr)]
+    undispatched = [
+        getattr(op, "ast_kind", type(op).__name__)
+        for op in find_all(ir, Operator)
+        if type(op) is Operator or isinstance(op, UnknownOp)
+    ]
+    unknown_sources = [s.raw_text for s in find_all(ir, UnknownSource)]
+    assert not (unknown_exprs or undispatched or unknown_sources), (
+        f"{query!r} did not lower cleanly -- UnknownExpr={unknown_exprs}, "
+        f"undispatched operators={undispatched}, "
+        f"UnknownSource={unknown_sources}. A battery pair built on a "
+        f"fallback discriminates on its raw_text, not on the modelled field."
+    )
