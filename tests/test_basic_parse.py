@@ -352,8 +352,9 @@ def test_scalar_type_names_resolve_regardless_of_case():
 def test_a_non_string_scalar_type_raises_type_error_not_a_clr_exception():
     """`{"T": {"c": None}}` reached `ScalarTypes.GetSymbol(None)` and came
     back as a raw `System.ArgumentNullException` with a .NET stack trace
-    naming `Dictionary`2.FindValue` — a CLR type with no Python class to
-    catch by name, and a message that says nothing about schemas.
+    through `System.Collections.Generic.Dictionary` — a CLR type with no
+    Python class to catch by name, and a message that says nothing about
+    schemas.
 
     A non-`str` type name is the caller's mistake in their own dict, so it
     is a `TypeError`, raised before the CLR boundary and worded like the

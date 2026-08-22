@@ -196,8 +196,8 @@ def test_everything_exported_resolves():
 
 def test_the_binder_enricher_alias_is_gone():
     """``BinderEnricher = SchemaAttacher`` was a bare assignment in `binder.py`,
-    re-exported through `kustology.ir.__all__`, and never mentioned by the
-    README, the docs, an example or a test.
+    re-exported through `kustology.ir.__all__`, and never documented — no
+    mention in the README, the CHANGELOG, an example or a test.
 
     An exported name is a promise: it turns up in `dir()`, in generated API
     documentation and in `from kustology.ir import *`, and once a consumer

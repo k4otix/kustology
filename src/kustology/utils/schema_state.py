@@ -87,8 +87,9 @@ def _resolve_scalar_type(type_name: str, *, column: str | None = None):
 
     A non-``str`` type name is a ``TypeError`` raised here rather than at the
     CLR boundary: ``GetSymbol(None)`` surfaces as a bare
-    ``System.ArgumentNullException`` naming ``Dictionary`2.FindValue``, and
-    ``GetSymbol(5)`` as pythonnet's "No method matches given arguments",
+    ``System.ArgumentNullException`` with a .NET stack trace through
+    ``System.Collections.Generic.Dictionary``, and ``GetSymbol(5)`` as
+    pythonnet's "No method matches given arguments",
     neither of which mentions schemas. ``column`` puts the offending key in
     the message, so the three schema-shape errors this module raises each
     name their own position — the schema, a table's value, a column's type.

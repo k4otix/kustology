@@ -1920,7 +1920,11 @@ def test_both_schemaless_docstrings_describe_the_family_they_actually_filter():
     from kustology.services import _UNKNOWN_NAME_CODES
 
     counts = {1: "one", 11: "eleven", 12: "twelve", 13: "thirteen"}
-    spelled = counts[len(_UNKNOWN_NAME_CODES)]
+    spelled = counts.get(len(_UNKNOWN_NAME_CODES))
+    assert spelled is not None, (
+        f"the family is now {len(_UNKNOWN_NAME_CODES)} codes; spell that "
+        f"number in `counts` and in both docstrings"
+    )
 
     for raw in (KustoQuery.to_ir.__doc__, IRBuilder.build_from_code.__doc__):
         # Both are wrapped prose; the phrase can straddle a line break.
