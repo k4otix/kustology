@@ -490,9 +490,10 @@ class IRBuilder:
         # one whose provenance a consumer needs, and a constant made every
         # unmodelled source hash the same -- the reason ``UnknownExpr`` and
         # ``UnknownOp`` have carried their text all along.
-        source: Any = UnknownSource(
-            raw_text=_node_text(node), span=to_span(node),
-        )
+        source: (
+            TableRef | LetRef | FuncCallSource | DataTableSource
+            | ExternalDataSource | ImplicitSource | UnknownSource | Pipeline
+        ) = UnknownSource(raw_text=_node_text(node), span=to_span(node))
 
         def walk(n: Any) -> None:
             nonlocal source
