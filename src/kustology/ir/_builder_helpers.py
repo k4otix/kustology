@@ -89,18 +89,152 @@ def to_span(node: Any) -> Span:
     return Span(text_start=node.TextStart, width=node.Width)
 
 
-def extract_qualified_table_name(node: Any) -> str | None:
-    """Return the rightmost simple name of a qualified table ``PathExpression``.
+def is_wildcarded_name(name_node: Any) -> bool:
+    """True when a name node is a ``WildcardedName`` (``T*``, ``*``).
 
-    Handles ``cluster("c").database("d").T``, ``database("d").T``, and ``A.B.T``.
+    ``T*`` and the bracketed literal ``['T*']`` both parse to a
+    ``NameReference`` whose ``visit_name`` is the string ``"T*"``; only the
+    inner name node's ``Kind`` separates the pattern from the table that
+    happens to be called that.
     """
-    kind = str(type(node).__name__)
-    if kind != "PathExpression":
+    if name_node is None:
+        return False
+    return str(getattr(name_node, "Kind", "")) == "WildcardedName"
+
+
+def _qualifier_argument(node: Any) -> tuple[str, str] | None:
+    """``database('d')`` -> ``("database", "d")``; anything else -> ``None``.
+
+    The argument is read through ``LiteralValue`` rather than the node's
+    text so the quoting style (``'d'`` / ``"d"``) does not reach the IR.
+    """
+    if str(type(node).__name__) != "FunctionCallExpression":
+        return None
+    name_node = getattr(node, "Name", None)
+    if name_node is None:
+        return None
+    fname = str(getattr(name_node, "SimpleName", None) or visit_name(name_node)).lower()
+    if fname not in ("database", "cluster"):
+        return None
+    arg_list = getattr(node, "ArgumentList", None)
+    exprs = getattr(arg_list, "Expressions", None) if arg_list is not None else None
+    if exprs is None or exprs.Count == 0:
+        return None
+    first = exprs[0]
+    first = getattr(first, "Element", first)
+    value = getattr(first, "LiteralValue", None)
+    if value is None:
+        return fname, first.ToString().strip().strip("@").strip("\"'")
+    return fname, str(value)
+
+
+def extract_qualified_table_ref(
+    node: Any,
+) -> tuple[str | None, str | None, str, bool] | None:
+    """Decompose a qualified table ``PathExpression`` into its parts.
+
+    Returns ``(cluster, database, name, is_wildcard)``, or ``None`` when the
+    node is not a path ending in a name.
+
+    ``cluster("c").database("d").T`` nests left-associatively -- the outer
+    ``PathExpression``'s ``Expression`` is itself a ``PathExpression`` whose
+    ``Selector`` is the ``database(...)`` call -- so the qualifiers are
+    collected by walking that left spine rather than by reading two fixed
+    positions. A plain dotted path (``A.B.T``) contributes no qualifiers and
+    still yields its trailing name, which is what the previous
+    ``extract_qualified_table_name`` returned for every one of these shapes.
+    """
+    if str(type(node).__name__) != "PathExpression":
         return None
     sel = getattr(node, "Selector", None)
     if sel is None or str(type(sel).__name__) != "NameReference":
         return None
-    return visit_name(sel.Name)
+    name_node = getattr(sel, "Name", None)
+    name = visit_name(name_node)
+    is_wildcard = is_wildcarded_name(name_node)
+
+    cluster: str | None = None
+    database: str | None = None
+
+    def record(candidate: Any) -> None:
+        nonlocal cluster, database
+        qualifier = _qualifier_argument(candidate)
+        if qualifier is None:
+            return
+        which, value = qualifier
+        if which == "cluster":
+            cluster = value
+        else:
+            database = value
+
+    left = getattr(node, "Expression", None)
+    while left is not None:
+        if str(type(left).__name__) == "PathExpression":
+            record(getattr(left, "Selector", None))
+            left = getattr(left, "Expression", None)
+            continue
+        record(left)
+        break
+    return cluster, database, name, is_wildcard
+
+
+def read_external_data(node: Any) -> tuple[list[tuple[str, str]], list[str], str | None]:
+    """Read an ``ExternalDataExpression`` into ``(columns, uris, format)``.
+
+    Shared by the source-position (:class:`ExternalDataSource`) and
+    expression-position (:class:`ExternalDataExpr`) branches of the builder,
+    which is the point: they used to read the node separately and the two
+    readings could disagree.
+
+    URIs come from ``el.LiteralValue`` because the DLL decodes KQL's
+    obfuscated string literal for us -- ``h"https://x"`` reads back as
+    ``https://x``, where the node's own text keeps the ``h`` and the quotes.
+    The text fallback exists for a URI expression the parser could not fold
+    to a literal at all.
+
+    Column types are read with ``node_text`` (``IncludeTrivia.Minimal``) and
+    not ``ToString()``, which is ``IncludeTrivia.All`` and prepends the
+    node's leading trivia: ``externaldata(a: // note\\n string)`` recorded
+    the type as ``"// note\\n string"`` and hashed differently from the
+    identical query without the comment.
+    """
+    from ..utils.walker import iter_elements, node_text
+
+    columns: list[tuple[str, str]] = []
+    schema_node = getattr(node, "Schema", None)
+    if schema_node is not None and hasattr(schema_node, "Columns"):
+        for col in iter_elements(schema_node.Columns):
+            type_node = getattr(col, "Type", None)
+            columns.append((
+                visit_name(col),
+                node_text(type_node).strip() if type_node is not None else "unknown",
+            ))
+
+    uris: list[str] = []
+    uri_nodes = getattr(node, "URIs", None)
+    if uri_nodes is not None:
+        for el in iter_elements(uri_nodes):
+            value = getattr(el, "LiteralValue", None)
+            if value is None:
+                uris.append(el.ToString().strip().strip("@").strip("\"'"))
+            else:
+                uris.append(str(value))
+
+    # ``with (format="csv", ignoreFirstRecord=true)`` -- only the format is
+    # modeled; the rest stay in the source text.
+    fmt: str | None = None
+    with_clause = getattr(node, "WithClause", None)
+    if with_clause is not None:
+        for prop in iter_elements(with_clause.Properties):
+            if visit_name(prop.Name).lower() != "format":
+                continue
+            value = getattr(prop.Expression, "LiteralValue", None)
+            fmt = (
+                str(value) if value is not None
+                else prop.Expression.ToString().strip().strip("\"'")
+            )
+            break
+    return columns, uris, fmt
 
 
 def is_table_symbol(sym: Any) -> bool:

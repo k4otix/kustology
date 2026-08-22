@@ -386,7 +386,7 @@ def _external(query):
     return next(iter(find_all(IRBuilder().build(query), ExternalDataExpr)))
 
 
-def test_externaldata_populates_uri_columns_and_format():
+def test_externaldata_populates_uris_columns_and_format():
     """All three fields were placeholders.
 
     ``uri`` kept the hardcoded string "url" because the guard read
@@ -394,13 +394,16 @@ def test_externaldata_populates_uri_columns_and_format():
     case-sensitive and silent about the miss. ``columns`` was bound to a
     literal ``[]`` and never appended to. ``format`` was hardcoded
     "unknown". The data for all three is on the node.
+
+    ``uris`` is plural because the singular field held whichever URI came
+    first; see ``tests/ir/test_sources.py`` for the source-position form of
+    the same construct, which shares the builder's reader with this one.
     """
     e = _external(
-        'let known = externaldata(id:string, n:long) '
-        '[@"https://example.test/known.csv"] with (format="csv"); '
-        'T | where C !in (known)'
+        'T | where C !in ((externaldata(id:string, n:long) '
+        '[@"https://example.test/known.csv"] with (format="csv")))'
     )
-    assert e.uri == "https://example.test/known.csv"
+    assert e.uris == ["https://example.test/known.csv"]
     assert e.columns == [("id", "string"), ("n", "long")]
     assert e.format == "csv"
 
@@ -411,7 +414,7 @@ def test_externaldata_without_a_with_clause_reports_no_format():
     e = _external('T | where C in ((externaldata(id:string) [@"https://example.test/x"]))')
     assert e.format is None
     assert e.columns == [("id", "string")]
-    assert e.uri == "https://example.test/x"
+    assert e.uris == ["https://example.test/x"]
 
 
 def test_externaldata_in_the_corpus_is_modeled():
@@ -428,7 +431,8 @@ def test_externaldata_in_the_corpus_is_modeled():
     e = next(iter(find_all(ir, ExternalDataExpr)))
     assert [n for n, _ in e.columns] == ["knownAppClientId", "knownAppDisplayName"]
     assert e.format == "csv"
-    assert e.uri.startswith("https://")
+    assert len(e.uris) == 1
+    assert e.uris[0].startswith("https://")
 
 
 # --- parse-kv and macro-expand ---------------------------------------------

@@ -109,10 +109,31 @@ class ProjectOp(Operator):
 
 
 class TableRef(BaseModel):
+    """A table named in source position, with whatever qualified it.
+
+    ``name`` is the bare table name, and stays the bare name even when the
+    query wrote ``cluster('c').database('d').T`` -- schema lookups are keyed
+    on it (see :meth:`SchemaAttacher._source_entry`), so folding the
+    qualifiers into the string would stop every qualified query resolving.
+
+    ``database`` and ``cluster`` are the qualifiers the query stated, and
+    they are data rather than decoration: ``database('d1').T`` and
+    ``database('d2').T`` read two different tables and used to build the
+    same node, so they carried the same ``semantic_hash``.
+
+    ``is_wildcard`` marks a pattern rather than a name -- ``union T*``
+    matches a *set* of tables, and without the flag it was indistinguishable
+    from a literal table that happens to be called ``T*`` (``union ['T*']``,
+    which is a legal and different query).
+    """
+
     model_config = {"extra": "forbid"}
     KIND: ClassVar[str] = "table_ref"
     kind: Literal["table_ref"] = "table_ref"
     name: str
+    database: str | None = None
+    cluster: str | None = None
+    is_wildcard: bool = False
     span: Span
 
 
@@ -164,6 +185,53 @@ class FuncCallSource(BaseModel):
     kind: Literal["func_call_source"] = "func_call_source"
     name: str
     args: list[AnyExpr] = []
+    span: Span
+
+
+class DataTableSource(BaseModel):
+    """``datatable(a:int, b:string)[1,"x",2,"y"]`` — an inline table literal.
+
+    The values *are* the query: a ``datatable`` of allow-listed hashes and
+    the same ``datatable`` of different hashes are two different queries.
+    The builder used to lower every one of them to
+    ``FuncCallSource(name="datatable", args=[])``, discarding the schema and
+    every row, so they all shared one ``semantic_hash``.
+
+    ``rows`` is the reshape of what the parser hands over. ``Values`` on the
+    .NET node is a *flat* list of expressions with no row structure at all;
+    the row width comes from ``len(columns)``. Cells are expressions rather
+    than plain Python values because KQL admits any scalar expression there
+    (``datatable(t:datetime)[ago(1d)]``), and because a ``LiteralExpr``
+    carries the literal kind — ``long`` vs ``real`` vs ``timespan`` — that a
+    bare Python value cannot.
+    """
+
+    model_config = {"extra": "forbid"}
+    KIND: ClassVar[str] = "datatable_source"
+    kind: Literal["datatable_source"] = "datatable_source"
+    columns: list[tuple[str, str]]
+    rows: list[list[AnyExpr]]
+    span: Span
+
+
+class ExternalDataSource(BaseModel):
+    """``externaldata(a:string)[uri, …] with (format="csv")`` in source position.
+
+    Distinct from :class:`~kustology.ir.expr.ExternalDataExpr`, which is the
+    same construct sitting in *expression* position (the value set of a
+    membership test). They share ``_read_external_data`` in the builder so
+    the two cannot drift.
+
+    ``uris`` is a list because the construct takes one: a feed assembled
+    from two URIs is not the feed from one of them.
+    """
+
+    model_config = {"extra": "forbid"}
+    KIND: ClassVar[str] = "external_data_source"
+    kind: Literal["external_data_source"] = "external_data_source"
+    columns: list[tuple[str, str]]
+    uris: list[str]
+    format: str | None = None
     span: Span
 
 
@@ -582,7 +650,14 @@ class Pipeline(BaseModel):
     model_config = {"extra": "forbid"}
     KIND: ClassVar[str] = "pipeline"
     kind: Literal["pipeline"] = "pipeline"
-    source: Union[TableRef, LetRef, FuncCallSource, ImplicitSource, UnknownSource, "Pipeline"]
+    # The ORDERING RULE below applies here too, and for the same reason:
+    # ``ImplicitSource`` is fields-less, so it sits after every source class
+    # that adds fields of its own and before ``UnknownSource``. New sources
+    # go between ``FuncCallSource`` and ``ImplicitSource``.
+    source: Annotated[Union[
+        TableRef, LetRef, FuncCallSource, DataTableSource, ExternalDataSource,
+        ImplicitSource, UnknownSource, "Pipeline",
+    ], Field(union_mode="left_to_right")]
     # Left-to-right Union mode is load-bearing. ORDERING RULE: fields-less
     # operator subclasses (only ``span`` + ``kind``) MUST appear before any
     # subclass that adds optional or defaulted fields. Pydantic's default

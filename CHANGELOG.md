@@ -65,8 +65,16 @@ release is in `docs/superpowers/reports/`.
   let-resolution entirely. All tabular right-hand-side shapes are covered,
   including the parenthesized `let X = ( T | where … );` form that dominates
   Microsoft Sentinel rules.
-- **`ExternalDataExpr` carries real data (tier 2).** `uri`, `columns` and
-  `format` were placeholders — `uri` was literally the string `"url"`.
+- **`ExternalDataExpr` carries real data (tier 2).** `uris`, `columns` and
+  `format` were placeholders — the URI was literally the string `"url"`.
+- **Comments no longer reach `semantic_hash` through a column type
+  (tier 2).** `AssertSchemaOp.columns`, `ParseKvOp.columns` and
+  `ExternalDataExpr.columns` read each declared type with `ToString()`,
+  which is `IncludeTrivia.All` and prepends the node's leading trivia: `T |
+  assert-schema (a: // note`↵`long)` recorded the type as
+  `"// note\nlong"` and hashed differently from the identical query without
+  the comment. All three (and the new `DataTableSource.columns`) read
+  `IncludeTrivia.Minimal` now.
 - **`ParseKvOp.columns`, `MacroExpandOp.pipeline` and `Expr.result_type_inner`
   are populated (tier 2).** Each was empty for every query ever parsed.
 - **`walk()` / `find_all()` descend tuple-valued fields (tier 2).** A
@@ -561,6 +569,32 @@ release is in `docs/superpowers/reports/`.
   stored dump written against the old shape fails validation under
   `extra="forbid"` instead of quietly reproducing the empty branches it
   recorded.
+- **The pipeline source position gains two classes and three fields, and
+  `ExternalDataExpr.uri` becomes `uris`.** Four different queries used to
+  build indistinguishable sources and share one `semantic_hash`. A
+  `datatable` lowered to `FuncCallSource(name="datatable", args=[])`, so its
+  schema and every row were discarded and any two datatables collided; it is
+  now a `DataTableSource` carrying `columns` and `rows` (the parser hands
+  over a flat value list, which the builder reshapes by the column count).
+  An `externaldata` in source position had no source class at all and is now
+  an `ExternalDataSource` with `columns`, `uris` and `format` — which also
+  makes `let X = externaldata(...)` a tabular binding on `rhs_pipeline`
+  rather than an `ExternalDataExpr` on `rhs_expr`, so `rhs_pipeline is not
+  None` is a reliable "is this binding tabular" test again. `TableRef` gains
+  `database`, `cluster` and `is_wildcard`: `database('d1').T` and
+  `database('d2').T` read different tables, and `union T*` names a set of
+  tables where `union ['T*']` names one table called `T*`. Both
+  `ExternalDataExpr.uri` and the single URI it held are gone — the field is
+  `uris: list[str]`, because a feed stitched from two URIs is not the feed
+  from either one. `Pipeline.source` becomes an explicitly ordered
+  `union_mode="left_to_right"` union (fields-less `ImplicitSource` after the
+  classes that add fields, as `Pipeline.operators` already did), and
+  `UnknownSource.raw_text` records the real source text instead of the
+  constant `"unknown"`. `semantic_hash` changes for every query with a
+  `datatable`, an `externaldata`, a database- or cluster-qualified table, a
+  wildcard table, or an unmodelled source. `to_llm_dict` caps
+  `DataTableSource.rows` at 20 and adds a `rows_omitted` count, since real
+  IOC datatables run to thousands of rows; `model_dump_json` stays complete.
 - **`KustoWalker.visit` takes a `depth` argument** (tier 1, listed here for
   want of a tier-1 breaking section): `visit(self, node)` →
   `visit(self, node, depth=0)`, so the base class can stop at

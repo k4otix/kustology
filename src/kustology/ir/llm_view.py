@@ -55,6 +55,15 @@ from .expr import Between, BinOp, ColumnRef, LiteralExpr, SetMembership
 # later; an explicit name is checkable.
 _OMIT_FIELDS = {"span", "body_span", "schema_attached", "ticks"}
 
+# Ceiling on ``DataTableSource.rows`` in the LLM view. Real threat-intel
+# datatables run to thousands of IOC rows; handing all of them to a model
+# buries the query's structure in data it cannot use and costs the context
+# window that structure needs. The truncation is announced with a
+# ``rows_omitted`` count so the reader is never shown a short table that
+# looks complete. It is a *view* concern only: ``model_dump_json`` stays
+# lossless, which is what round-trip and ``semantic_hash`` depend on.
+_MAX_LLM_DATATABLE_ROWS = 20
+
 
 def to_llm_dict(node: Any) -> Any:
     """Render ``node`` (a pydantic IR model, list, or primitive) into an
@@ -86,6 +95,7 @@ def _convert(node: Any) -> Any:
             out["canonical_form"] = node.canonical_form
         _drop_redundant_canonical_form(out, cls)
         _collapse_polarity_into_op(out, cls)
+        _cap_datatable_rows(out, cls)
         return out
     if isinstance(node, list):
         return [_convert(v) for v in node]
@@ -139,6 +149,24 @@ def _canonical_literal_repr(value: Any) -> str:
     if isinstance(value, str):
         return f'"{value}"'
     return str(value)
+
+
+def _cap_datatable_rows(out: dict[str, Any], cls: type) -> None:
+    """Truncate a ``DataTableSource``'s rows, recording how many were cut.
+
+    See :data:`_MAX_LLM_DATATABLE_ROWS`. ``rows_omitted`` is added only when
+    something really was omitted, so a short datatable reads exactly as it
+    did before and the key's presence means what it says.
+    """
+    from .query import DataTableSource  # lazy import: avoids cycle at module load
+
+    if not issubclass(cls, DataTableSource):
+        return
+    rows = out.get("rows")
+    if not isinstance(rows, list) or len(rows) <= _MAX_LLM_DATATABLE_ROWS:
+        return
+    out["rows"] = rows[:_MAX_LLM_DATATABLE_ROWS]
+    out["rows_omitted"] = len(rows) - _MAX_LLM_DATATABLE_ROWS
 
 
 def _collapse_polarity_into_op(out: dict[str, Any], cls: type) -> None:

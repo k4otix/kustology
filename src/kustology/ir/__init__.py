@@ -32,8 +32,9 @@ from .expr import (
     SetMembership, StarExpr, SubqueryExpr, ToScalarExpr, UnaryOp, UnknownExpr,
 )
 from .query import (
-    AsOp, AssertSchemaOp, Assignment, ConsumeOp, CountOp, Diagnostic,
-    DistinctOp, EvaluateOp, ExecuteAndCacheOp, ExtendOp, FacetOp, FilterOp,
+    AsOp, AssertSchemaOp, Assignment, ConsumeOp, CountOp, DataTableSource,
+    Diagnostic, DistinctOp, EvaluateOp, ExecuteAndCacheOp, ExtendOp,
+    ExternalDataSource, FacetOp, FilterOp,
     FindOp, ForkBranch, ForkOp, FuncCallSource, GetSchemaOp,
     GraphMarkComponentsOp, GraphMatchOp, GraphShortestPathsOp,
     GraphToTableOp, GraphWhereEdgesOp,
@@ -93,5 +94,6 @@ __all__ = [
     "GraphShortestPathsOp", "GraphToTableOp", "GraphWhereEdgesOp",
     "GraphWhereNodesOp", "UnknownOp",
     # Sources
-    "TableRef", "LetRef", "FuncCallSource", "ImplicitSource", "UnknownSource",
+    "TableRef", "LetRef", "FuncCallSource", "DataTableSource",
+    "ExternalDataSource", "ImplicitSource", "UnknownSource",
 ]

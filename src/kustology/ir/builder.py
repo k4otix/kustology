@@ -21,13 +21,16 @@ from ..bridge import GlobalState, KustoCode  # re-export-friendly; also triggers
 # Moved to Tier 1 so consumers walking the .NET tree can reach it without the
 # [ir] extra. The private alias keeps this module's call sites untouched.
 from ..utils.walker import iter_elements as _iter_elements
+from ..utils.walker import node_text as _node_text
 from ._builder_helpers import (
     extract_named_param,
-    extract_qualified_table_name,
+    extract_qualified_table_ref,
     is_table_symbol,
+    is_wildcarded_name,
     literal_kind_for,
     literal_value_and_ticks,
     map_semantic_info,
+    read_external_data,
     to_span,
     visit_name,
 )
@@ -63,11 +66,13 @@ from .query import (
     Assignment,
     ConsumeOp,
     CountOp,
+    DataTableSource,
     Diagnostic,
     DistinctOp,
     EvaluateOp,
     ExecuteAndCacheOp,
     ExtendOp,
+    ExternalDataSource,
     FacetOp,
     FilterOp,
     FindOp,
@@ -175,9 +180,10 @@ def _is_time_func_name(name: str) -> bool:
 # suffix is the .NET class hierarchy's own marker for "this is a query
 # operator", and query operators only ever appear in tabular position.
 _TABULAR_LET_RHS_KINDS = frozenset({
-    "PipeExpression",        # let A = T | where …
-    "MaterializeExpression", # let A = materialize(T | where …)
-    "DataTableExpression",   # let A = datatable(a:int)[1, 2]
+    "PipeExpression",         # let A = T | where …
+    "MaterializeExpression",  # let A = materialize(T | where …)
+    "DataTableExpression",    # let A = datatable(a:int)[1, 2]
+    "ExternalDataExpression", # let A = externaldata(a:string)["https://x"]
 })
 
 
@@ -218,23 +224,19 @@ def _is_tabular_let_rhs(net_kind: str) -> bool:
     """True when a ``let`` RHS of this .NET node kind is a tabular expression.
 
     Covers the operator-rooted forms (``union``/``range``/``search``/``print``/
-    ``find``, plus any operator Microsoft adds later) as well as the three
+    ``find``, plus any operator Microsoft adds later) as well as the four
     non-operator tabular kinds. Does *not* cover a bare ``NameReference`` —
     that is only tabular when the binder proves it, which the caller checks
     separately.
 
-    ``externaldata`` is deliberately excluded, though it *is* tabular in KQL.
-    It has no pipeline and no source to build one from, so routing it through
-    ``_visit_pipeline`` would manufacture an ``UnknownSource`` — inventing a
-    coverage gap to satisfy a field, and tripping the corpus gate on a query
-    the builder actually handles. ``let X = externaldata(...)`` therefore
-    lands on ``rhs_expr`` as an :class:`~kustology.ir.expr.ExternalDataExpr`,
-    which carries the declared columns, the URI and the format, so a consumer
-    can read the shape from there.
-
-    The consequence to know: ``rhs_pipeline is not None`` is *not* a reliable
-    test for "is this binding tabular". Check ``rhs_expr`` for an
-    ``ExternalDataExpr`` as well.
+    ``ExternalDataExpression`` is one of the four. It used to be excluded,
+    because there was no source class to build a pipeline around and routing
+    it through ``_visit_pipeline`` would have manufactured an
+    ``UnknownSource``. :class:`~kustology.ir.query.ExternalDataSource` is
+    that class, so ``let X = externaldata(...)`` now lands on
+    ``rhs_pipeline`` like every other tabular binding — and
+    ``rhs_pipeline is not None`` is a reliable "is this binding tabular"
+    test again.
     """
     return net_kind.endswith("Operator") or net_kind in _TABULAR_LET_RHS_KINDS
 
@@ -320,6 +322,12 @@ class IRBuilder:
         # dropping it would make the coverage audit report a fully-handled
         # shape as unhandled.
         "ToScalarExpression", "PipeExpression", "ExternalDataExpression",
+        "DataTableExpression",
+        # DataTableExpression is handled by ``_visit_pipeline`` rather than
+        # ``_visit_expr``: ``datatable`` is a tabular literal, so it only
+        # ever occupies source position (its own or a ``let`` right-hand
+        # side's). It joins MaterializeExpression and ForkExpression above
+        # in being modelled somewhere other than the expression visitor.
         "MakeSeriesExpression",
         "ForkExpression",
         # ForkExpression joins the same two: handled, but by the
@@ -477,8 +485,13 @@ class IRBuilder:
 
     def _visit_pipeline(self, node: Any) -> Pipeline:
         operators: list[Any] = []
-        source: TableRef | LetRef | UnknownSource | Pipeline = UnknownSource(
-            raw_text="unknown", span=to_span(node),
+        # The placeholder records the node's own text rather than the literal
+        # string "unknown". A shape the builder cannot model is exactly the
+        # one whose provenance a consumer needs, and a constant made every
+        # unmodelled source hash the same -- the reason ``UnknownExpr`` and
+        # ``UnknownOp`` have carried their text all along.
+        source: Any = UnknownSource(
+            raw_text=_node_text(node), span=to_span(node),
         )
 
         def walk(n: Any) -> None:
@@ -518,10 +531,20 @@ class IRBuilder:
                 return
 
             if kind == "PathExpression" and isinstance(source, UnknownSource):
-                # `cluster("c").database("d").T` / `database("d").T`.
-                tbl = extract_qualified_table_name(n)
-                if tbl:
-                    source = TableRef(name=tbl, span=to_span(n))
+                # `cluster("c").database("d").T` / `database("d").T` /
+                # `database("d").*`. The qualifiers are part of what the
+                # query reads, so they ride on the TableRef rather than
+                # being dropped on the way to the bare name.
+                qualified = extract_qualified_table_ref(n)
+                if qualified is not None and qualified[2]:
+                    cluster, database, tbl, is_wildcard = qualified
+                    source = TableRef(
+                        name=tbl,
+                        database=database,
+                        cluster=cluster,
+                        is_wildcard=is_wildcard,
+                        span=to_span(n),
+                    )
                     return
 
             if kind == "FunctionCallExpression":
@@ -544,10 +567,19 @@ class IRBuilder:
                 return
 
             if kind == "DataTableExpression":
-                # `datatable(schema)[values]` — inline tabular literal.
+                # `datatable(schema)[values]` — inline tabular literal. The
+                # values are the query, so they are modeled rather than
+                # collapsed into an argument-less FuncCallSource.
                 if isinstance(source, UnknownSource):
-                    source = FuncCallSource(
-                        name="datatable", args=[], span=to_span(n),
+                    source = self._visit_datatable(n)
+                return
+
+            if kind == "ExternalDataExpression":
+                # `externaldata(schema)[uris] with (...)` at source position.
+                if isinstance(source, UnknownSource):
+                    columns, uris, fmt = read_external_data(n)
+                    source = ExternalDataSource(
+                        columns=columns, uris=uris, format=fmt, span=to_span(n),
                     )
                 return
 
@@ -561,8 +593,10 @@ class IRBuilder:
                 source, UnknownSource
             ):
                 name = ""
+                name_node = None
                 if hasattr(n, "Name"):
-                    name = visit_name(n.Name)
+                    name_node = n.Name
+                    name = visit_name(name_node)
                 elif hasattr(n, "SimpleName"):
                     name = n.SimpleName.strip()
                 else:
@@ -575,7 +609,15 @@ class IRBuilder:
                     if name in self._let_names:
                         source = LetRef(name=name, span=to_span(n))
                     else:
-                        source = TableRef(name=name, span=to_span(n))
+                        # `union T*` names a set of tables; the bracketed
+                        # literal `union ['T*']` names one table that happens
+                        # to be called `T*`. Only the name node's Kind
+                        # separates them.
+                        source = TableRef(
+                            name=name,
+                            is_wildcard=is_wildcarded_name(name_node),
+                            span=to_span(n),
+                        )
 
         walk(node)
         # Operators-but-no-explicit-source means the source is implicit (parent
@@ -583,6 +625,35 @@ class IRBuilder:
         if isinstance(source, UnknownSource) and operators:
             source = ImplicitSource(span=to_span(node))
         return Pipeline(source=source, operators=operators)
+
+    def _visit_datatable(self, node: Any) -> DataTableSource:
+        """Build a :class:`DataTableSource` from a ``DataTableExpression``.
+
+        ``node.Values`` is a *flat* ``SyntaxList`` — the parser imposes no
+        row structure on it, so the rows come from chunking it by the
+        schema's column count. A trailing partial chunk is kept rather than
+        discarded: the query is malformed (the parser says so with its own
+        diagnostic) and dropping the values would hide what it wrote.
+
+        Column types are read with ``node_text`` (``IncludeTrivia.Minimal``),
+        never ``ToString()``: the latter is ``IncludeTrivia.All`` and
+        prepends leading trivia, so ``datatable(a: // note\\n long)`` would
+        record the type as ``"// note\\n long"``.
+        """
+        columns: list[tuple[str, str]] = []
+        schema_node = getattr(node, "Schema", None)
+        if schema_node is not None and hasattr(schema_node, "Columns"):
+            for col in _iter_elements(schema_node.Columns):
+                type_node = getattr(col, "Type", None)
+                columns.append((
+                    visit_name(col),
+                    _node_text(type_node).strip() if type_node is not None else "unknown",
+                ))
+
+        cells = [self._visit_expr(el) for el in _iter_elements(node.Values)]
+        width = len(columns) or len(cells) or 1
+        rows = [cells[i:i + width] for i in range(0, len(cells), width)]
+        return DataTableSource(columns=columns, rows=rows, span=to_span(node))
 
     def _visit_operator(self, node: Any) -> Operator | None:
         kind = str(type(node).__name__)
@@ -951,13 +1022,22 @@ class IRBuilder:
             return ForkOp(branches=branches, span=span)
 
         if kind == "AssertSchemaOperator":
+            # ``_node_text`` is ``ToString(IncludeTrivia.Minimal)``. The bare
+            # ``ToString()`` this replaced is ``IncludeTrivia.All``, which
+            # prepends the node's leading trivia: ``assert-schema (a: //
+            # note\n long)`` recorded the type as ``"// note\n long"`` and
+            # hashed differently from the identical query without the
+            # comment. ``columns`` became load-bearing for the hash when the
+            # volatile-field set stopped filtering the dump by key name.
             asserted: dict[str, str] = {}
             schema_node = getattr(n, "Schema", None)
             if schema_node is not None and hasattr(schema_node, "Columns"):
                 for col in _iter_elements(schema_node.Columns):
                     cname = visit_name(col)
                     ctype_node = getattr(col, "Type", None)
-                    asserted[cname] = ctype_node.ToString().strip() if ctype_node else "unknown"
+                    asserted[cname] = (
+                        _node_text(ctype_node).strip() if ctype_node else "unknown"
+                    )
             return AssertSchemaOp(columns=asserted, span=span)
 
         if kind == "ParseKvOperator":
@@ -971,13 +1051,17 @@ class IRBuilder:
             # ``Keys`` is a RowSchema. The previous guard tested it for a
             # ``Count`` member, which RowSchema does not have -- the loop
             # body never ran and the field was always empty.
+            #
+            # The type read is ``_node_text``, not ``ToString()``, for the
+            # same reason as ``AssertSchemaOperator`` above: the no-argument
+            # overload carries the node's leading comment into the value.
             declared: dict[str, str] = {}
             keys = getattr(n, "Keys", None)
             if keys is not None and hasattr(keys, "Columns"):
                 for col in _iter_elements(keys.Columns):
                     ctype_node = getattr(col, "Type", None)
                     declared[visit_name(col)] = (
-                        ctype_node.ToString().strip() if ctype_node else "unknown"
+                        _node_text(ctype_node).strip() if ctype_node else "unknown"
                     )
             return ParseKvOp(target=target, columns=declared, span=span)
 
@@ -1340,36 +1424,10 @@ class IRBuilder:
             res = SubqueryExpr(pipeline=self._visit_pipeline(node), span=span)
 
         elif kind == "ExternalDataExpression":
-            # All three fields used to be placeholders. The URI guard read
-            # ``node.Uris``; the member is ``URIs``, and pythonnet is
-            # case-sensitive and silent about the miss, so ``uri`` kept the
-            # literal string "url". ``columns`` was bound to [] and never
-            # appended to, and ``format`` was hardcoded "unknown".
-            cols: list[tuple[str, str]] = []
-            schema_node = getattr(node, "Schema", None)
-            if schema_node is not None:
-                for col in _iter_elements(schema_node.Columns):
-                    cols.append((
-                        col.Name.ToString().strip(),
-                        col.Type.ToString().strip(),
-                    ))
-
-            uri = ""
-            uris = getattr(node, "URIs", None)
-            if uris is not None and uris.Count > 0:
-                uri = uris[0].Element.ToString().strip().strip("@").strip("\"'")
-
-            # ``with (format="csv", ignoreFirstRecord=true)`` -- only the
-            # format is modeled; the rest stay in the source text.
-            fmt: str | None = None
-            with_clause = getattr(node, "WithClause", None)
-            if with_clause is not None:
-                for prop in _iter_elements(with_clause.Properties):
-                    if prop.Name.ToString().strip().lower() == "format":
-                        fmt = prop.Expression.ToString().strip().strip("\"'")
-                        break
-
-            res = ExternalDataExpr(columns=cols, uri=uri, format=fmt, span=span)
+            # Shared with the source-position branch of ``_visit_pipeline``:
+            # the same construct read two ways is how the two readings drift.
+            cols, uris, fmt = read_external_data(node)
+            res = ExternalDataExpr(columns=cols, uris=uris, format=fmt, span=span)
 
         elif kind == "MakeSeriesExpression":
             res = self._visit_expr(node.Expression)

@@ -385,25 +385,30 @@ def test_let_ref_classification_is_bind_independent():
     assert bound.let_bindings[0].rhs_pipeline is not None
 
 
-def test_externaldata_let_rhs_is_scalar_shaped_by_design():
-    """``rhs_pipeline is not None`` is not a reliable "is tabular" test.
+def test_externaldata_let_rhs_is_tabular():
+    """``rhs_pipeline is not None`` *is* a reliable "is tabular" test again.
 
-    ``externaldata`` is tabular in KQL but has no pipeline and no source to
-    build one from, so it lands on ``rhs_expr``. Routing it through
-    ``_visit_pipeline`` would manufacture an ``UnknownSource`` -- inventing a
-    coverage gap to satisfy a field. Pinned here with the reasoning in
-    ``_is_tabular_let_rhs``'s docstring so it is not rediscovered as a bug.
+    ``externaldata`` is tabular in KQL, but it used to land on ``rhs_expr``
+    because there was no source class to build a pipeline around -- routing
+    it through ``_visit_pipeline`` would have manufactured an
+    ``UnknownSource``, inventing a coverage gap to satisfy a field. With
+    ``ExternalDataSource`` there is a real source, so the binding takes the
+    same shape as every other tabular one and callers no longer need the
+    ``rhs_expr``-might-be-an-``ExternalDataExpr`` special case.
     """
-    from kustology.ir import ExternalDataExpr, IRBuilder
+    from kustology.ir import ExternalDataSource, IRBuilder
 
     ir = IRBuilder().build(
         'let known = externaldata(id:string) [@"https://example.test/x.csv"]; '
         "T | where C !in (known)"
     )
     lb = ir.let_bindings[0]
-    assert lb.rhs_pipeline is None
-    assert isinstance(lb.rhs_expr, ExternalDataExpr)
+    assert lb.rhs_expr is None
+    assert lb.rhs_pipeline is not None
+    source = lb.rhs_pipeline.source
+    assert isinstance(source, ExternalDataSource)
+    assert lb.rhs_pipeline.operators == []
+    # A URI is not a table, so lineage stays empty.
     assert lb.inner_tables == []
-    # The shape is still legible: the columns and URI are on the expression.
-    assert lb.rhs_expr.columns == [("id", "string")]
-    assert lb.rhs_expr.uri == "https://example.test/x.csv"
+    assert source.columns == [("id", "string")]
+    assert source.uris == ["https://example.test/x.csv"]

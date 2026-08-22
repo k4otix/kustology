@@ -174,7 +174,10 @@ def canonical(expr: Any) -> str:
         return "*"
     if isinstance(expr, ExternalDataExpr):
         cols = ", ".join(f"{n}:{ty}" for n, ty in expr.columns)
-        return f"externaldata({cols})[{expr.uri}]"
+        # Every URI, in source order. Rendering only the first collapsed a
+        # two-URI feed onto a one-URI feed -- the same loss the singular
+        # ``uri`` field used to bake into the model.
+        return f"externaldata({cols})[{', '.join(expr.uris)}]"
     # Pipeline-bearing expressions. The inner pipeline is elided rather than
     # rendered: canonical() is a pure Expr function and Pipeline is modeled
     # in ir.query, so recursing would invert the dependency. The wrapper is

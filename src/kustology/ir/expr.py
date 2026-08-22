@@ -251,10 +251,22 @@ class SubqueryExpr(Expr):
 
 
 class ExternalDataExpr(Expr):
+    """``externaldata(...)[...]`` in expression position — a membership set.
+
+    The source-position form is
+    :class:`~kustology.ir.query.ExternalDataSource`; both are filled by the
+    builder's ``_read_external_data`` so they cannot drift apart.
+
+    ``uris`` replaced a singular ``uri: str`` that held whichever URI came
+    first. ``externaldata`` takes a list, and a feed stitched from two URIs
+    is not the feed from either one of them — the dropped entries made two
+    different queries build the same node.
+    """
+
     KIND: ClassVar[str] = "external_data"
     kind: Literal["external_data"] = "external_data"
     columns: list[tuple[str, str]]
-    uri: str
+    uris: list[str]
     format: str | None = None
 
 

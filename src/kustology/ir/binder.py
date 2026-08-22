@@ -27,8 +27,10 @@ from .expr import (
 from .query import (
     Assignment,
     CountOp,
+    DataTableSource,
     DistinctOp,
     ExtendOp,
+    ExternalDataSource,
     FilterOp,
     JoinOp,
     LetRef,
@@ -163,7 +165,20 @@ class SchemaAttacher:
         return self.schemas.get(name, {})
 
     def _source_entry(self, pipeline: Pipeline) -> ScopeEntry:
+        """The scope a pipeline starts from, derived from its source.
+
+        Schema lookups are keyed on the **bare** table name, and stay that
+        way for a qualified source: ``database('d').T`` resolves against
+        ``schemas["T"]``. The qualifiers are recorded on the ``TableRef``
+        for consumers that care about provenance, but adopting a ``"d.T"``
+        key convention here would silently stop resolving every qualified
+        query written against a schema dict keyed the ordinary way.
+        """
         source = pipeline.source
+        if isinstance(source, (DataTableSource, ExternalDataSource)):
+            # These declare their own schema inline, so no lookup is needed
+            # -- and none would succeed, since neither has a table name.
+            return ScopeEntry(table=None, columns=dict(source.columns))
         if isinstance(source, Pipeline):
             # ``materialize(P) | …`` nests a whole pipeline in source
             # position. Walk it so its own operators shape the scope the
@@ -180,6 +195,11 @@ class SchemaAttacher:
             columns = self._let_schemas.get(source.name)
             if columns is not None:
                 return ScopeEntry(table=source.name, columns=dict(columns))
+            return ScopeEntry(table=None, columns={})
+        if isinstance(source, TableRef) and source.is_wildcard:
+            # ``union T*`` names a *set* of tables. Resolving it against a
+            # schema entry literally called ``T*`` would be a coincidence,
+            # and picking one member of the set would be a guess.
             return ScopeEntry(table=None, columns={})
         name = source.name if isinstance(source, TableRef) else None
         return ScopeEntry(table=name, columns=self._table_schema(name))
