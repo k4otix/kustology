@@ -1,12 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-from typing import Any, ClassVar, Literal, Union
+from typing import TYPE_CHECKING, ClassVar, Literal, Union
 
 from pydantic import BaseModel
 
 from .spans import Span
 from .types import KustoType
+
+if TYPE_CHECKING:
+    # ``query`` imports this module, so ``Pipeline`` can only be a forward
+    # reference here. It is resolved by the ``model_rebuild()`` calls at the
+    # bottom of ``query.py``, which run once ``Pipeline`` exists and use that
+    # module's namespace. See ``ToScalarExpr``.
+    from .query import Pipeline
 
 AnyExpr = Union[
     "BinOp", "UnaryOp", "SetMembership", "Between", "And", "Or", "Not",
@@ -297,9 +304,32 @@ class BracketedExpr(Expr):
 
 
 class ToScalarExpr(Expr):
+    """``toscalar(...)`` — a whole tabular pipeline reduced to one value.
+
+    ``pipeline`` was declared ``Any``, the cheap way around the ``expr`` ↔
+    ``query`` import cycle, and ``Any`` costs more than it saves. The builder
+    put a real :class:`~kustology.ir.query.Pipeline` there, so an in-memory IR
+    looked correct and every ``walk`` reached inside — but pydantic was told
+    nothing, so ``model_validate_json`` reloaded the nested query as a plain
+    dict. The reloaded IR did not equal the one it came from, ``walk`` (which
+    yields models, and a dict of primitives holds none) stopped seeing the
+    inner query entirely, and ``compute_semantic_hash`` — which strips spans
+    by walking — left every offset inside it in the digest, so rehashing
+    stored IR did not reproduce its own hash.
+
+    The cycle is real and the fix is a forward reference, not an import:
+    ``query.py`` imports this module, so ``Pipeline`` is a string here and
+    ``query.py`` rebuilds this class (and :class:`SubqueryExpr`) once
+    ``Pipeline`` is defined, resolving the reference from its own namespace.
+
+    ``| None`` rather than a bare ``Pipeline`` because the field previously
+    accepted anything, ``None`` included; narrowing it to required-and-present
+    would be a larger break than typing it. The builder always populates it.
+    """
+
     KIND: ClassVar[str] = "to_scalar"
     kind: Literal["to_scalar"] = "to_scalar"
-    pipeline: Any  # forward ref to Pipeline (cycle avoidance)
+    pipeline: "Pipeline | None"
 
 
 class SubqueryExpr(Expr):
@@ -311,11 +341,14 @@ class SubqueryExpr(Expr):
     pipeline arrives naked. Modeling it keeps the
     subtree reachable by ``walk``/``find_all`` instead of collapsing a whole
     inner query into an ``UnknownExpr`` blob of raw text.
+
+    See :class:`ToScalarExpr` for why ``pipeline`` is a forward reference and
+    what declaring it ``Any`` used to cost.
     """
 
     KIND: ClassVar[str] = "subquery"
     kind: Literal["subquery"] = "subquery"
-    pipeline: Any  # forward ref to Pipeline (cycle avoidance)
+    pipeline: "Pipeline | None"
 
 
 class ExternalDataExpr(Expr):
@@ -350,11 +383,18 @@ class UnknownExpr(Expr):
     reason: str
 
 
-for _cls in (
+# Rebuilt at the bottom of ``query.py`` rather than here, because that is the
+# first point at which both halves of the ``expr`` <-> ``query`` cycle exist.
+# ``ToScalarExpr.pipeline`` and ``SubqueryExpr.pipeline`` are forward
+# references to ``Pipeline``, and since both classes are members of
+# ``AnyExpr``, *every* expression class with an ``AnyExpr`` field needs them
+# resolved too -- so rebuilding any of them in this module fails, not just the
+# two. ``query.py`` imports this one, so a module-level rebuild there always
+# runs after these classes are defined.
+REBUILT_BY_QUERY_MODULE: tuple[type[BaseModel], ...] = (
     LiteralExpr, ColumnRef, LetValueRef, TypedNameDecl, BinOp, SetMembership,
     Between, And, Or, Not,
     FuncCall, CaseExpr, RegexMatch, Exists, PathExpr, ElementExpr, StarExpr,
     NamedExpr, CompoundNamedExpr, UnaryOp, BracketedExpr,
     ToScalarExpr, SubqueryExpr, ExternalDataExpr,
-):
-    _cls.model_rebuild()
+)

@@ -596,6 +596,21 @@ release is in `docs/superpowers/reports/`.
   stored dump written against the old shape fails validation under
   `extra="forbid"` instead of quietly reproducing the empty branches it
   recorded.
+- **`ToScalarExpr.pipeline` and `SubqueryExpr.pipeline` are typed
+  `Pipeline | None`** (were `Any`). `Any` was the cheap way around the
+  `expr` ↔ `query` import cycle, and it cost the round trip: the builder put
+  a real `Pipeline` there, so an in-memory IR looked correct, but pydantic
+  was told nothing and `QueryIR.model_validate_json(ir.model_dump_json())`
+  reloaded the entire nested query as a plain dict. The reloaded IR did not
+  equal the one it came from; `walk` yields models and a dict of primitives
+  holds none, so `find_all` went blind to everything inside a `toscalar(...)`
+  or an `in ((subquery))` after a round trip; and `compute_semantic_hash`,
+  which strips spans by walking, left every offset inside the nested
+  pipeline in the digest, so rehashing stored IR did not reproduce its own
+  hash. A stored dump whose nested pipeline is not a pipeline now raises
+  `ValidationError` instead of loading. The cycle is resolved by a forward
+  reference: the expression classes are rebuilt at the bottom of `query.py`,
+  once `Pipeline` exists.
 - **A `let`-bound scalar used in an expression is a `LetValueRef`, not a
   `ColumnRef`.** `threshold` in
   `let threshold = 5; T | where Count > threshold` lowered to a `ColumnRef`,

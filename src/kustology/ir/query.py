@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 # Pydantic v2 resolves string forward refs in `AnyExpr` using the namespace of
 # the consuming module, so every name in AnyExpr must be importable here.
 from .expr import (  # noqa: F401 — names referenced via forward refs
+    REBUILT_BY_QUERY_MODULE,
     And,
     AnyExpr,
     Between,
@@ -1080,6 +1081,23 @@ class QueryIR(BaseModel):
         from .llm_view import to_llm_dict
         return to_llm_dict(self)
 
+
+# The expression classes first, and here rather than in ``expr.py``:
+# ``ToScalarExpr.pipeline`` and ``SubqueryExpr.pipeline`` are forward
+# references to ``Pipeline``, which does not exist until this module has run,
+# and both classes are members of ``AnyExpr`` so *every* expression class with
+# an ``AnyExpr`` field needs them resolved too. See
+# ``expr.REBUILT_BY_QUERY_MODULE``.
+#
+# The rebuild resolves the reference from the **calling** module's namespace,
+# which is this one -- ``expr.py``'s own globals do not hold ``Pipeline``,
+# since its import there is ``TYPE_CHECKING``-only. That is the standard
+# pydantic idiom for a cycle, and it is load-bearing rather than incidental:
+# ``test_nested_pipelines`` asserts both classes come out complete with the
+# resolved annotation, so a pydantic change that stopped reaching the caller's
+# namespace fails loudly instead of silently reinstating an untyped field.
+for _expr_cls in REBUILT_BY_QUERY_MODULE:
+    _expr_cls.model_rebuild()
 
 Pipeline.model_rebuild()
 LetBinding.model_rebuild()
