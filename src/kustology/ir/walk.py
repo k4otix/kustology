@@ -52,8 +52,12 @@ def walk(
     Example:
         >>> for n in walk(ir):
         ...     ...
-        >>> for n in walk(ir, lambda n: isinstance(n, BinOp) and not n.case_sensitive):
+        >>> for n in walk(ir, lambda n: isinstance(n, BinOp) and n.case_sensitive is False):
         ...     ...
+
+    ``is False`` rather than ``not``: ``BinOp.case_sensitive`` is ``None``
+    on the arithmetic operators, where the question does not apply, and
+    ``not None`` is true.
     """
     yield from _walk(node, predicate, set())
 
@@ -74,6 +78,11 @@ def _walk(
     descent already produced. Holding ``id()`` values is safe because the
     root keeps every descendant alive for the traversal's lifetime, so no
     address is recycled underneath us.
+
+    A side effect worth knowing: the set also makes a cycle terminate. The
+    builder does not produce one and this is not a licence to introduce one
+    — a cycle would still break ``model_dump`` and the hash — but the walker
+    no longer recurses forever if one ever appears.
     """
     if id(node) in seen:
         return
