@@ -124,11 +124,6 @@ _PREC_COMPARISON = 3
 _PREC_UNARY = 6
 _PREC_ARITHMETIC = {"+": 4, "-": 4, "*": 5, "/": 5, "%": 5}
 
-# Operators for which ``a OP (b OP c)`` differs from ``(a OP b) OP c``. Equal
-# precedence is enough to drop parentheses on the *left* of any of these, and
-# never enough on the right.
-_NON_ASSOCIATIVE = frozenset({"-", "/", "%"})
-
 
 def _kql_string(value: str) -> str:
     """Render ``value`` as a KQL double-quoted string literal.
@@ -185,7 +180,9 @@ def canonical(expr: Any) -> str:
     ``BracketedExpr`` stays dropped. What the renderer owes the reader is that
     the string it emits parses back to the tree it came from: ``a and (b or
     c)`` keeps its parentheses because ``or`` binds looser than ``and``, and
-    ``x - (y - z)`` keeps them because ``-`` does not associate.
+    ``x - (y - z)`` keeps them because arithmetic is left-associative, so a
+    right operand of equal precedence can only have got there by being
+    bracketed.
 
     This is a *display and diffing* form, not the hash's key.
     ``semantic_hash`` digests the model dump, and ``canonical_form`` is a
@@ -194,8 +191,9 @@ def canonical(expr: Any) -> str:
 
     def _wrap(text: str, prec: int, parent_prec: int, parens_on_equal: bool) -> str:
         """Parenthesize ``text`` when its operator binds looser than the one
-        it sits inside -- or exactly as tight, on the right of an operator
-        that does not associate."""
+        it sits inside -- or exactly as tight, in the right operand's
+        position, where a left-associative grammar could not have produced it
+        without brackets."""
         if prec < parent_prec or (prec == parent_prec and parens_on_equal):
             return f"({text})"
         return text
@@ -227,9 +225,18 @@ def canonical(expr: Any) -> str:
             return f"{e.name}:{e.declared_type}"
         if isinstance(e, BinOp):
             prec = _PREC_ARITHMETIC.get(e.op, _PREC_COMPARISON)
+            # The right operand always re-brackets at equal precedence; the
+            # left never does. That asymmetry is left-associativity, and it
+            # belongs to the *child's* position rather than to the parent
+            # operator: a right operand of equal precedence cannot have come
+            # from an unbracketed parse, because an unbracketed chain nests
+            # left. This rule replaced one that asked whether the parent was
+            # ``-``, ``/`` or ``%`` -- the right observation attached to the
+            # wrong operator, which left ``x * (y / z)`` rendering as
+            # ``x * y / z``. Under integer division those are different
+            # numbers: ``2 * (7 / 2)`` is 6 and ``2 * 7 / 2`` is 7.
             text = (
-                f"{_render(e.left, prec)} {e.op} "
-                f"{_render(e.right, prec, e.op in _NON_ASSOCIATIVE)}"
+                f"{_render(e.left, prec)} {e.op} {_render(e.right, prec, True)}"
             )
             return _wrap(text, prec, parent_prec, parens_on_equal)
         if isinstance(e, And):

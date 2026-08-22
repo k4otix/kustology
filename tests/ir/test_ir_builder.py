@@ -634,14 +634,64 @@ def test_arithmetic_is_parenthesized_by_precedence():
     assert _form("T | extend y = x + y * z") == "x + y * z"
 
 
-@pytest.mark.parametrize("op", ["-", "/", "%"])
-def test_a_non_associative_operator_parenthesizes_its_right_operand(op):
-    """``x - (y - z)`` is not ``x - y - z``. Equal precedence is not enough
-    to drop the parentheses when the operator does not associate: the
-    grouping is the whole difference between the two, and both rendered as
-    the left-nested spelling."""
-    assert _form(f"T | extend r = x {op} (y {op} z)") == f"x {op} (y {op} z)"
-    assert _form(f"T | extend r = x {op} y {op} z") == f"x {op} y {op} z"
+# Every ordered pair of same-precedence arithmetic operators. The rule under
+# test is a property of *left-associativity*, which all of these share, not
+# of the individual operator: a right operand of equal precedence cannot have
+# come from an unparenthesized parse, so it always needs brackets back.
+_SAME_PRECEDENCE_ARITHMETIC_PAIRS = [
+    (outer, inner)
+    for group in (("+", "-"), ("*", "/", "%"))
+    for outer in group
+    for inner in group
+]
+
+
+@pytest.mark.parametrize(
+    "outer, inner",
+    _SAME_PRECEDENCE_ARITHMETIC_PAIRS,
+    ids=[f"{o}-{i}" for o, i in _SAME_PRECEDENCE_ARITHMETIC_PAIRS],
+)
+def test_a_right_operand_of_equal_precedence_is_parenthesized(outer, inner):
+    """``x * (y / z)`` is not ``x * y / z``, and neither is ``x - (y - z)``
+    ``x - y - z``.
+
+    The first version of this rule asked whether the *parent* operator was
+    one of ``-``, ``/``, ``%`` -- "non-associative" in the sense that
+    ``a - (b - c)`` differs from ``(a - b) - c``. That is the right
+    observation attached to the wrong operator. What makes the brackets
+    load-bearing is that KQL's arithmetic is **left**-associative, so a
+    right operand of equal precedence can only exist because the source
+    wrote brackets; dropping them re-parses as the left-nested tree, which is
+    a different tree. ``x * (y / z)`` and ``x * y / z`` both rendered
+    ``'x * y / z'`` while hashing apart -- and under integer division they
+    are different numbers: ``2 * (7 / 2)`` is 6, ``2 * 7 / 2`` is 7.
+
+    Parametrized over every ordered pair within each precedence group,
+    including ``+``/``+`` and ``*``/``*``, whose brackets are redundant for
+    exact arithmetic but not for floating point -- and which the renderer has
+    no business deciding, since it does not know the operand types.
+    """
+    grouped = _form(f"T | extend r = x {outer} (y {inner} z)")
+    flat = _form(f"T | extend r = x {outer} y {inner} z")
+    assert grouped == f"x {outer} (y {inner} z)"
+    assert flat == f"x {outer} y {inner} z"
+    assert grouped != flat
+
+
+def test_a_left_operand_of_equal_precedence_keeps_no_parentheses():
+    """The other half of left-associativity: ``(x - y) - z`` *is* how
+    ``x - y - z`` parses, so the brackets carry nothing and stay dropped.
+    Bracketing both sides would be safe and unreadable."""
+    assert _form("T | extend r = (x - y) - z") == "x - y - z"
+    assert _form("T | extend r = (x / y) / z") == "x / y / z"
+
+
+def test_a_higher_precedence_right_operand_still_needs_no_parentheses():
+    """The boundary: only *equal* precedence forces the brackets. ``y * z``
+    binds tighter than ``+``, so it can and did come from an unbracketed
+    parse."""
+    assert _form("T | extend r = x + y * z") == "x + y * z"
+    assert _form("T | extend r = x - y * z") == "x - y * z"
 
 
 def test_not_still_renders_its_own_parentheses():

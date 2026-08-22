@@ -171,8 +171,11 @@ release is in `docs/superpowers/reports/`.
   spells bools and null the KQL way (tier 2).** It rendered operands
   flat, so `a and (b or c)` and `a and b or c` — different predicates —
   came out as one string; it now brackets a child that binds looser than its
-  parent, and the right operand of a non-associative `-`, `/` or `%` at
-  equal precedence, so `x - (y - z)` no longer reads as `x - y - z`.
+  parent, and any right operand of *equal* precedence, since KQL's
+  arithmetic is left-associative and an unbracketed chain nests left — so
+  `x - (y - z)` no longer reads as `x - y - z`, and neither does
+  `x * (y / z)`, which under integer division is a different number
+  (`2 * (7 / 2)` is 6; `2 * 7 / 2` is 7).
   Redundant brackets are still dropped: the parser discards them before the
   builder sees them, so `(a and b) or c` and `a and b or c` build identical
   IR and render identically. String literals are escaped, so the one-argument
