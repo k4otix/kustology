@@ -14,7 +14,7 @@ and :attr:`HANDLED_EXPR_KINDS` for the coverage audit script.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from ..bridge import GlobalState, KustoCode  # re-export-friendly; also triggers CLR init
 
@@ -194,6 +194,18 @@ _TABULAR_LET_RHS_KINDS = frozenset({
     "DataTableExpression",    # let A = datatable(a:int)[1, 2]
     "ExternalDataExpression", # let A = externaldata(a:string)["https://x"]
 })
+
+
+# The four KQL null/empty tests and the polarity each one carries. A
+# mapping rather than a "does the name start with ``isnot``" rule: the set
+# is closed and small, and a name test would silently claim any future
+# ``isnotXxx`` function is a null test.
+_NULL_TEST_POLARITY: dict[str, Literal["inclusion", "exclusion"]] = {
+    "isnotnull": "inclusion",
+    "isnotempty": "inclusion",
+    "isnull": "exclusion",
+    "isempty": "exclusion",
+}
 
 
 # The arithmetic operators. Neither case sensitivity nor polarity is a
@@ -1761,11 +1773,21 @@ class IRBuilder:
                 res = CaseExpr(branches=branches, default=args[-1], span=span)
             elif lname == "iif" and len(args) == 3:
                 res = CaseExpr(branches=[(args[0], args[1])], default=args[2], span=span)
-            elif lname in ("isnotnull", "isnotempty") and len(args) == 1:
-                # Record which one: isnotempty also rejects "", so lowering
-                # both to a bare Exists made two different predicates
-                # indistinguishable.
-                res = Exists(op=lname, target=args[0], span=span)
+            elif lname in _NULL_TEST_POLARITY and len(args) == 1:
+                # All four null/empty tests lower here. Only the positive
+                # pair used to, so ``find_all(ir, Exists)`` -- "which columns
+                # does this query null-check" -- saw half the query.
+                #
+                # Record which function: isnotempty also rejects "", so
+                # lowering the pair to a bare Exists made two different
+                # predicates indistinguishable. ``polarity`` is the
+                # derived-but-useful companion, as on ``BinOp``.
+                res = Exists(
+                    op=lname,
+                    polarity=_NULL_TEST_POLARITY[lname],
+                    target=args[0],
+                    span=span,
+                )
             elif lname == "not" and len(args) == 1:
                 res = Not(operand=args[0], span=span)
 

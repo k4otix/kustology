@@ -279,19 +279,31 @@ class RegexMatch(Expr):
 
 
 class Exists(Expr):
-    """A positive null/empty test, lowered from ``isnotnull`` or ``isnotempty``.
+    """A null/empty test: ``isnull``, ``isnotnull``, ``isempty``, ``isnotempty``.
 
-    Note the asymmetry: the *negative* forms ``isnull`` and ``isempty`` are
-    not lowered at all -- they stay :class:`FuncCall`. Whether to lower them
-    too is an open question, not an oversight.
+    All four lower here. Only the two positive forms used to, which left the
+    IR modelling one half of a symmetric pair: a consumer asking "which
+    columns does this query null-check" through ``find_all(ir, Exists)`` saw
+    ``isnotnull(C)`` and missed ``isnull(C)``, and the shape it had to fall
+    back on for the other half -- a :class:`FuncCall` identified by a name
+    string -- is the shape this class exists to replace.
     """
 
     KIND: ClassVar[str] = "exists"
     kind: Literal["exists"] = "exists"
-    # Which function produced this: "isnotnull" or "isnotempty". They are not
-    # equivalent -- isnotempty also rejects "" -- and without this field both
-    # lowered to the same node with the same semantic_hash.
+    # Which function produced this. The four are four different predicates:
+    # ``isnotempty`` also rejects ``""`` where ``isnotnull`` does not, and
+    # each pair is the other's negation. Without this field the two positive
+    # forms lowered to the same node with the same semantic_hash.
     op: str
+    # ``inclusion`` for ``isnotnull``/``isnotempty``, ``exclusion`` for
+    # ``isnull``/``isempty``. Redundant with ``op`` in the same way
+    # ``BinOp.polarity`` is redundant with ``!=`` -- and kept for the same
+    # reason: it is the field a caller filters on when the question is "does
+    # this query test for absence", which is answerable without a table of
+    # which function names carry a negation. ``op`` stays the source of
+    # truth; ``canonical()`` and the LLM view render that, not this.
+    polarity: Literal["inclusion", "exclusion"]
     target: AnyExpr
 
 

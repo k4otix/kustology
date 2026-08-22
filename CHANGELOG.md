@@ -110,6 +110,14 @@ release is in `docs/superpowers/reports/`.
   `find_all(ir, FuncCall)` on `let A = T | where d > ago(1h) | where d <
   now(); A | take 1` reported `ago` and `now` twice each. Traversal now keeps
   a visited set keyed on object identity.
+- **All four null/empty tests lower to `Exists` (tier 2).** Only the
+  positive pair did, so the IR modelled one half of a symmetric pair: a
+  consumer asking "which columns does this query null-check" through
+  `find_all(ir, Exists)` saw `isnotnull(C)` and missed `isnull(C)`, whose
+  fallback shape — a `FuncCall` identified by a name string — is the shape
+  `Exists` exists to replace. `Exists` gains a required `polarity`
+  (`exclusion` for `isnull`/`isempty`); all four hash distinctly, and the
+  LLM view collapses `polarity` into `op` as it already does for `BinOp`.
 - **A bare `*` is a `StarExpr`, not a column named `*` (tier 2).** Kusto
   parses the `*` of `project-reorder *, a` (and of `project-away *` /
   `project-keep *`) as a `NameReference` — the same class it uses for an
@@ -529,6 +537,9 @@ release is in `docs/superpowers/reports/`.
 
 - **`SetMembership.op` and `Exists.op` are required**, and
   `ParseKvOp.columns` changes from `list[Assignment]` to `dict[str, str]`.
+- **`Exists` gains a required `polarity`**, and `isnull(x)` / `isempty(x)`
+  now build an `Exists` where they used to stay a `FuncCall`. Code reaching
+  for `FuncCall(name="isnull")` finds an `Exists(op="isnull")` instead.
 - **`BinOp.polarity` is `Literal["inclusion", "exclusion"] | None`** (was
   required non-null) and **`BinOp.case_sensitive` is `bool | None`**. `None`
   on the arithmetic operators means the question does not apply; code

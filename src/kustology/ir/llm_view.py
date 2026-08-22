@@ -18,9 +18,12 @@ being fed to a language model:
 * ``canonical_form`` on ``ColumnRef`` / ``LiteralExpr`` leaves is dropped
   when it's a literal restatement of ``name`` / ``value``; survives on
   subtree expressions (``BinOp``, ``And``, …) where it summarizes the tree.
-* ``polarity`` on ``BinOp`` / ``SetMembership`` / ``Between`` is collapsed
-  into ``op`` so the LLM reads natural KQL (``!=``, ``!contains``, ``!in``,
-  ``!between``) instead of IR-canonical ``op + polarity`` pairs.
+* ``polarity`` on ``BinOp`` / ``SetMembership`` / ``Exists`` / ``Between``
+  is collapsed into ``op`` so the LLM reads natural KQL (``!=``,
+  ``!contains``, ``!in``, ``isnull``, ``!between``) instead of IR-canonical
+  ``op + polarity`` pairs. ``polarity`` and ``case_sensitive`` are dropped
+  outright where they are ``None``, which on ``BinOp`` means the operator is
+  arithmetic and neither question applies.
 * Three operators (``render``, ``join``, ``lookup``) carry a KQL ``kind``
   field that collides with the discriminator key; they're renamed to
   ``render_kind`` / ``join_kind`` / ``lookup_kind`` in the LLM output.
@@ -40,7 +43,15 @@ from pydantic_core import PydanticUndefined
 # Imported for isinstance/issubclass dispatch rather than matched by class
 # name. Name-string dispatch silently stops firing when a class is renamed:
 # the rule just never applies again and the LLM view quietly regresses.
-from .expr import Between, BinOp, ColumnRef, LetValueRef, LiteralExpr, SetMembership
+from .expr import (
+    Between,
+    BinOp,
+    ColumnRef,
+    Exists,
+    LetValueRef,
+    LiteralExpr,
+    SetMembership,
+)
 
 # Stripped from every node by name. ``span`` and ``KIND``-ClassVar metadata
 # aren't useful for the LLM (offsets need source-text triangulation, KIND
@@ -196,9 +207,9 @@ def _collapse_polarity_into_op(out: dict[str, Any], cls: type) -> None:
 
     Builder behavior differs by node:
 
-    * ``BinOp.op`` and ``SetMembership.op`` already carry the literal KQL
-      string with ``!`` baked in (``!=``, ``!contains``, ``!in~``).
-      Polarity is redundant → drop it.
+    * ``BinOp.op``, ``SetMembership.op`` and ``Exists.op`` already carry the
+      literal KQL string with the negation baked in (``!=``, ``!contains``,
+      ``!in~``, ``isnull``). Polarity is redundant → drop it.
     * ``Between`` has no ``op`` field on the model; polarity is the only
       signal, and ``between``/``!between`` is a closed two-member set that
       polarity fully determines. Synthesize it and drop polarity.
@@ -212,7 +223,7 @@ def _collapse_polarity_into_op(out: dict[str, Any], cls: type) -> None:
     polarity = out.get("polarity")
     if polarity is None:
         return
-    if issubclass(cls, (BinOp, SetMembership)):
+    if issubclass(cls, (BinOp, Exists, SetMembership)):
         del out["polarity"]
     elif issubclass(cls, Between):
         out["op"] = "!between" if polarity == "exclusion" else "between"

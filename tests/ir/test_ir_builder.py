@@ -594,39 +594,62 @@ def test_canonical_form_distinguishes_shapes_that_used_to_collide(ir_builder):
 # --- Exists records which function produced it ------------------------------
 
 
-@pytest.mark.parametrize("fn", ["isnotnull", "isnotempty"])
-def test_exists_records_its_source_function(ir_builder, fn):
-    """``Exists`` had only ``target``, so both functions lowered to the same
-    node with the same hash -- though ``isnotempty`` also rejects ``""``."""
+@pytest.mark.parametrize(
+    "fn, polarity",
+    [
+        ("isnotnull", "inclusion"), ("isnotempty", "inclusion"),
+        ("isnull", "exclusion"), ("isempty", "exclusion"),
+    ],
+)
+def test_exists_records_its_source_function_and_polarity(ir_builder, fn, polarity):
+    """``Exists`` had only ``target``, so both positive functions lowered to
+    the same node with the same hash -- though ``isnotempty`` also rejects
+    ``""``. ``op`` closed that; ``polarity`` closes the asymmetry that only
+    the positive pair was lowered at all."""
     from kustology.ir import Exists, find_all
 
     ir = ir_builder.build(f"T | where {fn}(C)")
     e = next(iter(find_all(ir, Exists)))
     assert e.op == fn
+    assert e.polarity == polarity
 
 
-def test_isnotnull_and_isnotempty_do_not_collide(ir_builder):
-    a = ir_builder.build("T | where isnotnull(C)")
-    b = ir_builder.build("T | where isnotempty(C)")
-    assert a.semantic_hash != b.semantic_hash
+def test_all_four_null_tests_hash_distinctly(ir_builder):
+    """The four are four different predicates: ``isnotempty`` also rejects
+    ``""`` where ``isnotnull`` does not, and each pair is the other's
+    negation. None of them may share a digest."""
+    seen = {
+        fn: ir_builder.build(f"T | where {fn}(C)").semantic_hash
+        for fn in ("isnull", "isnotnull", "isempty", "isnotempty")
+    }
+    assert len(set(seen.values())) == 4, seen
 
 
-def test_negative_null_tests_are_not_lowered(ir_builder):
-    """``isnull`` / ``isempty`` stay ``FuncCall`` -- the IR lowers only the
-    positive forms. Pinned so the asymmetry is a stated boundary rather than
-    something a reader assumes is symmetric."""
+def test_the_negative_null_tests_are_lowered_too(ir_builder):
+    """``isnull`` / ``isempty`` used to stay ``FuncCall`` while their
+    negations became ``Exists``, so the IR modelled one half of a symmetric
+    pair. A consumer asking "which columns does this query null-check"
+    through ``find_all(ir, Exists)`` saw the positive tests and missed the
+    negative ones -- and the shape it had to fall back on, a ``FuncCall``
+    named by string, is the shape ``Exists`` exists to replace."""
     from kustology.ir import Exists, FuncCall, find_all
 
     for fn in ("isnull", "isempty"):
         ir = ir_builder.build(f"T | where {fn}(C)")
-        assert not list(find_all(ir, Exists)), fn
-        assert [f.name for f in find_all(ir, FuncCall)] == [fn]
+        (e,) = find_all(ir, Exists)
+        assert (e.op, e.polarity) == (fn, "exclusion")
+        assert e.target.name == "C"
+        assert not list(find_all(ir, FuncCall)), fn
 
-    # And they already hashed distinctly, which is why they were not the bug.
-    assert (
-        ir_builder.build("T | where isnull(C)").semantic_hash
-        != ir_builder.build("T | where isempty(C)").semantic_hash
-    )
+
+def test_exists_polarity_is_dropped_from_the_llm_view(ir_builder):
+    """Same rule as ``BinOp`` and ``SetMembership``: ``op`` already spells
+    the negation, so ``polarity`` restates it."""
+    from kustology.ir import Exists, find_all, to_llm_dict
+
+    dumped = to_llm_dict(next(iter(find_all(ir_builder.build("T | where isnull(C)"), Exists))))
+    assert dumped["op"] == "isnull"
+    assert "polarity" not in dumped
 
 
 # --- tolower/toupper equality rewrite is sound (K04) ------------------------
