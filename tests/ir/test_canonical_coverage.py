@@ -192,3 +192,28 @@ def test_everything_exported_resolves():
     """
     dangling = sorted(n for n in ir_pkg.__all__ if not hasattr(ir_pkg, n))
     assert dangling == [], f"kustology.ir.__all__ names unbound attributes: {dangling}"
+
+
+def test_the_binder_enricher_alias_is_gone():
+    """``BinderEnricher = SchemaAttacher`` was a bare assignment in `binder.py`,
+    re-exported through `kustology.ir.__all__`, and never mentioned by the
+    README, the docs, an example or a test.
+
+    An exported name is a promise: it turns up in `dir()`, in generated API
+    documentation and in `from kustology.ir import *`, and once a consumer
+    imports it the alias has to be kept working across the 1.0 line. Nothing
+    was ever written down about which of the two names was the real one, so
+    the pair only cost — two spellings of one class in every search result.
+    Removed before 0.2.0 rather than documented, because the class that does
+    the work already has the name that says what it does.
+    """
+    from kustology.ir import binder
+
+    assert not hasattr(ir_pkg, "BinderEnricher")
+    assert "BinderEnricher" not in ir_pkg.__all__
+    assert not hasattr(binder, "BinderEnricher")
+
+    # The control: the name that survives still resolves to the same class,
+    # so this is a deletion of a duplicate and not of the functionality.
+    assert ir_pkg.SchemaAttacher is binder.SchemaAttacher
+    assert "SchemaAttacher" in ir_pkg.__all__

@@ -812,6 +812,11 @@ release is in `docs/superpowers/reports/`.
   `docs/superpowers/reports/2026-08-20-materialize-reachability.md`),
   `LetBinding.category`, `QueryIR.parse_warnings`, `Span.source_text` and
   `Expr.nullable`. None was ever populated by any code path.
+- **Removed the undocumented `BinderEnricher` alias.** `kustology.ir`
+  exported both `SchemaAttacher` and a bare `BinderEnricher =
+  SchemaAttacher` assignment, with nothing in the README, the docs, the
+  examples or the tests to say which was the real name. Import
+  `SchemaAttacher`; the class and its behaviour are unchanged.
 - **Stored IR JSON from 0.1.0 no longer loads** under `extra="forbid"`, in
   both directions: it lacks the new required fields and may carry removed
   ones. Rebuild from source rather than migrating.

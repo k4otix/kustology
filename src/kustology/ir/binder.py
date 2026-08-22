@@ -1374,6 +1374,3 @@ class SchemaAttacher:
                 expr.result_type = KustoType.BOOL
         elif isinstance(expr, (SetMembership, Between, And, Or, Not)):
             expr.result_type = KustoType.BOOL
-
-
-BinderEnricher = SchemaAttacher
