@@ -730,9 +730,13 @@ release is in `docs/superpowers/reports/`.
   read at all, so both built a `SearchOp` holding only the term. Entries are
   `TableRef` — or `LetRef` when an earlier `let` bound the name — so
   `find_all(ir, TableRef)` now reports what a scoped `search` reads, and a
-  qualifier (`database('d').T`) or a wildcard (`T*`) survives. `search_kind`
-  stays optional: unlike `join` or `union kind`, its documented values have
-  shifted across Kusto versions, so there is no default this DLL pins.
+  qualifier (`database('d').T`) or a wildcard (`T*`) survives.
+  `search_kind` is required and carries KQL's effective default `"default"`
+  (D8) — the DLL names the value set itself, diagnosing `kind=bogus` as
+  *"Expected one of: default, case_insensitive, case_sensitive"* — so a bare
+  `search` hashes identically to `search kind=default`. `case_insensitive`
+  is a documented synonym for `default` and is still recorded verbatim, so
+  those two spellings hash apart.
 - **`UnionOp` gains a required `union_kind` plus `is_fuzzy` and
   `withsource`.** `union kind=inner` and `union kind=outer` return
   *different columns* — the intersection of the inputs' schemas against

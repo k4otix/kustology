@@ -519,3 +519,30 @@ def test_two_function_call_render_properties_hash_apart():
     assert _hash('T | render timechart with (title=strcat("a","b"))') != _hash(
         'T | render timechart with (title=strcat("c","d"))'
     )
+
+
+def test_bare_search_records_kqls_effective_kind():
+    """D8 does apply here: the DLL pins the value set.
+
+    ``search kind=bogus 'x'`` on a bound parse is diagnosed *Expected one
+    of: default, case_insensitive, case_sensitive*, so ``default`` is a
+    value the grammar knows and the unwritten case selects it.
+    """
+    (op,) = _ops("search 'x'")
+    assert op.search_kind == "default"
+
+
+def test_bare_search_hashes_as_its_effective_kind():
+    assert _hash("search 'x'") == _hash("search kind=default 'x'")
+
+
+def test_search_default_and_case_sensitive_hash_apart():
+    assert _hash("search kind=default 'x'") != _hash("search kind=case_sensitive 'x'")
+
+
+def test_search_kind_value_set_is_the_dlls():
+    """Pins the probe the effective default is derived from."""
+    messages = [d.message for d in parse(
+        "search kind=bogus 'x'", schema={"T": {"a": "string"}},
+    ).to_ir().diagnostics]
+    assert any("default, case_insensitive, case_sensitive" in m for m in messages)

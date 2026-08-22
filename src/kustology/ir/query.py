@@ -384,19 +384,25 @@ class SearchOp(Operator):
     gets, so a qualifier (``database('d').T``) and a wildcard (``T*``) survive
     here too.
 
-    ``search_kind`` is the ``kind=case_sensitive`` modifier. It stays
-    optional rather than taking an effective default: unlike ``join`` or
-    ``union kind``, the parameter's documented values have shifted across
-    Kusto versions (``case_sensitive`` / ``case_insensitive``), and stamping
-    a default we cannot pin to the grammar in the DLL would assert something
-    the query did not say. An unwritten ``kind`` and a written one still hash
-    apart, which is the direction that matters.
+    ``search_kind`` is required and carries KQL's effective default
+    ``"default"`` for an unwritten ``kind=`` (D8). The value set is not a
+    documentation guess: a bound parse of ``search kind=bogus 'x'`` is
+    diagnosed *"Expected one of: default, case_insensitive,
+    case_sensitive"*, so the grammar in the bundled DLL names ``default``
+    itself. Leaving the field optional split two spellings of one query --
+    a bare ``search`` and ``search kind=default`` hashed apart.
+
+    One residual, and it is a *split* rather than a merge: Microsoft
+    documents ``case_insensitive`` as a synonym for ``default``, and the two
+    are recorded verbatim, so they still hash apart. Folding them would mean
+    reporting a value the query did not write, which is a different decision
+    from substituting an unwritten default and is not made here.
     """
 
     KIND: ClassVar[str] = "search"
     kind: Literal["search"] = "search"
     predicate: AnyExpr | None = None
-    search_kind: str | None = None
+    search_kind: str
     # Left-to-right, as ``Pipeline.source`` is: both classes are a bare
     # ``name`` plus a ``span``, so only the ``kind`` literal tells a dumped
     # ``LetRef`` from a ``TableRef`` on the way back in.

@@ -918,7 +918,9 @@ class IRBuilder:
                     search_tables.append(self._visit_table_ref(el))
             return SearchOp(
                 predicate=self._visit_expr(n.Condition) if hasattr(n, "Condition") else None,
-                search_kind=extract_named_param(n, "kind"),
+                # KQL's effective default, never None -- see SearchOp.
+                search_kind=extract_named_param(n, "kind", default="default")
+                or "default",
                 tables=search_tables,
                 span=span,
             )
