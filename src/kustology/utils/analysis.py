@@ -2,6 +2,7 @@
 # Copyright 2026 Eddie Allan
 
 import hashlib
+import re
 import warnings
 
 from ..bridge import ColumnSymbol, FunctionSymbol, TableSymbol
@@ -442,7 +443,21 @@ def get_operator_stats(kusto_code) -> dict[str, int]:
 
 
 def get_operator_chain(kusto_code) -> list:
-    """Flatten pipe expressions into a left-to-right list of operator nodes."""
+    """Flatten pipe expressions into a left-to-right list of operator nodes.
+
+    **Operator nodes only**: the source the pipeline reads from is not an
+    operator and is not in the list, so ``T | where a | take 1`` returns two
+    nodes and a bare ``T`` returns none. It used to lead with the source's
+    ``NameReference``, which made ``len()`` an operator count that was one
+    too high and forced every consumer to know that element 0 was different
+    in kind from the rest. Read the source from
+    :func:`find_table_references` instead.
+
+    **Main pipeline only**: the walk follows the top-level pipe chain, so
+    operators inside a ``let`` binding, a join's subquery or any other nested
+    pipeline are not reported. Use :func:`get_operator_stats` for a count
+    across the whole AST.
+    """
     chain = []
 
     def walk(node):
@@ -457,7 +472,7 @@ def get_operator_chain(kusto_code) -> list:
         elif kind == "PipeExpression":
             walk(node.GetChild(0))
             chain.append(node.GetChild(2))
-        elif "Operator" in kind or kind == "NameReference":
+        elif "Operator" in kind:
             chain.append(node)
 
     walk(kusto_code.Syntax)
@@ -686,6 +701,12 @@ def find_time_expressions(kusto_code) -> list[tuple[str, int, int]]:
     in source order: time-function calls (``ago``, ``now``, ``bin``, ...) plus
     standalone datetime/timespan literals not already inside a matched call.
 
+    One entry per construct: a matched call nested inside another matched
+    call is reported at the outer one only, so ``startofday(now())`` is a
+    single expression whose span covers the whole of it. A temporal call
+    inside a *non*-temporal one is still reported — nothing matched around
+    it, so ``tostring(now())`` yields ``now()``.
+
     A **discovery aid**, not a lookback extractor. The result is syntactic: it
     includes bare ``now()``, bare ``1h`` operands, and the operands of
     ``!between`` — with no indication of which bound a given expression is, or
@@ -703,8 +724,11 @@ def find_time_expressions(kusto_code) -> list[tuple[str, int, int]]:
     usage of it is about time, so it is subtracted. Everything here is a
     candidate to read, not a fact about the query's time window.
     """
-    fn_ranges = []  # (start, end) of matched time-function calls
+    fn_ranges: list[tuple[int, int]] = []  # (start, end) of matched time-function calls
     out = []
+
+    def _within_function(start: int, end: int) -> bool:
+        return any(fs <= start and end <= fe for fs, fe in fn_ranges)
 
     class FnPass(KustoWalker):
         def pre_visit(self, node):
@@ -717,13 +741,18 @@ def find_time_expressions(kusto_code) -> list[tuple[str, int, int]]:
                 return
             start = node.TextStart
             end = start + node.Width
+            # `startofday(now())` is one expression. The walk is pre-order,
+            # so an enclosing match is already recorded when the argument is
+            # reached; reporting both handed the caller two overlapping spans
+            # for one construct. The suppressed range is a subset of the one
+            # that suppressed it, so the literal pass below stays correct
+            # without recording it.
+            if _within_function(start, end):
+                return
             fn_ranges.append((start, end))
             out.append((node_text(node), start, node.Width))
 
     FnPass().visit(kusto_code.Syntax)
-
-    def _within_function(start: int, end: int) -> bool:
-        return any(fs <= start and end <= fe for fs, fe in fn_ranges)
 
     class LiteralPass(KustoWalker):
         def pre_visit(self, node):
@@ -766,8 +795,35 @@ def get_time_range(kusto_code) -> list[tuple[str, int, int]]:
     return find_time_expressions(kusto_code)
 
 
+# A name that can be written bare in KQL. Anything else — a hyphen, a space,
+# a leading digit — has to go through the bracketed-name form.
+_BARE_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _quote_table_name(new_name: str) -> str:
+    """Return ``new_name`` in a form that parses as one table name.
+
+    A bare identifier is emitted as-is. Anything else takes KQL's bracketed
+    form, ``['name']``, whose inner half is an ordinary string literal — so a
+    backslash and a single quote are escaped, or the literal would end early
+    and the rest of the name would be loose syntax.
+    """
+    if _BARE_IDENTIFIER.fullmatch(new_name):
+        return new_name
+    escaped = new_name.replace("\\", "\\\\").replace("'", "\\'")
+    return f"['{escaped}']"
+
+
 def replace_table(kusto_code, old_name: str, new_name: str, force_syntactic: bool = False) -> str:
     """Rename every reference to ``old_name`` to ``new_name``; return the new text.
+
+    ``new_name`` is emitted verbatim when it is a bare identifier and in
+    KQL's bracketed form, ``['my-new-table']``, when it is not — a hyphenated
+    or spaced table name is legal in Kusto and illegal as a bare identifier,
+    and pasting one in raw produced a query that parses as arithmetic and
+    reads no table at all. Both names must be non-empty strings; a
+    ``ValueError`` beats returning a query with the table name deleted from
+    it.
 
     Rewrites the spans ``find_table_references`` reports, minus wildcard
     patterns. On a bound parse that includes tables the supplied schema does
@@ -785,6 +841,15 @@ def replace_table(kusto_code, old_name: str, new_name: str, force_syntactic: boo
     still *reported* (``get_referenced_tables`` says ``{'T1'}``, which is
     true); it just cannot be retargeted this way.
     """
+    for label, value in (("old_name", old_name), ("new_name", new_name)):
+        if not isinstance(value, str):
+            raise TypeError(
+                f"replace_table {label} must be a str; got {type(value).__name__}."
+            )
+        if not value:
+            raise ValueError(f"replace_table {label} must be a non-empty table name.")
+
+    replacement = _quote_table_name(new_name)
     refs = find_table_references(kusto_code, force_syntactic=force_syntactic)
     seen = set()
     replacements = []
@@ -799,5 +864,5 @@ def replace_table(kusto_code, old_name: str, new_name: str, force_syntactic: boo
 
     text = kusto_code.Text
     for start, length in sorted(replacements, key=lambda t: t[0], reverse=True):
-        text = text[:start] + new_name + text[start + length:]
+        text = text[:start] + replacement + text[start + length:]
     return text

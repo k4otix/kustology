@@ -1,12 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-from importlib.metadata import PackageNotFoundError
+# Underscored: both names are machinery for computing `__version__`, and a
+# plain import binds them into `kustology`'s namespace, where
+# `kustology.PackageNotFoundError` reads as part of this library's API.
+from importlib.metadata import PackageNotFoundError as _PackageNotFoundError
 from importlib.metadata import version as _pkg_version
 
 try:
     __version__: str = _pkg_version("kustology")
-except PackageNotFoundError:  # pragma: no cover — editable install without metadata
+except _PackageNotFoundError:  # pragma: no cover — editable install without metadata
     __version__ = "0.0.0+unknown"
 
 from .bridge import KustoCode

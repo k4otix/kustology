@@ -4,6 +4,7 @@
 import json
 
 from .bridge import KustoCode
+from .services import _diagnostic_dicts
 from .utils.analysis import (
     find_table_references,
     find_time_expressions,
@@ -24,16 +25,35 @@ class KustoQuery:
 
     @property
     def syntax(self):
+        """The root ``SyntaxNode`` of Microsoft's parse tree (a ``QueryBlock``)."""
         return self._code.Syntax
 
     @property
     def text(self) -> str:
+        """The query text this object was parsed from, verbatim."""
         return self._code.Text
 
     @property
     def has_semantics(self) -> bool:
         """True when the underlying KustoCode was bound (parsed with a schema)."""
         return self._code.HasSemantics
+
+    @property
+    def diagnostics(self) -> list[dict]:
+        """This query's diagnostics, in :func:`kustology.validate`'s dict shape.
+
+        Read off the ``KustoCode`` this object already holds — no second
+        parse — so on a bound query the binder's semantic diagnostics
+        (unresolved columns, type errors) are included and on an unbound one
+        the parser's are all there is. ``validate(text)`` answers the same
+        question for text you have not parsed yet.
+
+        Unfiltered: unlike ``validate(..., ignore_unknown_tables=True)``
+        there is no way to suppress ``KS204`` here. Filter the list yourself
+        — ``[d for d in q.diagnostics if d["code"] != "KS204"]`` — since the
+        parse is already done and doing it here would only hide rows.
+        """
+        return _diagnostic_dicts(self._code.GetDiagnostics())
 
     def get_referenced_tables(self, force_syntactic: bool = False) -> set[str]:
         """Return the set of tables referenced by the query.
@@ -71,6 +91,12 @@ class KustoQuery:
         return find_table_references(self._code, force_syntactic=force_syntactic)
 
     def get_operator_chain(self) -> list:
+        """Return the main pipeline's operator nodes, left to right.
+
+        Operator nodes only — the source table is not one — and the main
+        pipeline only; use :meth:`get_operator_stats` for the whole AST. See
+        :func:`kustology.utils.analysis.get_operator_chain`.
+        """
         return get_operator_chain(self._code)
 
     def get_operator_stats(self) -> dict[str, int]:
@@ -95,12 +121,31 @@ class KustoQuery:
         return json.dumps(self.to_dict(), indent=indent)
 
     def get_referenced_columns(self, force_syntactic: bool = False) -> set[str]:
+        """Return the set of column names the query references.
+
+        The two modes differ on a column the query creates and never reads
+        back — see
+        :func:`kustology.utils.analysis.get_referenced_columns`.
+        """
         return get_referenced_columns(self._code, force_syntactic=force_syntactic)
 
     def get_referenced_functions(self, force_syntactic: bool = False) -> set[str]:
+        """Return the set of function names the query calls.
+
+        Semantic mode reads the binder's symbols, syntactic mode the callee
+        positions — see
+        :func:`kustology.utils.analysis.get_referenced_functions`.
+        """
         return get_referenced_functions(self._code, force_syntactic=force_syntactic)
 
     def get_structural_hash(self) -> str:
+        """SHA256 over the AST shape — "same query modulo the data".
+
+        Blind to literal values and identifiers, sensitive to named-parameter
+        keywords and the ``evaluate`` plug-in; see
+        :func:`kustology.utils.analysis.get_structural_hash` for the full
+        contract.
+        """
         return get_structural_hash(self._code)
 
     def find_time_expressions(self) -> list[tuple[str, int, int]]:

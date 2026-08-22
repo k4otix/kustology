@@ -212,6 +212,8 @@ print(result.get_structural_hash()[:16])
 schema = {"StormEvents": {"StartTime": "datetime", "DeathsDirect": "int", "State": "string", "EventType": "string"}}
 bound = parse(query, schema=schema)
 assert bound.has_semantics
+print(bound.diagnostics)                       # [] — validate()'s dicts, read
+                                               # off the parse you already have
 ```
 
 With the `[ir]` extra installed, the same `KustoQuery` builds a Pydantic IR:

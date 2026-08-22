@@ -310,6 +310,47 @@ release is in `docs/superpowers/reports/`.
   **Not covered:** `to_ir()` / `IRBuilder` walk the AST with their own
   recursion, which is still uncapped — `parse --ir` on such input exits 1
   with a one-line `RecursionError` message rather than a truncated IR.
+- **`replace_table` validates its arguments and quotes a name that needs it
+  (tier 1).** `replace_table("A", "")` deleted the table name and returned
+  ` | count` — a query the parser rejects — with no error, and a non-string
+  died in the middle of a string concatenation with a message about this
+  function's internals. Both names must now be non-empty `str`. Separately,
+  a hyphenated or spaced table name is legal in Kusto and illegal as a bare
+  identifier, so `replace_table("A", "my-new-table")` emitted
+  `my-new-table | count`, which parses as arithmetic and reads no table at
+  all; a `new_name` that is not `[A-Za-z_][A-Za-z0-9_]*` is now emitted in
+  KQL's bracketed form, `['my-new-table']`, with `\` and `'` escaped so the
+  inner string literal cannot end early. An identifier is still emitted
+  verbatim.
+- **`find_time_expressions` reports a nested temporal call once (tier 1).**
+  `startofday(now())` came back as two overlapping entries — the outer call
+  and its own argument — so a caller counting time expressions or slicing
+  the source by their spans saw one construct twice. A matched call inside
+  another matched call is now suppressed, which is the same containment rule
+  the datetime/timespan literal pass already applied to `ago(1h)`. A
+  temporal call inside a *non*-temporal one is untouched: nothing matched
+  around it, so `tostring(now())` still reports `now()`.
+- **The unknown-scalar-type `RuntimeWarning` names the caller's file (tier
+  1).** `stacklevel=3` landed inside `utils/schema_state.py`, so
+  `parse(q, schema={"T": {"x": "typo"}})` blamed a library module the caller
+  does not own, `-W error::RuntimeWarning` pointed at the wrong file, and the
+  default once-per-location filter folded every caller's typo into a single
+  report. It is `stacklevel=5` now — the depth of `parse` / `validate` above
+  the resolver — measured through both entry points. Calling
+  `build_global_state` directly still overshoots by one frame; that is
+  documented on the resolver.
+- **`kustology.PackageNotFoundError` is gone from the package namespace
+  (tier 1).** `from importlib.metadata import PackageNotFoundError` bound the
+  name into `kustology`, where it appeared in `dir()` and in generated
+  documentation as if it were part of this library's API. `__all__` never
+  listed it, which is why nothing caught it; it is imported under an
+  underscored alias now. `__version__` is unchanged.
+- **Six public `KustoQuery` members gained docstrings (tier 1).**
+  `get_operator_chain`, `get_referenced_columns`, `get_referenced_functions`,
+  `get_structural_hash`, `syntax` and `text` delegated in silence, so
+  `help(KustoQuery)` showed a bare signature for methods whose module-level
+  functions document at length what they are blind to and where their two
+  modes disagree. A test now fails if a public member ships undocumented.
 
 ### Added
 
@@ -365,8 +406,26 @@ release is in `docs/superpowers/reports/`.
   consumer's compatibility contract and neither was reachable from the CLI,
   so a stored payload could not be checked against the IR shape that
   produced it. The IR itself moved under `"ir"`.
+- `KustoQuery.diagnostics` (tier 1) — the query's diagnostics in
+  `validate()`'s dict shape, read off the `KustoCode` the object already
+  holds. A caller who had parsed could only get diagnostics by handing the
+  text back to `validate()`, which parses it a second time and, for a bound
+  query, re-runs the binder against a schema it has to be given again.
+  Unfiltered — there is no `ignore_unknown_tables` on a property; filter the
+  list. `validate()` and the property share
+  `services._diagnostic_dicts`, so the two shapes cannot drift.
 
 ### Changed
+
+- **`get_operator_chain()` returns operators only (tier 1).** Element 0 used
+  to be the `NameReference` naming the source table, so `len()` was an
+  operator count one too high — `KustoQuery.__repr__` reported `T | where a |
+  take 1` as `3 ops` — and every consumer had to know the first element was
+  different in kind from the rest. `T | where a | take 1` now yields two
+  nodes and a bare `T` yields none; the source is available from
+  `find_table_references()`. The docstring also states the other half of the
+  scope, which was never written down: this is the *main* pipeline only, and
+  `get_operator_stats()` is the whole-AST count.
 
 - `get_time_range()` is renamed `find_time_expressions()` on both the module
   and `KustoQuery`; the old name remains as a deprecated alias. It returns

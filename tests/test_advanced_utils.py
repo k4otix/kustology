@@ -8,10 +8,46 @@ def test_get_operator_chain():
     query = "SecurityEvent | where EventID == 4624 | count"
     result = parse(query)
     chain = result.get_operator_chain()
-    assert len(chain) == 3
-    assert "SecurityEvent" in str(chain[0])
-    assert "FilterOperator" in str(chain[1].Kind)
-    assert "CountOperator" in str(chain[2].Kind)
+    assert [str(node.Kind) for node in chain] == ["FilterOperator", "CountOperator"]
+
+
+def test_get_operator_chain_excludes_the_source_table():
+    """The chain is operators, so the source table is not one of them.
+
+    Element 0 used to be the ``NameReference`` naming the table, which made
+    every caller either special-case it or count it as an operator — and
+    ``__repr__`` did the latter, reporting a two-operator query as ``3 ops``.
+    """
+    chain = parse("T | where a | take 1").get_operator_chain()
+    assert [str(node.Kind) for node in chain] == ["FilterOperator", "TakeOperator"]
+    assert "NameReference" not in {str(node.Kind) for node in chain}
+    assert "2 ops" in repr(parse("T | where a | take 1"))
+
+
+def test_get_operator_chain_of_a_bare_table_is_empty():
+    """A query with no operators has an empty chain rather than a one-element
+    one holding its source."""
+    assert parse("T").get_operator_chain() == []
+    assert "0 ops" in repr(parse("T"))
+
+
+def test_every_public_kustoquery_member_is_documented():
+    """`KustoQuery` is the whole tier-1 API and half of it delegated silently.
+
+    Six members carried no docstring at all — including `get_structural_hash`,
+    whose module-level function documents at length what the hash is blind to,
+    and `get_referenced_columns`, whose two modes disagree by design. A caller
+    reading `help(KustoQuery)` saw a bare signature and had no way to know
+    there was anything to read.
+    """
+    from kustology import KustoQuery
+
+    undocumented = sorted(
+        name
+        for name, attr in vars(KustoQuery).items()
+        if not name.startswith("_") and not (attr.__doc__ or "").strip()
+    )
+    assert undocumented == []
 
 
 def test_to_dict_basic():
@@ -259,6 +295,38 @@ def test_find_time_expressions_keeps_floor():
     """``floor(TimeGenerated, 1h)`` buckets time exactly as ``bin`` does."""
     times = parse("T | summarize count() by floor(TimeGenerated, 1h)").find_time_expressions()
     assert [t[0] for t in times] == ["floor(TimeGenerated, 1h)"]
+
+
+def test_find_time_expressions_reports_only_the_outer_of_two_nested_calls():
+    """``startofday(now())`` is one time expression, not two.
+
+    The inner ``now()`` is an argument of the outer call, so reporting both
+    gave a reader two overlapping spans for one construct — the same
+    double-count the literal pass already avoids for ``ago(1h)``, which this
+    pass did not apply to itself.
+    """
+    times = parse("T | where Time > startofday(now())").find_time_expressions()
+    assert [t[0] for t in times] == ["startofday(now())"]
+    # The span is the outer call's, so a caller slicing the source with it
+    # gets the whole expression back.
+    text, start, length = times[0]
+    assert "T | where Time > startofday(now())"[start:start + length] == text
+
+
+def test_find_time_expressions_keeps_a_temporal_call_inside_a_non_temporal_one():
+    """The containment rule is about *matched* calls only. ``tostring`` is not
+    a time function, so it opens no range and the ``now()`` inside it is still
+    the query's time expression."""
+    times = parse("T | extend s = tostring(now())").find_time_expressions()
+    assert [t[0] for t in times] == ["now()"]
+
+
+def test_find_time_expressions_still_reports_sibling_calls():
+    """Control: suppression is containment, not "one per query"."""
+    times = parse(
+        "T | where t between (ago(2h) .. now())"
+    ).find_time_expressions()
+    assert [t[0] for t in times] == ["ago(2h)", "now()"]
 
 
 def test_find_time_expressions_ignores_string_literal_text():

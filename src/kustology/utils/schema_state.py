@@ -25,13 +25,28 @@ from ..bridge import (
 
 
 def _resolve_scalar_type(type_name: str):
-    """Resolve a KQL type name to a ScalarSymbol via Microsoft's lookup."""
+    """Resolve a KQL type name to a ScalarSymbol via Microsoft's lookup.
+
+    A miss is the caller's typo in their own schema dict, so the warning is
+    reported against the caller's line, five frames up: this function ←
+    :func:`_build_table_symbol` ← :func:`build_global_state` ←
+    ``services.parse`` / ``services.validate`` ← the caller. (The two
+    comprehensions in that chain add no frame — PEP 709 inlines them.)
+    Attributed at the library's own file instead, the warning names a module
+    the caller does not own and the default "once per location" filter folds
+    every caller's typo into a single report.
+
+    The tuned depth is for the documented entry points. Calling
+    :func:`build_global_state` directly overshoots by one, which costs a
+    warning pointed one frame too far out — the trade the two supported
+    paths are worth.
+    """
     sym = ScalarTypes.GetSymbol(type_name)
     if sym is None:
         warnings.warn(
             f"Unknown KQL scalar type {type_name!r}; falling back to 'string'.",
             RuntimeWarning,
-            stacklevel=3,
+            stacklevel=5,
         )
         return ScalarTypes.String
     return sym

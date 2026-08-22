@@ -7,6 +7,8 @@ Pins behavior for the leftmost pipe source as well as join, union, lookup,
 and database-qualified targets, in both the syntactic and semantic paths.
 """
 
+import pytest
+
 from kustology import parse
 
 
@@ -80,3 +82,79 @@ def test_replace_repeated_references():
     """A table referenced multiple times should be renamed in every position."""
     out = parse("A | join (A) on x").replace_table("A", "Z")
     assert out == "Z | join (Z) on x"
+
+
+def test_replace_rejects_an_empty_new_name():
+    """`replace_table("A", "")` deleted the table name and returned a query
+    the parser rejects — ` | count` — with no error at all, so the caller got
+    a broken string back and had to notice for themselves."""
+    q = parse("A | count")
+    with pytest.raises(ValueError) as exc_info:
+        q.replace_table("A", "")
+    assert "new_name" in str(exc_info.value)
+
+
+def test_replace_rejects_an_empty_old_name():
+    q = parse("A | count")
+    with pytest.raises(ValueError) as exc_info:
+        q.replace_table("", "Z")
+    assert "old_name" in str(exc_info.value)
+
+
+def test_replace_rejects_a_non_string_name():
+    """A non-string reached the concatenation and died there with
+    ``can only concatenate str (not "NoneType") to str`` — a message about
+    this function's internals rather than about the argument."""
+    q = parse("A | count")
+    with pytest.raises(TypeError) as exc_info:
+        q.replace_table("A", None)
+    assert "new_name" in str(exc_info.value)
+    assert "NoneType" in str(exc_info.value)
+
+
+def test_replace_brackets_a_new_name_that_is_not_an_identifier():
+    """`my-new-table` is a legal Kusto table name and an illegal bare
+    identifier: pasted in raw it parses as the subtraction `my - new - table`,
+    so the rewritten query silently stopped reading a table at all. The
+    emitted form is the bracketed-name quoting KQL provides for exactly this.
+    """
+    out = parse("A | count").replace_table("A", "my-new-table")
+    assert out == "['my-new-table'] | count"
+    # The point of quoting is that the output is still the query it claims to
+    # be, and still names the table the caller asked for.
+    assert parse(out).get_referenced_tables() == {"my-new-table"}
+
+
+def test_replace_brackets_every_occurrence_and_escapes_the_quote():
+    """Back-to-front rewriting keeps the later spans valid even though the
+    bracketed form is longer than the name it replaces. A `'` in the name
+    would close the string literal early, so it is escaped."""
+    out = parse("A | join (A) on x").replace_table("A", "space name")
+    assert out == "['space name'] | join (['space name']) on x"
+    assert parse(out).get_referenced_tables() == {"space name"}
+
+    quoted = parse("A | count").replace_table("A", "o'brien")
+    assert quoted == "['o\\'brien'] | count"
+    assert parse(quoted).get_referenced_tables() == {"o'brien"}
+
+
+def test_replace_brackets_only_the_positions_that_are_really_tables():
+    """Quoting must not widen what gets rewritten.
+
+    The alias filters are positional, and the bracketed form is four
+    characters longer than the name it replaces — so this pins that the
+    shadowing rule (a `let`'s own right-hand side is the real table, every
+    later use is the alias) and the `| as` exclusion both still hold once the
+    replacement changes the text's length.
+    """
+    out = parse("let T = T | where x == 1; T | take 1").replace_table("T", "my-new-table")
+    assert out == "let T = ['my-new-table'] | where x == 1; T | take 1"
+
+    aliased = parse("union A, (A | as A2), A2").replace_table("A", "a b")
+    assert aliased == "union ['a b'], (['a b'] | as A2), A2"
+
+
+def test_replace_leaves_an_identifier_new_name_unquoted():
+    """The control: a plain identifier must not grow brackets, or every
+    ordinary rename would start emitting noise."""
+    assert parse("A | count").replace_table("A", "Z_9") == "Z_9 | count"

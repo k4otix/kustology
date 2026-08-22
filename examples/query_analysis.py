@@ -94,15 +94,12 @@ def analyze(query_text: str) -> None:
         print(f"  {text!r:25s}  start={start:4d}  length={length}")
 
     banner("get_operator_chain()")
+    # Operators only: the source table the pipeline reads from is not one,
+    # so print it separately rather than expecting it at the head of the list.
     chain = result.get_operator_chain()
-    flow = []
-    for node in chain:
-        kind = str(node.Kind).replace("Operator", "")
-        if kind == "NameReference":
-            flow.append(f"[{node.ToString().strip()}]")
-        else:
-            flow.append(kind)
-    print(f"  {len(chain)} steps:")
+    flow = [str(node.Kind).replace("Operator", "") for node in chain]
+    sources = sorted(result.get_referenced_tables())
+    print(f"  {len(chain)} operators, reading {', '.join(sources)}:")
     print("  " + " -> ".join(flow))
 
     banner("get_operator_stats()")

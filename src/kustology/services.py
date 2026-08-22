@@ -48,30 +48,15 @@ def format_query(query_text: str, options: FormattingOptions | None = None) -> s
     return str(formatted.Text).replace("\r\n", "\n")
 
 
-def validate(
-    query_text: str,
-    schema: SchemaLike = None,
-    ignore_unknown_tables: bool = False,
-) -> list[dict]:
+def _diagnostic_dicts(diagnostics, ignore_unknown_tables: bool = False) -> list[dict]:
+    """Render a .NET diagnostic list as this library's list-of-dicts shape.
+
+    The one place that decides what a diagnostic looks like on the Python
+    side. :func:`validate` and :attr:`kustology.KustoQuery.diagnostics` both
+    go through it so the two cannot drift — they differ only in where the
+    ``KustoCode`` came from, and the property's whole reason to exist is that
+    it already has one and must not parse again.
     """
-    Validate a KQL query and return diagnostics.
-
-    Without ``schema`` only parser diagnostics are returned. With ``schema`` the
-    query is bound and semantic diagnostics (unresolved columns, type errors) are
-    included. Set ``ignore_unknown_tables=True`` to suppress KS204 ("name does
-    not refer to any known table") diagnostics for tables outside the schema.
-
-    ``schema`` takes the same dict-of-tables shapes :func:`parse` accepts.
-    """
-    from .utils.analysis import build_global_state
-
-    if schema is None:
-        code = KustoCode.Parse(query_text)
-    else:
-        state = build_global_state(schema)
-        code = KustoCode.ParseAndAnalyze(query_text, state)
-    diagnostics = code.GetDiagnostics()
-
     results = []
     for d in diagnostics:
         code_str = str(d.Code)
@@ -88,3 +73,32 @@ def validate(
             }
         )
     return results
+
+
+def validate(
+    query_text: str,
+    schema: SchemaLike = None,
+    ignore_unknown_tables: bool = False,
+) -> list[dict]:
+    """
+    Validate a KQL query and return diagnostics.
+
+    Without ``schema`` only parser diagnostics are returned. With ``schema`` the
+    query is bound and semantic diagnostics (unresolved columns, type errors) are
+    included. Set ``ignore_unknown_tables=True`` to suppress KS204 ("name does
+    not refer to any known table") diagnostics for tables outside the schema.
+
+    ``schema`` takes the same dict-of-tables shapes :func:`parse` accepts.
+
+    This parses the text. When you already hold a ``KustoQuery``, read
+    :attr:`kustology.KustoQuery.diagnostics` instead — same dicts, no second
+    parse.
+    """
+    from .utils.analysis import build_global_state
+
+    if schema is None:
+        code = KustoCode.Parse(query_text)
+    else:
+        state = build_global_state(schema)
+        code = KustoCode.ParseAndAnalyze(query_text, state)
+    return _diagnostic_dicts(code.GetDiagnostics(), ignore_unknown_tables)

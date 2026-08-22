@@ -57,6 +57,65 @@ def test_validate_unknown_table_default_emits_ks204():
     assert any(d["code"] == "KS204" for d in diagnostics)
 
 
+def test_diagnostics_matches_validate_on_an_unbound_parse():
+    """``KustoQuery.diagnostics`` is ``validate()``'s answer for a query you
+    already hold, so a caller that parsed once does not have to hand the text
+    back to a function that parses it again."""
+    query = "SecurityEvent | where EventID == "
+    diagnostics = parse(query).diagnostics
+    assert diagnostics == validate(query)
+    # Pin a real value, not just the equality: an empty list would satisfy
+    # the comparison above if both sides broke the same way.
+    assert [d["code"] for d in diagnostics] == ["KS006"]
+    assert diagnostics[0]["severity"] == "Error"
+    assert diagnostics[0]["start"] == 32
+
+
+def test_diagnostics_matches_validate_on_a_bound_parse():
+    """A bound parse carries the binder's semantic diagnostics too."""
+    schema = {"SecurityEvent": {"Account": "string"}}
+    query = "SecurityEvent | where NoSuchCol == 1"
+    bound = parse(query, schema=schema)
+    assert bound.has_semantics
+    diagnostics = bound.diagnostics
+    assert diagnostics == validate(query, schema=schema)
+    assert [d["code"] for d in diagnostics] == ["KS142"]
+    assert "NoSuchCol" in diagnostics[0]["message"]
+
+
+def test_diagnostics_does_not_reparse(monkeypatch):
+    """The whole point of the property: read the diagnostics off the
+    ``KustoCode`` we already have. Routing through ``validate()`` would parse
+    the text a second time, and on a bound query would silently throw the
+    binder's work away — the same seam ``tests/test_to_ir_seam.py`` guards
+    for ``to_ir()``."""
+    from kustology import services as services_module
+
+    query = parse("Unknown | count", schema={"Known": {"x": "string"}})
+    # Taken before the patch: an *unbound* parse of the same text reports
+    # nothing, so the KS204 asserted below can only have come from the bound
+    # code the property was handed.
+    assert parse("Unknown | count").diagnostics == []
+    calls = []
+
+    class _NoParse:
+        @staticmethod
+        def Parse(text):
+            calls.append(("Parse", text))
+            raise AssertionError("diagnostics re-parsed the query text")
+
+        @staticmethod
+        def ParseAndAnalyze(text, state):
+            calls.append(("ParseAndAnalyze", text))
+            raise AssertionError("diagnostics re-parsed the query text")
+
+    monkeypatch.setattr(services_module, "KustoCode", _NoParse)
+    diagnostics = query.diagnostics
+
+    assert calls == []
+    assert [d["code"] for d in diagnostics] == ["KS204"]
+
+
 def test_get_referenced_tables_syntactic():
     query = "SecurityEvent | where EventID == 4624 | join kind=inner (SigninLogs) on Account"
     tables = parse(query).get_referenced_tables()
@@ -92,6 +151,51 @@ def test_unknown_scalar_type_falls_back_with_warning():
         issubclass(w.category, RuntimeWarning) and "not_a_real_type" in str(w.message)
         for w in captured
     )
+
+
+def test_unknown_scalar_type_warning_is_attributed_to_the_caller():
+    """The warning must point at the line that wrote the bad type.
+
+    ``stacklevel=3`` landed on ``build_global_state`` — inside
+    ``kustology/utils/schema_state.py`` — so the warning's location was a
+    library file the caller does not own, `-W error::RuntimeWarning` blamed
+    the wrong module, and the default "once per location" filter deduplicated
+    every caller's typo down to a single report. Five frames up from
+    ``_resolve_scalar_type`` is ``_build_table_symbol`` →
+    ``build_global_state`` → ``parse`` → here.
+    """
+    with pytest.warns(RuntimeWarning) as record:
+        parse("T | count", schema={"T": {"x": "not_a_real_type"}})
+
+    assert record[0].filename == __file__
+    assert "not_a_real_type" in str(record[0].message)
+
+
+def test_unknown_scalar_type_warning_is_attributed_to_the_caller_of_validate():
+    """``validate`` reaches the same helper through the same number of frames,
+    so the one ``stacklevel`` serves both entry points."""
+    with pytest.warns(RuntimeWarning) as record:
+        validate("T | count", schema={"T": {"x": "not_a_real_type"}})
+
+    assert record[0].filename == __file__
+
+
+def test_package_namespace_does_not_leak_its_version_lookup_imports():
+    """``kustology.PackageNotFoundError`` was importable and meant nothing.
+
+    The name is an implementation detail of reading ``__version__`` from the
+    installed metadata; exported by accident it reads as part of this
+    library's API, shows up in ``dir()`` and in generated documentation, and
+    invites `from kustology import PackageNotFoundError`. ``__all__`` never
+    listed it, which is exactly why nothing caught it.
+    """
+    import kustology
+
+    assert "PackageNotFoundError" not in dir(kustology)
+    # The control: `__version__`, the thing the import exists to compute, is
+    # still there and still a version string.
+    assert kustology.__version__
+    assert kustology.__version__[0].isdigit()
 
 
 def test_top_level_schema_string_is_rejected_naming_the_dict_form():
