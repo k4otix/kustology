@@ -44,6 +44,38 @@ release is in `docs/superpowers/reports/`.
   `isnotnull` / `isnotempty` — so hash-based deduplication merged queries
   that mean different things (`has_any` and `has_all` are opposites). Both
   nodes now carry `op`.
+- **Every remaining operator-modifier collision is closed (tier 2).** The
+  same defect class as the bullet above, swept across the whole operator
+  surface. It is invisible to the obvious check: a lowering that drops a
+  modifier leaves a node with every field populated, so nothing reads as
+  stubbed, and the loss shows up only as two different queries sharing one
+  `semantic_hash` — which a rule library deduplicating on the digest
+  silently resolves by dropping one of them. The question that finds it is
+  "can two different queries produce this node?", not "is this field
+  populated?". Each pair below collided and now does not: `sort by x asc`
+  against `desc`, and `nulls first` against `nulls last` — the same through
+  `order by` and `top`, which share the parser's ordering clause;
+  `project-reorder x asc` against `desc` against bare; any two `fork`s,
+  whose branches were all empty and whose contents no traversal could
+  reach; any two `datatable`s and any two `externaldata` feeds, whose
+  schema, rows and URIs were discarded; `database('d1').T` against
+  `database('d2').T`, the same for `cluster(…)`, and `union T*` (a pattern)
+  against `union ['T*']` (one table so named); each of `mv-expand`'s four
+  modifiers — `to typeof`, `limit`, `with_itemindex` and `kind`, every one
+  of them discarded; `parse kind=simple` against `regex` against
+  `relaxed`, and `flags=`; `union kind=inner` against `outer`, plus
+  `withsource=` and `isfuzzy=`; `search kind=`, and `search in (A)` against
+  `in (B)`; `make-series default=0` against `default=1`, and two different
+  `in range(…)` windows; every `render` however configured; `find in (A)`
+  against `in (B)`, and `withsource=`; a typed capture `b:long` against an
+  untyped `b`; a `let`-bound scalar against a real column of the same name;
+  and `T | count; U | count` against `T | count`, since everything past the
+  first `;` was discarded. The reverse direction is pinned too: where KQL
+  applies an effective default, the bare spelling and the explicit one stay
+  one digest, so `join` still hashes with `join kind=innerunique` (not
+  `kind=inner`) and `mv-expand bagexpansion=array` with
+  `mv-expand kind=array`. `### Breaking` below carries the field-by-field
+  detail for each.
 - **`BinOp.case_sensitive` is correct across the operator family (tier 2).**
   Eight operators were reported backwards, including every negated string
   operator (`!has`, `!contains`, …) and `hasprefix`/`hassuffix`. `search
