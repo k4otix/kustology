@@ -48,7 +48,12 @@ def walk(node, depth: int = 0) -> None:
         # walking only main_pipeline silently skips them.
         for binding in node.let_bindings:
             walk(binding, depth + 1)
-        walk(node.main_pipeline, depth + 1)
+        # Same trap one field over: a multi-statement query (`T | count;
+        # U | count`) keeps its second and later statements in
+        # `additional_pipelines`, so `main_pipeline` alone is only ever the
+        # first one.
+        for pipeline in [node.main_pipeline, *node.additional_pipelines]:
+            walk(pipeline, depth + 1)
     elif isinstance(node, LetBinding):
         # A binding's right-hand side is a pipeline, a scalar expression or
         # a user function; only the first is walkable as a pipeline.

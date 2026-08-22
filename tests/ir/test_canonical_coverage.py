@@ -17,9 +17,16 @@ already do that (see `test_literals.py`, etc). It inspects `canonical()`'s
 the function body. That's a coarse check (a name appearing in a comment
 would also pass), but it is exactly calibrated to catch what matters here:
 a class added to `expr.py` and never added to `canonical()` at all. It
-passes today over all 22 non-`UnknownExpr` subclasses; it exists so that
-adding a 23rd subclass without touching `canonical()` fails CI instead of
-shipping a builder that renders the new shape as its raw source text.
+covers every non-`UnknownExpr` subclass there is, discovered by walking
+`Expr.__subclasses__()` rather than listed here, so that adding one more
+without touching `canonical()` fails CI instead of shipping a builder that
+renders the new shape as its raw source text.
+
+The count is deliberately not written down. It used to say "all 22 ... adding
+a 23rd" and went stale the first time a subclass landed (`TypedNameDecl`, then
+`LetValueRef`), which is the hand-maintained-list drift AGENTS.md warns about
+-- in a docstring whose whole subject is a list that must not be
+hand-maintained.
 """
 
 import inspect

@@ -27,6 +27,11 @@ constant. Two things followed:
 deliberately *not* a ``ColumnRef`` subclass: the binder resolves column
 provenance by isinstance, and a subclass would inherit that behaviour and
 send the binder looking for a column of that name in the scope.
+
+The last section pins the known limitation this buys — a ``let`` name that
+shadows a real column is classified as the binding, because classifying it
+correctly would need the binder and so would make the lowering, and the hash,
+depend on whether a schema was supplied.
 """
 
 import pytest
@@ -54,13 +59,22 @@ def _ir(query: str, schema: dict | None = None) -> QueryIR:
     )
 
 
-def _hash(query: str) -> str:
-    return _ir(query).semantic_hash
+def _hash(query: str, schema: dict | None = None) -> str:
+    return _ir(query, schema).semantic_hash
+
+
+# Parametrization shared by every test whose claim has to hold in both bind
+# states. Classification is made from the query text, so bind state must not
+# change it -- that is the invariant the shadowing limitation below is traded
+# for, and asserting it only unbound would leave the trade unproven.
+BOTH_MODES = pytest.mark.parametrize(
+    "schema", [None, _T_SCHEMA], ids=["unbound", "bound"],
+)
 
 
 # -- the use site builds its own node -------------------------------------
 
-@pytest.mark.parametrize("schema", [None, _T_SCHEMA], ids=["unbound", "bound"])
+@BOTH_MODES
 def test_a_scalar_let_reference_is_a_let_value_ref(schema):
     ir = _ir("let threshold = 5; T | where threshold < Count", schema)
     predicate = ir.main_pipeline.operators[0].predicate
@@ -69,7 +83,7 @@ def test_a_scalar_let_reference_is_a_let_value_ref(schema):
     assert isinstance(predicate.right, ColumnRef)
 
 
-@pytest.mark.parametrize("schema", [None, _T_SCHEMA], ids=["unbound", "bound"])
+@BOTH_MODES
 def test_find_all_column_ref_no_longer_reports_the_let_name(schema):
     """The lineage question, asked the documented way, in both bind states."""
     ir = _ir("let threshold = 5; T | where Count > threshold", schema)
@@ -84,8 +98,9 @@ def test_a_let_value_ref_is_not_a_column_ref():
     assert not issubclass(LetValueRef, ColumnRef)
 
 
-def test_a_let_bound_list_in_a_membership_test_is_a_let_value_ref():
-    ir = _ir("let list = dynamic([1]); T | where a in (list)")
+@BOTH_MODES
+def test_a_let_bound_list_in_a_membership_test_is_a_let_value_ref(schema):
+    ir = _ir("let list = dynamic([1]); T | where a in (list)", schema)
     (membership,) = find_all(ir, SetMembership)
     assert isinstance(membership.values[0], LetValueRef)
     assert membership.values[0].name == "list"
@@ -134,9 +149,10 @@ def test_which_binding_is_referenced_is_still_hashed():
     )
 
 
-def test_a_let_reference_in_a_later_statement_is_renamed_too():
-    a = _hash("let n = 5; T | count; U | where a > n")
-    b = _hash("let m = 5; T | count; U | where a > m")
+@BOTH_MODES
+def test_a_let_reference_in_a_later_statement_is_renamed_too(schema):
+    a = _hash("let n = 5; T | count; U | where a > n", schema)
+    b = _hash("let m = 5; T | count; U | where a > m", schema)
     assert a == b
 
 
@@ -185,3 +201,77 @@ def test_llm_view_drops_the_redundant_canonical_form():
     assert view["kind"] == "let_value_ref"
     assert view["name"] == "threshold"
     assert "canonical_form" not in view
+
+
+# -- known limitation: a let name that shadows a real column ---------------
+#
+# The classification is text-only ("is this name bound by an earlier ``let``"),
+# and KQL's own rule is the reverse: an unqualified name resolves to a
+# row-scope column first, falling back to a ``let``-bound variable only when
+# no column matches. So a ``let`` whose name collides with a real column is
+# recorded as a ``LetValueRef`` even though the query reads the column.
+#
+# These tests assert what the builder does *today*, deliberately. Fixing the
+# classification needs ``ReferencedSymbol``, which the .NET parser only fills
+# on a bound parse -- so the same query text would build a ``ColumnRef`` with
+# a schema and a ``LetValueRef`` without one. That is a difference in IR
+# shape, which no volatile-field stripping can hide, and it would make
+# ``semantic_hash`` depend on whether a schema was supplied. See
+# ``tests/ir/test_semantic_hash_bind_invariance.py`` for the invariant being
+# protected and ``LetValueRef``'s docstring for the full reasoning.
+
+@BOTH_MODES
+def test_a_let_name_shadowing_a_real_column_is_recorded_as_the_let(schema):
+    """``T`` really has a ``Count`` column, and KQL reads it here -- the .NET
+    binder resolves this name to a ``ColumnSymbol``, not a ``VariableSymbol``.
+    The builder records a ``LetValueRef`` anyway, so ``find_all(ir, ColumnRef)``
+    does not report the column. Pinned, not endorsed."""
+    ir = _ir("let Count = 5; T | where Count > 1", schema)
+    assert [c.name for c in find_all(ir, ColumnRef)] == []
+    assert [r.name for r in find_all(ir, LetValueRef)] == ["Count"]
+
+
+@BOTH_MODES
+def test_a_column_created_mid_pipeline_shadowing_a_let_behaves_the_same(schema):
+    """The shadowing column need not come from the table: ``extend`` creates
+    one, and the ``where`` past it reads that column, not the binding."""
+    ir = _ir("let a = 5; T | extend a = 1 | where a > 0", schema)
+    assert [c.name for c in find_all(ir, ColumnRef)] == []
+    assert [r.name for r in find_all(ir, LetValueRef)] == ["a"]
+    predicate = ir.main_pipeline.operators[1].predicate
+    assert isinstance(predicate.left, LetValueRef)
+
+
+@BOTH_MODES
+def test_the_shadowing_case_collapses_two_queries_onto_one_hash(schema):
+    """The cost of the trade, stated. The first query reads ``T.Count``; the
+    second compares two constants. They hash alike because the ``let`` rename
+    reaches the use site in both."""
+    assert (
+        _hash("let Count = 5; T | where Count > 1", schema)
+        == _hash("let Other = 5; T | where Other > 1", schema)
+    )
+    # It does still hash apart from the query with no binding at all, which
+    # is a genuine ColumnRef.
+    assert (
+        _hash("let Count = 5; T | where Count > 1", schema)
+        != _hash("T | where Count > 1", schema)
+    )
+
+
+def test_the_shadowing_classification_is_the_same_in_both_bind_states():
+    """The invariant the limitation buys, asserted on the very query that
+    exposes the limitation.
+
+    A ``ReferencedSymbol``-based fix would make exactly this pair diverge --
+    ``ColumnRef`` bound, ``LetValueRef`` unbound -- so if a later change
+    "fixes" the shadowing case, this test is the one that should stop it and
+    force the trade to be re-argued rather than made by accident.
+    """
+    unbound = _ir("let Count = 5; T | where Count > 1")
+    bound = _ir("let Count = 5; T | where Count > 1", _T_SCHEMA)
+
+    assert type(unbound.main_pipeline.operators[0].predicate.left) is type(
+        bound.main_pipeline.operators[0].predicate.left
+    )
+    assert unbound.semantic_hash == bound.semantic_hash

@@ -126,6 +126,41 @@ class LetValueRef(Expr):
     while the use site kept the name the query wrote, so
     ``let n = 5; T | where a > n`` and ``let m = 5; T | where a > m`` hashed
     apart. Adding this class to ``transforms._LET_NAME_MODELS`` closes that.
+
+    **Known limitation: a ``let`` name that shadows a real column.** The
+    classification is made from the query text alone -- "is this name bound by
+    an earlier ``let`` statement" -- and KQL's own rule is the other way
+    round: an unqualified name resolves to a **row-scope column first**, and
+    only falls back to a ``let``-bound variable when no column matches. So in
+
+        let Count = 5; T | where Count > 1
+
+    where ``T`` really has a ``Count`` column, KQL reads the column and this
+    builder records a ``LetValueRef``. The consequences are that
+    ``find_all(ir, ColumnRef)`` does not report ``Count`` for that query, and
+    that ``semantic_hash`` collapses it onto
+    ``let Other = 5; T | where Other > 1`` -- which compares two constants --
+    because the ``let`` rename reaches both. The same applies to a column an
+    operator creates mid-pipeline: ``let a = 5; T | extend a = 1 | where a >
+    0`` classifies the ``where``'s ``a`` as a ``LetValueRef`` too.
+
+    This is deliberate, not an oversight. Getting it right needs the binder:
+    the .NET parser resolves the shadowed name to a ``ColumnSymbol`` and the
+    non-shadowed one to a ``VariableSymbol``, but *only on a bound parse* --
+    an unbound ``KustoCode.Parse`` leaves ``ReferencedSymbol`` ``None`` on
+    every name. Classifying by symbol would therefore build a ``ColumnRef``
+    with a schema and a ``LetValueRef`` without one, for identical query
+    text. That is a difference in IR *shape*, which no volatile-field
+    stripping can hide (see ``transforms._VOLATILE_FIELDS``), so the same
+    query would hash two ways depending on whether the caller happened to
+    supply a schema -- breaking the bind-independence invariant that
+    ``tests/ir/test_semantic_hash_bind_invariance.py`` exists to hold.
+    Shadowing a column with a ``let`` is rare; a bind-dependent hash is
+    load-bearing for every consumer that stores digests. The trade is made
+    knowingly in favour of the invariant, and it is the same text-only rule
+    :class:`~kustology.ir.query.LetRef` already applies at source position.
+    ``tests/ir/test_let_value_ref.py`` pins the behaviour above so it stays a
+    decision rather than drifting.
     """
 
     KIND: ClassVar[str] = "let_value_ref"

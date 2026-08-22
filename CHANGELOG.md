@@ -633,7 +633,19 @@ release is in `docs/superpowers/reports/`.
   `let m = 5; T | where a > m`. Those two now collide; a `let`-bound `n` and
   a column `n` still do not. Classification is bind-independent — the name
   is bound by a `let` in the same query text — and only bindings declared
-  *earlier* count, the same rule `LetRef` follows.
+  *earlier* count, the same rule `LetRef` follows. **Known limitation:** that
+  text-only rule is the reverse of KQL's own, which resolves an unqualified
+  name to a row-scope column first and only then to a `let`-bound variable.
+  So when a `let` name shadows a real column — `let Count = 5; T | where
+  Count > 1` where `T` has a `Count` — the reference is recorded as a
+  `LetValueRef`, `find_all(ir, ColumnRef)` does not report that column, and
+  the query hashes together with `let Other = 5; T | where Other > 1`. The
+  same holds for a column created mid-pipeline (`let a = 5; T | extend a = 1
+  | where a > 0`). Resolving it correctly needs the binder — the .NET parser
+  distinguishes the two only on a bound parse — which would make the lowering,
+  and therefore the hash, depend on whether a schema was supplied. Shadowing
+  is rare and a bind-dependent hash is not, so the invariant wins; the
+  behaviour is pinned by tests rather than left to drift.
 - **`QueryIR` gains `additional_pipelines`**, a `list[Pipeline]` holding the
   second and later tabular statements of a multi-statement query in source
   order. The builder read `expr_stmts[0]` and stopped, so everything past the
@@ -753,8 +765,10 @@ release is in `docs/superpowers/reports/`.
   `kind=simple` and differently from `kind=regex`. It is declared required
   precisely so `to_llm_dict` renders it.
 - **`MvExpandOp.columns` is `list[MvExpandColumn]`** (was `list[AnyExpr]`),
-  and the operator gains `row_limit`, `with_item_index`, `bag_expansion` and
-  `expand_kind`. Every modifier `mv-expand` takes was discarded, so
+  and the operator gains `row_limit`, `with_item_index` and `expand_kind` —
+  three fields for four modifiers, because `bagexpansion=` is folded into
+  `expand_kind` rather than modelled separately (see below). Every modifier
+  `mv-expand` takes was discarded, so
   `mv-expand a`, `mv-expand a to typeof(string)`, `mv-expand a limit 10`,
   `mv-expand with_itemindex=i a`, `mv-expand bagexpansion=bag a` and
   `mv-expand kind=array a` — six queries returning different rows — built
