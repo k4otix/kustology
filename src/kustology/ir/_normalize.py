@@ -112,99 +112,222 @@ def normalize_in_place(expr: Any) -> Any:
     return expr
 
 
+# KQL operator precedence, loosest to tightest. The number is only ever
+# compared against another number from this table, so the absolute values
+# mean nothing -- only the ordering does.
+_PREC_OR = 1
+_PREC_AND = 2
+# Every comparison and every string operator (``==``, ``has``, ``!in~``,
+# ``:``) sits at one level: KQL does not let two of them chain without
+# parentheses, so their relative order is unobservable.
+_PREC_COMPARISON = 3
+_PREC_UNARY = 6
+_PREC_ARITHMETIC = {"+": 4, "-": 4, "*": 5, "/": 5, "%": 5}
+
+# Operators for which ``a OP (b OP c)`` differs from ``(a OP b) OP c``. Equal
+# precedence is enough to drop parentheses on the *left* of any of these, and
+# never enough on the right.
+_NON_ASSOCIATIVE = frozenset({"-", "/", "%"})
+
+
+def _kql_string(value: str) -> str:
+    """Render ``value`` as a KQL double-quoted string literal.
+
+    Escaping is the whole point. ``f("a\\", \\"b")`` is a call with **one**
+    argument whose value contains quotes and a comma; rendered raw it came
+    out as ``f("a", "b")``, a call with two arguments -- a description of a
+    tree that does not exist. Backslash goes first, or it would re-escape
+    the backslashes the other rules just introduced.
+
+    ``\\r`` is escaped alongside ``\\n`` for the same reason: a raw control
+    character inside the quotes makes the rendering unreadable and, for a
+    consumer feeding it back to a parser, unparseable.
+    """
+    escaped = (
+        value.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    )
+    return f'"{escaped}"'
+
+
+def _kql_literal(value: Any, literal_kind: str) -> str:
+    """Render a literal's value the way KQL spells it.
+
+    ``bool`` is checked before anything else because ``True`` is a Python
+    ``int`` subclass, and before ``literal_kind`` because the kind tells us
+    what the parser called it, not how to write it down. KQL's spellings are
+    ``true`` / ``false`` / ``null``; ``str()`` produced Python's, so a
+    canonical form of ``x == True`` named no value KQL has.
+
+    Non-string kinds that happen to hold a ``str`` (``datetime``,
+    ``timespan``, ``guid``, ``dynamic``) stay unquoted: their KQL spelling is
+    a bare token or a constructor call, not a quoted string.
+    """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return "null"
+    if literal_kind == "string" and isinstance(value, str):
+        return _kql_string(value)
+    return str(value)
+
+
 def canonical(expr: Any) -> str:
-    """Stable, commutative-aware string representation for diffing."""
-    if isinstance(expr, LiteralExpr):
-        if expr.literal_kind == "string":
-            return f'"{expr.value}"'
-        return str(expr.value)
-    if isinstance(expr, ColumnRef):
-        return f"{expr.table}.{expr.name}" if expr.table else expr.name
-    if isinstance(expr, LetValueRef):
-        # The name as the query wrote it. A ``let``-bound scalar reads like a
-        # column at the use site and that is the faithful rendering of the
-        # source; the two are told apart by node type, and by the ``kind``
-        # discriminator in the dump the hash actually digests -- canonical()
-        # is a display and diffing form, not the hash's key.
-        return expr.name
-    if isinstance(expr, TypedNameDecl):
-        # ``name:type`` — the KQL spelling. Rendering the bare name would
-        # make a typed capture indistinguishable from an untyped one, which
-        # is the collision the node exists to close.
-        return f"{expr.name}:{expr.declared_type}"
-    if isinstance(expr, BinOp):
-        return f"{canonical(expr.left)} {expr.op} {canonical(expr.right)}"
-    if isinstance(expr, And):
-        ops = [canonical(o) for o in expr.operands]
-        return " and ".join(sorted(ops))
-    if isinstance(expr, Or):
-        ops = [canonical(o) for o in expr.operands]
-        return " or ".join(sorted(ops))
-    if isinstance(expr, Not):
-        return f"not({canonical(expr.operand)})"
-    if isinstance(expr, FuncCall):
-        args = ", ".join(canonical(a) for a in expr.args)
-        return f"{expr.name}({args})"
-    if isinstance(expr, SetMembership):
-        # Render the recorded operator. Rebuilding it from polarity plus
-        # case_sensitive could only ever emit one of four strings, so
-        # has_any and has_all both came out as `in~` -- a different
-        # predicate. Same reason BinOp above renders `expr.op` verbatim.
-        vals = ", ".join(sorted(canonical(v) for v in expr.values))
-        return f"{canonical(expr.column)} {expr.op} ({vals})"
-    if isinstance(expr, Between):
-        op = "between" if expr.polarity == "inclusion" else "!between"
-        return (
-            f"{canonical(expr.target)} {op} "
-            f"({canonical(expr.low)} .. {canonical(expr.high)})"
-        )
-    if isinstance(expr, CaseExpr):
-        branches = ", ".join(
-            f"{canonical(p)} => {canonical(v)}" for p, v in expr.branches
-        )
-        default = canonical(expr.default) if expr.default is not None else "_"
-        return f"case({branches} | else {default})"
-    if isinstance(expr, Exists):
-        # `exists(...)` is not KQL -- name the function that produced it.
-        return f"{expr.op}({canonical(expr.target)})"
-    if isinstance(expr, RegexMatch):
-        return f"{canonical(expr.target)} matches regex \"{expr.pattern}\""
-    if isinstance(expr, UnaryOp):
-        return f"{expr.op}{canonical(expr.operand)}"
-    if isinstance(expr, PathExpr):
-        return f"{canonical(expr.expression)}.{canonical(expr.selector)}"
-    if isinstance(expr, ElementExpr):
-        return f"{canonical(expr.expression)}[{canonical(expr.selector)}]"
-    if isinstance(expr, BracketedExpr):
-        # Parentheses carry no semantics once the tree is built, so they are
-        # dropped rather than rendered -- `(X) > 1` and `X > 1` are the same
-        # predicate and must produce the same string.
-        return canonical(expr.expression)
-    if isinstance(expr, NamedExpr):
-        return f"{expr.name} = {canonical(expr.expression)}"
-    if isinstance(expr, CompoundNamedExpr):
-        return f"({', '.join(expr.names)}) = {canonical(expr.expression)}"
-    if isinstance(expr, StarExpr):
-        return "*"
-    if isinstance(expr, ExternalDataExpr):
-        cols = ", ".join(f"{n}:{ty}" for n, ty in expr.columns)
-        # Every URI, in source order. Rendering only the first collapsed a
-        # two-URI feed onto a one-URI feed -- the same loss the singular
-        # ``uri`` field used to bake into the model.
-        return f"externaldata({cols})[{', '.join(expr.uris)}]"
-    # Pipeline-bearing expressions. The inner pipeline is elided rather than
-    # rendered: canonical() is a pure Expr function and Pipeline is modeled
-    # in ir.query, so recursing would invert the dependency. The wrapper is
-    # still named, which is what distinguishes these from each other and
-    # from every other shape -- before, all three rendered as a bare "?".
-    if isinstance(expr, ToScalarExpr):
-        return f"toscalar({_pipeline_head(expr.pipeline)} | ...)"
-    if isinstance(expr, SubqueryExpr):
-        return f"({_pipeline_head(expr.pipeline)} | ...)"
-    # UnknownExpr and anything a future release adds. UnknownExpr carries the
-    # source text, which is the most faithful thing available for a shape the
-    # builder could not model.
-    return getattr(expr, "raw_text", "?").strip() if hasattr(expr, "raw_text") else "?"
+    """Stable, commutative-aware string representation for diffing.
+
+    Parenthesized **by precedence**, not by what the source wrote. The parser
+    discards redundant parentheses before the builder ever sees them -- ``(a
+    and b) or c`` and ``a and b or c`` build byte-identical IR -- so
+    reproducing the source's brackets is not an option even in principle, and
+    ``BracketedExpr`` stays dropped. What the renderer owes the reader is that
+    the string it emits parses back to the tree it came from: ``a and (b or
+    c)`` keeps its parentheses because ``or`` binds looser than ``and``, and
+    ``x - (y - z)`` keeps them because ``-`` does not associate.
+
+    This is a *display and diffing* form, not the hash's key.
+    ``semantic_hash`` digests the model dump, and ``canonical_form`` is a
+    property rather than a field, so nothing here can move a digest.
+    """
+
+    def _wrap(text: str, prec: int, parent_prec: int, parens_on_equal: bool) -> str:
+        """Parenthesize ``text`` when its operator binds looser than the one
+        it sits inside -- or exactly as tight, on the right of an operator
+        that does not associate."""
+        if prec < parent_prec or (prec == parent_prec and parens_on_equal):
+            return f"({text})"
+        return text
+
+    def _render(e: Any, parent_prec: int = 0, parens_on_equal: bool = False) -> str:
+        # Precedence-bearing shapes -- ``BinOp``, ``And``, ``Or``,
+        # ``UnaryOp`` -- compute their text and hand it to ``_wrap``. Every
+        # other shape is an atom: a leaf, a call, or something that renders
+        # with delimiters of its own (``not(...)``, ``case(...)``,
+        # ``X between (a .. b)``). An atom returns directly, is never
+        # parenthesized, never forces its parent to parenthesize it, and
+        # renders its children at ``parent_prec`` 0 -- its own delimiters
+        # already do the grouping.
+        if isinstance(e, LiteralExpr):
+            return _kql_literal(e.value, e.literal_kind)
+        if isinstance(e, ColumnRef):
+            return f"{e.table}.{e.name}" if e.table else e.name
+        if isinstance(e, LetValueRef):
+            # The name as the query wrote it. A ``let``-bound scalar reads
+            # like a column at the use site and that is the faithful
+            # rendering of the source; the two are told apart by node type,
+            # and by the ``kind`` discriminator in the dump the hash actually
+            # digests.
+            return e.name
+        if isinstance(e, TypedNameDecl):
+            # ``name:type`` — the KQL spelling. Rendering the bare name would
+            # make a typed capture indistinguishable from an untyped one,
+            # which is the collision the node exists to close.
+            return f"{e.name}:{e.declared_type}"
+        if isinstance(e, BinOp):
+            prec = _PREC_ARITHMETIC.get(e.op, _PREC_COMPARISON)
+            text = (
+                f"{_render(e.left, prec)} {e.op} "
+                f"{_render(e.right, prec, e.op in _NON_ASSOCIATIVE)}"
+            )
+            return _wrap(text, prec, parent_prec, parens_on_equal)
+        if isinstance(e, And):
+            # Sorted by each operand's *unparenthesized* rendering, so the
+            # order does not depend on whether a nested operand happened to
+            # need brackets -- a leading "(" would otherwise sort ahead of
+            # every letter and reorder the chain for that reason alone.
+            ordered = sorted(e.operands, key=_render)
+            return _wrap(
+                " and ".join(_render(o, _PREC_AND) for o in ordered),
+                _PREC_AND, parent_prec, parens_on_equal,
+            )
+        if isinstance(e, Or):
+            ordered = sorted(e.operands, key=_render)
+            return _wrap(
+                " or ".join(_render(o, _PREC_OR) for o in ordered),
+                _PREC_OR, parent_prec, parens_on_equal,
+            )
+        if isinstance(e, UnaryOp):
+            return _wrap(
+                f"{e.op}{_render(e.operand, _PREC_UNARY)}",
+                _PREC_UNARY, parent_prec, parens_on_equal,
+            )
+        if isinstance(e, Not):
+            # Renders as a call, so its own parentheses do the grouping.
+            return f"not({_render(e.operand)})"
+        if isinstance(e, FuncCall):
+            return f"{e.name}({', '.join(_render(a) for a in e.args)})"
+        if isinstance(e, SetMembership):
+            # Render the recorded operator. Rebuilding it from polarity plus
+            # case_sensitive could only ever emit one of four strings, so
+            # has_any and has_all both came out as `in~` -- a different
+            # predicate. Same reason BinOp above renders `e.op` verbatim.
+            vals = ", ".join(sorted(_render(v) for v in e.values))
+            return f"{_render(e.column, _PREC_COMPARISON)} {e.op} ({vals})"
+        if isinstance(e, Between):
+            op = "between" if e.polarity == "inclusion" else "!between"
+            return (
+                f"{_render(e.target, _PREC_COMPARISON)} {op} "
+                f"({_render(e.low)} .. {_render(e.high)})"
+            )
+        if isinstance(e, CaseExpr):
+            branches = ", ".join(
+                f"{_render(p)} => {_render(v)}" for p, v in e.branches
+            )
+            default = _render(e.default) if e.default is not None else "_"
+            return f"case({branches} | else {default})"
+        if isinstance(e, Exists):
+            # `exists(...)` is not KQL -- name the function that produced it.
+            # ``op`` already spells the negation, so ``polarity`` is not
+            # rendered on top of it.
+            return f"{e.op}({_render(e.target)})"
+        if isinstance(e, RegexMatch):
+            # The pattern through ``_kql_string`` like any other string
+            # literal: a regex is where backslashes actually live, and
+            # ``\\d+`` rendered raw inside quotes is the ambiguity this
+            # function exists to remove.
+            return f"{_render(e.target, _PREC_COMPARISON)} matches regex {_kql_string(e.pattern)}"
+        if isinstance(e, PathExpr):
+            return f"{_render(e.expression)}.{_render(e.selector)}"
+        if isinstance(e, ElementExpr):
+            return f"{_render(e.expression)}[{_render(e.selector)}]"
+        if isinstance(e, BracketedExpr):
+            # Parentheses carry no semantics once the tree is built, so they
+            # are dropped rather than rendered -- `(X) > 1` and `X > 1` are
+            # the same predicate and must produce the same string. The
+            # precedence table above puts back the ones that *do* carry
+            # grouping, which is a different question from what the source
+            # typed.
+            return _render(e.expression, parent_prec, parens_on_equal)
+        if isinstance(e, NamedExpr):
+            return f"{e.name} = {_render(e.expression)}"
+        if isinstance(e, CompoundNamedExpr):
+            return f"({', '.join(e.names)}) = {_render(e.expression)}"
+        if isinstance(e, StarExpr):
+            return "*"
+        if isinstance(e, ExternalDataExpr):
+            cols = ", ".join(f"{n}:{ty}" for n, ty in e.columns)
+            # Every URI, in source order. Rendering only the first collapsed
+            # a two-URI feed onto a one-URI feed -- the same loss the
+            # singular ``uri`` field used to bake into the model.
+            return f"externaldata({cols})[{', '.join(e.uris)}]"
+        # Pipeline-bearing expressions. The inner pipeline is elided rather
+        # than rendered: canonical() is a pure Expr function and Pipeline is
+        # modeled in ir.query, so recursing would invert the dependency. The
+        # wrapper is still named, which is what distinguishes these from each
+        # other and from every other shape -- before, all three rendered as a
+        # bare "?".
+        if isinstance(e, ToScalarExpr):
+            return f"toscalar({_pipeline_head(e.pipeline)} | ...)"
+        if isinstance(e, SubqueryExpr):
+            return f"({_pipeline_head(e.pipeline)} | ...)"
+        # UnknownExpr and anything a future release adds. UnknownExpr carries
+        # the source text, which is the most faithful thing available for a
+        # shape the builder could not model.
+        return getattr(e, "raw_text", "?").strip() if hasattr(e, "raw_text") else "?"
+
+    return _render(expr)
 
 
 def _pipeline_head(pipeline: Any) -> str:

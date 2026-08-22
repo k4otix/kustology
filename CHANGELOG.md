@@ -135,6 +135,21 @@ release is in `docs/superpowers/reports/`.
 - **`canonical_form` renders every expression shape (tier 2).** Eleven `Expr`
   types rendered as a bare `"?"`, so `-X > 1`, `D.a == 1` and
   `toscalar(…) > 1` were indistinguishable.
+- **`canonical_form` parenthesizes by precedence, escapes strings, and
+  spells bools and null the KQL way (tier 2).** It rendered operands
+  flat, so `a and (b or c)` and `a and b or c` — different predicates —
+  came out as one string; it now brackets a child that binds looser than its
+  parent, and the right operand of a non-associative `-`, `/` or `%` at
+  equal precedence, so `x - (y - z)` no longer reads as `x - y - z`.
+  Redundant brackets are still dropped: the parser discards them before the
+  builder sees them, so `(a and b) or c` and `a and b or c` build identical
+  IR and render identically. String literals are escaped, so the one-argument
+  call `f("a\", \"b")` no longer renders as the two-argument `f("a", "b")`.
+  `true` / `false` / `null` replace Python's `True` / `False` / `None` —
+  which also means the LLM view's redundant-`canonical_form` drop fires on
+  bool and null literals, as it was always meant to. `semantic_hash` is
+  unaffected: it digests the model dump, and `canonical_form` is a derived
+  property.
 - **A bare tabular subquery is modeled (tier 2).**
   `| where User in ((Suspicious | project User))` collapsed the inner query
   into one `UnknownExpr` blob; it now builds a `SubqueryExpr`.

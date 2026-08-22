@@ -591,6 +591,124 @@ def test_canonical_form_distinguishes_shapes_that_used_to_collide(ir_builder):
     assert len(forms) == 3, f"distinct predicates collapsed to {forms}"
 
 
+# --- canonical_form is faithful: precedence, escaping, KQL bool/null --------
+
+
+def _form(query: str) -> str:
+    """The canonical form of the one expression ``query``'s single operator
+    holds -- a ``where``'s predicate or an ``extend``'s right-hand side."""
+    from kustology.ir import ExtendOp, FilterOp, IRBuilder
+
+    op = IRBuilder().build(query).main_pipeline.operators[0]
+    if isinstance(op, FilterOp):
+        return op.predicate.canonical_form
+    assert isinstance(op, ExtendOp), type(op).__name__
+    return op.assignments[0].expr.canonical_form
+
+
+def test_a_disjunction_inside_a_conjunction_is_parenthesized():
+    """``a and (b or c)`` and ``a and b or c`` are different predicates --
+    ``or`` binds looser than ``and`` -- and both rendered as
+    ``"a and b or c"``. Anyone diffing two rules by canonical form, or
+    reading one out of the LLM view, was shown a predicate the query does
+    not express."""
+    assert _form("T | where a and (b or c)") == "a and (b or c)"
+
+
+def test_a_conjunction_inside_a_disjunction_needs_no_parentheses():
+    """The other direction, and the reason the fix is a precedence table
+    rather than "keep the parentheses the source wrote". ``and`` already
+    binds tighter than ``or``, so the parentheses in ``(a and b) or c`` are
+    redundant: it is the *same* predicate as ``a and b or c``, the parser
+    discards them, and the two build byte-identical IR that has to render
+    one way. What matters is that it no longer renders the same as the
+    conjunction-of-a-disjunction above."""
+    redundant = _form("T | where (a and b) or c")
+    assert redundant == "a and b or c"
+    assert redundant == _form("T | where a and b or c")
+    assert redundant != _form("T | where a and (b or c)")
+
+
+def test_arithmetic_is_parenthesized_by_precedence():
+    assert _form("T | extend y = (x + y) * z") == "(x + y) * z"
+    assert _form("T | extend y = x + y * z") == "x + y * z"
+
+
+@pytest.mark.parametrize("op", ["-", "/", "%"])
+def test_a_non_associative_operator_parenthesizes_its_right_operand(op):
+    """``x - (y - z)`` is not ``x - y - z``. Equal precedence is not enough
+    to drop the parentheses when the operator does not associate: the
+    grouping is the whole difference between the two, and both rendered as
+    the left-nested spelling."""
+    assert _form(f"T | extend r = x {op} (y {op} z)") == f"x {op} (y {op} z)"
+    assert _form(f"T | extend r = x {op} y {op} z") == f"x {op} y {op} z"
+
+
+def test_not_still_renders_its_own_parentheses():
+    """``not`` renders as a call, so its operand never needs precedence
+    parentheses on top of the ones already there."""
+    assert _form("T | where not(a and b)") == "not(a and b)"
+
+
+def test_a_quote_inside_a_string_literal_is_escaped():
+    r"""``f("a\", \"b")`` is a call with ONE argument whose value contains
+    quotes and a comma. Rendered without escaping it read as
+    ``f("a", "b")`` -- a call with two arguments, a different call. The
+    canonical form is meant to be an unambiguous rendering of the tree, and
+    this one described a tree that does not exist."""
+    assert _form(r'T | extend y = f("a\", \"b")') == r'f("a\", \"b")'
+
+
+def test_a_backslash_in_a_string_literal_is_escaped():
+    assert _form(r'T | where p == "C:\\Windows"') == r'p == "C:\\Windows"'
+
+
+def test_a_bool_literal_renders_as_kql_not_python():
+    """``True`` is Python's spelling. KQL's is ``true``, and the canonical
+    form is supposed to be KQL."""
+    assert _form("T | where x == true") == "x == true"
+    assert _form("T | where x == false") == "x == false"
+
+
+def test_a_null_literal_renders_as_null():
+    assert _form("T | where x == real(null)") == "x == null"
+
+
+def test_the_llm_view_drops_a_bool_literal_canonical_form_as_redundant():
+    """The redundant-form drop compares ``canonical_form`` against a
+    reconstruction of the literal, and the reconstruction has always spelled
+    a bool the KQL way. They disagreed, so every bool literal in the LLM view
+    carried a ``canonical_form: "True"`` restating a ``value: true`` two
+    lines above it."""
+    from kustology.ir import IRBuilder, LiteralExpr, find_all, to_llm_dict
+
+    ir = IRBuilder().build("T | where e == true")
+    (lit,) = find_all(ir, LiteralExpr)
+    dumped = to_llm_dict(lit)
+    assert dumped["value"] is True
+    assert "canonical_form" not in dumped
+
+
+def test_the_llm_view_drops_an_escaped_string_canonical_form_as_redundant():
+    """The redundant-form check has to spell a string exactly the way
+    ``canonical()`` does, or it stops firing for the strings that need
+    escaping. It is now the same function on both sides."""
+    from kustology.ir import IRBuilder, LiteralExpr, find_all, to_llm_dict
+
+    ir = IRBuilder().build(r'T | where p == "C:\\Windows"')
+    (lit,) = find_all(ir, LiteralExpr)
+    dumped = to_llm_dict(lit)
+    assert dumped["value"] == r"C:\Windows"
+    assert "canonical_form" not in dumped
+
+
+def test_a_redundant_bracket_still_renders_identically():
+    """The boundary the precedence table must not cross. Parentheses that
+    carry no grouping information are still dropped -- ``(X) > 1`` and
+    ``X > 1`` are one predicate and must be one string."""
+    assert _form("T | where (x) > 1") == _form("T | where x > 1") == "x > 1"
+
+
 # --- Exists records which function produced it ------------------------------
 
 

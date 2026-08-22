@@ -43,6 +43,7 @@ from pydantic_core import PydanticUndefined
 # Imported for isinstance/issubclass dispatch rather than matched by class
 # name. Name-string dispatch silently stops firing when a class is renamed:
 # the rule just never applies again and the LLM view quietly regresses.
+from ._normalize import _kql_string
 from .expr import (
     Between,
     BinOp,
@@ -154,13 +155,22 @@ def _drop_redundant_canonical_form(out: dict[str, Any], cls: type) -> None:
 
 def _canonical_literal_repr(value: Any) -> str:
     """Reproduce the KQL canonical form for a primitive literal: strings get
-    double-quoted, bools/None lowercase, numbers stringified."""
+    double-quoted, bools/None lowercase, numbers stringified.
+
+    The quoting is delegated to ``_normalize._kql_string`` rather than
+    re-spelled here. This function only exists to answer "is
+    ``canonical_form`` a restatement of ``value``", and two independent
+    renderings of the same thing answer that question wrongly the moment they
+    disagree — which they did, for every string containing a quote or a
+    backslash: the drop stopped firing and the LLM view carried a
+    ``canonical_form`` restating the ``value`` beside it.
+    """
     if isinstance(value, bool):
         return "true" if value else "false"
     if value is None:
         return "null"
     if isinstance(value, str):
-        return f'"{value}"'
+        return _kql_string(value)
     return str(value)
 
 
