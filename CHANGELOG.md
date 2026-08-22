@@ -743,7 +743,9 @@ release is in `docs/superpowers/reports/`.
   191 false unknown-table rows `IRBuilder().build` used to report across the
   fixture corpus. A parse the caller bound with their own schema is
   unchanged and still reports `KS204` for a table that schema does not
-  describe. `semantic_hash` is unmoved: `result_type` is volatile.
+  describe. Acquiring the types does not itself move `semantic_hash` —
+  `result_type` is volatile — but the digest does move in this release, for
+  the reason given in the next entry.
 - **Result schemas come from Microsoft's binder, not from our rules (tier
   2).** `SchemaAttacher` re-derived every operator's output columns from
   hand-written per-operator rules, and a pre-release audit found a dozen
@@ -766,9 +768,17 @@ release is in `docs/superpowers/reports/`.
   the walk still computes it, and `join` / `lookup` / `union` still run their
   own rule for the per-side scope that `$left` / `$right` resolve against.
   `tests/ir/test_binder_oracle.py` compares the two answers over an operator
-  matrix and the whole fixture corpus; five cases remain, all of them
-  queries where Microsoft is open, and each is `xfail`ed with the divergence
-  named.
+  matrix and the whole fixture corpus.
+  **This moves every `semantic_hash` value for any query containing an
+  operator — still within `kustology-sem-v2`**, which covers the whole
+  unreleased window since `v0.1.0`. The *value* is stripped, as the field's
+  volatility requires; what moves the digest is the *declaration*.
+  `compute_semantic_hash` dumps with `model_dump(mode="json")`, which emits
+  every declared field, so a cleared `result_schema` is serialized as
+  `"result_schema": null` rather than being absent, and that key is in the
+  payload of every operator. Measured across the 49 fixture queries: 48
+  changed, and the one that did not (`DataTable_InlineSource`) is the only
+  one with no operator in it.
 
 ### Breaking (tier 2, pre-1.0)
 
