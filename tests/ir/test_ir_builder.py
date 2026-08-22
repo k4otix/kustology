@@ -227,6 +227,75 @@ def test_matches_regex_lifts_to_regexmatch(ir_builder):
     assert "cmd" in pred.pattern
 
 
+@pytest.mark.parametrize(
+    "spelling, expected",
+    [
+        (r'@"\d+"', r"\d+"),          # verbatim: backslash is literal
+        (r'"\\d+"', r"\d+"),          # escaped: same pattern, other spelling
+        ("'[0-9]+'", "[0-9]+"),       # no backslash at all
+        (r'@"^cmd\.exe$"', r"^cmd\.exe$"),
+    ],
+)
+def test_regex_match_carries_the_pattern_text(ir_builder, spelling, expected):
+    """``pattern`` holds the regex, not a placeholder.
+
+    Asserted as an exact non-default value on a real parse across both KQL
+    spellings of a backslash, because "is this field ever populated" is
+    answered by a substring check on one query and a substring check is what
+    lets an always-empty field look implemented.
+    """
+    from kustology.ir import RegexMatch, find_all
+
+    (rm,) = find_all(ir_builder.build(f"T | where C matches regex {spelling}"), RegexMatch)
+    assert rm.pattern == expected
+    assert rm.pattern != ""
+
+
+def test_two_different_regexes_differ_in_the_pattern_field(ir_builder):
+    """Not merely in the digest. A field that always held ``""`` would still
+    let the two queries hash apart -- ``raw_text`` and the spans differ --
+    so the digest is not evidence that ``pattern`` carries anything."""
+    from kustology.ir import RegexMatch, find_all
+
+    (a,) = find_all(ir_builder.build(r'T | where C matches regex @"\d+"'), RegexMatch)
+    (b,) = find_all(ir_builder.build(r'T | where C matches regex @"[a-z]+"'), RegexMatch)
+    assert a.pattern != b.pattern
+    assert (a.pattern, b.pattern) == (r"\d+", "[a-z]+")
+    assert a.canonical_form != b.canonical_form
+
+
+def test_an_illegal_escape_truncates_the_literal_for_every_reader(ir_builder):
+    r"""``"\d+"`` is not a KQL string, and the empty ``pattern`` it yields is
+    the parser's error recovery rather than a builder defect.
+
+    ``\d`` is not one of KQL's escape sequences, so Microsoft's parser ends
+    the string at the backslash and reports three diagnostics. What reaches
+    the builder is a ``StringLiteralExpression`` whose text is a bare quote
+    and whose ``LiteralValue`` is ``""`` -- there is no pattern left in the
+    tree to extract, by any route. Pinned across ``matches regex`` *and* a
+    plain equality so the next reader can see it is a property of the string
+    literal and not of ``RegexMatch``: the same query written ``@"\d+"`` or
+    ``"\\d+"`` carries the pattern fine, which the test above asserts.
+    """
+    from kustology import parse
+    from kustology.ir import LiteralExpr, RegexMatch, find_all
+
+    bad_regex = r'T | where C matches regex "\d+"'
+    bad_literal = r'T | where C == "\d+"'
+
+    # The queries really are malformed -- without this the assertions below
+    # would also pass against a parser that accepted them and a builder that
+    # dropped the value.
+    for q in (bad_regex, bad_literal):
+        codes = {d["code"] for d in parse(q).diagnostics}
+        assert "KS002" in codes, (q, codes)
+
+    (rm,) = find_all(ir_builder.build(bad_regex), RegexMatch)
+    assert rm.pattern == ""
+    (lit,) = find_all(ir_builder.build(bad_literal), LiteralExpr)
+    assert lit.value == ""
+
+
 def test_not_func_lifts_to_not(ir_builder):
     from kustology.ir import Not
     # The KQL `not(X)` function call lifts to Not via the FuncCall name lift.
