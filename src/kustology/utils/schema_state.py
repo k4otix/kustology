@@ -65,18 +65,42 @@ def _caller_stacklevel() -> int:
     return level  # pragma: no cover — unreachable: the loop returns first
 
 
-def _resolve_scalar_type(type_name: str):
+def _resolve_scalar_type(type_name: str, *, column: str | None = None):
     """Resolve a KQL type name to a ScalarSymbol via Microsoft's lookup.
 
-    A miss is the caller's typo in their own schema dict, so the warning is
-    reported against the caller's own line rather than against this file —
-    see :func:`_caller_stacklevel` for why that depth is computed and not
-    written down. Attributed at the library's own file instead, the warning
-    names a module the caller does not own, ``-W error::RuntimeWarning``
-    blames the wrong place, and the default "once per location" filter folds
-    every caller's typo into a single report.
+    The lookup key is case-folded. ``ScalarTypes.GetSymbol`` is an exact
+    dictionary lookup and every scalar type name and alias in the grammar is
+    lower-case (``long``, ``int64``, ``datetime``, ``boolean``, …), so a
+    schema transcribed from a portal column list — ``"LONG"``, ``"DateTime"``
+    — missed every time and produced a silently mistyped ``string`` column.
+    Folding cannot collide with a real name, because there is no scalar type
+    whose spelling differs from another only by case.
+
+    A genuine miss is the caller's typo in their own schema dict, so the
+    warning is reported against the caller's own line rather than against
+    this file — see :func:`_caller_stacklevel` for why that depth is computed
+    and not written down. Attributed at the library's own file instead, the
+    warning names a module the caller does not own,
+    ``-W error::RuntimeWarning`` blames the wrong place, and the default
+    "once per location" filter folds every caller's typo into a single
+    report.
+
+    A non-``str`` type name is a ``TypeError`` raised here rather than at the
+    CLR boundary: ``GetSymbol(None)`` surfaces as a bare
+    ``System.ArgumentNullException`` naming ``Dictionary`2.FindValue``, and
+    ``GetSymbol(5)`` as pythonnet's "No method matches given arguments",
+    neither of which mentions schemas. ``column`` puts the offending key in
+    the message, so the three schema-shape errors this module raises each
+    name their own position — the schema, a table's value, a column's type.
     """
-    sym = ScalarTypes.GetSymbol(type_name)
+    if not isinstance(type_name, str):
+        where = f" for column {column!r}" if column is not None else ""
+        raise TypeError(
+            f"Schema column type{where} must be a KQL scalar type name as a "
+            f"str; got {type(type_name).__name__}. The typed-column form is "
+            "{table: {column: 'type'}} — e.g. {'T': {'c': 'long'}}."
+        )
+    sym = ScalarTypes.GetSymbol(type_name.lower())
     if sym is None:
         warnings.warn(
             f"Unknown KQL scalar type {type_name!r}; falling back to 'string'.",
@@ -87,12 +111,42 @@ def _resolve_scalar_type(type_name: str):
     return sym
 
 
+def _warn_on_untyped_schema_string_columns(name: str, table) -> None:
+    """Warn for each column Microsoft's schema-string parser left ``unknown``.
+
+    ``TableSymbol.From("(n:bogus)")`` does not reject the unrecognized name:
+    it types the column ``ScalarTypes.Unknown`` and returns, so the typo
+    reached the binder and resolved nothing while the equivalent dict form
+    ``{"n": "bogus"}`` warned. Same mistake, same category of warning, same
+    attribution — the only difference is the fallback, and Microsoft's
+    ``unknown`` is kept because substituting ``string`` here would invent a
+    type the caller never wrote.
+
+    A bare name (``"(a)"``) lands in the same place. The documented way to
+    say "untyped" is the list form ``{"T": ["a"]}``, which means ``string``;
+    a name with no type inside a schema string means neither.
+    """
+    for col in table.Columns:
+        if col.Type == ScalarTypes.Unknown:
+            warnings.warn(
+                f"Column {str(col.Name)!r} in the schema string for table "
+                f"{name!r} has no resolvable KQL scalar type; Microsoft's "
+                "schema parser typed it 'unknown'.",
+                RuntimeWarning,
+                stacklevel=_caller_stacklevel(),
+            )
+
+
 def _build_table_symbol(name: str, cols):
     """Build a TableSymbol from the supported schema-value forms."""
     if isinstance(cols, str):
-        return TableSymbol.From(cols).WithName(name)
+        table = TableSymbol.From(cols).WithName(name)
+        _warn_on_untyped_schema_string_columns(name, table)
+        return table
     if isinstance(cols, dict):
-        col_symbols = [ColumnSymbol(c, _resolve_scalar_type(t)) for c, t in cols.items()]
+        col_symbols = [
+            ColumnSymbol(c, _resolve_scalar_type(t, column=c)) for c, t in cols.items()
+        ]
         return TableSymbol(name, col_symbols)
     if isinstance(cols, (list, tuple)):
         col_symbols = [ColumnSymbol(c, ScalarTypes.String) for c in cols]
@@ -139,6 +193,21 @@ def build_global_state(schema):
       * dict ``{table: {col: type}}`` — typed columns
       * dict ``{table: "(col:type, ...)"}`` — per-table Kusto schema string
       * dict ``{table: [col, ...]}`` — untyped columns (treated as string)
+
+    **Every key is a raw name, not query text.** Table keys and column keys
+    become the ``Name`` of a ``TableSymbol`` / ``ColumnSymbol`` verbatim.
+    The bracket-quoting ``["my col"]`` / ``['my col']`` is KQL *query* syntax
+    for referring to a name that is not a bare identifier; written as a key
+    it is taken literally, so ``{"T": {"['my col']": "string"}}`` declares a
+    column whose name is the ten characters ``['my col']`` and no query can
+    reach it. Write ``{"T": {"my col": "string"}}`` and let the query do the
+    quoting.
+
+    Type names are case-insensitive (``"LONG"`` is ``long``); an
+    unrecognized one falls back to ``string`` with a ``RuntimeWarning``, and
+    a non-``str`` one is a ``TypeError``. Inside a schema string an
+    unrecognized type is Microsoft's ``unknown`` — also a ``RuntimeWarning``,
+    but without the fallback.
     """
     if not isinstance(schema, dict):
         raise TypeError(

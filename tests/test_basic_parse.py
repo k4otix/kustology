@@ -309,3 +309,169 @@ def test_schema_like_alias_no_longer_advertises_a_bare_string():
     assert typing.get_type_hints(validate)["schema"] == SchemaLike
     for fn in (parse_service, validate):
         assert "schema string" not in fn.__doc__, fn.__name__
+
+
+def test_scalar_type_names_resolve_regardless_of_case():
+    """`{"T": {"c": "LONG"}}` typed the column `string`, with a warning.
+
+    Microsoft's `ScalarTypes.GetSymbol` is a dictionary lookup on the exact
+    lower-case spelling, so every capitalisation a caller might reasonably
+    write — `LONG`, `Long`, `DateTime`, `Real` — missed, fell through to the
+    unknown-type branch and silently produced a `string` column. A schema
+    hand-written from a portal column list or lifted from a `.csl` file is
+    full of them, and the only symptom is a binder that resolves the wrong
+    type.
+
+    KQL scalar type names and their aliases (`int64`, `datetime`, `boolean`,
+    …) are lower-case throughout the grammar, so case-folding the lookup key
+    cannot collide with a real name.
+    """
+    from kustology.utils.schema_state import (
+        build_global_state,
+        extract_schemas_from_global_state,
+    )
+
+    schema = {"T": {"a": "LONG", "b": "DateTime", "c": "Real", "d": "BOOLEAN"}}
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        state = build_global_state(schema)
+
+    # Read back off the real .NET ColumnSymbols: `bool` is the alias's
+    # resolved name, and none of the four is the old `string` fallback.
+    assert extract_schemas_from_global_state(state) == {
+        "T": {"a": "long", "b": "datetime", "c": "real", "d": "bool"},
+    }
+
+    # The lower-case spelling was never broken; it must still resolve to the
+    # identical symbol rather than through some new normalization path.
+    assert extract_schemas_from_global_state(
+        build_global_state({"T": {"a": "long"}})
+    ) == {"T": {"a": "long"}}
+
+
+def test_a_non_string_scalar_type_raises_type_error_not_a_clr_exception():
+    """`{"T": {"c": None}}` reached `ScalarTypes.GetSymbol(None)` and came
+    back as a raw `System.ArgumentNullException` with a .NET stack trace
+    naming `Dictionary`2.FindValue` — a CLR type with no Python class to
+    catch by name, and a message that says nothing about schemas.
+
+    A non-`str` type name is the caller's mistake in their own dict, so it
+    is a `TypeError`, raised before the CLR boundary and worded like the
+    other two schema-shape errors this module raises.
+    """
+    from kustology.utils.schema_state import build_global_state
+
+    for bad in (None, 5, ["long"], {"type": "long"}):
+        with pytest.raises(TypeError) as exc_info:
+            build_global_state({"T": {"c": bad}})
+        message = str(exc_info.value)
+        assert type(bad).__name__ in message, message
+        assert "str" in message, message
+        # Not the CLR's words.
+        assert "ArgumentNullException" not in message
+        assert "Kusto.Language" not in message
+
+
+def test_a_non_string_scalar_type_error_is_distinct_from_the_two_shape_errors():
+    """Three positions in a schema can be the wrong type, and each names its
+    own position: the schema itself, a table's value, and a column's type.
+
+    Conflating them was the trap the top-level string form fell into — one
+    message that could mean any of three mistakes sends the reader looking in
+    the wrong place.
+    """
+    from kustology.utils.schema_state import build_global_state
+
+    with pytest.raises(TypeError) as top_level:
+        build_global_state("(a:string)")
+    with pytest.raises(TypeError) as table_value:
+        build_global_state({"T": 5})
+    with pytest.raises(TypeError) as column_type:
+        build_global_state({"T": {"c": 5}})
+
+    assert "schema must be a dict" in str(top_level.value)
+    assert "table 'T'" in str(table_value.value)
+    assert "column 'c'" in str(column_type.value)
+    assert len({str(e.value) for e in (top_level, table_value, column_type)}) == 3
+
+
+def test_the_schema_string_form_warns_about_a_column_it_could_not_type():
+    """`{"T": "(n:bogus)"}` was silent; `{"T": {"n": "bogus"}}` warned.
+
+    Two spellings of one schema, one of them with a typo in it, and only one
+    of them said so. Microsoft's schema-string parser does not reject an
+    unrecognized type name — it types the column `unknown`, which binds
+    without an error and resolves nothing — so the typo reached the binder
+    and the caller saw only columns that would not resolve.
+    """
+    from kustology.utils.schema_state import (
+        build_global_state,
+        extract_schemas_from_global_state,
+    )
+
+    with pytest.warns(RuntimeWarning) as record:
+        state = build_global_state({"T": "(a:long, n:bogus)"})
+
+    assert record[0].filename == __file__, "must blame the caller, not the library"
+    assert "'n'" in str(record[0].message)
+    assert "'T'" in str(record[0].message)
+
+    # Microsoft's answer is kept: `unknown` is what its parser decided, and
+    # substituting `string` here would invent a type the caller never wrote.
+    assert extract_schemas_from_global_state(state) == {
+        "T": {"a": "long", "n": "unknown"},
+    }
+
+
+def test_an_untyped_column_in_a_schema_string_warns_the_same_way():
+    """`"(a)"` is not the documented `"(col:type, ...)"` form, and Microsoft
+    types the column `unknown` rather than rejecting it.
+
+    The list form `{"T": ["a"]}` is the documented way to say "untyped", and
+    it means `string`; a bare name inside a schema string means neither, so
+    it gets the same warning the typo does.
+    """
+    from kustology.utils.schema_state import build_global_state
+
+    with pytest.warns(RuntimeWarning, match="'a'"):
+        build_global_state({"T": "(a)"})
+
+    # The control: the documented untyped form is silent and means `string`.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        build_global_state({"T": ["a"]})
+
+
+def test_a_valid_schema_string_warns_about_nothing():
+    """The guard must not fire on the form the docstring advertises."""
+    from kustology.utils.schema_state import build_global_state
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        state = build_global_state({"T": "(x:long, y:string, z:dynamic)"})
+    assert state.Database.Tables[0].Columns.Count == 3
+
+
+def test_dict_keys_are_raw_column_names_and_the_docstring_says_so():
+    """`{"T": {"['my col']": "string"}}` builds a column whose *name* is the
+    ten characters `['my col']`, brackets and quotes included.
+
+    The bracket-quoting is KQL *query* syntax for referring to a name that
+    is not a bare identifier; a schema dict key is not query text, it is the
+    name itself, so quoting it produces a column nothing can reference. The
+    behaviour is Microsoft's `ColumnSymbol(name, type)` and is correct — a
+    column really can be named anything — so this is a documentation fix,
+    and the docstring is what the test pins alongside it.
+    """
+    from kustology.utils.schema_state import (
+        build_global_state,
+        extract_schemas_from_global_state,
+    )
+
+    state = build_global_state({"T": {"['my col']": "string", "my col": "long"}})
+    assert extract_schemas_from_global_state(state) == {
+        "T": {"['my col']": "string", "my col": "long"},
+    }
+
+    doc = build_global_state.__doc__.lower()
+    assert "raw name" in doc and "bracket-quoting" in doc, doc

@@ -475,6 +475,33 @@ release is in `docs/superpowers/reports/`.
   any hardcoded number lands back inside that same file. All three entry
   points are now attributed to their caller on every supported version,
   including the direct `build_global_state` call that previously overshot.
+- **Schema type names are case-insensitive, and a non-`str` one is a
+  `TypeError` (tier 1).** `ScalarTypes.GetSymbol` is an exact dictionary
+  lookup, so `{"T": {"c": "LONG"}}` — the spelling a column list copied out
+  of the portal gives you — missed, warned, and produced a `string` column
+  the binder then resolved wrongly. The lookup key is case-folded now; no
+  scalar type name or alias in the grammar differs from another only by
+  case. A type name that is not a `str` used to cross the CLR boundary and
+  come back as `System.ArgumentNullException` (for `None`) or pythonnet's
+  "No method matches given arguments" (for anything else), neither of which
+  mentions schemas; it raises `TypeError` naming the column instead, so the
+  three shape errors this layer raises each name their own position — the
+  schema, a table's value, a column's type.
+- **The schema-string form warns about a column it could not type (tier
+  1).** `{"T": "(n:bogus)"}` was silent while `{"T": {"n": "bogus"}}`
+  warned: Microsoft's `TableSymbol.From` does not reject an unrecognized
+  type name, it types the column `unknown`, which binds without an error and
+  resolves nothing. Same `RuntimeWarning`, same attribution to the caller's
+  line. Microsoft's `unknown` is kept rather than swapped for the dict
+  form's `string` fallback — substituting a type the caller never wrote
+  would be the more surprising answer. A bare name in a schema string
+  (`"(a)"`) warns the same way; the documented untyped form is the list
+  `{"T": ["a"]}`, which still means `string` and is still silent.
+- **`build_global_state` documents that its keys are raw names.** A table or
+  column key becomes a `Symbol.Name` verbatim, so the KQL query syntax
+  `{"T": {"['my col']": "string"}}` declares a column literally named
+  `['my col']` that no query can reach. The behaviour is correct and
+  unchanged; nothing said so.
 - **`kustology.PackageNotFoundError` is gone from the package namespace
   (tier 1).** `from importlib.metadata import PackageNotFoundError` bound the
   name into `kustology`, where it appeared in `dir()` and in generated
