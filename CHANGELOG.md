@@ -622,6 +622,23 @@ release is in `docs/superpowers/reports/`.
   wildcard table, or an unmodelled source. `to_llm_dict` caps
   `DataTableSource.rows` at 20 and adds a `rows_omitted` count, since real
   IOC datatables run to thousands of rows; `model_dump_json` stays complete.
+- **`FindOp.tables` is `list[TableRef | LetRef]`** (was `list[str]`), and
+  the operator gains `withsource` and `project`. The string list was read
+  with `el.ToString().strip()` — the no-argument overload, which is
+  `IncludeTrivia.All` — so a comment written before a table name became
+  part of the name: `find in (// note`↵`T) where x == 1` recorded
+  `"// note\nT"` and hashed differently from the same query without the
+  comment. This was the last known site of that defect class; the four
+  column-type readers and the `externaldata` URI fallback were fixed
+  earlier in this release. The refs also keep the qualifier, wildcard and
+  `let`-alias distinctions a bare string could not express. A typed
+  `project a:string` column arrives as a `TypedNameDecl`
+  (`TypedColumnReference` joins `HANDLED_EXPR_KINDS`). There is **no**
+  `project_away` field: `FindOperator.ProjectAway` exists on the .NET node
+  but no spelling of the clause reaches it in Kusto.Language 12.3.2 —
+  every form probed, Microsoft's documented example included, parses
+  `project-away` as a separate operator with an `Expected: ;` diagnostic —
+  and a field nothing can populate reads as implemented.
 - **`SearchOp` gains `tables` and `search_kind`.** `search in (A) 'x'` and
   `search in (B) 'x'` search different tables, and the in-clause was not
   read at all, so both built a `SearchOp` holding only the term. Entries are

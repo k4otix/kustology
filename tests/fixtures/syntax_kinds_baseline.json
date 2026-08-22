@@ -1142,7 +1142,8 @@
     "PrefixUnaryExpression",
     "SimpleNamedExpression",
     "StarExpression",
-    "ToScalarExpression"
+    "ToScalarExpression",
+    "TypedColumnReference"
   ],
   "handled_operator_kinds": [
     "AsOperator",
@@ -1602,7 +1603,6 @@
     "TreeMapKeyword",
     "TypeOfKeyword",
     "TypeOfLiteralExpression",
-    "TypedColumnReference",
     "UInt16Keyword",
     "UInt32Keyword",
     "UInt64Keyword",

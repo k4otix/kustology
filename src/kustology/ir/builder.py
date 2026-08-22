@@ -318,7 +318,8 @@ class IRBuilder:
 
     HANDLED_EXPR_KINDS = frozenset({
         "ParenthesizedExpression", "NameReference", "NameDeclaration",
-        "NameAndTypeDeclaration", "PathExpression", "ElementExpression",
+        "NameAndTypeDeclaration", "TypedColumnReference",
+        "PathExpression", "ElementExpression",
         "SimpleNamedExpression", "CompoundNamedExpression", "BracketedExpression",
         "PrefixUnaryExpression", "StarExpression", "LiteralExpression",
         "DynamicExpression",
@@ -1075,12 +1076,29 @@ class IRBuilder:
                 self._visit_expr(n.Condition)
                 if hasattr(n, "Condition") and n.Condition else None
             )
-            tables: list[str] = []
+            # ``el.ToString().strip()`` -- what this read before -- is the
+            # no-argument overload, ``IncludeTrivia.All``, so the table name
+            # carried whatever comment preceded it into the hash. The shared
+            # reader uses ``IncludeTrivia.Minimal`` and, more to the point,
+            # keeps the qualifier / wildcard / ``let``-alias distinctions a
+            # bare string could not express.
+            tables: list[Any] = []
             in_clause = getattr(n, "InClause", None)
             if in_clause is not None and hasattr(in_clause, "Expressions"):
                 for el in _iter_elements(in_clause.Expressions):
-                    tables.append(el.ToString().strip())
-            return FindOp(predicate=pred, tables=tables, span=span)
+                    tables.append(self._visit_table_ref(el))
+            project_cols: list[AnyExpr] = []
+            project_clause = getattr(n, "Project", None)
+            if project_clause is not None and hasattr(project_clause, "Columns"):
+                for el in _iter_elements(project_clause.Columns):
+                    project_cols.append(self._visit_expr(el))
+            return FindOp(
+                predicate=pred,
+                tables=tables,
+                withsource=extract_named_param(n, "withsource"),
+                project=project_cols,
+                span=span,
+            )
 
         if kind == "FacetOperator":
             cols = []
@@ -1364,19 +1382,25 @@ class IRBuilder:
         elif kind == "NameDeclaration":
             res = ColumnRef(name=visit_name(node), span=span)
 
-        elif kind == "NameAndTypeDeclaration":
-            # ``b:long`` in a ``parse`` pattern or a ``find … project`` list.
-            # This shared a branch with ``NameDeclaration`` and so lowered to
-            # a bare ``ColumnRef``: ``visit_name`` reads the ``Name`` child
-            # and the declared type went nowhere, making a typed capture and
-            # an untyped one one node with one hash. ``node_text`` on the
+        elif kind in ("NameAndTypeDeclaration", "TypedColumnReference"):
+            # The same ``name:type`` shape under two node classes:
+            # ``NameAndTypeDeclaration`` is a ``parse`` capture (``b:long``,
+            # name in ``Name``) and ``TypedColumnReference`` is a
+            # ``find … project`` column (``a:string``, name in ``Column``).
+            # The first shared a branch with ``NameDeclaration`` and so
+            # lowered to a bare ``ColumnRef``: ``visit_name`` reads the name
+            # child and the declared type went nowhere, making a typed and an
+            # untyped capture one node with one hash. ``node_text`` on the
             # type rather than ``ToString()`` for the reason every other type
             # read in this builder uses it -- the no-argument overload is
             # ``IncludeTrivia.All`` and would put a preceding comment in the
             # type string, and from there into the hash.
+            name_node = getattr(node, "Name", None)
+            if name_node is None:
+                name_node = getattr(node, "Column", None)
             type_node = getattr(node, "Type", None)
             res = TypedNameDecl(
-                name=visit_name(node.Name),
+                name=visit_name(name_node),
                 declared_type=(
                     _node_text(type_node).strip() if type_node is not None else "unknown"
                 ),

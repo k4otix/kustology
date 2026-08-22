@@ -272,3 +272,64 @@ def test_searched_table_reaches_the_hash():
 
 def test_search_scope_reaches_the_hash():
     assert _hash("search in (A) 'x'") != _hash("search 'x'")
+
+
+# -- find -----------------------------------------------------------------
+
+_FIND_ALL = "find withsource=S in (T, U) where a == 1 project a, b"
+
+
+def test_find_records_its_tables_as_refs():
+    (op,) = _ops(_FIND_ALL)
+    assert [t.name for t in op.tables] == ["T", "U"]
+
+
+def test_find_records_withsource():
+    (op,) = _ops(_FIND_ALL)
+    assert op.withsource == "S"
+
+
+def test_find_records_its_project_columns():
+    (op,) = _ops(_FIND_ALL)
+    assert [c.name for c in op.project] == ["a", "b"]
+
+
+def test_find_typed_project_column_keeps_its_type():
+    (op,) = _ops("find in (T) where a == 1 project a:string")
+    assert isinstance(op.project[0], TypedNameDecl)
+    assert op.project[0].declared_type == "string"
+
+
+def test_found_tables_are_reachable_as_table_refs():
+    from kustology.ir import TableRef, find_all
+    ir = _ir("find in (T, U) where a == 1")
+    assert [t.name for t in find_all(ir, TableRef)] == ["T", "U"]
+
+
+def test_a_let_bound_name_in_find_in_is_a_let_ref():
+    from kustology.ir import LetRef
+    ir = _ir("let A = T | take 1; find in (A) where a == 1")
+    (op,) = ir.main_pipeline.operators
+    assert isinstance(op.tables[0], LetRef)
+
+
+def test_find_project_reaches_the_hash():
+    assert _hash("find in (T) where a == 1 project a") != _hash(
+        "find in (T) where a == 1"
+    )
+
+
+def test_find_withsource_reaches_the_hash():
+    assert _hash("find withsource=S in (T) where a == 1") != _hash(
+        "find in (T) where a == 1"
+    )
+
+
+def test_a_comment_before_a_found_table_does_not_reach_the_hash():
+    """The routed finding: ``FindOp.tables`` was read with a bare
+    ``ToString()``, which is ``IncludeTrivia.All`` and prepends the node's
+    leading trivia -- so the table name was recorded as ``"// note\\n T"``
+    and a comment split the digest."""
+    assert _hash("find in (// note\n T) where x == 1") == _hash(
+        "find in (T) where x == 1"
+    )

@@ -659,10 +659,37 @@ class InvokeOp(Operator):
 
 
 class FindOp(Operator):
+    """``find`` — search rows across a set of tables.
+
+    ``tables`` is the ``in (T, U)`` scope, read the same way as the
+    pipeline's own source position and :class:`SearchOp.tables`, so a
+    qualifier, a wildcard and a ``let`` alias each survive. It was
+    ``list[str]`` filled with ``el.ToString().strip()`` -- the no-argument
+    overload, which is ``IncludeTrivia.All`` -- so a comment written before
+    a table name became *part of the name* and ``find in (// note`` ↵ ``T)``
+    hashed differently from ``find in (T)``.
+
+    ``project`` is the ``project a, b`` column list, which decides the
+    output schema; a typed column (``project a:string``) arrives as a
+    :class:`~kustology.ir.expr.TypedNameDecl`. ``withsource=C`` names the
+    column recording which table each row came from.
+
+    There is no ``project_away`` field. ``FindOperator.ProjectAway`` exists
+    as a member on the .NET node, but no spelling of the clause reaches it
+    in the bundled parser (Kusto.Language 12.3.2): the eight forms probed --
+    including Microsoft's own documented example -- all parse
+    ``project-away`` as a *separate* ``ProjectAwayOperator`` statement with
+    an ``Expected: ;`` diagnostic. A declared field nothing can populate
+    reads as implemented and cannot be tested (AGENTS.md), so it is left out
+    until a DLL refresh makes the clause reachable.
+    """
+
     KIND: ClassVar[str] = "find"
     kind: Literal["find"] = "find"
     predicate: AnyExpr | None = None
-    tables: list[str] = []
+    tables: list[Annotated[TableRef | LetRef, Field(union_mode="left_to_right")]] = []
+    withsource: str | None = None
+    project: list[AnyExpr] = []
 
 
 class ForkBranch(BaseModel):
