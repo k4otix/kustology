@@ -1900,6 +1900,40 @@ def test_a_bound_parse_still_reports_every_unknown_name():
     assert {"KS204", "KS211"} <= codes
 
 
+def test_both_schemaless_docstrings_describe_the_family_they_actually_filter():
+    """``KustoQuery.to_ir`` still promised a one-code filter.
+
+    Its docstring was written when ``build_from_code`` filtered ``KS204``
+    alone and was left behind when the filter widened to
+    ``services._UNKNOWN_NAME_CODES``. A reader taking it at its word would
+    expect `union isfuzzy=true Foo, Bar` or an ASIM parser call to surface an
+    ``Error`` diagnostic from a schemaless ``to_ir()``, and would build the
+    gate that the widening exists to keep from flipping.
+
+    The count is asserted against the live set, not spelled out twice by
+    hand: ``tests/test_reflection_audit.py`` re-derives that set from
+    ``Kusto.Language.DiagnosticFacts``, so a DLL refresh that adds a code
+    fails there first and lands here next, where the two docstrings have to
+    be corrected together rather than drifting apart again.
+    """
+    from kustology import KustoQuery
+    from kustology.services import _UNKNOWN_NAME_CODES
+
+    counts = {1: "one", 11: "eleven", 12: "twelve", 13: "thirteen"}
+    spelled = counts[len(_UNKNOWN_NAME_CODES)]
+
+    for raw in (KustoQuery.to_ir.__doc__, IRBuilder.build_from_code.__doc__):
+        # Both are wrapped prose; the phrase can straddle a line break.
+        doc = " ".join(raw.split())
+        assert "_UNKNOWN_NAME_CODES" in doc, doc
+        assert f"{spelled} codes" in doc, doc
+
+    # The behaviour the corrected sentence describes: a query whose only
+    # schemaless artifact is *not* KS204 also comes back clean.
+    assert parse("_Im_WebSession(starttime=ago(1d)) | take 1").to_ir().diagnostics == []
+    assert "KS211" in _UNKNOWN_NAME_CODES
+
+
 def test_table_symbol_columns_declines_a_tuple_symbol():
     """The docstring promises a ``TableSymbol``; the guard must check for one.
 

@@ -203,10 +203,16 @@ class KustoQuery:
         taking its syntactic path. What it buys is real types for everything
         that does not need a table: ``1h`` is a ``timespan``, ``1.5`` a
         ``real``, ``ago(1h)`` a ``datetime``. Default globals describe no
-        tables, so the ``KS204`` those bindings raise is an artifact of how
-        the types were obtained and is filtered out; a parse the caller bound
-        with their own schema keeps it, because there an undescribed table is
-        a real error.
+        tables — and no functions, clusters, databases, external tables,
+        materialized views, entity groups or stored query results either —
+        so *every* name the query brings with it fails to resolve there.
+        The whole unknown-name diagnostic family those bindings raise
+        (:data:`kustology.services._UNKNOWN_NAME_CODES`, twelve codes of
+        which ``KS204`` "the name X does not refer to any known table" is
+        one) is therefore an artifact of how the types were obtained, and is
+        filtered out. A parse the caller bound with their own schema keeps
+        every one of them, because there an undescribed name is a real
+        error.
 
         Two passes populate the IR's type / provenance information:
 
