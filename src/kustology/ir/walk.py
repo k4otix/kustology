@@ -3,11 +3,12 @@
 
 """Generic IR traversal.
 
-The IR is acyclic. ``walk`` is depth-first, pre-order, and yields only
-pydantic ``BaseModel`` descendants — primitive values (strings, ints,
-enums, ``None``) are skipped, since they're read via attribute access on
-the node that owns them. Container fields are unwrapped to any depth, so
-a model reached only through ``list[tuple[...]]`` is still visited.
+``walk`` is depth-first, pre-order, and yields only pydantic
+``BaseModel`` descendants — primitive values (strings, ints, enums,
+``None``) are skipped, since they're read via attribute access on the
+node that owns them. Container fields are unwrapped to any depth, so a
+model reached only through ``list[tuple[...]]`` is still visited, and an
+object reachable by more than one path is yielded once.
 
 ``find_all`` is the type-filtered convenience wrapper most analyzers use.
 """
@@ -30,8 +31,17 @@ def walk(
     root) in depth-first, pre-order.
 
     Descends into list-, tuple- and dict-valued fields, and through
-    nested containers such as ``list[tuple[Expr, Expr]]``. Assumes the
-    tree is acyclic — the IR builder never produces cycles.
+    nested containers such as ``list[tuple[Expr, Expr]]``.
+
+    **Each object is yielded exactly once.** The IR is a DAG, not a tree:
+    several nodes index into a subtree that another field already owns,
+    holding the *same* objects rather than copies. ``LetBinding`` is the
+    clear case — ``inner_time_exprs`` and ``inner_tables`` point at nodes
+    that also live inside ``rhs_pipeline`` — so an un-deduplicated walk
+    reported ``ago`` and ``now`` twice for a single ``let``, and any caller
+    counting occurrences double-counted them. Identity is the key
+    (``id(node)``), not equality: two structurally identical nodes written
+    at different offsets are different nodes and both must surface.
 
     With ``predicate``, only nodes for which ``predicate(node)`` returns
     truthy are yielded; traversal still descends into every subtree, so a
@@ -45,11 +55,34 @@ def walk(
         >>> for n in walk(ir, lambda n: isinstance(n, BinOp) and not n.case_sensitive):
         ...     ...
     """
+    yield from _walk(node, predicate, set())
+
+
+def _walk(
+    node: BaseModel,
+    predicate: Predicate | None,
+    seen: set[int],
+) -> Iterator[BaseModel]:
+    """Recursive half of :func:`walk`, threading the visited set.
+
+    Kept private so the public signature stays two arguments: the set is an
+    implementation detail of one traversal, and a caller who supplied their
+    own could silently suppress nodes.
+
+    Re-entering an already-visited object prunes its whole subtree, not just
+    the yield — descending a second time can only re-yield what the first
+    descent already produced. Holding ``id()`` values is safe because the
+    root keeps every descendant alive for the traversal's lifetime, so no
+    address is recycled underneath us.
+    """
+    if id(node) in seen:
+        return
+    seen.add(id(node))
     if predicate is None or predicate(node):
         yield node
     for name in type(node).model_fields:
         for item in _models_in(getattr(node, name)):
-            yield from walk(item, predicate)
+            yield from _walk(item, predicate, seen)
 
 
 def _models_in(value: object) -> Iterator[BaseModel]:

@@ -91,6 +91,12 @@ release is in `docs/superpowers/reports/`.
 - **`walk()` / `find_all()` descend tuple-valued fields (tier 2).** A
   `case()` holding five `ColumnRef`s surfaced one, since `CaseExpr.branches`
   is `list[tuple[Expr, Expr]]`.
+- **`walk()` / `find_all()` yield a shared node once (tier 2).** The IR is a
+  DAG: `LetBinding.inner_time_exprs` and `inner_tables` index into the same
+  objects `rhs_pipeline` already owns, so
+  `find_all(ir, FuncCall)` on `let A = T | where d > ago(1h) | where d <
+  now(); A | take 1` reported `ago` and `now` twice each. Traversal now keeps
+  a visited set keyed on object identity.
 - **`canonical_form` renders every expression shape (tier 2).** Eleven `Expr`
   types rendered as a bare `"?"`, so `-X > 1`, `D.a == 1` and
   `toscalar(…) > 1` were indistinguishable.

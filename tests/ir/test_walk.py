@@ -158,3 +158,25 @@ def test_walk_descends_tuples_of_non_models_without_error():
     nodes = list(walk(ir))
     assert nodes[0] is ir
     assert all(isinstance(n, BaseModel) for n in nodes)
+
+
+def test_walk_yields_a_shared_node_once():
+    """A node reachable by two paths must be yielded once, not twice.
+
+    ``LetBinding.inner_time_exprs`` holds the *same* ``FuncCall`` objects
+    that already sit inside ``rhs_pipeline`` -- it is an index into the
+    subtree, not a copy of it. Without a visited set ``walk`` reached each
+    one twice, so ``find_all(ir, FuncCall)`` reported ``ago`` and ``now``
+    two times each and every caller counting occurrences (column lineage,
+    "how many time functions does this query call") double-counted them.
+    """
+    from kustology.ir import FuncCall
+
+    ir = IRBuilder().build(
+        "let A = T | where d > ago(1h) | where d < now(); A | take 1"
+    )
+    assert [f.name for f in find_all(ir, FuncCall)] == ["ago", "now"]
+
+    # And the general invariant, not just this one query: no object twice.
+    ids = [id(n) for n in walk(ir)]
+    assert len(ids) == len(set(ids))
