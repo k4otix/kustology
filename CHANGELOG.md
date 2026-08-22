@@ -281,9 +281,18 @@ release is in `docs/superpowers/reports/`.
   by a blanket `except OSError` in `main`, which would also cover every
   `sys.stdout.write`: under one, `kustology parse --ast --json big.kql |
   head` reported a usage error for a correct invocation whose reader simply
-  stopped reading. A broken pipe is now its own case and exits `0`, with
-  stdout redirected to `devnull` so the interpreter's shutdown flush cannot
-  print `Exception ignored … Broken pipe` after the fact.
+  stopped reading.
+- **A broken pipe no longer reports a usage error, and no longer erases the
+  command's own exit code (tier 1).** A reader hanging up says nothing about
+  whether the input was valid, and for `validate` the validity verdict *is*
+  the exit code — so neither `2` nor a blanket `0` is right.
+  `kustology validate q.kql | head` still exits `1` on a query that fails
+  validation: each subcommand decides its code before it writes and wraps
+  only the writing, so the pipe stops the output and nothing else. Only a
+  pipe that breaks before any code was decided reaches `main`'s own arm,
+  which exits `0`. Either way stdout is redirected to `devnull` so the
+  interpreter's shutdown flush cannot print `Exception ignored … Broken
+  pipe` after the command has already returned.
 - **`KUSTOLOGY_MAX_INPUT_BYTES` counts bytes (tier 1).** The ceiling read
   through a decoded text stream, so `len(data)` counted *characters*: a
   20-character query occupying 28 bytes passed a 22-byte cap. The read now

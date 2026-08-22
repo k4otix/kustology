@@ -182,7 +182,8 @@ def test_broken_pipe_is_a_success_not_a_usage_error(monkeypatch, capsys, tmp_pat
     stdout writes in with the input reads and reported exit 2 — the code the
     module docstring reserves for bad flags, a missing file and a malformed
     `--schema`. The mapping now lives at the two read sites instead, and a
-    broken pipe is its own case returning 0.
+    broken pipe stops the emit without changing the command's own code,
+    which for a clean `parse` is 0.
 
     `test_format_missing_file_is_a_usage_error` is the control: the read
     site must still produce 2, so this is not just the mapping deleted."""
@@ -196,19 +197,70 @@ def test_broken_pipe_is_a_success_not_a_usage_error(monkeypatch, capsys, tmp_pat
     assert "error:" not in err
 
 
-def test_broken_pipe_discovered_on_flush_is_also_a_success(
+def test_broken_pipe_keeps_the_validation_verdict(monkeypatch, capsys, tmp_path):
+    """A broken pipe must not erase the answer. `T | where` fails validation
+    (KS006), so `validate` owes exit 1 whether or not the reader stayed to
+    read the diagnostics — otherwise `kustology validate q.kql | head` in CI
+    reads as a pass on a query that fails. Returning 0 for every broken pipe
+    traded "a broken pipe is a usage error" for "a broken pipe erases the
+    result"; `_cmd_validate` now decides `rc` before it writes and the guard
+    only stops the emit."""
+    q = tmp_path / "q.kql"
+    q.write_text("T | where", encoding="utf-8")
+    monkeypatch.setattr(sys, "stdout", _BrokenPipeStdout())
+    rc = main(["validate", str(q)])
+    capsys.readouterr()
+    assert rc == 1
+
+
+def test_broken_pipe_on_a_valid_query_still_succeeds(monkeypatch, capsys, tmp_path):
+    """The other half of the pair, and the reason the one above cannot pass
+    by hard-coding 1: the same command, the same dead pipe, a query with no
+    Error diagnostics — exit 0."""
+    q = tmp_path / "q.kql"
+    q.write_text("StormEvents | take 5", encoding="utf-8")
+    monkeypatch.setattr(sys, "stdout", _BrokenPipeStdout())
+    rc = main(["validate", str(q)])
+    capsys.readouterr()
+    assert rc == 0
+
+
+def test_broken_pipe_on_stderr_keeps_the_verdict_too(monkeypatch, capsys, tmp_path):
+    """`kustology format bad.kql 2>&1 | head` puts the *diagnostics* in the
+    pipe, so the same erasure is reachable through stderr: the report is what
+    fills the buffer, and losing exit 1 there is no better than losing it on
+    stdout. `_report_error_diagnostics` decides `bool(errors)` before it
+    writes, so the hang-up truncates the report and `format` still returns 1."""
+    q = tmp_path / "q.kql"
+    q.write_text("T | where", encoding="utf-8")
+    monkeypatch.setattr(sys, "stderr", _BrokenPipeStdout())
+    rc = main(["format", str(q)])
+    capsys.readouterr()
+    assert rc == 1
+
+
+def test_broken_pipe_discovered_on_flush_is_handled_too(
     monkeypatch, capsys, tmp_path
 ):
     """The deferred case: every `write` lands in the buffer and the failure
-    only appears when it drains. `main` flushes inside its try block so that
-    failure is classified here rather than escaping at interpreter shutdown
-    as an unhandleable `Exception ignored` traceback."""
+    only appears when it drains. That is the shape a real pipe has, and if
+    nothing flushes inside a guard it surfaces at interpreter shutdown as an
+    unhandleable `Exception ignored` traceback.
+
+    The exit code alone cannot prove the flush happened — this command
+    returns 0 either way. The discriminating assertion is that
+    `sys.stdout` was *replaced*: only `_silence_broken_stdout`, reached from
+    a caught `BrokenPipeError`, does that. Delete the flush from the guard
+    and nothing raises, nothing is replaced, and this fails."""
     q = tmp_path / "q.kql"
     q.write_text("StormEvents | take 5", encoding="utf-8")
-    monkeypatch.setattr(sys, "stdout", _DeferredBrokenPipeStdout())
+    stub = _DeferredBrokenPipeStdout()
+    monkeypatch.setattr(sys, "stdout", stub)
     rc = main(["parse", "--ast", "--json", str(q)])
+    replaced = sys.stdout is not stub
     err = capsys.readouterr().err
     assert rc == 0
+    assert replaced, "the broken stream was never flushed, so never replaced"
     assert "BrokenPipeError" not in err
 
 

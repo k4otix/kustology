@@ -6,7 +6,7 @@
 Subcommands: version, format, validate, parse.
 
 Exit codes:
-  0 — success, including a downstream reader closing the pipe (``| head``).
+  0 — success.
   1 — input had errors (parse failure, Error-severity diagnostic).
   2 — usage error (bad flags, missing or unreadable file, malformed
       ``--schema`` JSON, missing optional extra, input exceeded the size
@@ -23,12 +23,20 @@ two places that read one — :func:`_read_input` and :func:`_load_schema`,
 which raise :class:`_UsageError` — and not to a blanket ``except OSError``
 in :func:`main`. A blanket one also covers every ``sys.stdout.write``, so
 ``kustology parse --ast --json big.kql | head`` — a correct invocation whose
-reader simply stopped reading — reported a usage error. A broken pipe is now
-its own case and exits 0.
+reader simply stopped reading — reported a usage error.
+
+A broken pipe is neither a usage error nor a verdict. Each command decides
+its exit code before it writes and wraps only the writing in
+:func:`_tolerate_broken_pipe`, so a reader hanging up stops the output and
+nothing else: ``kustology validate q.kql | head`` still exits 1 on a query
+that fails validation. Only a pipe that breaks outside any command's guard
+— i.e. before a code was ever decided — reaches :func:`main`'s own arm and
+exits 0.
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json as _json
 import os
 import sys
@@ -187,8 +195,38 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+@contextlib.contextmanager
+def _tolerate_broken_pipe():
+    """Stop emitting when the reader goes away, without losing the verdict.
+
+    A broken pipe means the *reader* stopped listening. It says nothing about
+    whether the input was valid — and for ``validate`` the validity verdict
+    *is* the exit code, so swallowing it turns
+    ``kustology validate q.kql | head`` in CI into a pass on a query that
+    fails validation.
+
+    Each command therefore computes its exit code **before** it writes and
+    wraps only the writing in this guard: the emit stops here, stdout is
+    redirected so the interpreter's shutdown flush stays silent, and the
+    caller falls straight through to its own ``return rc``. The flush is
+    inside the guard because a pipe write is buffered — a departed reader is
+    not discovered until the buffer drains, and leaving that to interpreter
+    shutdown puts it beyond every handler in this module.
+
+    ``main`` keeps a ``BrokenPipeError`` arm as the last resort for anything
+    that escapes a guard; returning 0 there is right, because a command that
+    never got as far as computing a code was still on the success path.
+    """
+    try:
+        yield
+        sys.stdout.flush()
+    except BrokenPipeError:
+        _silence_broken_stdout()
+
+
 def _cmd_version() -> int:
-    print(f"kustology {__version__}")
+    with _tolerate_broken_pipe():
+        print(f"kustology {__version__}")
     return 0
 
 
@@ -213,8 +251,13 @@ def _report_error_diagnostics(body: str) -> bool:
     is the subcommand for asking about that.
     """
     errors = [d for d in validate(body) if d.get("severity") == "Error"]
-    for d in errors:
-        sys.stderr.write(_format_diagnostic(d))
+    # Same rule as stdout, on the other stream: the verdict is already
+    # decided, so a reader that hung up mid-report stops the report and
+    # nothing else. `kustology format bad.kql 2>&1 | head` is the case —
+    # with `2>&1` these lines *are* what fills the pipe.
+    with contextlib.suppress(BrokenPipeError):
+        for d in errors:
+            sys.stderr.write(_format_diagnostic(d))
     return bool(errors)
 
 
@@ -222,9 +265,11 @@ def _cmd_format(args: argparse.Namespace) -> int:
     body = _read_input(args)
     if _report_error_diagnostics(body):
         return 1
-    sys.stdout.write(format_query(body))
-    if not body.endswith("\n"):
-        sys.stdout.write("\n")
+    formatted = format_query(body)
+    with _tolerate_broken_pipe():
+        sys.stdout.write(formatted)
+        if not body.endswith("\n"):
+            sys.stdout.write("\n")
     return 0
 
 
@@ -251,14 +296,17 @@ def _cmd_validate(args: argparse.Namespace) -> int:
         schema=schema,
         ignore_unknown_tables=args.ignore_unknown_tables,
     )
-    if args.json:
-        sys.stdout.write(_json.dumps(diags, indent=2))
-        sys.stdout.write("\n")
-    else:
-        for d in diags:
-            sys.stdout.write(_format_diagnostic(d))
-    has_error = any(d.get("severity") == "Error" for d in diags)
-    return 1 if has_error else 0
+    # The verdict is decided before a byte is written, so a reader that hangs
+    # up mid-emit cannot turn a failing query into a passing exit code.
+    rc = 1 if any(d.get("severity") == "Error" for d in diags) else 0
+    with _tolerate_broken_pipe():
+        if args.json:
+            sys.stdout.write(_json.dumps(diags, indent=2))
+            sys.stdout.write("\n")
+        else:
+            for d in diags:
+                sys.stdout.write(_format_diagnostic(d))
+    return rc
 
 
 def _ast_dict_to_text(node: dict, indent: int = 0) -> str:
@@ -313,19 +361,19 @@ def _cmd_parse(args: argparse.Namespace) -> int:
                 "semantic_hash_scheme": SEMANTIC_HASH_SCHEME,
                 "ir": _json.loads(ir.model_dump_json()),
             }
-            sys.stdout.write(_json.dumps(payload, indent=2))
-            sys.stdout.write("\n")
+            rendered = _json.dumps(payload, indent=2) + "\n"
         else:
-            sys.stdout.write(repr(ir))
-            sys.stdout.write("\n")
+            rendered = repr(ir) + "\n"
+        with _tolerate_broken_pipe():
+            sys.stdout.write(rendered)
         return 0
 
     tree = node_to_dict(parse(body, schema=schema).syntax)
-    if args.json:
-        sys.stdout.write(_json.dumps(tree, indent=2))
-        sys.stdout.write("\n")
-    else:
-        sys.stdout.write(_ast_dict_to_text(tree))
+    rendered = (
+        _json.dumps(tree, indent=2) + "\n" if args.json else _ast_dict_to_text(tree)
+    )
+    with _tolerate_broken_pipe():
+        sys.stdout.write(rendered)
     return 0
 
 
@@ -379,10 +427,11 @@ def main(argv: list[str] | None = None) -> int:
     except SystemExit:
         raise
     except BrokenPipeError:
-        # `kustology parse --ast --json big.kql | head` is a correct
-        # invocation whose reader stopped reading; we produced what was
-        # asked for. Not 2 — 2 means the invocation was wrong, and this one
-        # was not — and not 1 either, since the KQL was fine.
+        # Last resort, for a pipe that broke somewhere no command guarded.
+        # Each command wraps its own writing in `_tolerate_broken_pipe` and
+        # returns the code it had already decided, so `validate | head` keeps
+        # reporting 1 on a query that fails validation. Reaching *here* means
+        # no code was ever decided, which only happens on the success path.
         _silence_broken_stdout()
         return 0
     except _UsageError as e:
