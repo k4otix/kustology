@@ -147,3 +147,69 @@ def test_dumps_carrying_removed_fields_are_rejected():
         mutate(stale)
         with pytest.raises(ValidationError):
             QueryIR.model_validate(stale)
+
+
+def test_dumps_missing_a_field_added_this_release_are_rejected():
+    """The other direction: a required field the older shape did not have.
+
+    ``extra="forbid"`` rejects a dump carrying a field that no longer
+    exists, which the test above pins. It says nothing about a dump written
+    before a field was *added* -- that one is short a key, not carrying a
+    spare, and only the field being required (no pydantic default) makes it
+    fail. WS4 added several such fields, and ``SortKey`` is the sharpest
+    case: ``SortOp.expressions`` used to be a ``list[AnyExpr]`` holding the
+    bare ordering expression, and is now a ``list[SortKey]`` wrapping it as
+    ``expression`` alongside a required ``direction``.
+
+    That shape change matters precisely because the old dump is *lossy* --
+    it predates the model recording which way the rows come back. Loading it
+    by treating the missing direction as some default would invent the half
+    of the query the old builder threw away, and reproduce the collision
+    ``SortKey`` exists to close. So it must fail loudly instead, and the
+    error has to name the field a reader would have to add.
+
+    Built by demoting a real dump rather than by hand, so it stays a
+    genuine 0.2-dev payload: ``expressions[0]`` is replaced with the very
+    expression node the current shape carries inside it.
+    """
+    import json
+
+    import pytest
+    from pydantic import ValidationError
+
+    from kustology.ir import IRBuilder, QueryIR
+
+    ir = IRBuilder().build("DeviceProcessEvents | sort by TimeGenerated desc")
+    payload = json.loads(ir.model_dump_json())
+    sort_op = payload["main_pipeline"]["operators"][0]
+    assert sort_op["kind"] == "sort", sort_op["kind"]
+    # Sanity: the current shape wraps the expression in a SortKey that
+    # states the direction. Asserting the non-default value here is what
+    # makes the demotion below meaningful.
+    assert sort_op["expressions"][0]["kind"] == "sort_key"
+    assert sort_op["expressions"][0]["direction"] == "desc"
+
+    # The 0.2-dev shape: the ordering expression sat directly in the list.
+    sort_op["expressions"] = [sort_op["expressions"][0]["expression"]]
+
+    with pytest.raises(ValidationError) as excinfo:
+        QueryIR.model_validate_json(json.dumps(payload))
+
+    # `Pipeline.operators` is a big union, so pydantic reports a branch per
+    # member and most of them are noise about the wrong operator. The one
+    # that matters is the SortOp branch, reported by full path -- matching
+    # on the leaf name alone would also accept a `missing` on some unrelated
+    # member's own `expression` field.
+    missing = {
+        ".".join(str(part) for part in err["loc"])
+        for err in excinfo.value.errors()
+        if err["type"] == "missing"
+    }
+    named = sorted(
+        loc for loc in missing if "SortOp" in loc and loc.endswith(".expression")
+    )
+    assert named, (
+        f"the ValidationError must name the field the old dump lacks, by "
+        f"path, so a reader knows what to add; the missing-field paths it "
+        f"reported were {sorted(missing)}"
+    )
