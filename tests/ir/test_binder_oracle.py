@@ -17,11 +17,24 @@ for ``code.ResultType.Columns`` and asks us for
 **as ordered lists** — KQL's column order is part of a query's result, and a
 plain dict comparison would let a reordering through.
 
-Cases that still fail are marked ``xfail`` naming Task 5.3, which removes the
-marker as it fixes the fallback rule underneath. A case fails here only where
-Microsoft declined to answer (an *open* table symbol, i.e. a schema it could
-not fully determine) and the hand-rolled walk had to; where Microsoft
-answered, the answer is taken verbatim and there is nothing left to diverge.
+**Two legs, and the second is the one that gates the rules.** On a bound
+parse the answer is *taken* from ``ResultType`` wherever Microsoft could
+compute one, so for most of this matrix the bound leg compares Microsoft's
+answer with itself and can only fail where the symbol is open. The unbound
+leg — ``SchemaAttacher(schema).enrich(parse(q).to_ir())``, with the schema
+reaching the IR only through the attacher — has no binder answer anywhere,
+so every case runs the hand-rolled rules and every case is a real
+comparison. Both legs run the same matrix and the same 49 corpus fixtures.
+
+Each leg carries its own ``strict=True`` xfail list, because they fail for
+different reasons: ``XFAIL_5_3`` for the bound leg (open symbols only) and
+``XFAIL_FALLBACK`` for the unbound one. ``strict=True`` means a case someone
+fixes fails here rather than sitting as a silent xpass, so the entry has to
+be deleted with the fix.
+
+The unbound leg compares ordered column *names* exactly and types only where
+both sides claim one: the walk does not model numeric promotion, so
+``extend n = a + 1`` is honestly ``unknown`` where Microsoft says ``long``.
 """
 
 from __future__ import annotations
@@ -32,6 +45,7 @@ import pytest
 
 from kustology import parse
 from kustology.bridge import KustoCode
+from kustology.ir import SchemaAttacher
 from kustology.utils.analysis import build_global_state
 
 # A deliberately collision-heavy schema: ``L`` and ``R`` share ``k`` and
@@ -171,9 +185,73 @@ XFAIL_5_3: dict[str, str] = {
 }
 
 
+# The same comparison, run against the *unbound* path -- the hand-rolled
+# fallback rules answering alone, with no ``ResultType`` anywhere to defer to.
+# It is a separate list because the two legs fail for different reasons: the
+# bound leg only reaches the fallback where Microsoft's symbol is open, while
+# this one reaches it always.
+XFAIL_FALLBACK: dict[str, str] = {
+    "project-reorder-desc": (
+        "`project-reorder * desc` orders the columns a wildcard term matched "
+        "by name, descending. The direction is recorded on ReorderKey and the "
+        "rule ignores it, leaving the matched columns in source order."
+    ),
+    "mv-apply": (
+        "`mv-apply d on (...)` moves the applied column to the end of the "
+        "output. The rule leaves the scope untouched, so the column order "
+        "differs even though the set does not."
+    ),
+    "find": (
+        "`find` synthesizes `source_` and `pack_` and retypes the columns it "
+        "unions as dynamic. FindOp has no scope rule; the shape needs its own "
+        "task rather than a line in this one."
+    ),
+    "scan": (
+        "`scan declare (v:long = 0) with (...)` adds `v` and `match_id`. "
+        "ScanOp is modelled as raw text -- the declared columns are not on the "
+        "node to read."
+    ),
+    "ADFSRemoteHTTPNetworkConnection": (
+        "Several divergences at once behind an `evaluate`: column order, and "
+        "join-collision suffixes `TechniqueId1`/`TechniqueName1` the walk does "
+        "not reproduce once the scope has gone through parse and mv-expand."
+    ),
+    "AnomalyFoundInNetworkSessionTraffic": (
+        "A *builder* defect, not a scope rule: `extend (a, b, c) = "
+        "series_decompose_anomalies(...)` is a multi-output assignment lowered "
+        "to one Assignment named after the whole `(a, b, c) = ...` text."
+    ),
+    "Brute_Force_Attack_against_GitHub_Account": (
+        "`let f = (t:string){ … }; union f('A'), f('B')` -- a `let`-declared "
+        "function is recorded and not expanded, which is a documented boundary "
+        "of `SchemaAttacher.enrich`, so both union arms contribute nothing."
+    ),
+    "CertifiedPreOwned_TGTs_requested": (
+        "A `parse` capture the walk drops: the query parses `EventData` into "
+        "`CIN` and the fallback's capture set misses it."
+    ),
+    "Find_WithSourceScoped": (
+        "`find withsource=SourceTable in (...)` -- the same missing FindOp "
+        "rule as the `find` matrix case."
+    ),
+    "Qualified_ClusterDatabaseTable": (
+        "Column order, plus a join-collision suffix `IndicatorValue1` the "
+        "engine does not emit, over a `cluster(...).database(...).T` source "
+        "the schema does not describe."
+    ),
+}
+
+
 def _case(case_id: str, query: str):
     """One parametrized case, xfailed when Task 5.3 still owns it."""
     reason = XFAIL_5_3.get(case_id)
+    marks = [pytest.mark.xfail(reason=reason, strict=True)] if reason else []
+    return pytest.param(case_id, query, id=case_id, marks=marks)
+
+
+def _fallback_case(case_id: str, query: str):
+    """One parametrized case for the unbound leg."""
+    reason = XFAIL_FALLBACK.get(case_id)
     marks = [pytest.mark.xfail(reason=reason, strict=True)] if reason else []
     return pytest.param(case_id, query, id=case_id, marks=marks)
 
@@ -258,6 +336,90 @@ def test_corpus_fixture_matches_microsoft(name: str, query: str):
             "statement, main_pipeline the first"
         )
     assert_agrees(query, schema)
+
+
+# --- the same matrix, against the fallback walk ------------------------------
+
+
+def fallback_columns(query: str, schema: dict) -> list[tuple[str, str]] | None:
+    """Our answer with **no** binder answer available to defer to.
+
+    ``parse(query)`` alone is analyzed against ``GlobalState.Default``, which
+    describes no tables, so every operator's ``result_schema`` is ``None``
+    and the hand-rolled rules answer. The schema then reaches the IR only
+    through ``SchemaAttacher``. This is a supported public entry point --
+    a caller with a schema dict and no cluster to bind against -- and it is
+    the only way to exercise the rules Task 5.3 corrected.
+    """
+    ir = SchemaAttacher(schema).enrich(parse(query).to_ir())
+    result_schema = ir.main_pipeline.result_schema
+    return list(result_schema.columns.items()) if result_schema is not None else None
+
+
+def assert_fallback_agrees(query: str, schema: dict, *, types: bool) -> None:
+    """Ordered column *names*, and types only where both sides claim one.
+
+    Names and order are the fallback rules' whole job, and they are compared
+    exactly. Types are not comparable in general: the walk does not model
+    numeric promotion, so ``extend n = a + 1`` is honestly ``unknown`` where
+    Microsoft says ``long``, and Microsoft returns ``unknown`` of its own for
+    the columns of an open symbol. A type either side declines to give is
+    skipped; a type both give and disagree on is a failure.
+    """
+    theirs = microsoft_columns(query, schema)
+    if theirs is None:
+        pytest.skip("Microsoft reports no tabular ResultType for this query")
+    ours = fallback_columns(query, schema)
+    assert ours is not None and [n for n, _ in ours] == [n for n, _ in theirs], (
+        f"the fallback walk disagrees with Microsoft's binder for {query!r}\n"
+        f"  ours: {ours}\n"
+        f"  ms:   {theirs}"
+    )
+    if not types:
+        return
+    expected = dict(theirs)
+    mistyped = [
+        (name, kind, expected[name])
+        for name, kind in ours
+        if kind != "unknown" and expected[name] not in (kind, "unknown")
+    ]
+    assert mistyped == [], (
+        f"the fallback walk mistyped columns for {query!r}: {mistyped}"
+    )
+
+
+@pytest.mark.parametrize(
+    "query_id,query", [_fallback_case(cid, q) for cid, q in MATRIX]
+)
+def test_operator_matrix_matches_microsoft_without_the_binder(
+    query_id: str, query: str,
+):
+    assert_fallback_agrees(query, SCHEMA, types=True)
+
+
+@pytest.mark.parametrize(
+    "name,query", [_fallback_case(n, q) for n, q in CORPUS]
+)
+def test_corpus_fixture_matches_microsoft_without_the_binder(
+    name: str, query: str,
+):
+    """Names only here.
+
+    ``_heuristic_schema`` types every column ``string``, including ones the
+    query itself creates -- a ``parse`` capture declared ``long``, an
+    ``mv-expand`` item index. Microsoft's collision rules for a created
+    column that shadows an existing one differ from ours, and no real schema
+    reaches that shape, so comparing types would pin an artefact of the
+    stand-in schema rather than a rule.
+    """
+    schema = _heuristic_schema(query)
+    ir = parse(query, schema=schema).to_ir()
+    if ir.additional_pipelines:
+        pytest.skip(
+            "multi-statement query: code.ResultType describes the last "
+            "statement, main_pipeline the first"
+        )
+    assert_fallback_agrees(query, schema, types=False)
 
 
 def test_auto_names_do_not_depend_on_the_bind_state():
