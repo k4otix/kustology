@@ -57,6 +57,33 @@ from .query import (
 from .types import KustoType
 from .walk import _models_in
 
+# Join kinds that emit one side's columns only. ``anti``/``leftantisemi`` and
+# ``rightantisemi`` are Microsoft's own aliases -- the parser lists all twelve
+# spellings in its KS005 message -- and each pair returns the same schema, so
+# they are grouped by the side that survives rather than by name.
+_LEFT_ONLY_JOIN_KINDS = frozenset({
+    "anti", "leftanti", "leftantisemi", "leftsemi",
+})
+_RIGHT_ONLY_JOIN_KINDS = frozenset({
+    "rightanti", "rightantisemi", "rightsemi",
+})
+
+
+def _join_kind(text: str | None) -> str:
+    """Normalize ``JoinOp.join_kind`` for matching.
+
+    ``join_kind`` records the text the query wrote, and a bare ``join`` is
+    recorded as ``innerunique`` -- KQL's effective default, and the one this
+    falls back to for an empty value so a hand-built ``JoinOp`` cannot land
+    on "no rule matched, therefore widen".
+
+    Case is folded, which is *wider* than Microsoft's parser: it rejects
+    ``kind=LeftAnti`` with KS005 rather than accepting it. Folding cannot
+    change the answer for a valid query, and for an IR built or edited
+    directly it avoids reading an anti join as a widening one.
+    """
+    return (text or "innerunique").strip().lower()
+
 
 @dataclass
 class ScopeEntry:
@@ -432,6 +459,26 @@ class SchemaAttacher:
             on_scope = scope + rhs_scope[:1]
             for e in op.on:
                 self._fill(e, on_scope)
+            if isinstance(op, JoinOp):
+                # A semi or anti join is a *filter*, not a widening: it emits
+                # rows of one side and columns of one side. ``lookup`` has no
+                # such kind (only ``leftouter`` / ``inner``), which is why the
+                # check is on ``JoinOp`` rather than shared.
+                kind = _join_kind(op.join_kind)
+                if kind in _LEFT_ONLY_JOIN_KINDS:
+                    return
+                if kind in _RIGHT_ONLY_JOIN_KINDS:
+                    kept = [
+                        ScopeEntry(
+                            table=e.table,
+                            columns=dict(e.columns),
+                            origins=dict(e.origins),
+                        )
+                        for e in rhs_scope[:1]
+                    ]
+                    scope.clear()
+                    scope.extend(kept)
+                    return
             # KQL renames colliding right-side columns with numeric suffixes
             # (Foo, Foo1, Foo2, ...). Lookup additionally drops the right-side
             # join-key columns since they merge into the left's.

@@ -494,6 +494,16 @@ release is in `docs/superpowers/reports/`.
   appended last, which was a guess presented as provenance; it resolves to
   `None` now. Join collisions are unaffected — the right side's `k` is
   renamed to `k1` before the scope holds both.
+- **Semi and anti joins emit one side's columns (tier 2).** The fallback
+  scope rule appended the right side for every join kind, so
+  `L | join kind=leftanti (R) on k` claimed six output columns where the
+  engine emits three, and invented `k1` / `shared1` that no downstream
+  operator can reference. `leftanti` / `leftsemi` / `anti` / `leftantisemi`
+  leave the scope alone; `rightanti` / `rightsemi` / `rightantisemi` replace
+  it with the right side, so a following `where k == 'x'` reports `R` rather
+  than the discarded `L`. A bare `join` is `innerunique`, and the kind is
+  matched case-insensitively — wider than the parser, which rejects
+  `kind=LeftAnti`, but the right answer for an IR built or edited directly.
 - **Six public `KustoQuery` members gained docstrings (tier 1).**
   `get_operator_chain`, `get_referenced_columns`, `get_referenced_functions`,
   `get_structural_hash`, `syntax` and `text` delegated in silence, so

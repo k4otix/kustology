@@ -787,3 +787,75 @@ def test_an_ambiguous_unqualified_column_resolves_to_no_table():
     """
     ir = _fallback("T | union U | where k == 'x'")
     assert _tables(ir)["k"] == {None}
+
+
+# K07: join kinds ------------------------------------------------------------
+
+
+def test_left_semi_and_anti_joins_emit_the_left_side_only():
+    """A semi/anti join is a *filter*, not a widening.
+
+    The rule appended the right side's columns for every kind, so
+    ``L | join kind=leftanti (R) on k`` claimed six output columns where the
+    engine emits three — and invented ``k1``/``shared1`` that no downstream
+    operator can reference.
+    """
+    for kind in ("leftanti", "leftsemi", "anti", "leftantisemi"):
+        ir = _fallback(f"L | join kind={kind} (R) on k")
+        assert _columns(ir) == [
+            ("k", "string"), ("a", "long"), ("shared", "string"),
+        ], kind
+
+
+def test_right_semi_and_anti_joins_emit_the_right_side_only():
+    for kind in ("rightanti", "rightsemi", "rightantisemi"):
+        ir = _fallback(f"L | join kind={kind} (R) on k")
+        assert _columns(ir) == [
+            ("k", "string"), ("b", "real"), ("shared", "string"),
+        ], kind
+
+
+def test_a_right_semi_join_reports_the_right_table_as_provenance():
+    """The surviving rows are the right side's, so its ``k`` is too.
+
+    Both tables have a ``k``; before the fix the scope still held the left
+    entry, so the filter's ``k`` resolved to ``L`` — a column the operator
+    above it had just discarded.
+    """
+    from kustology.ir import ColumnRef, FilterOp, find_all
+
+    ir = _fallback("L | join kind=rightsemi (R) on k | where k == 'x'")
+    where = next(op for op in ir.main_pipeline.operators if isinstance(op, FilterOp))
+    assert {c.table for c in find_all(where, ColumnRef)} == {"R"}
+
+
+def test_a_bare_join_is_innerunique_and_still_widens():
+    ir = _fallback("L | join (R) on k")
+    assert _columns(ir) == [
+        ("k", "string"), ("a", "long"), ("shared", "string"),
+        ("k1", "string"), ("b", "real"), ("shared1", "string"),
+    ]
+
+
+def test_join_kind_matching_is_case_insensitive():
+    """``JoinOp.join_kind`` is the text the query wrote.
+
+    Microsoft's *parser* rejects ``kind=LeftAnti`` outright (KS005, "Expected
+    one of: inner, fullouter, …"), so this is not a shape a valid query
+    reaches. It is reachable by a caller who builds or edits the IR directly,
+    and answering a mixed-case anti join as a widening join is the worst of
+    the available answers.
+    """
+    ir = _fallback("L | join kind=LeftAnti (R) on k")
+    assert _columns(ir) == [
+        ("k", "string"), ("a", "long"), ("shared", "string"),
+    ]
+
+
+def test_lookup_is_never_semi_or_anti():
+    """``lookup`` takes only ``leftouter`` / ``inner``; both keep both sides."""
+    ir = _fallback("L | lookup (R) on k")
+    assert _columns(ir) == [
+        ("k", "string"), ("a", "long"), ("shared", "string"),
+        ("b", "real"), ("shared1", "string"),
+    ]

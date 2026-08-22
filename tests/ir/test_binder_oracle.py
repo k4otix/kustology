@@ -48,9 +48,13 @@ SCHEMA: dict[str, dict[str, str]] = {
     "U": {"k": "string", "a": "string", "z": "long"},
 }
 
+# All twelve spellings the parser accepts — its KS005 message lists them. The
+# three aliases matter to Task 5.3's fallback rule, which groups kinds by the
+# side that survives rather than by name.
 _JOIN_KINDS = (
     "innerunique", "inner", "leftouter", "rightouter", "fullouter",
     "leftanti", "rightanti", "leftsemi", "rightsemi",
+    "anti", "leftantisemi", "rightantisemi",
 )
 
 # (id, query) — every entry is a *shape*, not a rule, so the id names the
