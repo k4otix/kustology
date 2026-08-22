@@ -133,10 +133,12 @@ def _is_function_callee(node) -> bool:
 def _is_wildcard_name(node) -> bool:
     """True when this NameReference spells a wildcard pattern (``T*``).
 
-    ``union T*`` and ``find in (T*)`` name a *set* of tables by pattern —
-    the binder resolves them to a ``GroupSymbol``, not a ``TableSymbol``.
-    A pattern is not a table name: it cannot be looked up, and renaming it
-    would silently change which tables the query matches.
+    ``union T*`` names a *set* of tables by pattern, and a pattern is not a
+    table name: it cannot be looked up, and rewriting it would silently
+    change which tables the query reads. Only the syntactic walk needs this
+    test — a bound parse gets the binder's expansion instead, which is a
+    ``GroupSymbol`` for two or more matches and the ``TableSymbol`` itself
+    when exactly one table matches.
     """
     name = getattr(node, "Name", None)
     return name is not None and str(name.Kind) == "WildcardedName"
@@ -270,21 +272,64 @@ def _collect_semantic_table_refs(syntax) -> list:
     return refs
 
 
+def _merge_unresolved_table_refs(syntax) -> list:
+    """Semantic table refs, plus the syntactic ones the binder left unresolved.
+
+    A schema is almost always partial — a detection rule joins tables from
+    workspaces the caller did not describe — and the binder resolves only
+    what it was told about. Returning its answer alone means every unknown
+    table silently disappears, which is the worst possible failure for
+    ``replace_table``: it rewrites nothing and reports nothing.
+
+    A syntactic ref is added when the binder produced no symbol for that
+    exact node (``ReferencedSymbol is None``) and no semantic ref already
+    occupies its span. Both lists hold ``NameReference`` nodes, which cannot
+    nest, so two refs either share a span exactly or do not overlap at all —
+    equality is full coverage, and there is no partial-overlap case to
+    arbitrate. The syntactic side is the filtered walk of
+    :func:`_collect_table_refs`, so ``let`` and ``as`` aliases, function
+    parameters and wildcard patterns stay out of the union.
+    """
+    merged = _collect_semantic_table_refs(syntax)
+    covered = {(node.TextStart, node.Width) for _, node in merged}
+    for name, node in _collect_table_refs(syntax):
+        span = (node.TextStart, node.Width)
+        if span in covered or node.ReferencedSymbol is not None:
+            continue
+        covered.add(span)
+        merged.append((name, node))
+    merged.sort(key=lambda ref: (ref[1].TextStart, ref[1].Width))
+    return merged
+
+
 def find_table_references(kusto_code, force_syntactic: bool = False) -> list:
     """Return [(name, node), ...] for every table reference (one entry per
-    occurrence). Use ``get_referenced_tables`` for a deduplicated set of names.
+    occurrence), in source order. Use ``get_referenced_tables`` for a
+    deduplicated set of names.
+
+    On a bound parse the binder's own references are used, and the syntactic
+    walk fills in the tables the supplied schema did not describe — those
+    would otherwise vanish. Pass ``force_syntactic=True`` for the syntactic
+    walk alone.
     """
     if not force_syntactic and kusto_code.HasSemantics:
-        return _collect_semantic_table_refs(kusto_code.Syntax)
+        return _merge_unresolved_table_refs(kusto_code.Syntax)
     return _collect_table_refs(kusto_code.Syntax)
 
 
 def get_tables_syntactic(kusto_code) -> set[str]:
+    """Return tables found by the syntactic walk alone, ignoring the binder."""
     return {name for name, _ in _collect_table_refs(kusto_code.Syntax)}
 
 
 def get_tables_semantic(kusto_code) -> set[str]:
-    """Return tables resolved by the binder. Requires a bound KustoCode."""
+    """Return tables resolved by the binder. Requires a bound KustoCode.
+
+    Strictly the binder's answer: a table the supplied schema does not
+    describe is *not* in this set. ``get_referenced_tables`` /
+    :func:`find_table_references` add those back — prefer them unless you
+    specifically want to know what resolved.
+    """
     if not kusto_code.HasSemantics:
         raise ValueError(
             "get_tables_semantic requires a bound KustoCode "
@@ -507,9 +552,13 @@ def get_time_range(kusto_code) -> list[tuple[str, int, int]]:
 def replace_table(kusto_code, old_name: str, new_name: str, force_syntactic: bool = False) -> str:
     """Rename every reference to ``old_name`` to ``new_name``; return the new text.
 
-    Semantic mode replaces every NameReference whose ReferencedSymbol is the
-    matching TableSymbol (covers join/union/lookup). Syntactic mode matches by
-    source position via the same allowlist used by ``find_table_references``.
+    Rewrites exactly the spans ``find_table_references`` reports, so the two
+    always agree on what a table is. On a bound parse that includes tables
+    the supplied schema does not describe — the binder cannot resolve them,
+    but they are still in the query and still have to be retargeted. Names
+    that only look like tables (``let`` and ``as`` aliases, function
+    parameters, wildcard patterns) are left alone; so is a shadowed alias,
+    while the binding's own right-hand side is rewritten.
     """
     refs = find_table_references(kusto_code, force_syntactic=force_syntactic)
     seen = set()

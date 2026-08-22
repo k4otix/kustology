@@ -12,8 +12,6 @@ from .utils.analysis import (
     get_referenced_columns,
     get_referenced_functions,
     get_structural_hash,
-    get_tables_semantic,
-    get_tables_syntactic,
     node_to_dict,
     replace_table,
 )
@@ -41,20 +39,35 @@ class KustoQuery:
         """Return the set of tables referenced by the query.
 
         Uses the binder when the query was parsed with a schema, the syntactic
-        walk otherwise. Pass ``force_syntactic=True`` to bypass the binder on a
-        bound query (mainly useful for benchmarking and parity checks).
+        walk otherwise — and on a bound query, the syntactic walk as well, for
+        the names the binder could not resolve. Pass ``force_syntactic=True``
+        to bypass the binder entirely (mainly useful for benchmarking and
+        parity checks).
 
         ``let`` aliases, ``as`` aliases, function parameters and wildcard
         patterns are not tables and are excluded; the binding's own
         right-hand side is included — in ``let T = T | where x; T | take 1``
         the right-hand ``T`` is the real table and the rest is the alias.
+
+        On a bound query the result is *not* limited to what the binder
+        resolved: a table the schema does not describe is still reported, so
+        a partial schema cannot make a table disappear.
         """
-        if not force_syntactic and self._code.HasSemantics:
-            return get_tables_semantic(self._code)
-        return get_tables_syntactic(self._code)
+        return {
+            name
+            for name, _ in find_table_references(
+                self._code, force_syntactic=force_syntactic
+            )
+        }
 
     def find_table_references(self, force_syntactic: bool = False):
-        """Return [(name, node), ...] for every table reference in the query."""
+        """Return [(name, node), ...] for every table reference in the query,
+        in source order.
+
+        On a bound query this is the binder's references plus the syntactic
+        ones it left unresolved — see
+        :func:`kustology.utils.analysis.find_table_references`.
+        """
         return find_table_references(self._code, force_syntactic=force_syntactic)
 
     def get_operator_chain(self) -> list:
@@ -106,6 +119,12 @@ class KustoQuery:
         new_name: str,
         force_syntactic: bool = False,
     ) -> str:
+        """Rename every reference to ``old_name``; return the rewritten query.
+
+        Rewrites exactly the spans :meth:`find_table_references` reports —
+        including, on a bound query, tables the schema does not describe,
+        and excluding aliases, function parameters and wildcard patterns.
+        """
         return replace_table(
             self._code, old_name, new_name, force_syntactic=force_syntactic
         )

@@ -47,6 +47,20 @@ def test_replace_unknown_table_is_no_op():
     assert out == "A | count"
 
 
+def test_replace_a_table_the_schema_does_not_know():
+    """A bound parse must still rewrite a table the binder could not resolve.
+
+    Before this was fixed the call returned the query unchanged and raised
+    nothing, so a retarget against a partial schema silently shipped the old
+    name.
+    """
+    schema = {"SecurityEvent": {"Account": "string"}}
+    q = parse("union SecurityEvent, SigninLogs", schema=schema)
+    assert q.has_semantics is True
+    assert q.replace_table("SigninLogs", "X") == "union SecurityEvent, X"
+    assert q.replace_table("SecurityEvent", "X") == "union X, SigninLogs"
+
+
 def test_replace_repeated_references():
     """A table referenced multiple times should be renamed in every position."""
     out = parse("A | join (A) on x").replace_table("A", "Z")

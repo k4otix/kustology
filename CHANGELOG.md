@@ -177,6 +177,23 @@ release is in `docs/superpowers/reports/`.
   column. `NameDeclaration` now reads back unquoted like every other name
   node. Column extraction drops wildcard patterns too, so `project-away
   Foo*` no longer reports `Foo*` and `project-keep *` no longer reports `*`.
+- **A bound parse no longer drops tables the schema does not describe
+  (tier 1).** `get_referenced_tables()` and `replace_table()` returned the
+  binder's answer alone whenever the query was parsed with a schema, so any
+  table the schema did not mention silently vanished: with
+  `schema={"SecurityEvent": …}`, `union SecurityEvent, SigninLogs` reported
+  only `SecurityEvent` and `replace_table("SigninLogs", "X")` returned the
+  query unchanged with no error. A partial schema is the normal case — a
+  detection rule joins tables from workspaces the caller never described —
+  and the more of the schema a caller supplied, the more they got back, so
+  the failure looked like the schema was working. `find_table_references`
+  now returns the binder's references plus every syntactic reference the
+  binder left unresolved (`ReferencedSymbol is None`) whose source span no
+  semantic reference already covers, and both public methods read from it,
+  so they can no longer disagree about what a table is. Binding all 33
+  fixture rules against a deliberately half-complete schema lost a table in
+  13 of them before this change and none after. `get_tables_semantic()` is
+  unchanged and still strictly the binder's answer.
 
 ### Added
 

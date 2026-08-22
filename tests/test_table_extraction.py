@@ -209,3 +209,81 @@ def test_bracketed_let_alias_is_not_a_table():
 def test_replace_table_leaves_a_bracketed_let_alias_alone():
     out = parse(BRACKETED_ALIAS_QUERY).replace_table("weird-name", "Z")
     assert out == BRACKETED_ALIAS_QUERY
+
+
+# --- a bound parse keeps tables the schema does not know (K17) -------------
+#
+# Semantic mode reported only what Microsoft's binder resolved, so any table
+# absent from the supplied schema vanished silently -- the opposite failure
+# to the false positives above, and the more dangerous one: a partial schema
+# is the normal case for a SOC engineer, and the analyzer answered as if the
+# missing tables were not in the query at all.
+
+PARTIAL_SCHEMA = {"SecurityEvent": {"Account": "string", "EventID": "long"}}
+PARTIAL_UNION = "union SecurityEvent, SigninLogs"
+
+
+def test_bound_parse_keeps_a_table_absent_from_the_schema():
+    q = parse(PARTIAL_UNION, schema=PARTIAL_SCHEMA)
+    assert q.has_semantics is True
+    assert q.get_referenced_tables() == {"SecurityEvent", "SigninLogs"}
+
+
+def test_bound_find_table_references_yields_both_nodes_in_source_order():
+    """The unresolved node comes back with the span replace_table rewrites."""
+    refs = parse(PARTIAL_UNION, schema=PARTIAL_SCHEMA).find_table_references()
+    assert [name for name, _ in refs] == ["SecurityEvent", "SigninLogs"]
+    assert [(n.TextStart, n.Width) for _, n in refs] == [(6, 13), (21, 10)]
+
+
+def test_bound_parse_prefers_the_binders_own_reference():
+    """A resolved table is not double-counted by the syntactic pass."""
+    schema = {"A": {"x": "string"}, "B": {"x": "string"}}
+    refs = parse(JOIN_QUERY, schema=schema).find_table_references()
+    assert [name for name, _ in refs] == ["A", "B"]
+
+
+def test_bound_parse_does_not_reintroduce_an_as_alias():
+    """An alias is not a table on a bound parse either.
+
+    Two things keep it out: the binder gives it a ``VariableSymbol`` rather
+    than no symbol at all, and the syntactic side of the union excludes it.
+    """
+    q = parse("T | as X | join (X) on a", schema={"T": {"a": "string"}})
+    assert q.get_referenced_tables() == {"T"}
+
+
+def test_bound_parse_does_not_reintroduce_an_unmatched_wildcard():
+    """Here the syntactic filter is the only thing standing in the way.
+
+    A wildcard matching nothing in the schema gets *no* symbol from the
+    binder, so ``ReferencedSymbol is None`` admits it and only the
+    pattern exclusion keeps it out — the reason table extraction had to be
+    cleaned up before the union was built on it.
+    """
+    q = parse("union withsource=S Unknown*", schema={"Other": {"a": "string"}})
+    assert q.get_referenced_tables() == set()
+    assert q.replace_table("Unknown*", "Z") == "union withsource=S Unknown*"
+
+
+def test_bound_parse_does_not_reintroduce_a_wildcard():
+    """The pattern text never leaks into a bound result.
+
+    The binder expands ``T*`` itself: against a schema with exactly one
+    match it resolves the reference straight to that ``TableSymbol``, so the
+    bound answer is the expansion, not the pattern. (Two or more matches
+    resolve to a ``GroupSymbol``, which this analyzer does not unpack — a
+    bound ``union T*`` over several tables reports none of them. Separate
+    gap, not this one.)
+    """
+    q = parse("union withsource=S T*", schema={"T1": {"a": "string"}})
+    assert q.get_referenced_tables() == {"T1"}
+
+
+def test_bound_parse_keeps_the_shadowing_lets_rhs():
+    q = parse(SHADOW_QUERY, schema={"SecurityEvent": {"a": "string"}})
+    assert q.get_referenced_tables() == {"SecurityEvent"}
+    assert (
+        q.replace_table("SecurityEvent", "Z")
+        == "let SecurityEvent = Z | where a; SecurityEvent | take 1"
+    )
