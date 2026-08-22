@@ -1,0 +1,3 @@
+SigninLogs
+| summarize SigninCount = count() by bin(TimeGenerated, 1h)
+| render timechart with (title="Sign-ins per hour", xtitle="Time", ytitle="Count", legend=hidden)

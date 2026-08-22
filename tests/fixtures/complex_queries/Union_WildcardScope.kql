@@ -1,0 +1,3 @@
+union kind=inner isfuzzy=true Security*, WindowsEvent
+| where TimeGenerated > ago(1d)
+| summarize EventCount = count() by Computer

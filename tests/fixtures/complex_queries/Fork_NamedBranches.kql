@@ -1,0 +1,5 @@
+SigninLogs
+| where ResultType != 0
+| fork
+    Failures=(summarize FailedCount = count() by UserPrincipalName)
+    (where ResultType == 50126 | project TimeGenerated, UserPrincipalName, IPAddress)

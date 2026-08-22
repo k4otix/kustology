@@ -1,0 +1,5 @@
+DeviceNetworkEvents
+| extend Fields = todynamic(AdditionalFields)
+| mv-expand kind=array with_itemindex=PortIndex Port = Fields to typeof(string) limit 100
+| mv-expand bagexpansion=bag Detail = Fields
+| project DeviceName, Port, PortIndex, Detail

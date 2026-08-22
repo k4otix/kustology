@@ -1,0 +1,4 @@
+DeviceLogonEvents
+| where ActionType == "LogonSuccess"
+| lookup kind=leftouter (DeviceInfo | project DeviceId, DeviceName, OSPlatform) on DeviceId
+| project Timestamp, DeviceName, OSPlatform, AccountName

@@ -1,0 +1,2 @@
+find withsource=SourceTable in (SecurityEvent, SigninLogs)
+    where UserPrincipalName == "admin@contoso.com"

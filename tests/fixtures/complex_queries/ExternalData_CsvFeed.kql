@@ -1,0 +1,4 @@
+externaldata(IndicatorValue: string, ThreatType: string)
+[@"https://raw.githubusercontent.com/Azure/Azure-Sentinel/master/Sample%20Data/Feeds/ThreatIntel.csv"]
+with (format="csv", ignoreFirstRecord=true)
+| where ThreatType == "Botnet"

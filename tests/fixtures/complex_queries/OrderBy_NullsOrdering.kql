@@ -1,0 +1,4 @@
+OfficeActivity
+| where Operation == "FileDownloaded"
+| order by ClientIP asc nulls first, TimeGenerated desc
+| take 100

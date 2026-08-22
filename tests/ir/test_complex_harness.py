@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-"""Real-world Sentinel detection queries — coverage signal for the builder.
+"""Sentinel detection queries — coverage signal for the builder.
 
-Each `.kql` file under ``tests/fixtures/complex_queries/`` was extracted from
-a published Azure-Sentinel analytic rule (see
+Most `.kql` files under ``tests/fixtures/complex_queries/`` were extracted
+from a published Azure-Sentinel analytic rule (see
 ``scripts/extract_complex_corpus.py``). The test parametrizes over every file
 and asserts that the builder doesn't fall back to ``UnknownExpr`` or to a
 bare ``Operator`` — both indicate "this kind of node/operator wasn't handled
@@ -18,6 +18,32 @@ green while producing a bare ``UnknownExpr``.
 When a new gap surfaces (a real-world query trips one of these assertions),
 the right fix is to add the missing case to ``ir/builder.py``, not to relax
 the assertion.
+
+## Why some fixtures are synthetic
+
+A gate parametrized over found queries only covers what the sample happened
+to contain, and the shapes it misses are invisible: the run is green either
+way. That is not hypothetical here. Modelling the ordering clause in 0.2
+regressed ``project-reorder x asc`` to an ``UnknownExpr`` for part of the
+work, and this gate — whose entire job is to catch exactly that — stayed
+green, because all 33 fixtures at the time spelled ``project-reorder``
+without a direction. The corpus also had no ``fork``, no ``lookup``, no
+``find``, no ``search``, no ``render``, no ``nulls`` ordering, no
+``externaldata`` in source position, no wildcard or ``database()``/
+``cluster()``-qualified table name, and no ``datatable`` carrying an actual
+schema and rows.
+
+So the corpus is deliberately two things. The Sentinel-derived files supply
+realistic shape and scale; alongside them sits one small hand-written file
+per construct the real sample does not reach, named for the construct rather
+than for a rule (``Fork_NamedBranches``, ``Sort_BareColumn``,
+``Render_WithProperties``, …). They are written in Sentinel idiom, but their
+job is to make a specific modifier reachable by this gate.
+
+The rule when the IR grows a field: if no fixture makes that field take a
+non-default value, this gate cannot see the field regress, and a fixture
+belongs here. ``scripts/mine_corpus.py`` reports the same scan across the
+corpus and is the quickest way to check.
 """
 
 from __future__ import annotations

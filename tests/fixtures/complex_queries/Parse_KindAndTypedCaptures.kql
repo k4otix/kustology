@@ -1,0 +1,4 @@
+Syslog
+| parse kind=regex flags=i SyslogMessage with @"user=" User:string @"\s+uid=" Uid:long
+| parse-where kind=regex SyslogMessage with @"session opened for " Target:string
+| project Computer, User, Uid, Target

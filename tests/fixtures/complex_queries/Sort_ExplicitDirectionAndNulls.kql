@@ -1,0 +1,4 @@
+SecurityEvent
+| where EventID == 4625
+| summarize FailureCount = count() by Account, IpAddress
+| sort by FailureCount desc nulls last, Account asc nulls first

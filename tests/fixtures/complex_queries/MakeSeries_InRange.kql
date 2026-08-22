@@ -1,0 +1,3 @@
+SigninLogs
+| where ResultType != 0
+| make-series FailedSignins = count() default=0 on TimeGenerated in range(ago(7d), now(), 1h) by UserPrincipalName

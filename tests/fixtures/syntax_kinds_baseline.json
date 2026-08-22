@@ -710,6 +710,9 @@
     "DataTableExpression": [
       "DataTableExpression"
     ],
+    "DefaultExpressionClause": [
+      "DefaultExpressionClause"
+    ],
     "DistinctOperator": [
       "DistinctOperator"
     ],
@@ -742,6 +745,18 @@
     ],
     "FilterOperator": [
       "FilterOperator"
+    ],
+    "FindInClause": [
+      "FindInClause"
+    ],
+    "FindOperator": [
+      "FindOperator"
+    ],
+    "ForkExpression": [
+      "ForkExpression"
+    ],
+    "ForkOperator": [
+      "ForkOperator"
     ],
     "FunctionBody": [
       "FunctionBody"
@@ -789,6 +804,7 @@
     ],
     "KindToken": [
       "AndKeyword",
+      "AscKeyword",
       "AsteriskToken",
       "BagExpansionKeyword",
       "BangEqualToken",
@@ -805,7 +821,9 @@
       "ContainsKeyword",
       "CountKeyword",
       "DataTableKeyword",
+      "DatabaseKeyword",
       "DateTimeKeyword",
+      "DefaultKeyword",
       "DescKeyword",
       "DistinctKeyword",
       "DotDotToken",
@@ -818,7 +836,10 @@
       "EvaluateKeyword",
       "ExtendKeyword",
       "ExternalDataKeyword",
+      "FindKeyword",
+      "FirstKeyword",
       "FlagsKeyword",
+      "ForkKeyword",
       "FromKeyword",
       "GreaterThanOrEqualToken",
       "GreaterThanToken",
@@ -833,10 +854,13 @@
       "IsFuzzyKeyword",
       "JoinKeyword",
       "KindKeyword",
+      "LastKeyword",
       "LessThanOrEqualToken",
       "LessThanToken",
       "LetKeyword",
+      "LimitKeyword",
       "LongKeyword",
+      "LookupKeyword",
       "MakeSeriesKeyword",
       "MatchesRegexKeyword",
       "MaterializeKeyword",
@@ -846,12 +870,15 @@
       "NotBangContainsCsKeyword",
       "NotInKeyword",
       "NotStartsWithKeyword",
+      "NullsKeyword",
       "OnKeyword",
       "OpenBraceToken",
       "OpenBracketToken",
       "OpenParenToken",
       "OrKeyword",
+      "OrderKeyword",
       "ParseKeyword",
+      "ParseWhereKeyword",
       "PartitionKeyword",
       "PlusToken",
       "PrintKeyword",
@@ -859,7 +886,10 @@
       "ProjectKeyword",
       "ProjectRenameKeyword",
       "ProjectReorderKeyword",
+      "RangeKeyword",
       "RegexKeyword",
+      "RenderKeyword",
+      "SearchKeyword",
       "SemicolonToken",
       "SlashToken",
       "SortKeyword",
@@ -867,19 +897,24 @@
       "StringKeyword",
       "SummarizeKeyword",
       "TakeKeyword",
+      "TimeChartKeyword",
+      "TitleKeyword",
       "ToKeyword",
       "ToScalarKeyword",
       "TopKeyword",
       "TypeOfKeyword",
       "UnionKeyword",
       "WhereKeyword",
-      "WithKeyword"
+      "WithItemIndexKeyword",
+      "WithKeyword",
+      "WithSourceKeyword"
     ],
     "LetStatement": [
       "LetStatement"
     ],
     "LiteralExpression": [
       "BooleanLiteralExpression",
+      "DateTimeLiteralExpression",
       "IntLiteralExpression",
       "LongLiteralExpression",
       "RealLiteralExpression",
@@ -889,11 +924,15 @@
     ],
     "LiteralToken": [
       "BooleanLiteralToken",
+      "DateTimeLiteralToken",
       "IntLiteralToken",
       "LongLiteralToken",
       "RealLiteralToken",
       "StringLiteralToken",
       "TimespanLiteralToken"
+    ],
+    "LookupOperator": [
+      "LookupOperator"
     ],
     "MakeSeriesByClause": [
       "MakeSeriesByClause"
@@ -906,6 +945,9 @@
     ],
     "MakeSeriesFromToStepClause": [
       "MakeSeriesFromToStepClause"
+    ],
+    "MakeSeriesInRangeClause": [
+      "MakeSeriesInRangeClause"
     ],
     "MakeSeriesOnClause": [
       "MakeSeriesOnClause"
@@ -937,11 +979,17 @@
     "MvExpandOperator": [
       "MvExpandOperator"
     ],
+    "MvExpandRowLimitClause": [
+      "MvExpandRowLimitClause"
+    ],
     "NameAndTypeDeclaration": [
       "NameAndTypeDeclaration"
     ],
     "NameDeclaration": [
       "NameDeclaration"
+    ],
+    "NameEqualsClause": [
+      "NameEqualsClause"
     ],
     "NameReference": [
       "NameReference"
@@ -955,11 +1003,17 @@
     "OrderingClause": [
       "OrderingClause"
     ],
+    "OrderingNullsClause": [
+      "OrderingNullsClause"
+    ],
     "ParenthesizedExpression": [
       "ParenthesizedExpression"
     ],
     "ParseOperator": [
       "ParseOperator"
+    ],
+    "ParseWhereOperator": [
+      "ParseWhereOperator"
     ],
     "PartitionOperator": [
       "PartitionOperator"
@@ -1000,8 +1054,17 @@
     "RenameList": [
       "RenameList"
     ],
+    "RenderOperator": [
+      "RenderOperator"
+    ],
+    "RenderWithClause": [
+      "RenderWithClause"
+    ],
     "RowSchema": [
       "RowSchema"
+    ],
+    "SearchOperator": [
+      "SearchOperator"
     ],
     "SeparatedElement[Expression]": [
       "SeparatedElement"
@@ -1049,6 +1112,9 @@
       "SummarizeOperator"
     ],
     "SyntaxList[Directive]": [
+      "List"
+    ],
+    "SyntaxList[ForkExpression]": [
       "List"
     ],
     "SyntaxList[NamedParameter]": [
@@ -1262,7 +1328,6 @@
     "DatabaseKeyword",
     "DateKeyword",
     "DateTimeKeyword",
-    "DateTimeLiteralExpression",
     "DateTimePattern",
     "DateTimePatternKeyword",
     "DecimalKeyword",

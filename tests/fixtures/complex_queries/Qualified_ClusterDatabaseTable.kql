@@ -1,0 +1,3 @@
+cluster("securityhub.kusto.windows.net").database("SOC").SecurityEvent
+| where EventID == 4688
+| join kind=innerunique (database("ThreatIntel").IndicatorTable | project IndicatorValue) on $left.CommandLine == $right.IndicatorValue

@@ -1,0 +1,3 @@
+SecurityAlert
+| where AlertSeverity == "High"
+| project-reorder AlertName asc, TimeGenerated desc

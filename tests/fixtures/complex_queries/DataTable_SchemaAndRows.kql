@@ -1,0 +1,6 @@
+datatable(TimeGenerated: datetime, Account: string, Severity: string)
+[
+    datetime(2024-01-01T00:00:00Z), "svc-backup", "High",
+    datetime(2024-01-01T01:00:00Z), "svc-deploy", "Medium"
+]
+| where Severity == "High"

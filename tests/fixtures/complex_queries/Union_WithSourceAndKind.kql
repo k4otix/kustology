@@ -1,0 +1,4 @@
+union kind=outer withsource=SourceTable isfuzzy=true
+    (SecurityEvent | where EventID == 4624),
+    (WindowsEvent | where EventID == 4624)
+| summarize SigninCount = count() by SourceTable

@@ -1,0 +1,2 @@
+search kind=case_sensitive in (SecurityEvent, SigninLogs) "Mimikatz"
+| take 50
