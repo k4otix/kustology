@@ -5,9 +5,12 @@
 
 The LLM view is a lossy projection of the IR — discriminator-prefixed,
 default-stripped, span-free. Tests pin the shape contract: every node
-carries ``kind``, every default value is omitted, and the three operators
-with a colliding ``kind`` field (``render``, ``join``, ``lookup``) get
-their field renamed in output.
+carries ``kind``, the root additionally carries ``ir_schema_version``, and
+every default value is omitted. The three operators whose KQL ``kind``
+clause would collide with that discriminator (``render``, ``join``,
+``lookup``) are pinned too — the model fields are named ``render_kind`` /
+``join_kind`` / ``lookup_kind``, so the view renames nothing and both keys
+survive side by side.
 """
 
 from __future__ import annotations
@@ -219,15 +222,21 @@ def test_between_synthesizes_between_op():
     assert "polarity" not in op_neg
 
 
-# Collision-renamed fields -----------------------------------------------
+# KQL ``kind`` clauses that would collide with the discriminator ---------
 
 def test_join_kind_field_is_renamed():
-    """``JoinOp.kind`` becomes ``join_kind`` in LLM output."""
+    """``join kind=inner`` and the ``join`` discriminator both reach the dump.
+
+    The model field is called ``join_kind``, so the view renames nothing --
+    the collision was designed out at the model rather than patched in the
+    projection. What is pinned here is that both keys survive, which is what
+    a rename in either direction would break.
+    """
     ir = IRBuilder().build("T | join kind=inner (U) on x")
     out = to_llm_dict(ir)
     join = out["main_pipeline"]["operators"][0]
     assert join["kind"] == "join"          # the discriminator
-    assert join["join_kind"] == "inner"    # renamed from .kind
+    assert join["join_kind"] == "inner"    # the KQL clause
 
 
 def test_render_kind_field_is_renamed():
@@ -356,3 +365,34 @@ def test_body_span_is_omitted_from_a_let_function():
     assert fn["parameters"] == ["x"]
 
     assert "body_span" not in fn
+
+
+def test_the_llm_view_is_tagged_with_the_ir_schema_version():
+    """A dump handed to a model, cached, or written to disk had nothing on it
+    saying which IR shape produced it.
+
+    ``model_dump_json`` round-trips through pydantic, which validates the
+    shape and fails loudly on drift; the LLM view is a lossy projection with
+    no validator behind it, so a consumer holding one from an earlier release
+    had no way to tell -- the fields it expected were simply absent, which
+    reads identically to a query that did not use them. The tag is the same
+    ``IR_SCHEMA_VERSION`` the CLI's JSON envelope already publishes, so the
+    two agree by construction.
+    """
+    from kustology.ir import IR_SCHEMA_VERSION
+
+    dumped = to_llm_dict(IRBuilder().build("T | count"))
+    assert dumped["ir_schema_version"] == IR_SCHEMA_VERSION
+    assert dumped["ir_schema_version"] == "0.2"
+
+
+def test_only_the_root_carries_the_schema_version():
+    """It tags the document, not every node. A per-node copy would be noise
+    in the context window the view exists to conserve."""
+    dumped = to_llm_dict(IRBuilder().build("T | where a == 1 | count"))
+    assert "ir_schema_version" not in dumped["main_pipeline"]
+    assert "ir_schema_version" not in dumped["main_pipeline"]["operators"][0]
+
+    # And a sub-tree dumped on its own is not a document, so it is untagged.
+    sub = to_llm_dict(IRBuilder().build("T | count").main_pipeline)
+    assert "ir_schema_version" not in sub

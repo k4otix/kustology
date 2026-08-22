@@ -8,7 +8,13 @@ being fed to a language model:
 
 * Every node carries a stable ``kind`` discriminator drawn from the class's
   ``KIND`` constant — the wire format uses snake_case KQL-aligned labels.
-* Fields holding their declared default (``result_type=unknown``,
+* A ``QueryIR`` root additionally carries ``ir_schema_version``. The view is
+  a lossy projection with no validator behind it, so unlike
+  ``model_dump_json`` — which pydantic re-validates — a dump from an earlier
+  release is indistinguishable from a query that simply did not use the
+  fields a reader expects. The tag is the same ``IR_SCHEMA_VERSION`` the
+  CLI's JSON envelope publishes.
+* Fields holding their declared default (``result_type=unresolved``,
   ``result_type_inner=None``, empty lists/dicts) are dropped.
 * ``span`` (and ``LetFunction.body_span``) and ``schema_attached`` are
   stripped — character offsets aren't useful without source-text
@@ -24,9 +30,6 @@ being fed to a language model:
   ``op + polarity`` pairs. ``polarity`` and ``case_sensitive`` are dropped
   outright where they are ``None``, which on ``BinOp`` means the operator is
   arithmetic and neither question applies.
-* Three operators (``render``, ``join``, ``lookup``) carry a KQL ``kind``
-  field that collides with the discriminator key; they're renamed to
-  ``render_kind`` / ``join_kind`` / ``lookup_kind`` in the LLM output.
 
 Use :meth:`~kustology.ir.QueryIR.model_dump_json` for canonical,
 lossless round-trip; ``to_llm_dict`` for handing the IR off to a model.
@@ -80,7 +83,24 @@ _MAX_LLM_DATATABLE_ROWS = 20
 def to_llm_dict(node: Any) -> Any:
     """Render ``node`` (a pydantic IR model, list, or primitive) into an
     LLM-optimized dict. See module docstring for the shape contract."""
-    return _convert(node)
+    out = _convert(node)
+    # Lazy imports: ``ir/__init__`` imports this module, and ``query``
+    # participates in the expr <-> query cycle.
+    from . import IR_SCHEMA_VERSION
+    from .query import QueryIR
+
+    if isinstance(node, QueryIR) and isinstance(out, dict):
+        # Only the document root. Stamping every node would repeat one string
+        # hundreds of times into the context window this view exists to
+        # conserve, and a sub-tree dumped on its own is not a document.
+        # Placed second so it reads before the body, after the ``kind``
+        # discriminator that leads every node.
+        out = {
+            "kind": out["kind"],
+            "ir_schema_version": IR_SCHEMA_VERSION,
+            **{k: v for k, v in out.items() if k != "kind"},
+        }
+    return out
 
 
 def _convert(node: Any) -> Any:

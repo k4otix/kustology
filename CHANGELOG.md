@@ -441,6 +441,14 @@ release is in `docs/superpowers/reports/`.
 
 ### Added
 
+- `ir_schema_version` on `to_llm_dict(QueryIR)` (tier 2) — the LLM view is a
+  lossy projection with no validator behind it, so unlike `model_dump_json`,
+  which pydantic re-validates on load, a dump from an earlier release was
+  indistinguishable from a query that simply did not use the fields a reader
+  expects. Same `IR_SCHEMA_VERSION` the CLI's JSON envelope publishes; on
+  the document root only, not on every node.
+- `Exists.polarity` (tier 2) — `"exclusion"` for `isnull` / `isempty`,
+  `"inclusion"` for their negations, now that all four lower to `Exists`.
 - `LetRef` (tier 2) — now actually emitted, so a `let` alias is
   distinguishable from a table. Decided from the `let` statements alone, so
   it holds with or without a schema.
