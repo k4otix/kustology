@@ -147,12 +147,21 @@ from Kusto.Language.Syntax import (
 def _is_time_func_name(name: str) -> bool:
     """True when ``name`` is a known KQL time function.
 
-    Reflects ``Kusto.Language.Functions`` for the answer; falls back to a
-    substring check (``time``/``ago``/``now``) if reflection is unavailable.
+    Reflects ``Kusto.Language.Functions`` for the answer, then subtracts
+    ``_NON_TEMPORAL_ARITHMETIC``. That subtraction is the same one
+    ``utils.analysis`` applies to ``_TIME_FUNCS``, and it is shared rather
+    than restated so this field and ``find_time_expressions()`` cannot drift:
+    ``time_functions()`` classifies by return type, so ``abs`` is a member
+    on the strength of ``abs(timespan)`` alone and would otherwise set
+    ``FuncCall.is_time_func`` on ``abs(x)`` over a numeric column.
+
+    Falls back to a substring check (``time``/``ago``/``now``) if reflection
+    is unavailable.
     """
     try:
         from ..reflection import time_functions
-        return name in time_functions()
+        from ..utils.analysis import _NON_TEMPORAL_ARITHMETIC
+        return name in time_functions() and name not in _NON_TEMPORAL_ARITHMETIC
     except Exception:  # pragma: no cover — defensive
         lower = name.lower()
         return "time" in lower or "ago" in lower or "now" in lower

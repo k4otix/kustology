@@ -88,17 +88,32 @@ _TEMPORAL_RELEVANT = frozenset({
     "unixtime_microseconds_todatetime", "unixtime_nanoseconds_todatetime",
 })
 
+# The other half of the judgement: arithmetic functions that reflection
+# reports as temporal only because one *overload* returns a timespan.
+# `time_functions()` is right to list them — it answers "what can this
+# return", and `abs(1h)` really does return a timespan — but the question
+# both consumers here ask is "is this call about time", and for `abs` the
+# answer is no in every usage. `floor` is deliberately NOT in this set:
+# `floor(TimeGenerated, 1h)` is a real bucketing idiom, which is why it is
+# hand-listed above. Add a name here only when its temporal claim is purely
+# an artifact of an overload; see ``reflection._safe_return_type_name``.
+_NON_TEMPORAL_ARITHMETIC = frozenset({"abs"})
+
 # See kustology.reflection.time_functions for the reflected source.
 try:
     from ..reflection import time_functions as _time_functions
 
-    _TIME_FUNCS = _time_functions() | _TEMPORAL_RELEVANT
+    _TIME_FUNCS = (_time_functions() | _TEMPORAL_RELEVANT) - _NON_TEMPORAL_ARITHMETIC
 except Exception:  # pragma: no cover — defensive
-    _TIME_FUNCS = _TEMPORAL_RELEVANT
+    _TIME_FUNCS = _TEMPORAL_RELEVANT - _NON_TEMPORAL_ARITHMETIC
 
 _STRUCTURAL_NOISE_KINDS = frozenset({"List", "SeparatedElement"})
 
-# Every SyntaxKind that names a *token* — punctuation, keywords, identifiers.
+# Every SyntaxKind that names a *token* — punctuation and identifiers.
+# Keyword kinds are NOT in here (`JoinKeyword`, `EvaluateKeyword`, `AscKeyword`
+# and the rest end in "Keyword", not "Token") and still contribute their kind
+# to the hash, which is what makes `sort by a asc` differ from `desc` and
+# `render timechart` from `barchart`.
 # Derived once from the enum, as a closed set: substring-matching "Token" also
 # catches ``TokenLiteralExpression`` (the value half of ``kind=inner``) and
 # ``TokenName``, neither of which is a token. See :func:`get_structural_hash`.
@@ -678,6 +693,15 @@ def find_time_expressions(kusto_code) -> list[tuple[str, int, int]]:
     effective time window additionally needs let-resolution, awareness of which
     column is temporal, and negation handling; build that on the tier-2 IR
     rather than on this list.
+
+    The match is on the callee's *name*, so a function that is temporal in its
+    usual usage is reported in all of them. ``floor`` is the deliberate case:
+    ``floor(TimeGenerated, 1h)`` buckets time exactly as ``bin`` does and is
+    hand-listed for that reason, so numeric ``floor(x, 1)`` is over-reported
+    too. ``abs`` is the deliberate *exclusion* — reflection lists it as
+    returning a timespan because of its ``abs(timespan)`` overload, but no
+    usage of it is about time, so it is subtracted. Everything here is a
+    candidate to read, not a fact about the query's time window.
     """
     fn_ranges = []  # (start, end) of matched time-function calls
     out = []

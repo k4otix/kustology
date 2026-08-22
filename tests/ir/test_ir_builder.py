@@ -1275,3 +1275,65 @@ def test_renaming_a_scalar_let_binding_does_not_change_the_hash(ir_builder):
     b = ir_builder.build("let m = 5; T | where a > m")
 
     assert a.semantic_hash == b.semantic_hash
+
+
+def _time_flags(query: str) -> dict[str, bool]:
+    """``{func name: is_time_func}`` for every FuncCall in an unbound build."""
+    from kustology.ir import FuncCall, find_all
+
+    ir = parse(query).to_ir(attach_schema=False)
+    return {fc.name: fc.is_time_func for fc in find_all(ir, FuncCall)}
+
+
+def test_is_time_func_marks_bin_and_bin_at():
+    """``bin`` is how a real query buckets time, and the field must say so.
+
+    Reflection reported ``bin`` / ``bin_at`` as plain scalars until the
+    return-type scan learned to read every overload, so this published field
+    was ``False`` on the single most common temporal construct in KQL.
+    """
+    assert _time_flags("T | summarize count() by bin(TimeGenerated, 1h)") == {
+        "count": False,
+        "bin": True,
+    }
+    assert _time_flags(
+        "T | summarize count() by bin_at(TimeGenerated, 1d, datetime(2024-01-01))"
+    ) == {"count": False, "bin_at": True}
+
+
+def test_is_time_func_is_false_for_arithmetic_abs():
+    """``abs`` is in ``time_functions()`` and must not be flagged here.
+
+    Its overload list is ``['long', None, 'timespan']``, so the "any overload
+    declares datetime/timespan" rule that rescued ``bin`` catches ``abs`` as
+    well. That rule is right for a return-type question and wrong for "is
+    this call about time": ``abs(x)`` on a number is not, in any usage.
+    """
+    from kustology.reflection import time_functions
+
+    assert "abs" in time_functions()
+    assert _time_flags("T | extend a = abs(x)") == {"abs": False}
+
+
+def test_is_time_func_keeps_floor():
+    """``floor(TimeGenerated, 1h)`` is a genuine bucketing idiom.
+
+    Unlike ``abs`` it is hand-listed as temporally relevant, so it stays
+    flagged — and the flag is a property of the *name*, so numeric
+    ``floor(x, 1)`` is over-reported. Deliberate, and documented on
+    ``find_time_expressions``.
+    """
+    assert _time_flags("T | extend a = floor(TimeGenerated, 1h)") == {"floor": True}
+    assert _time_flags("T | extend a = floor(x, 1)") == {"floor": True}
+
+
+def test_is_time_func_agrees_with_find_time_expressions():
+    """The two consumers of the temporal-function set must not drift apart."""
+    from kustology.ir.builder import _is_time_func_name
+    from kustology.utils.analysis import _TIME_FUNCS
+
+    for name in ("bin", "bin_at", "floor", "ago", "now"):
+        assert _is_time_func_name(name) is True
+        assert name in _TIME_FUNCS
+    assert _is_time_func_name("abs") is False
+    assert "abs" not in _TIME_FUNCS

@@ -114,3 +114,17 @@ def test_syntax_kinds_has_expected_breadth():
     # dispatches on. Pick canonical members the enum is guaranteed to expose.
     for canonical in ("FilterOperator", "JoinOperator", "AddExpression", "AndExpression"):
         assert canonical in kinds, f"expected {canonical!r} in syntax_kinds()"
+
+
+def test_plugin_functions_is_exported_from_the_package_root():
+    """The brief required both exports; only ``reflection``'s was exercised.
+
+    ``kustology.plugin_functions`` is the import path a caller actually
+    writes, and a name missing from ``__all__`` is invisible to
+    ``from kustology import *`` and to documentation tooling.
+    """
+    import kustology
+
+    assert "plugin_functions" in kustology.__all__
+    assert kustology.plugin_functions is plugin_functions
+    assert "bag_unpack" in kustology.plugin_functions()

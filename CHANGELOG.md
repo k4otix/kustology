@@ -234,10 +234,15 @@ release is in `docs/superpowers/reports/`.
   the table has one: `user` and `userPrincipalName` are keys inside a dynamic
   value, and a caller resolving that list against a schema is looking up
   names that cannot exist. Selectors are skipped unless the left side is
-  `$left` / `$right`, where the selector is the real column. Syntactic mode
-  also now reports the columns an `extend` / `summarize` creates, which
-  semantic mode always did. Across the 33 fixture rules this drops 100
-  dynamic-bag keys and adds 105 projected columns.
+  `$left` / `$right`, where the selector is the real column. A `| as X` alias
+  is excluded too — it is deliberately not a table reference, so it has no
+  span to match and needs its own name-keyed exclusion, which is the scoping
+  the language itself uses since `as` binds query-wide. Syntactic mode also
+  now reports the columns an `extend` / `summarize` creates; semantic mode
+  reports those only where the query reads the alias back, since the binder
+  attaches a `ColumnSymbol` to references and a never-read alias has none.
+  Across the 33 fixture rules this drops 100 dynamic-bag keys and adds 105
+  projected columns.
 - **Reflection reads every overload, sees shadowed statics, and lists
   `evaluate` plug-ins (tier 1).** Three separate defects in
   `kustology.reflection`. It read only *signature zero*'s
@@ -254,7 +259,14 @@ release is in `docs/superpowers/reports/`.
   `tdigest_merge`, which are aggregates; the two sets are now disjoint.
   `time_functions()` 24 → 28, `string_functions()` 66 → 68,
   `scalar_functions()` 335 → 328, `all_function_names()` 482 → 532,
-  `aggregate_functions()` unchanged at 61.
+  `aggregate_functions()` unchanged at 61. **Tier 2 is affected too:**
+  `FuncCall.is_time_func` now reads `true` for `bin`, `bin_at` and `floor`,
+  where it read `false` before — the field's whole point is finding the
+  temporal calls, and it was blind to the most common one. `abs` is
+  explicitly excluded from that widening despite being in
+  `time_functions()`: its only temporal claim is an `abs(timespan)` overload,
+  and `abs(x)` over a numeric column is not a time expression. `semantic_hash`
+  does not read the flag, so stored tier-2 hashes are unaffected.
 - **The CLI honours its documented exit codes (tier 1).** `cli.py`'s
   docstring has always promised `0` success, `1` the input had errors, `2` a
   usage error, and the code decided between them by whichever exception

@@ -241,6 +241,26 @@ def test_find_time_expressions_finds_bin_at():
     ]
 
 
+def test_find_time_expressions_ignores_arithmetic_abs():
+    """``abs`` is in ``time_functions()`` but is never a temporal expression.
+
+    Reflection classifies by return type and ``abs`` has a timespan overload,
+    which is the right answer to "what can this return" and the wrong answer
+    to "is this call about time". ``abs(x)`` on a number must not surface in
+    a discovery list a rule author reads to find the query's time handling.
+    """
+    assert parse("T | extend a = abs(x)").find_time_expressions() == []
+    # The timespan usage is still not reported: the exclusion is by name, and
+    # `abs(1h)` contributes its own bare `1h` literal instead.
+    assert [t[0] for t in parse("T | where abs(d) > 1h").find_time_expressions()] == ["1h"]
+
+
+def test_find_time_expressions_keeps_floor():
+    """``floor(TimeGenerated, 1h)`` buckets time exactly as ``bin`` does."""
+    times = parse("T | summarize count() by floor(TimeGenerated, 1h)").find_time_expressions()
+    assert [t[0] for t in times] == ["floor(TimeGenerated, 1h)"]
+
+
 def test_find_time_expressions_ignores_string_literal_text():
     """Substring 'ago(' embedded in a string literal must not match."""
     query = "T | where Note == 'this query uses ago()' | count"
