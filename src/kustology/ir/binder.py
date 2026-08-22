@@ -234,10 +234,32 @@ class SchemaAttacher:
         for op in pipeline.operators:
             self._walk_operator(op, scope)
         # Snapshot final scope so downstream consumers don't re-walk operators.
-        merged: dict[str, str] = {}
-        for entry in scope:
-            merged.update(entry.columns)
-        pipeline.result_schema = TabularSchema(columns=merged)
+        #
+        # The last operator's own ``result_schema`` is preferred when it has
+        # one, and not merely as an optimization: it is Microsoft's answer
+        # *in Microsoft's column order*, and the merge below cannot
+        # reproduce that order. ``ScopeEntry`` groups columns by originating
+        # table so provenance survives, which means merging them re-orders a
+        # join's output by side rather than by the order the engine emits.
+        #
+        # With no operators there is nothing to read it off, and the value
+        # the builder left on the pipeline -- Microsoft's reading of the
+        # source -- stands in. When the builder had no answer either, that
+        # slot holds whatever a previous walk of this pipeline computed,
+        # which is the same merge this one would redo.
+        authoritative = (
+            pipeline.operators[-1].result_schema if pipeline.operators
+            else pipeline.result_schema
+        )
+        if authoritative is not None:
+            pipeline.result_schema = TabularSchema(
+                columns=dict(authoritative.columns)
+            )
+        else:
+            merged: dict[str, str] = {}
+            for entry in scope:
+                merged.update(entry.columns)
+            pipeline.result_schema = TabularSchema(columns=merged)
         return scope
 
     # --- scope-mutation helpers ---------------------------------------------
@@ -263,7 +285,77 @@ class SchemaAttacher:
             return name
         return None
 
+    def _overlay_result_schema(
+        self, columns: dict[str, str], scope: list[ScopeEntry],
+    ) -> None:
+        """Rewrite ``scope`` to carry exactly ``columns``, keeping provenance.
+
+        Microsoft's ``ResultType`` says which columns exist after an operator
+        and what they are typed; it says nothing about which table each one
+        came from, and ``ColumnRef.table`` is the one thing in the IR that
+        only this walk can supply. So the two are combined rather than one
+        replacing the other: each column is filed under the table the
+        *pre-operator* scope had it under, and anything new (a summarize
+        aggregate, a join's suffixed ``Foo1``) lands in the anonymous entry.
+
+        The table order of the incoming scope is preserved, because
+        :meth:`_resolve_column_table` reads it as precedence -- most recently
+        joined side wins a name collision, which is KQL's own rule.
+
+        Dropping to ``_set_scope`` here instead (one anonymous entry with
+        Microsoft's columns) would be simpler and would silently delete
+        provenance for every operator the binder can type: ``T | where a > 1
+        | project a`` would stop reporting ``a.table == "T"``.
+        """
+        origin: dict[str, str] = {}
+        tables: list[str | None] = []
+        for entry in scope:
+            if entry.table not in tables:
+                tables.append(entry.table)
+            if entry.table:
+                for name in entry.columns:
+                    # Later entries win, matching ``_resolve_column_table``'s
+                    # "most recently joined side" rule.
+                    origin[name] = entry.table
+        if None not in tables:
+            tables.append(None)
+        buckets: dict[str | None, dict[str, str]] = {t: {} for t in tables}
+        for name, type_name in columns.items():
+            buckets[origin.get(name)][name] = type_name
+        scope.clear()
+        for table in tables:
+            scope.append(ScopeEntry(table=table, columns=buckets[table]))
+
     def _walk_operator(self, op: Operator, scope: list[ScopeEntry]) -> None:
+        if op.result_schema is not None:
+            # Microsoft already computed this operator's output. Its answer
+            # is authoritative for *names and types*; provenance is still
+            # ours, so the expressions are filled first and the scope is
+            # then overlaid rather than replaced.
+            #
+            # ``join`` / ``lookup`` / ``union`` keep their hand-rolled rule
+            # even here, for two things the overlay cannot recover: ``on``
+            # clauses resolve against a scope that includes the right side
+            # (``$left`` / ``$right`` depend on it), and the per-side
+            # ``ScopeEntry`` it appends is what gives a right-hand column a
+            # table at all. The overlay then corrects the names and types
+            # that rule guesses at -- which is the whole point of the task.
+            if isinstance(op, (JoinOp, LookupOp, UnionOp)):
+                self._walk_operator_rules(op, scope)
+            else:
+                self._fill_children(op, scope, inherited=scope)
+            self._overlay_result_schema(dict(op.result_schema.columns), scope)
+            return
+        self._walk_operator_rules(op, scope)
+
+    def _walk_operator_rules(self, op: Operator, scope: list[ScopeEntry]) -> None:
+        """The hand-rolled per-operator scope rules.
+
+        Runs when Microsoft did not answer for this operator — an unbound
+        parse, or a schema the binder could not fully determine — and, for
+        the multi-source operators, alongside the answer when it did. See
+        :meth:`_walk_operator`.
+        """
         if isinstance(op, FilterOp):
             self._fill(op.predicate, scope)
             return

@@ -556,3 +556,127 @@ def test_let_names_do_not_leak_between_enrich_calls(attacher, builder):
     second = builder.build("Base | project AccountName")
     attacher.enrich(second)
     assert second.main_pipeline.result_schema.columns.get("AccountName") == "unknown"
+
+
+# Microsoft's per-operator schema (K-ARCH-1, Task 5.2) --------------------
+
+def test_provenance_survives_an_authoritative_result_schema():
+    """Taking names and types from the binder must not cost ``ColumnRef.table``.
+
+    Microsoft's ``ResultType`` says which columns exist and how they are
+    typed; it does not say which table each came from, and this walk is the
+    only thing in the library that can. Replacing the scope with one
+    anonymous entry carrying Microsoft's columns — the obvious shortcut —
+    would silently drop provenance for every operator the binder can type.
+    """
+    from kustology import parse
+    from kustology.ir import ColumnRef, ProjectOp, SortOp, find_all
+
+    schemas = {"DeviceProcessEvents": {"FileName": "string", "ProcessId": "long"}}
+    ir = parse(
+        "DeviceProcessEvents "
+        "| where ProcessId > 4 "
+        "| project FileName, ProcessId "
+        "| sort by ProcessId desc",
+        schema=schemas,
+    ).to_ir()
+
+    # The shortcut really did fire — otherwise this proves nothing.
+    assert all(op.result_schema is not None for op in ir.main_pipeline.operators)
+
+    project = next(op for op in ir.main_pipeline.operators if isinstance(op, ProjectOp))
+    sort = next(op for op in ir.main_pipeline.operators if isinstance(op, SortOp))
+    assert {c.table for c in find_all(project, ColumnRef)} == {"DeviceProcessEvents"}
+    assert {c.table for c in find_all(sort, ColumnRef)} == {"DeviceProcessEvents"}
+
+
+def test_join_provenance_survives_an_authoritative_result_schema():
+    """The per-side scope entries a join builds are still built.
+
+    ``$left`` / ``$right`` resolve against a scope that has both sides in it,
+    and a right-hand column has a table only because the join rule appended
+    an entry for it. Both are things the overlay cannot reconstruct, so the
+    hand-rolled rule keeps running for ``join`` / ``lookup`` / ``union`` even
+    when Microsoft answered.
+    """
+    from kustology import parse
+    from kustology.ir import ColumnRef, ProjectOp, find_all
+
+    schemas = {
+        "DeviceProcessEvents": {"DeviceId": "string", "FileName": "string"},
+        "DeviceFileEvents": {"DeviceId": "string", "TimeGenerated": "datetime"},
+    }
+    ir = parse(
+        "DeviceProcessEvents "
+        "| join DeviceFileEvents on DeviceId "
+        "| project FileName, TimeGenerated",
+        schema=schemas,
+    ).to_ir()
+
+    assert all(op.result_schema is not None for op in ir.main_pipeline.operators)
+    project = next(op for op in ir.main_pipeline.operators if isinstance(op, ProjectOp))
+    tables = {c.name: c.table for c in find_all(project, ColumnRef)}
+    assert tables == {
+        "FileName": "DeviceProcessEvents",
+        "TimeGenerated": "DeviceFileEvents",
+    }
+
+
+def test_the_hand_rolled_rule_still_runs_when_microsoft_declines(builder, attacher):
+    """``IRBuilder().build`` binds against globals with no tables at all.
+
+    Every symbol it produces is open, so nothing is recorded and the scope
+    rules answer alone — which is what keeps a caller's own schema, handed
+    to the attacher afterwards, from being overridden by the binder's
+    table-less reading.
+    """
+    ir = builder.build(
+        "DeviceProcessEvents | project FileName, AccountName "
+        "| where FileName == 'cmd.exe'"
+    )
+    assert all(op.result_schema is None for op in ir.main_pipeline.operators)
+    attacher.enrich(ir)
+    # Narrowed by the hand-rolled ``project`` rule, and typed from the
+    # schema the *attacher* was given -- which the binder never saw.
+    assert ir.main_pipeline.result_schema.columns == {
+        "FileName": "string", "AccountName": "string",
+    }
+
+
+def test_count_closes_a_symbol_even_from_an_unknown_table(builder):
+    """``IsOpen`` is per node, not per query, and ``count`` is the proof.
+
+    ``T | count`` returns exactly ``Count:long`` whatever ``T`` is, so
+    Microsoft closes the symbol there even though the source is unknown --
+    which is why the decline is read off each operator rather than decided
+    once for the whole parse.
+    """
+    ir = builder.build("Whatever | where x > 1 | count")
+    where_op, count_op = ir.main_pipeline.operators
+    assert where_op.result_schema is None
+    assert count_op.result_schema.columns == {"Count": "long"}
+
+
+def test_microsoft_decides_the_column_order_not_the_scope_grouping():
+    """A join's output is ordered by the engine, not by which side it came from.
+
+    ``ScopeEntry`` groups columns by originating table so provenance
+    survives, which means merging the scope orders a join's output
+    left-side-first. Microsoft emits ``DeviceId, FileName, DeviceId1,
+    TimeGenerated`` — the pipeline schema has to be its list, in its order.
+    """
+    from kustology import parse
+
+    schemas = {
+        "DeviceProcessEvents": {"DeviceId": "string", "FileName": "string"},
+        "DeviceFileEvents": {"DeviceId": "string", "TimeGenerated": "datetime"},
+    }
+    ir = parse(
+        "DeviceProcessEvents | join DeviceFileEvents on DeviceId", schema=schemas,
+    ).to_ir()
+    assert list(ir.main_pipeline.result_schema.columns.items()) == [
+        ("DeviceId", "string"),
+        ("FileName", "string"),
+        ("DeviceId1", "string"),
+        ("TimeGenerated", "datetime"),
+    ]

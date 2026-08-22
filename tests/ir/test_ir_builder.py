@@ -1744,3 +1744,91 @@ def test_the_three_schemaless_paths_hash_the_same():
     b = parse(_SCHEMALESS_Q).to_ir().semantic_hash
     c = IRBuilder().build(_SCHEMALESS_Q).semantic_hash
     assert a == b == c
+
+
+# -- Operator.result_schema from Microsoft's binder (K-ARCH-1, Task 5.2) --
+
+_BINDER_SCHEMA = {"T": {"a": "long", "s": "string"}}
+
+
+def test_operator_result_schema_is_captured_from_the_bound_parse():
+    """Every operator carries the columns Microsoft says it emits.
+
+    Read off ``<operator node>.ResultType``, so ``summarize`` reports the
+    aggregate's real type (``count()`` is a ``long``) rather than whatever
+    our own rule would have inferred from the expression.
+    """
+    ir = parse(
+        "T | where a > 1 | summarize n = count() by s", schema=_BINDER_SCHEMA,
+    ).to_ir()
+    where_op, summarize_op = ir.main_pipeline.operators
+    assert where_op.result_schema.columns == {"a": "long", "s": "string"}
+    assert summarize_op.result_schema.columns == {"s": "string", "n": "long"}
+
+
+def test_operator_result_schema_is_none_when_microsoft_declines():
+    """An unknown table leaves Microsoft's symbol *open*, and open is a decline.
+
+    An open ``TableSymbol`` still lists the columns the query happened to
+    name, typed ``unknown``. Recording that would present a guess as the
+    binder's answer, and would then override the real schema a caller hands
+    to ``SchemaAttacher`` afterwards — which is exactly how
+    ``IRBuilder().build(q)`` (bound against ``GlobalState.Default``, which
+    knows no tables) reaches the attacher.
+    """
+    ir = IRBuilder().build("T | where a > 1 | summarize n = count() by s")
+    assert [op.result_schema for op in ir.main_pipeline.operators] == [None, None]
+
+
+def test_operator_result_schema_is_stripped_from_the_semantic_hash():
+    """Supplying a schema must not move the digest.
+
+    ``result_schema`` was already in ``_VOLATILE_FIELDS`` for ``Pipeline``,
+    and the set is keyed by model *field name* rather than by owning class,
+    so the new declaration on ``Operator`` is covered by the same entry.
+    That is worth an assertion rather than an assumption: without it every
+    operator's schema would enter the digest and the same query would hash
+    two ways depending on whether the caller had a schema.
+    """
+    query = "T | where a > 1 | summarize n = count() by s"
+    bound = parse(query, schema=_BINDER_SCHEMA).to_ir()
+    unbound = parse(query).to_ir()
+
+    # Not vacuous: one side really does carry the schemas the other lacks.
+    assert all(op.result_schema is not None for op in bound.main_pipeline.operators)
+    assert all(op.result_schema is None for op in unbound.main_pipeline.operators)
+
+    assert bound.semantic_hash == unbound.semantic_hash
+
+
+def test_result_schema_is_named_once_in_the_volatile_set():
+    """The guard above depends on the set being keyed by field name."""
+    from kustology.ir.transforms import _VOLATILE_FIELDS
+
+    assert "result_schema" in _VOLATILE_FIELDS
+
+
+def test_table_symbol_columns_declines_an_open_symbol():
+    """The reader's guard, asserted against a real pair of parses.
+
+    Same operator, same query text; the only difference is whether the
+    binder was given the table. Closed answers, open declines.
+    """
+    from kustology.bridge import KustoCode
+    from kustology.ir._builder_helpers import table_symbol_columns
+    from kustology.utils.analysis import build_global_state, collect_nodes
+
+    def _filter_result_type(schema):
+        code = KustoCode.ParseAndAnalyze(
+            "T | where a > 1", build_global_state(schema),
+        )
+        (node,) = collect_nodes(
+            code.Syntax, lambda n: str(n.Kind) == "FilterOperator",
+        )
+        return node.ResultType
+
+    assert table_symbol_columns(_filter_result_type(_BINDER_SCHEMA)) == {
+        "a": "long", "s": "string",
+    }
+    assert table_symbol_columns(_filter_result_type({})) is None
+    assert table_symbol_columns(None) is None

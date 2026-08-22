@@ -326,6 +326,44 @@ def is_table_symbol(sym: Any) -> bool:
         return False
 
 
+def table_symbol_columns(sym: Any) -> dict[str, str] | None:
+    """``{column: type}`` for a **closed** ``TableSymbol``, else ``None``.
+
+    This is the whole of "ask Microsoft what this operator returns": the
+    binder puts a ``TableSymbol`` on every tabular node's ``ResultType``, and
+    its ``Columns`` are the names and types the node emits, in order.
+
+    ``IsOpen`` is the reason for the guard, and it is Microsoft's own flag
+    rather than a heuristic of ours: an *open* symbol means the binder could
+    not determine the full column set, which is the state every symbol
+    downstream of an unknown table is in. An open symbol still lists
+    columns -- the ones the query happened to name, typed ``unknown`` -- so
+    reading ``Columns`` without checking would dress a partial guess up as
+    the binder's answer. It would also be actively harmful downstream:
+    ``IRBuilder().build(q)`` binds against ``GlobalState.Default``, which
+    knows no tables at all, so every operator would carry an
+    ``unknown``-typed schema that then overrode the real one a caller hands
+    to :class:`~kustology.ir.binder.SchemaAttacher` afterwards.
+
+    Returns ``None`` -- not ``{}`` -- for anything that is not a closed
+    table symbol, because an empty schema is a legitimate answer
+    (``T | project-away *``) and the caller has to be able to tell "no
+    columns" from "no answer".
+    """
+    if sym is None:
+        return None
+    columns = getattr(sym, "Columns", None)
+    if columns is None:
+        return None
+    if getattr(sym, "IsOpen", False):
+        return None
+    out: dict[str, str] = {}
+    for i in range(columns.Count):
+        column = columns[i]
+        out[str(column.Name)] = str(column.Type.Name)
+    return out
+
+
 def read_to_typeof(node: Any) -> str | None:
     """The type named by an expression's ``to typeof(T)`` clause, if any.
 

@@ -158,3 +158,32 @@ def test_schemaless_to_ir_analyzes_without_a_second_parse(parse_counter):
         "Tier 1 keeps its syntactic path"
     )
     assert ir.schema_attached is False
+
+
+def test_result_schema_survives_an_opted_out_attach_on_a_bound_parse():
+    """``attach_schema=False`` skips provenance, not Microsoft's shape.
+
+    The two used to arrive together because ``SchemaAttacher`` was the only
+    thing that filled ``result_schema``. The binder already knew it, so a
+    caller who wants the output columns and not the ``ColumnRef.table`` pass
+    no longer has to pay for both.
+    """
+    schema = {"DeviceProcessEvents": {"FileName": "string", "DeviceName": "string"}}
+    ir = parse(
+        "DeviceProcessEvents | project FileName", schema=schema,
+    ).to_ir(attach_schema=False)
+
+    assert ir.schema_attached is False
+    assert ir.main_pipeline.result_schema.columns == {"FileName": "string"}
+
+
+def test_a_schemaless_parse_still_has_no_result_schema():
+    """K27's default-globals analysis must not fabricate an output schema.
+
+    Default globals know no tables, so the symbol is *open* and Microsoft
+    declines. The columns an open symbol does list are the ones the query
+    named, typed ``unknown`` — publishing those as the result schema would
+    be a guess wearing the binder's authority.
+    """
+    ir = parse("DeviceProcessEvents | project FileName").to_ir()
+    assert ir.main_pipeline.result_schema is None

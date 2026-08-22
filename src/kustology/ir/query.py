@@ -56,8 +56,12 @@ class Diagnostic(BaseModel):
 
 
 class TabularSchema(BaseModel):
-    """Tabular result type: ``{column_name: kusto_type_string}``. Populated by
-    ``SchemaAttacher`` after walking a pipeline."""
+    """Tabular result type: ``{column_name: kusto_type_string}``, in the order
+    the engine emits them.
+
+    Carried by :class:`Operator` and :class:`Pipeline`. On a bound parse it
+    is Microsoft's binder's answer, captured at build time; otherwise
+    ``SchemaAttacher``'s, derived from its own walk."""
     model_config = {"extra": "forbid"}
     KIND: ClassVar[str] = "tabular_schema"
     kind: Literal["tabular_schema"] = "tabular_schema"
@@ -101,6 +105,24 @@ class Operator(BaseModel):
     # own parameters: a consumer that wants to see the tuning can read it,
     # and a consumer deduplicating rules does not see two rules.
     hints: dict[str, str] = {}
+    # The columns this operator *emits*, straight from Microsoft's binder
+    # (``<operator node>.ResultType``), captured at build time whenever the
+    # parse was bound and the symbol is closed -- see
+    # :func:`kustology.ir._builder_helpers.table_symbol_columns` for what
+    # "closed" buys and why an open one is dropped instead of read.
+    #
+    # ``SchemaAttacher`` prefers this over its own per-operator rule, which
+    # is the point: the rules were re-deriving an answer the binder already
+    # had, and a dozen of them disagreed with it. ``None`` means Microsoft
+    # did not answer for this operator (no schema, or a schema it could not
+    # fully determine) and the hand-rolled rule is what runs.
+    #
+    # **Volatile: excluded from ``semantic_hash``.** The field name is
+    # already in ``transforms._VOLATILE_FIELDS`` for ``Pipeline``, and that
+    # set is keyed by model field name rather than by owning class, so this
+    # declaration is covered by the same entry. It has to be: a query's
+    # digest must not depend on whether the caller supplied a schema.
+    result_schema: TabularSchema | None = None
 
 
 class FilterOp(Operator):
@@ -987,7 +1009,12 @@ class Pipeline(BaseModel):
         GraphToTableOp, GraphWhereEdgesOp, GraphWhereNodesOp,
         UnknownOp,
     ], Field(union_mode="left_to_right")]]
-    # Final scope after walking ops. Populated by SchemaAttacher.enrich().
+    # The columns this pipeline emits. Set at build time from the pipe
+    # chain's own ``ResultType`` when the parse was bound and Microsoft's
+    # symbol is closed -- so ``to_ir(attach_schema=False)`` has the shape
+    # without the provenance pass -- and by ``SchemaAttacher.enrich()``
+    # otherwise, from the scope its walk leaves. Volatile: see
+    # ``Operator.result_schema``.
     result_schema: TabularSchema | None = None
 
 

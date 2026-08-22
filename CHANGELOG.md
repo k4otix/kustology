@@ -620,6 +620,31 @@ release is in `docs/superpowers/reports/`.
   fixture corpus. A parse the caller bound with their own schema is
   unchanged and still reports `KS204` for a table that schema does not
   describe. `semantic_hash` is unmoved: `result_type` is volatile.
+- **Result schemas come from Microsoft's binder, not from our rules (tier
+  2).** `SchemaAttacher` re-derived every operator's output columns from
+  hand-written per-operator rules, and a pre-release audit found a dozen
+  places where they disagree with the engine — join-collision suffixes,
+  wildcard `project-keep`, `mv-expand`'s element type, `arg_max(t, *)`,
+  union conflicts. The binder in `Kusto.Language` had already computed all
+  of it: every tabular node carries a `TableSymbol` on `ResultType`. The
+  builder now captures it into `Operator.result_schema` (new field,
+  volatile, absent from the LLM view when unset) and `Pipeline.result_schema`
+  as the parse is walked, and the attacher prefers it, falling back to its
+  own rule only where Microsoft declined. Declining is Microsoft's own call,
+  read off `TableSymbol.IsOpen`: an *open* symbol means the binder could not
+  determine the full column set — the state everything downstream of an
+  unknown table is in — so an unbound build keeps the hand-rolled walk and a
+  schema handed to `SchemaAttacher` afterwards is not overridden by a
+  table-less reading. Column *order* now matches the engine's, which the
+  scope merge could not reproduce: `T | join U on K` reports `K, V, K1, V1`
+  rather than the two sides' columns grouped by side. `ColumnRef.table` is
+  unaffected — provenance is the one thing `ResultType` does not carry, so
+  the walk still computes it, and `join` / `lookup` / `union` still run their
+  own rule for the per-side scope that `$left` / `$right` resolve against.
+  `tests/ir/test_binder_oracle.py` compares the two answers over an operator
+  matrix and the whole fixture corpus; five cases remain, all of them
+  queries where Microsoft is open, and each is `xfail`ed with the divergence
+  named.
 
 ### Breaking (tier 2, pre-1.0)
 

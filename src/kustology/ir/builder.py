@@ -40,6 +40,7 @@ from ._builder_helpers import (
     read_named_params,
     read_row_schema,
     read_to_typeof,
+    table_symbol_columns,
     to_span,
     visit_name,
 )
@@ -137,6 +138,7 @@ from .query import (
     SortOp,
     SummarizeOp,
     TableRef,
+    TabularSchema,
     TakeOp,
     TopHittersOp,
     TopNestedOp,
@@ -719,7 +721,18 @@ class IRBuilder:
         # rows: union-at-root, mv-apply/partition/fork subqueries, join RHS).
         if isinstance(source, UnknownSource) and operators:
             source = ImplicitSource(span=to_span(node))
-        return Pipeline(source=source, operators=operators)
+        pipeline = Pipeline(source=source, operators=operators)
+        # ``node`` is the whole pipe chain, so its own ``ResultType`` is the
+        # last operator's -- or, for a source-only pipeline, the source's.
+        # One read therefore covers both, and it cannot drift from the
+        # per-operator reads above because it is literally the same symbol.
+        # ``SchemaAttacher`` recomputes the same value; the point of setting
+        # it here is that ``to_ir(attach_schema=False)`` gets the output
+        # shape without paying for the provenance pass.
+        columns = table_symbol_columns(getattr(node, "ResultType", None))
+        if columns is not None:
+            pipeline.result_schema = TabularSchema(columns=columns)
+        return pipeline
 
     def _visit_table_ref(self, node: Any) -> TableRef | LetRef:
         """A table named in a *naming* position, wherever the grammar puts one.
@@ -795,12 +808,21 @@ class IRBuilder:
         them, and a per-branch call is a list to maintain -- the shape
         AGENTS.md records as drifting every time. One call site cannot miss
         an operator, including one added later.
+
+        The same argument decides where Microsoft's post-operator schema is
+        read. ``<operator node>.ResultType`` is the columns the operator
+        emits, and every operator has one; wrapping the dispatch rather than
+        touching 53 branches means a new operator gets the binder's answer
+        for free instead of getting a hand-written rule.
         """
         op = self._dispatch_operator(node)
         if op is not None:
             hints = extract_hints(node)
             if hints:
                 op.hints = hints
+            columns = table_symbol_columns(getattr(node, "ResultType", None))
+            if columns is not None:
+                op.result_schema = TabularSchema(columns=columns)
         return op
 
     def _dispatch_operator(self, node: Any) -> Operator | None:
