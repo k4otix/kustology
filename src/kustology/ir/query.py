@@ -158,6 +158,27 @@ class LetRef(BaseModel):
 
 
 class UnknownSource(BaseModel):
+    """Source the IR builder couldn't model — captures provenance.
+
+    ``raw_text`` is the node's own source, ``ToString(IncludeTrivia.Minimal)``.
+    It used to be the constant string ``"unknown"``, which made every
+    unmodelled source hash identically no matter what the query said.
+
+    **Known boundary: an unmodelled source is formatting-sensitive in the
+    hash.** ``Minimal`` drops the node's *leading* trivia but not trivia
+    *interior* to it — no ``IncludeTrivia`` mode does, checked against all
+    four — so ``let /*c*/ x = 1;`` and ``let x = 1;`` produce different
+    ``semantic_hash`` values. Stripping comments textually is ruled out for
+    the reason ``transforms._normalize_raw_text`` records: ``//`` is the
+    middle of every URL, and a run of spaces inside a string literal is
+    data. This is accepted rather than fixed because the direction is safe:
+    it is a false *split* (a dedup consumer fails to merge two spellings of
+    one query), never a false *merge* (two different queries sharing a
+    digest), and it reaches only the sources the builder already could not
+    model. :class:`~kustology.ir.expr.UnknownExpr` and :class:`UnknownOp`
+    have carried the same property since they were written.
+    """
+
     model_config = {"extra": "forbid"}
     KIND: ClassVar[str] = "unknown_source"
     kind: Literal["unknown_source"] = "unknown_source"
@@ -219,11 +240,16 @@ class ExternalDataSource(BaseModel):
 
     Distinct from :class:`~kustology.ir.expr.ExternalDataExpr`, which is the
     same construct sitting in *expression* position (the value set of a
-    membership test). They share ``_read_external_data`` in the builder so
-    the two cannot drift.
+    membership test). They share
+    :func:`~kustology.ir._builder_helpers.read_external_data` so the two
+    cannot drift.
 
     ``uris`` is a list because the construct takes one: a feed assembled
-    from two URIs is not the feed from one of them.
+    from two URIs is not the feed from one of them. An entry is **not
+    guaranteed to be a URI**: when the element does not fold to a literal —
+    a ``let``-bound feed URL, or ``strcat("https://", env)`` — the field
+    records that element's source text instead (``"u"``, or the whole call
+    as written). Resolving those needs the query, not just this field.
     """
 
     model_config = {"extra": "forbid"}
@@ -680,10 +706,15 @@ class Pipeline(BaseModel):
     model_config = {"extra": "forbid"}
     KIND: ClassVar[str] = "pipeline"
     kind: Literal["pipeline"] = "pipeline"
-    # The ORDERING RULE below applies here too, and for the same reason:
-    # ``ImplicitSource`` is fields-less, so it sits after every source class
-    # that adds fields of its own and before ``UnknownSource``. New sources
-    # go between ``FuncCallSource`` and ``ImplicitSource``.
+    # The ORDERING RULE below applies here too. It reads oddly against this
+    # list because ``ImplicitSource`` -- the one fields-less source -- is not
+    # first: every other source class has at least one *required* field, so
+    # none of them can absorb a bare ``span``+``kind`` payload and the rule
+    # has nothing to bite on among them. What the rule protects against is a
+    # source class whose fields are all optional or defaulted; the position
+    # to keep clear is therefore *before* ``ImplicitSource``, which is where
+    # a new source goes. ``UnknownSource`` trails it as ``UnknownOp`` trails
+    # the operator list.
     source: Annotated[Union[
         TableRef, LetRef, FuncCallSource, DataTableSource, ExternalDataSource,
         ImplicitSource, UnknownSource, "Pipeline",

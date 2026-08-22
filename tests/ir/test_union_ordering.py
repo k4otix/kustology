@@ -22,6 +22,7 @@ produces a passing test suite and a wrong IR.
 from __future__ import annotations
 
 import types
+from enum import Enum
 from typing import Annotated, Literal, Union, get_args, get_origin
 
 import pytest
@@ -54,10 +55,21 @@ def _sample(annotation):
     Deliberately generic rather than a hand-written table: a table drifts
     the moment a field is added, and the point of this module is that a
     model change cannot slip past it.
+
+    Every field is filled, not just the required ones. Filling only what is
+    required leaves each defaulted field at its default, and a payload made
+    entirely of defaults is exactly the shape the ORDERING RULE warns
+    about — ``{"kind": …, "span": …, "predicate": null, "tables": []}`` is
+    what a fields-less class's payload has to be told apart from. Giving
+    every optional field a non-default value also puts it through the
+    round-trip, which is where a mis-declared ``Literal`` or a container
+    type the validator coerces would show up.
     """
     annotation = _unwrap(annotation)
     if annotation is Span:
         return _SPAN
+    if isinstance(annotation, type) and issubclass(annotation, Enum):
+        return next(iter(annotation))
     # Break the two cycles by hand. ``AnyExpr``'s first member is ``BinOp``,
     # whose operands are ``AnyExpr`` again; ``Pipeline`` nests through
     # ``JoinOp.right`` and friends.
@@ -81,7 +93,6 @@ def _sample(annotation):
         return annotation(**{
             name: _sample(f.annotation)
             for name, f in annotation.model_fields.items()
-            if f.is_required()
         })
     if annotation is bool:
         return True

@@ -254,13 +254,17 @@ class ExternalDataExpr(Expr):
     """``externaldata(...)[...]`` in expression position — a membership set.
 
     The source-position form is
-    :class:`~kustology.ir.query.ExternalDataSource`; both are filled by the
-    builder's ``_read_external_data`` so they cannot drift apart.
+    :class:`~kustology.ir.query.ExternalDataSource`; both are filled by
+    :func:`~kustology.ir._builder_helpers.read_external_data` so they cannot
+    drift apart.
 
     ``uris`` replaced a singular ``uri: str`` that held whichever URI came
     first. ``externaldata`` takes a list, and a feed stitched from two URIs
     is not the feed from either one of them — the dropped entries made two
-    different queries build the same node.
+    different queries build the same node. As on the source class, an entry
+    is **not guaranteed to be a URI**: an element that does not fold to a
+    literal (a ``let``-bound feed URL, ``strcat(...)``) is recorded as its
+    own source text.
     """
 
     KIND: ClassVar[str] = "external_data"
