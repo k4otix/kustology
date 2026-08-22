@@ -196,8 +196,20 @@ _TABULAR_LET_RHS_KINDS = frozenset({
 })
 
 
-def _is_case_sensitive_op(op: str) -> bool:
+# The arithmetic operators. Neither case sensitivity nor polarity is a
+# property of arithmetic -- both are categories of *comparison* -- so a
+# ``BinOp`` built from one of these records ``None`` for both rather than
+# whatever the comparison rules happen to return.
+_ARITHMETIC_OPS = frozenset({"+", "-", "*", "/", "%"})
+
+
+def _is_case_sensitive_op(op: str) -> bool | None:
     """Whether a KQL binary operator compares case-sensitively.
+
+    ``None`` means the question does not apply: an arithmetic operator does
+    not compare text at all, and reporting ``True`` for ``a + 1`` -- which is
+    what the comparison fall-through did -- states a fact about a query that
+    is not one.
 
     Derived from the operator's own suffix rather than an allow-list of
     members. The allow-list this replaced named six operators and let
@@ -209,14 +221,24 @@ def _is_case_sensitive_op(op: str) -> bool:
 
     KQL's rule, in the order it has to be applied:
 
+    * arithmetic -> ``None``, the question does not apply
     * ``_cs`` suffix -> sensitive (``has_cs``, ``!contains_cs``)
     * ``~`` suffix -> insensitive (``=~``, ``!~``)
+    * ``:`` -> insensitive. ``search Col:'x'`` is Microsoft's documented
+      shorthand for ``Col has 'x'``, a term match, and term matches fold
+      case. It is spelled as none of the stems below, so it fell through to
+      the comparison default and reported the two equivalent spellings as
+      comparing differently.
     * string operators -> insensitive by default, negation included
     * everything else, i.e. the comparisons -> sensitive
     """
+    if op in _ARITHMETIC_OPS:
+        return None
     if op.endswith("_cs"):
         return True
     if op.endswith("~"):
+        return False
+    if op == ":":
         return False
     return not op.lstrip("!").startswith(_CASE_INSENSITIVE_OP_STEMS)
 
@@ -1646,7 +1668,14 @@ class IRBuilder:
             else:
                 res = BinOp(
                     op=op,
-                    polarity="inclusion" if "!" not in op else "exclusion",
+                    # Arithmetic is neither an inclusion nor an exclusion.
+                    # The ``"!" in op`` rule has no arithmetic case, so it
+                    # answered "inclusion" for every ``+`` ever parsed.
+                    polarity=(
+                        None if op in _ARITHMETIC_OPS
+                        else "inclusion" if "!" not in op
+                        else "exclusion"
+                    ),
                     case_sensitive=_is_case_sensitive_op(op),
                     left=left,
                     right=right,

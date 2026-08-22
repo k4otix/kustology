@@ -46,7 +46,20 @@ release is in `docs/superpowers/reports/`.
   nodes now carry `op`.
 - **`BinOp.case_sensitive` is correct across the operator family (tier 2).**
   Eight operators were reported backwards, including every negated string
-  operator (`!has`, `!contains`, …) and `hasprefix`/`hassuffix`.
+  operator (`!has`, `!contains`, …) and `hasprefix`/`hassuffix`. `search
+  Col:'x'` is now `case_sensitive=False`: `:` is Microsoft's documented
+  shorthand for `Col has 'x'`, a term match, and term matches fold case — it
+  matched none of the operator-suffix rules and fell through to the
+  comparison default, so the two equivalent spellings reported as comparing
+  differently.
+- **Arithmetic `BinOp`s no longer claim a case sensitivity or a polarity
+  (tier 2).** Both fields are categories of *comparison*, and the rules
+  populating them have no arithmetic case — `polarity` came from whether the
+  operator text contains `!` and `case_sensitive` from the string-operator
+  check falling through to its comparison default — so every `a + 1` in
+  every query recorded `polarity="inclusion", case_sensitive=True`. `+ - * /
+  %` now record `None` for both, and `to_llm_dict` omits the fields rather
+  than emitting `null`.
 - **`literal_kind` and `LiteralExpr.value` are faithful (tier 2).**
   `literal_kind` was re-inferred from the Python type, so `real` reported as
   `int` and `datetime`/`timespan`/`guid` all as `string`. `value` rendered
@@ -516,6 +529,11 @@ release is in `docs/superpowers/reports/`.
 
 - **`SetMembership.op` and `Exists.op` are required**, and
   `ParseKvOp.columns` changes from `list[Assignment]` to `dict[str, str]`.
+- **`BinOp.polarity` is `Literal["inclusion", "exclusion"] | None`** (was
+  required non-null) and **`BinOp.case_sensitive` is `bool | None`**. `None`
+  on the arithmetic operators means the question does not apply; code
+  branching on `polarity == "exclusion"` is unaffected, code asserting
+  `polarity is not None` on every `BinOp` is not.
 - **Removed:** `MaterializeExpr` (proven unreachable — see
   `docs/superpowers/reports/2026-08-20-materialize-reachability.md`),
   `LetBinding.category`, `QueryIR.parse_warnings`, `Span.source_text` and

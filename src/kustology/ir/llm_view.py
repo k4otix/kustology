@@ -94,6 +94,7 @@ def _convert(node: Any) -> Any:
         if isinstance(node, Expr):
             out["canonical_form"] = node.canonical_form
         _drop_redundant_canonical_form(out, cls)
+        _drop_inapplicable_operator_flags(out)
         _collapse_polarity_into_op(out, cls)
         _cap_datatable_rows(out, cls)
         return out
@@ -168,6 +169,26 @@ def _cap_datatable_rows(out: dict[str, Any], cls: type) -> None:
         return
     out["rows"] = rows[:_MAX_LLM_DATATABLE_ROWS]
     out["rows_omitted"] = len(rows) - _MAX_LLM_DATATABLE_ROWS
+
+
+def _drop_inapplicable_operator_flags(out: dict[str, Any]) -> None:
+    """Remove ``polarity`` / ``case_sensitive`` when they are ``None``.
+
+    ``None`` on ``BinOp`` means "this operator is arithmetic, so the question
+    does not apply" — see :class:`~kustology.ir.expr.BinOp`. ``polarity`` is
+    a *required* field there, so the default-stripping pass above cannot drop
+    it and the dump would carry an explicit ``"polarity": null``. A null
+    field is worse than an absent one for a model reading the dump: it
+    invites the question of what a null case-sensitivity means, when the
+    answer is that the node was never asked.
+
+    Runs before :func:`_collapse_polarity_into_op`, whose ``None`` guard then
+    reads the key as absent and leaves the node alone — the right outcome,
+    since there is no polarity to fold into ``op``.
+    """
+    for field in ("polarity", "case_sensitive"):
+        if field in out and out[field] is None:
+            del out[field]
 
 
 def _collapse_polarity_into_op(out: dict[str, Any], cls: type) -> None:

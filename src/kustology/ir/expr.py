@@ -208,8 +208,18 @@ class BinOp(Expr):
     KIND: ClassVar[str] = "bin_op"
     kind: Literal["bin_op"] = "bin_op"
     op: str
-    polarity: Literal["inclusion", "exclusion"]
-    case_sensitive: bool = True
+    # ``None`` on the arithmetic operators (``+ - * / %``), where neither
+    # field applies: both are categories of *comparison*. They used to be
+    # populated for arithmetic too, from rules that have no arithmetic case
+    # -- ``polarity`` from whether the operator text contains ``!``, and
+    # ``case_sensitive`` from the string-operator suffix check falling
+    # through to its comparison default -- so every ``a + 1`` in every query
+    # recorded ``polarity="inclusion", case_sensitive=True``. Neither is
+    # merely uninteresting there; both are answers to questions the node
+    # cannot be asked, and a consumer filtering on ``case_sensitive`` (the
+    # example in ``walk``'s own docstring) had arithmetic answering it.
+    polarity: Literal["inclusion", "exclusion"] | None
+    case_sensitive: bool | None = True
     left: AnyExpr
     right: AnyExpr
 

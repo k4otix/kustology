@@ -721,6 +721,72 @@ def test_binop_case_sensitivity_follows_the_operator_suffix(
     assert m.case_sensitive is case_sensitive
 
 
+@pytest.mark.parametrize("op", ["+", "-", "*", "/", "%"])
+def test_arithmetic_binops_carry_no_case_or_polarity(ir_builder, op):
+    """``a + 1`` is not case-sensitive and it is not an inclusion -- both
+    fields are categories of *comparison*, and arithmetic is not one.
+
+    They were populated anyway, from rules with no arithmetic case in them:
+    ``polarity`` came from ``"!" in op`` and ``case_sensitive`` from the
+    string-operator suffix check, so every ``+`` in every query reported
+    ``polarity="inclusion", case_sensitive=True``. Both readings are
+    meaningless rather than merely uninteresting, and a consumer filtering
+    ``walk(ir, lambda n: n.case_sensitive)`` -- the example in ``walk``'s own
+    docstring -- had arithmetic answering it. ``None`` says "does not apply",
+    which is the only true answer.
+    """
+    from kustology.ir import BinOp, find_all
+
+    ir = ir_builder.build(f"T | extend y = a {op} 2")
+    b = next(x for x in find_all(ir, BinOp) if x.op == op)
+    assert b.case_sensitive is None
+    assert b.polarity is None
+
+
+def test_comparisons_and_string_operators_keep_their_flags(ir_builder):
+    """The other side of the boundary: only arithmetic loses the fields.
+    A comparison compares exactly and a string operator folds case, and both
+    are real answers that must survive."""
+    from kustology.ir import BinOp, find_all
+
+    eq = next(iter(find_all(ir_builder.build('T | where C == "a"'), BinOp)))
+    assert (eq.case_sensitive, eq.polarity) == (True, "inclusion")
+
+    nothas = next(iter(find_all(ir_builder.build('T | where C !has "a"'), BinOp)))
+    assert (nothas.case_sensitive, nothas.polarity) == (False, "exclusion")
+
+
+def test_the_llm_view_omits_the_inapplicable_flags(ir_builder):
+    """A ``null`` field is worse than an absent one for a model reading the
+    dump: it invites the question of what a null case-sensitivity means."""
+    from kustology.ir import BinOp, find_all, to_llm_dict
+
+    ir = ir_builder.build("T | extend y = a + 2")
+    dumped = to_llm_dict(next(iter(find_all(ir, BinOp))))
+    assert "case_sensitive" not in dumped
+    assert "polarity" not in dumped
+    assert dumped["op"] == "+"
+
+
+def test_search_colon_folds_case_like_has(ir_builder):
+    """``search Col:'x'`` is KQL's shorthand for ``Col has 'x'`` -- a
+    term match, and term matches fold case.
+
+    ``:`` matched none of ``_is_case_sensitive_op``'s rules, so it fell
+    through to the "everything else is a comparison" default and reported
+    ``case_sensitive=True``. Rules that read the flag would have called
+    ``search Col:'x'`` an exact match and ``Col has 'x'`` a folded one,
+    though Kusto runs both the same way.
+    """
+    from kustology.ir import BinOp, SearchOp, find_all
+
+    (search,) = find_all(ir_builder.build("search Col:'x'"), SearchOp)
+    assert isinstance(search.predicate, BinOp)
+    assert search.predicate.op == ":"
+    assert search.predicate.case_sensitive is False
+    assert search.predicate.polarity == "inclusion"
+
+
 def test_case_folding_variants_do_not_collide(ir_builder):
     """``has`` and ``has_cs`` are different predicates and must not share a
     hash. They did not before -- ``op`` already differed -- but the flag
