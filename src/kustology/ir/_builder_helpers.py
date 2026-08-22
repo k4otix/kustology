@@ -18,6 +18,11 @@ from .types import KustoType
 
 logger = logging.getLogger(__name__)
 
+# ``+ - * / %``. Kept here rather than in ``builder`` because the binder needs
+# the same set: an arithmetic ``BinOp`` is not a predicate, and typing one
+# ``bool`` is a wrong answer rather than an incomplete one.
+ARITHMETIC_OPS = frozenset({"+", "-", "*", "/", "%"})
+
 
 def visit_name(node: Any) -> str:
     """Extract a simple-name string from a .NET name node, recursing into wrappers."""

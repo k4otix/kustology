@@ -1396,3 +1396,64 @@ def test_schema_attached_is_true_when_the_binder_answered():
     assert ir.main_pipeline.operators[-1].result_schema is not None
     SchemaAttacher().enrich(ir)
     assert ir.schema_attached is True
+
+
+# Arithmetic is not a predicate, and serialize can add a column ---------------
+
+
+def test_arithmetic_is_not_typed_as_a_boolean():
+    """Every ``BinOp`` was typed ``bool``, arithmetic included.
+
+    ``extend n = a + 1`` recorded ``n:bool`` -- the same answer the node
+    gives for ``a > 1``, which is a predicate and this is not. ``bool`` is a
+    wrong answer where ``unknown`` is merely an incomplete one; the fallback
+    does not do numeric promotion, and saying so is the honest position.
+    """
+    cols = dict(_columns(_fallback("T | extend n = a + 1, flag = a > 1")))
+    assert cols["flag"] == "bool"
+    assert cols["n"] == "unknown"
+
+
+def test_serialize_with_an_assignment_adds_its_column():
+    """``serialize rn = row_number()`` is ``serialize`` plus an ``extend``.
+
+    ``SerializeOp.assignments`` is populated and the rule ignored it, so the
+    column existed in the engine's output and not in the scope.
+    """
+    ir = _fallback("T | serialize rn = row_number()")
+    assert _columns(ir)[-1] == ("rn", "long")
+
+
+# Union split and join right-hand side, corrected against the corpus ----------
+
+
+def test_union_does_not_split_on_a_type_it_simply_does_not_know():
+    """``unknown`` is the absence of a type, not a type that disagrees.
+
+    The fallback cannot type ``a + 1``, so one arm reports ``s:unknown`` and
+    the other ``s:string``. Treating that as a conflict produced
+    ``s_string`` and ``s_unknown`` -- two columns the engine never emits --
+    where the honest answer is one ``s`` whose type we do not know.
+    """
+    ir = _fallback("T | union (T | project s = a + 1)")
+    columns = dict(_columns(ir))
+    assert "s" in columns
+    assert columns["s"] == "unknown"
+    assert not [n for n in columns if n.startswith("s_")]
+
+
+def test_a_join_whose_right_side_is_a_union_appends_it_once():
+    """A union is one row set, and a join has one right side.
+
+    Taking ``rhs_scope[0]`` picked the empty entry a union's implicit source
+    leaves and appended nothing; keeping every entry suffixed each arm
+    separately and invented an ``a2`` for a union that emits ``a1`` once.
+    """
+    ir = _fallback(
+        "L | join (union (L | where a > 1), (R | where b > 1)) on k"
+    )
+    assert _columns(ir) == [
+        ("k", "string"), ("a", "long"), ("shared", "string"),
+        ("k1", "string"), ("a1", "long"), ("shared1", "string"),
+        ("b", "real"),
+    ]

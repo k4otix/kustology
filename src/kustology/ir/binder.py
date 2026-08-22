@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 
 from ._builder_helpers import (
+    ARITHMETIC_OPS,
     MULTI_OUTPUT_AGGREGATES,
     aggregate_function_name,
     percentile_token,
@@ -61,6 +62,7 @@ from .query import (
     QueryIR,
     RangeOp,
     SearchOp,
+    SerializeOp,
     SummarizeOp,
     TableRef,
     TabularSchema,
@@ -116,6 +118,39 @@ def _matches_any(patterns: list[str], name: str) -> bool:
         elif pattern == name:
             return True
     return False
+
+
+def _flatten_side(entries: list[ScopeEntry]) -> ScopeEntry:
+    """Collapse a join's right-hand scope into the one row set it is.
+
+    The rule used to take ``rhs_scope[:1]``, which is right only when the
+    right-hand pipeline is a bare table. A union leaves one entry per arm
+    *behind* the empty entry its implicit source produced, so
+    ``L | join (union A, B) on k`` appended nothing at all; keeping every
+    entry instead over-corrected, suffixing each arm separately and inventing
+    an ``EventID2`` for a union that emits ``EventID`` once. A union is one
+    row set and a join has one right side, so the entries are merged.
+
+    The merged entry keeps a table when every contributing entry named the
+    same one, and otherwise records provenance per column in ``origins`` --
+    so a right-hand ``R | project b`` still reports ``b`` as ``R``'s.
+    """
+    columns: dict[str, str] = {}
+    origins: dict[str, str | None] = {}
+    tables: set[str] = set()
+    for entry in entries:
+        if entry.table and entry.columns:
+            tables.add(entry.table)
+        for name, kind in entry.columns.items():
+            if name in columns:
+                continue
+            columns[name] = kind
+            origins[name] = entry.origin_of(name)
+    return ScopeEntry(
+        table=next(iter(tables)) if len(tables) == 1 else None,
+        columns=columns,
+        origins=origins,
+    )
 
 
 def _join_kind(text: str | None) -> str:
@@ -676,6 +711,13 @@ class SchemaAttacher:
         types: dict[str, list[tuple[str, str | None]]] = {}
         for entry in scope:
             for name, kt in entry.columns.items():
+                # ``unknown`` is not a type, it is the absence of one, and a
+                # side that does not know its own column's type does not
+                # disagree with the side that does. Splitting on it produced
+                # ``Fqdn_string`` and ``Fqdn_unknown`` for a column the
+                # engine emits once.
+                if kt == "unknown":
+                    continue
                 variants = types.setdefault(name, [])
                 if kt not in [t for t, _ in variants]:
                     variants.append((kt, entry.origin_of(name)))
@@ -743,7 +785,7 @@ class SchemaAttacher:
             # several entries, and resolving it positionally (``scope[-2]``)
             # named whichever table that join happened to add.
             left_side = list(scope)
-            right_side = rhs_scope[:1]
+            right_side = [_flatten_side(rhs_scope)]
             on_scope = left_side + right_side
             previous_sides = self._join_sides
             self._join_sides = (left_side, right_side)
@@ -767,7 +809,7 @@ class SchemaAttacher:
                             columns=dict(e.columns),
                             origins=dict(e.origins),
                         )
-                        for e in rhs_scope[:1]
+                        for e in right_side
                     ]
                     self._scope_determined = True
                     scope.clear()
@@ -784,7 +826,7 @@ class SchemaAttacher:
                 drop_keys = {
                     e.name for e in op.on if isinstance(e, ColumnRef)
                 }
-            for entry in rhs_scope[:1]:
+            for entry in right_side:
                 renamed: dict[str, str] = {}
                 renamed_origins: dict[str, str | None] = {}
                 for name, kt in entry.columns.items():
@@ -1046,6 +1088,17 @@ class SchemaAttacher:
             # ``count as N`` names it.
             self._set_scope(scope, {op.as_name or "Count": KustoType.LONG.value})
             return
+        if isinstance(op, SerializeOp):
+            # ``serialize`` alone preserves the schema; ``serialize rn =
+            # row_number()`` is ``serialize`` plus an ``extend``, and
+            # ``SerializeOp.assignments`` records the added columns.
+            added: dict[str, str] = {}
+            for a in op.assignments:
+                self._fill(a.expr, scope)
+                added[a.name] = self._expr_type(a.expr)
+            if added:
+                scope.append(ScopeEntry(table=None, columns=added))
+            return
         if isinstance(op, ParseKvOp):
             # ``parse-kv s as (n:long, m:string)`` states its own output
             # columns, and ``ParseKvOp.columns`` already records them -- the
@@ -1236,7 +1289,16 @@ class SchemaAttacher:
                 expr.result_type = KustoType(expr.literal_kind)
             except ValueError:
                 pass
-        elif isinstance(expr, (BinOp, SetMembership, Between, And, Or, Not)):
+        elif isinstance(expr, BinOp):
+            # Every ``BinOp`` used to be typed ``bool``, arithmetic included,
+            # so ``extend n = a + 1`` recorded ``n:bool`` -- the same answer
+            # the node gives for the predicate ``a > 1``. Arithmetic is left
+            # unresolved rather than guessed at: its type is the promotion of
+            # its operands' (``long + real`` is a real, ``datetime -
+            # datetime`` a timespan) and the fallback does not model that.
+            if expr.op not in ARITHMETIC_OPS:
+                expr.result_type = KustoType.BOOL
+        elif isinstance(expr, (SetMembership, Between, And, Or, Not)):
             expr.result_type = KustoType.BOOL
 
 

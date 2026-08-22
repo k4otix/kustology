@@ -587,6 +587,19 @@ release is in `docs/superpowers/reports/`.
   operator that opens the symbol (`evaluate`) leaves the scope stale, and
   `project` then reported `unknown` for a column whose type was sitting on
   the `ColumnRef`.
+- **Arithmetic no longer types as `bool`, and `serialize` adds its column
+  (tier 2).** Every `BinOp` was typed `bool` by the enricher, so
+  `extend n = a + 1` recorded `n:bool` — the same answer as the predicate
+  `a > 1`. Arithmetic is left unresolved instead: its type is the promotion
+  of its operands' and the fallback does not model that, so `unknown` is
+  incomplete where `bool` was wrong. Separately, `SerializeOp.assignments`
+  was populated and ignored, so `serialize rn = row_number()` lost `rn`.
+- **A join's right-hand side is the whole right pipeline (tier 2).** The rule
+  read `rhs_scope[0]`, which is the right *table* only when the right side is
+  a bare table. Where it is a union, that entry is the empty one its implicit
+  source leaves, so `SecurityEvent | join (union A, B) on Account` appended
+  no right-hand columns at all. The right scope is merged into the single row
+  set it is, keeping per-column provenance.
 - **Six public `KustoQuery` members gained docstrings (tier 1).**
   `get_operator_chain`, `get_referenced_columns`, `get_referenced_functions`,
   `get_structural_hash`, `syntax` and `text` delegated in silence, so

@@ -29,6 +29,7 @@ from ..utils.walker import iter_elements as _iter_elements
 from ..utils.walker import node_text as _node_text
 from ._builder_helpers import (
     AGGREGATE_NAME_PREFIXES,
+    ARITHMETIC_OPS,
     COLUMN_NAMED_AGGREGATES,
     MULTI_OUTPUT_AGGREGATES,
     aggregate_function_name,
@@ -224,7 +225,6 @@ _NULL_TEST_POLARITY: dict[str, Literal["inclusion", "exclusion"]] = {
 # property of arithmetic -- both are categories of *comparison* -- so a
 # ``BinOp`` built from one of these records ``None`` for both rather than
 # whatever the comparison rules happen to return.
-_ARITHMETIC_OPS = frozenset({"+", "-", "*", "/", "%"})
 
 
 def _is_case_sensitive_op(op: str) -> bool | None:
@@ -256,7 +256,7 @@ def _is_case_sensitive_op(op: str) -> bool | None:
     * string operators -> insensitive by default, negation included
     * everything else, i.e. the comparisons -> sensitive
     """
-    if op in _ARITHMETIC_OPS:
+    if op in ARITHMETIC_OPS:
         return None
     if op.endswith("_cs"):
         return True
@@ -1744,7 +1744,7 @@ class IRBuilder:
                     # The ``"!" in op`` rule has no arithmetic case, so it
                     # answered "inclusion" for every ``+`` ever parsed.
                     polarity=(
-                        None if op in _ARITHMETIC_OPS
+                        None if op in ARITHMETIC_OPS
                         else "inclusion" if "!" not in op
                         else "exclusion"
                     ),
