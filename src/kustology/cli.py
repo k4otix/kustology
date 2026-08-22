@@ -6,7 +6,7 @@
 Subcommands: version, format, validate, parse.
 
 Exit codes:
-  0 — success.
+  0 — success, including a downstream reader closing the pipe (``| head``).
   1 — input had errors (parse failure, Error-severity diagnostic).
   2 — usage error (bad flags, missing or unreadable file, malformed
       ``--schema`` JSON, missing optional extra, input exceeded the size
@@ -17,6 +17,14 @@ invocation is wrong", and it is what a CI job branches on: an unreadable
 path or an unparseable ``--schema`` says nothing about the KQL. Both
 ``format`` and ``parse`` run the validator before they emit anything, so
 neither writes output derived from a query the parser rejected.
+
+Because 2 is a claim about the *invocation*, the mapping is attached to the
+two places that read one — :func:`_read_input` and :func:`_load_schema`,
+which raise :class:`_UsageError` — and not to a blanket ``except OSError``
+in :func:`main`. A blanket one also covers every ``sys.stdout.write``, so
+``kustology parse --ast --json big.kql | head`` — a correct invocation whose
+reader simply stopped reading — reported a usage error. A broken pipe is now
+its own case and exits 0.
 """
 from __future__ import annotations
 
@@ -47,7 +55,20 @@ def _max_input_bytes() -> int:
     return max(0, n)
 
 
-class _InputTooLargeError(Exception):
+class _UsageError(Exception):
+    """A failure of the invocation rather than of the KQL — exit 2.
+
+    Raised where the invocation is actually read (a path we cannot open, a
+    ``--schema`` file that is not JSON) so that ``main`` needs no blanket
+    ``except OSError``. The blanket form is what let a ``BrokenPipeError``
+    from a ``sys.stdout.write`` be reported as a usage error.
+
+    The message is rendered verbatim after ``error: ``, so callers embed the
+    exception's own class name where it is useful (``FileNotFoundError: …``).
+    """
+
+
+class _InputTooLargeError(_UsageError):
     """Raised when stdin or a --schema/file payload exceeds the byte ceiling."""
 
 
@@ -73,7 +94,18 @@ def _read_capped(stream, limit: int, source: str) -> str:
     "overflowed." The +1 is bounded, not the entire stream.
     """
     raw = getattr(stream, "buffer", stream)
-    data: bytes = raw.read(limit + 1)
+    data = raw.read(limit + 1)
+    if isinstance(data, str):
+        # An embedder calling `main()` in-process with `sys.stdin` set to a
+        # `StringIO` lands here: no `.buffer`, and `read` hands back text.
+        # Silently measuring its length would revert the ceiling to counting
+        # characters — the exact defect this function was rewritten to fix —
+        # and `.decode` would then die with a bare `AttributeError`. Say so.
+        raise TypeError(
+            f"{source} is a decoded text stream with no .buffer, so the "
+            f"{limit}-byte input ceiling cannot be enforced over it. Pass a "
+            "binary stream, or an io.TextIOWrapper, which has one."
+        )
     if len(data) > limit:
         raise _InputTooLargeError(
             f"{source} exceeded the {limit}-byte input ceiling "
@@ -84,10 +116,16 @@ def _read_capped(stream, limit: int, source: str) -> str:
 
 def _read_input(args: argparse.Namespace) -> str:
     limit = _max_input_bytes()
-    if args.file in (None, "-"):
-        return _read_capped(sys.stdin, limit, "stdin")
-    with open(args.file, "rb") as f:
-        return _read_capped(f, limit, args.file)
+    try:
+        if args.file in (None, "-"):
+            return _read_capped(sys.stdin, limit, "stdin")
+        with open(args.file, "rb") as f:
+            return _read_capped(f, limit, args.file)
+    except OSError as e:
+        # Scoped to the read: a path that does not exist, a directory, a
+        # permission denial. `main` no longer classifies OSError at large,
+        # so writes are not swept up with reads.
+        raise _UsageError(f"{type(e).__name__}: {e}") from e
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -194,9 +232,15 @@ def _load_schema(path: str | None) -> dict | None:
     if not path:
         return None
     limit = _max_input_bytes()
-    with open(path, "rb") as f:
-        body = _read_capped(f, limit, path)
-    return _json.loads(body)
+    try:
+        with open(path, "rb") as f:
+            body = _read_capped(f, limit, path)
+    except OSError as e:
+        raise _UsageError(f"{type(e).__name__}: {e}") from e
+    try:
+        return _json.loads(body)
+    except _json.JSONDecodeError as e:
+        raise _UsageError(f"JSONDecodeError: {e}") from e
 
 
 def _cmd_validate(args: argparse.Namespace) -> int:
@@ -285,32 +329,64 @@ def _cmd_parse(args: argparse.Namespace) -> int:
     return 0
 
 
+def _silence_broken_stdout() -> None:
+    """Point stdout somewhere harmless after the downstream reader went away.
+
+    CPython flushes ``sys.stdout`` once more at interpreter shutdown, and on
+    a dead pipe that second failure prints ``Exception ignored … Broken
+    pipe`` to stderr — after ``main`` has already returned, so a caller that
+    handled the pipe still gets noise on a run it considers clean.
+    Redirecting the file *descriptor* is the stdlib's own recipe (the note on
+    SIGPIPE in the ``signal`` docs); when stdout has no descriptor to
+    redirect — a ``capsys`` buffer, a test stub — rebinding the name is the
+    closest equivalent available.
+    """
+    try:
+        fd = sys.stdout.fileno()
+    except (AttributeError, OSError, ValueError):
+        fd = None
+    if fd is None:
+        sys.stdout = open(os.devnull, "w")  # noqa: SIM115 — replaces a dead stream
+        return
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, fd)
+    finally:
+        os.close(devnull)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
     try:
         if args.command == "version":
-            return _cmd_version()
-        if args.command == "format":
-            return _cmd_format(args)
-        if args.command == "validate":
-            return _cmd_validate(args)
-        if args.command == "parse":
-            return _cmd_parse(args)
-        parser.error(f"unknown command: {args.command!r}")
-        return 2  # unreachable; parser.error raises SystemExit
+            rc = _cmd_version()
+        elif args.command == "format":
+            rc = _cmd_format(args)
+        elif args.command == "validate":
+            rc = _cmd_validate(args)
+        elif args.command == "parse":
+            rc = _cmd_parse(args)
+        else:
+            parser.error(f"unknown command: {args.command!r}")
+            rc = 2  # unreachable; parser.error raises SystemExit
+        # Flush inside the guard. A write to a pipe is buffered, so a reader
+        # that has gone away does not surface until the buffer drains — and
+        # if that only happens at interpreter shutdown it lands outside every
+        # handler below, where it becomes an unclassifiable traceback.
+        sys.stdout.flush()
+        return rc
     except SystemExit:
         raise
-    except _InputTooLargeError as e:
+    except BrokenPipeError:
+        # `kustology parse --ast --json big.kql | head` is a correct
+        # invocation whose reader stopped reading; we produced what was
+        # asked for. Not 2 — 2 means the invocation was wrong, and this one
+        # was not — and not 1 either, since the KQL was fine.
+        _silence_broken_stdout()
+        return 0
+    except _UsageError as e:
         sys.stderr.write(f"error: {e}\n")
-        return 2
-    except (OSError, _json.JSONDecodeError) as e:
-        # Both are failures of the *invocation*: a path we could not open,
-        # or a --schema file that is not JSON. Neither says anything about
-        # the KQL, so neither may borrow exit 1 from the query that was
-        # never read. FileNotFoundError used to land in the handler below
-        # and report 1.
-        sys.stderr.write(f"error: {type(e).__name__}: {e}\n")
         return 2
     except Exception as e:
         sys.stderr.write(f"error: {type(e).__name__}: {e}\n")

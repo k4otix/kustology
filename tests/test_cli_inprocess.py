@@ -155,6 +155,79 @@ def test_format_missing_file_is_a_usage_error(capsys):
     assert "Traceback" not in captured.err
 
 
+class _BrokenPipeStdout(io.StringIO):
+    """A stdout whose writes fail the way a closed downstream pipe does."""
+
+    def write(self, s):
+        raise BrokenPipeError(32, "Broken pipe")
+
+
+class _DeferredBrokenPipeStdout(io.StringIO):
+    """Writes succeed into the buffer; the pipe only breaks on flush.
+
+    This is the shape a real pipe has — `write` fills a buffer and the dead
+    reader is not discovered until the buffer drains — which is why `main`
+    flushes inside its own guard rather than leaving it to interpreter
+    shutdown.
+    """
+
+    def flush(self):
+        raise BrokenPipeError(32, "Broken pipe")
+
+
+def test_broken_pipe_is_a_success_not_a_usage_error(monkeypatch, capsys, tmp_path):
+    """`kustology parse --ast --json big.kql | head` is a *correct*
+    invocation whose reader stopped reading. `BrokenPipeError` is an
+    `OSError`, so a blanket `except OSError: return 2` in `main` swept
+    stdout writes in with the input reads and reported exit 2 — the code the
+    module docstring reserves for bad flags, a missing file and a malformed
+    `--schema`. The mapping now lives at the two read sites instead, and a
+    broken pipe is its own case returning 0.
+
+    `test_format_missing_file_is_a_usage_error` is the control: the read
+    site must still produce 2, so this is not just the mapping deleted."""
+    q = tmp_path / "q.kql"
+    q.write_text("StormEvents | take 5", encoding="utf-8")
+    monkeypatch.setattr(sys, "stdout", _BrokenPipeStdout())
+    rc = main(["parse", "--ast", "--json", str(q)])
+    err = capsys.readouterr().err
+    assert rc == 0
+    assert "BrokenPipeError" not in err
+    assert "error:" not in err
+
+
+def test_broken_pipe_discovered_on_flush_is_also_a_success(
+    monkeypatch, capsys, tmp_path
+):
+    """The deferred case: every `write` lands in the buffer and the failure
+    only appears when it drains. `main` flushes inside its try block so that
+    failure is classified here rather than escaping at interpreter shutdown
+    as an unhandleable `Exception ignored` traceback."""
+    q = tmp_path / "q.kql"
+    q.write_text("StormEvents | take 5", encoding="utf-8")
+    monkeypatch.setattr(sys, "stdout", _DeferredBrokenPipeStdout())
+    rc = main(["parse", "--ast", "--json", str(q)])
+    err = capsys.readouterr().err
+    assert rc == 0
+    assert "BrokenPipeError" not in err
+
+
+def test_text_stdin_without_a_buffer_reports_why(monkeypatch, capsys):
+    """An embedder calling `main()` with `sys.stdin` set to a `StringIO` has
+    no `.buffer` for the byte ceiling to read. Measuring the text instead
+    would silently revert the ceiling to counting characters, and the decode
+    would then die with a bare `AttributeError` naming nothing. Unreachable
+    from the shipped entry point; reachable from a library caller."""
+    monkeypatch.setattr(sys, "stdin", io.StringIO("StormEvents | take 5"))
+    rc = main(["format", "-"])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "AttributeError" not in captured.err
+    assert ".buffer" in captured.err
+    assert "stdin" in captured.err
+    assert "Traceback" not in captured.err
+
+
 def test_validate_clean_query_exits_0(monkeypatch, capsys):
     monkeypatch.setattr(sys, "stdin", _stdin("StormEvents | take 5"))
     rc = main(["validate"])

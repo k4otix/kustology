@@ -276,21 +276,31 @@ release is in `docs/superpowers/reports/`.
   and `parse` printed the AST of input carrying Error-severity diagnostics
   and exited `0`, so a script checking only the status code treated
   `T | where` as a good parse. Both file and schema failures are now `2` and
-  an Error diagnostic is `1`, in every subcommand.
+  an Error diagnostic is `1`, in every subcommand. The `2` is raised where
+  the invocation is *read* — `_read_input` and `_load_schema` — rather than
+  by a blanket `except OSError` in `main`, which would also cover every
+  `sys.stdout.write`: under one, `kustology parse --ast --json big.kql |
+  head` reported a usage error for a correct invocation whose reader simply
+  stopped reading. A broken pipe is now its own case and exits `0`, with
+  stdout redirected to `devnull` so the interpreter's shutdown flush cannot
+  print `Exception ignored … Broken pipe` after the fact.
 - **`KUSTOLOGY_MAX_INPUT_BYTES` counts bytes (tier 1).** The ceiling read
   through a decoded text stream, so `len(data)` counted *characters*: a
   20-character query occupying 28 bytes passed a 22-byte cap. The read now
   goes through `sys.stdin.buffer`, and file inputs open binary.
-- **Deeply nested input no longer raises `RecursionError` out of the library
-  (tier 1).** `KustoQuery.to_dict()`, `KustoWalker.visit` and everything
-  built on them (`collect_nodes` and every analyzer above it) recursed once
-  per AST level with no cap, and 1200 nested parentheses nest the tree past
-  2400 levels — deeper than CPython's own 1000-frame limit. The CLI carried
-  a local cap of 1000 that could never be reached for the same reason. The
-  cap is now `walker.MAX_AST_DEPTH = 300`, enforced in the walker where all
-  three paths share it: `node_to_dict` emits `{"kind", "text", "children":
-  [], "truncated": true}` at the cap and `visit` stops descending, so
-  adversarial input degrades to a marked partial answer.
+- **Deeply nested input no longer raises `RecursionError` out of the AST
+  traversal layer (tier 1).** `KustoQuery.to_dict()`, `KustoWalker.visit` and
+  the `utils/analysis.py` analyzers reached through `collect_nodes` recursed
+  once per AST level with no cap, and 1200 nested parentheses nest the tree
+  past 2400 levels — deeper than CPython's own 1000-frame limit. The CLI
+  carried a local cap of 1000 that could never be reached for the same
+  reason. The cap is now `walker.MAX_AST_DEPTH = 300`, enforced in the walker
+  where all three paths share it: `node_to_dict` emits `{"kind", "text",
+  "children": [], "truncated": true}` at the cap and `visit` stops
+  descending, so adversarial input degrades to a marked partial answer.
+  **Not covered:** `to_ir()` / `IRBuilder` walk the AST with their own
+  recursion, which is still uncapped — `parse --ir` on such input exits 1
+  with a one-line `RecursionError` message rather than a truncated IR.
 
 ### Added
 
@@ -361,12 +371,28 @@ release is in `docs/superpowers/reports/`.
   reports the diagnostics on stderr and exits `1`; `parse` does the same. The
   gate is unbound, so an unknown table is still fine.
 - `parse --ast --json` node text no longer carries the node's leading
-  trivia. The CLI had its own copy of the tree serializer that differed from
-  `walker.node_to_dict` in exactly this respect — the `where` token of
+  *whitespace*. The CLI had its own copy of the tree serializer that differed
+  from `walker.node_to_dict` in exactly this respect — the `where` token of
   `| where x == 1` serialized as `" where"` and the pipe token as `"\n|"`.
   Both emitters now render the library's dict, so the CLI's JSON is
   `KustoQuery.to_dict()` output. Kinds and tree shape are unchanged, and the
-  text form's output is byte-identical.
+  text form's output is byte-identical. Note this is `ToString().strip()`,
+  not `IncludeTrivia.Minimal`: a leading **comment** is still part of the
+  text, so the second pipe of `StormEvents\n| where … // c\n| take 5` still
+  serializes as `"// c\n|"`. Reading a node's own source without comments is
+  what `node_text` is for — see the trivia entry under **Fixed**.
+- **Input is no longer newline-translated (tier 1).** The CLI reads bytes now
+  that `KUSTOLOGY_MAX_INPUT_BYTES` counts bytes, so a CRLF file and a CRLF
+  stdin pipe both reach the parser as CRLF instead of being folded to LF by
+  Python's universal-newline layer. Byte offsets are therefore computed over
+  the input as it actually is: `validate --json` on a query whose first two
+  lines end CRLF reports `"start": 33` where the LF-authored equivalent
+  reports `32`, and `parse --ast --json` node text contains literal `\r\n`.
+  This is arguably more correct — the offsets index the bytes on disk, which
+  is what an editor integration needs — but it does change published numbers
+  for Windows-authored `.kql`, and CI runs on LF so nothing else catches it.
+  `format` output is unaffected: `format_query` normalizes CRLF to LF, and
+  CRLF and LF inputs produce byte-identical output.
 
 ### Breaking (tier 2, pre-1.0)
 
@@ -429,6 +455,13 @@ release is in `docs/superpowers/reports/`.
   all one digest. Only *consecutive* filters merge — `| where A | take 5`
   and `| take 5 | where A` still hash apart. Still `kustology-sem-v2`, which
   covers the whole unreleased window since `v0.1.0`.
+- **`KustoWalker.visit` takes a `depth` argument** (tier 1, listed here for
+  want of a tier-1 breaking section): `visit(self, node)` →
+  `visit(self, node, depth=0)`, so the base class can stop at
+  `MAX_AST_DEPTH`. `pre_visit` / `post_visit` are the documented override
+  points and are unchanged; a subclass that overrode `visit` itself gets a
+  `TypeError` the first time the base recurses into it. Nothing in this
+  repository does.
 
 ### Internal
 
