@@ -25,6 +25,7 @@ from .expr import (
     Exists,
     ExternalDataExpr,
     FuncCall,
+    LetValueRef,
     LiteralExpr,
     NamedExpr,
     Not,
@@ -119,6 +120,13 @@ def canonical(expr: Any) -> str:
         return str(expr.value)
     if isinstance(expr, ColumnRef):
         return f"{expr.table}.{expr.name}" if expr.table else expr.name
+    if isinstance(expr, LetValueRef):
+        # The name as the query wrote it. A ``let``-bound scalar reads like a
+        # column at the use site and that is the faithful rendering of the
+        # source; the two are told apart by node type, and by the ``kind``
+        # discriminator in the dump the hash actually digests -- canonical()
+        # is a display and diffing form, not the hash's key.
+        return expr.name
     if isinstance(expr, TypedNameDecl):
         # ``name:type`` — the KQL spelling. Rendering the bare name would
         # make a typed capture indistinguishable from an untyped one, which

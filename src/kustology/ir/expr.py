@@ -10,7 +10,8 @@ from .types import KustoType
 
 AnyExpr = Union[
     "BinOp", "UnaryOp", "SetMembership", "Between", "And", "Or", "Not",
-    "Exists", "RegexMatch", "CaseExpr", "ColumnRef", "TypedNameDecl",
+    "Exists", "RegexMatch", "CaseExpr", "ColumnRef", "LetValueRef",
+    "TypedNameDecl",
     "LiteralExpr",
     "FuncCall", "PathExpr", "ElementExpr", "StarExpr", "NamedExpr",
     "CompoundNamedExpr", "BracketedExpr", "ToScalarExpr",
@@ -85,6 +86,44 @@ class ColumnRef(Expr):
     # bound parse would otherwise lose the side entirely -- and the side is
     # semantic: `$left.a == $left.b` is not the join `$left.a == $right.b`.
     join_side: Literal["left", "right"] | None = None
+
+
+class LetValueRef(Expr):
+    """A reference, in expression position, to a name an earlier ``let`` bound.
+
+    ``threshold`` in ``let threshold = 5; T | where Count > threshold`` --
+    a query-local constant, not a column of ``T``. It used to lower to a
+    :class:`ColumnRef`, which made the IR state something the query does not:
+    that the filter reads two columns. ``find_all(ir, ColumnRef)`` is the
+    documented way to ask which columns a query touches, so column lineage,
+    schema-drift checks and rename impact analysis all counted the ``let``
+    name among them, and the binder spent every lookup failing to place a
+    column that does not exist.
+
+    It is the expression-position twin of
+    :class:`~kustology.ir.query.LetRef`, which already covered the *source*
+    position (``let Base = T | …; Base | count``). Both exist for the same
+    reason: a name a ``let`` bound is neither a table nor a column, and
+    saying it is either one is a wrong answer rather than a missing one.
+
+    Deliberately **not** a ``ColumnRef`` subclass. The binder places columns
+    by ``isinstance``, so a subclass would inherit exactly the resolution
+    this node exists to stop. Nothing types it but ``map_semantic_info``,
+    which copies the .NET ``ResultType`` the parser already computed.
+
+    It also restores an equivalence the hash is documented to have. A
+    ``let`` name is a local label, so ``compute_semantic_hash`` renames every
+    binding to its declaration index -- but the rename can only touch nodes
+    that *are* ``let`` names, and a ``ColumnRef`` is not one (a real column
+    called ``n`` is a different query). The declaration was canonicalized
+    while the use site kept the name the query wrote, so
+    ``let n = 5; T | where a > n`` and ``let m = 5; T | where a > m`` hashed
+    apart. Adding this class to ``transforms._LET_NAME_MODELS`` closes that.
+    """
+
+    KIND: ClassVar[str] = "let_value_ref"
+    kind: Literal["let_value_ref"] = "let_value_ref"
+    name: str
 
 
 class TypedNameDecl(Expr):
@@ -312,7 +351,8 @@ class UnknownExpr(Expr):
 
 
 for _cls in (
-    LiteralExpr, ColumnRef, TypedNameDecl, BinOp, SetMembership, Between, And, Or, Not,
+    LiteralExpr, ColumnRef, LetValueRef, TypedNameDecl, BinOp, SetMembership,
+    Between, And, Or, Not,
     FuncCall, CaseExpr, RegexMatch, Exists, PathExpr, ElementExpr, StarExpr,
     NamedExpr, CompoundNamedExpr, UnaryOp, BracketedExpr,
     ToScalarExpr, SubqueryExpr, ExternalDataExpr,

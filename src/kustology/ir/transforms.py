@@ -27,7 +27,7 @@ from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 
 from ._normalize import normalize_in_place
-from .expr import And, Expr, Or, SetMembership
+from .expr import And, Expr, LetValueRef, Or, SetMembership
 from .query import FilterOp, LetBinding, LetRef, Pipeline, QueryIR
 from .spans import Span
 from .types import KustoType
@@ -289,12 +289,17 @@ def _clear_volatile(root: BaseModel) -> None:
             object.__setattr__(node, "raw_text", _normalize_raw_text(node.raw_text))
 
 
-# Every model carrying a ``let``-bound name in a ``name`` field. Append to
-# this tuple when a new one lands -- Task 4.6's ``LetValueRef``, the node a
-# scalar ``let`` reference will build instead of today's ``ColumnRef``, is the
-# next one. Nothing else needs to change: ``_canonicalize_let_names`` walks by
-# isinstance against the whole tuple.
-_LET_NAME_MODELS: tuple[type[BaseModel], ...] = (LetBinding, LetRef)
+# Every model carrying a ``let``-bound name in a ``name`` field: the
+# declaration, the source-position reference and the expression-position
+# reference. Append to this tuple when a new one lands -- nothing else needs
+# to change, since ``_canonicalize_let_names`` walks by isinstance against the
+# whole tuple.
+#
+# ``LetValueRef`` is the reason the tuple was written to be extended.
+# ``ColumnRef`` deliberately is not a member and must not become one: a real
+# column named ``n`` is a different query from a ``let``-bound ``n``, so
+# renaming one would collapse the two.
+_LET_NAME_MODELS: tuple[type[BaseModel], ...] = (LetBinding, LetRef, LetValueRef)
 
 
 def _canonicalize_let_names(ir: QueryIR) -> None:

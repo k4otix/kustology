@@ -51,6 +51,7 @@ from .expr import (
     Exists,
     ExternalDataExpr,
     FuncCall,
+    LetValueRef,
     LiteralExpr,
     NamedExpr,
     Not,
@@ -1461,7 +1462,16 @@ class IRBuilder:
 
         elif kind == "NameReference":
             name = visit_name(node.Name)
-            res = ColumnRef(name=name, span=span)
+            # A name an *earlier* ``let`` bound is a query-local value, not a
+            # column of whatever the pipeline reads -- the expression-position
+            # twin of the ``LetRef`` check in ``_visit_source``, and decided
+            # from the statement text alone so it does not depend on whether a
+            # schema was supplied. Lowering it to a ``ColumnRef`` made
+            # ``find_all(ir, ColumnRef)`` report a column that does not exist.
+            if name in self._let_names:
+                res = LetValueRef(name=name, span=span)
+            else:
+                res = ColumnRef(name=name, span=span)
 
         elif kind == "NameDeclaration":
             res = ColumnRef(name=visit_name(node), span=span)

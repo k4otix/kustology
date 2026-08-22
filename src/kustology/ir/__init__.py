@@ -28,7 +28,7 @@ from .spans import Span
 from .expr import (
     And, AnyExpr, Between, BinOp, BracketedExpr, CaseExpr, ColumnRef,
     CompoundNamedExpr, ElementExpr, Exists, Expr, ExternalDataExpr, FuncCall,
-    LiteralExpr, NamedExpr, Not, Or, PathExpr, RegexMatch,
+    LetValueRef, LiteralExpr, NamedExpr, Not, Or, PathExpr, RegexMatch,
     SetMembership, StarExpr, SubqueryExpr, ToScalarExpr, TypedNameDecl,
     UnaryOp, UnknownExpr,
 )
@@ -82,7 +82,7 @@ __all__ = [
     "And", "Or", "Not", "Exists", "RegexMatch", "CaseExpr", "UnknownExpr",
     "LiteralExpr", "FuncCall", "PathExpr", "ElementExpr", "StarExpr",
     "NamedExpr", "UnaryOp", "BracketedExpr", "CompoundNamedExpr",
-    "TypedNameDecl",
+    "TypedNameDecl", "LetValueRef",
     "ToScalarExpr", "SubqueryExpr", "ExternalDataExpr",
     # Operators
     "Operator", "FilterOp", "ExtendOp", "SummarizeOp", "ProjectOp",

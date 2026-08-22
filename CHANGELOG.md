@@ -596,6 +596,29 @@ release is in `docs/superpowers/reports/`.
   stored dump written against the old shape fails validation under
   `extra="forbid"` instead of quietly reproducing the empty branches it
   recorded.
+- **A `let`-bound scalar used in an expression is a `LetValueRef`, not a
+  `ColumnRef`.** `threshold` in
+  `let threshold = 5; T | where Count > threshold` lowered to a `ColumnRef`,
+  so the IR claimed the filter reads two columns of `T` where it reads one
+  and compares it against a query-local constant.
+  `find_all(ir, ColumnRef)` — the documented way to ask which columns a
+  query touches — counted `let` names among them, so column lineage,
+  schema-drift checks and rename-impact analysis all answered wrongly, and
+  the binder spent every lookup failing to place a column that does not
+  exist. The new node is the expression-position twin of `LetRef`, which
+  already covered the source position, and is deliberately **not** a
+  `ColumnRef` subclass: the binder places columns by `isinstance`, so a
+  subclass would inherit exactly the resolution the node exists to stop.
+  Nothing types it but the parser's own `ResultType`. It also restores an
+  equivalence `semantic_hash` is documented to have: `let` names are
+  replaced by their declaration index on the hash's copy, and that rename
+  could not touch a `ColumnRef` (a real column called `n` *is* a different
+  query), so the declaration was canonicalized while the use site kept the
+  name the query wrote and `let n = 5; T | where a > n` hashed apart from
+  `let m = 5; T | where a > m`. Those two now collide; a `let`-bound `n` and
+  a column `n` still do not. Classification is bind-independent — the name
+  is bound by a `let` in the same query text — and only bindings declared
+  *earlier* count, the same rule `LetRef` follows.
 - **`QueryIR` gains `additional_pipelines`**, a `list[Pipeline]` holding the
   second and later tabular statements of a multi-statement query in source
   order. The builder read `expr_stmts[0]` and stopped, so everything past the

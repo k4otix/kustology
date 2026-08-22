@@ -21,6 +21,7 @@ from .expr import (  # noqa: F401 — names referenced via forward refs
     Expr,
     ExternalDataExpr,
     FuncCall,
+    LetValueRef,
     LiteralExpr,
     NamedExpr,
     Not,

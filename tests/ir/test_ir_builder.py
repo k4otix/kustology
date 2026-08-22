@@ -1264,17 +1264,17 @@ def test_a_shadowed_let_name_still_canonicalizes_by_declaration_index(ir_builder
     assert distinct.semantic_hash == shadowed.semantic_hash
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Task 4.6 introduces LetValueRef; until then a scalar let reference "
-           "is lowered as a ColumnRef, which _canonicalize_let_names does not "
-           "rename because a real column of that name would be a different query",
-)
 def test_renaming_a_scalar_let_binding_does_not_change_the_hash(ir_builder):
-    """The remaining gap. ``n`` in ``where a > n`` builds a ``ColumnRef``, so
-    the binding's name is canonicalized at the declaration and left alone at
-    the use site, and the two queries still hash apart. Task 4.6 gives the
-    scalar reference its own node; delete this marker there."""
+    """The gap this used to record, now closed.
+
+    ``n`` in ``where a > n`` built a ``ColumnRef``, so the binding's name was
+    canonicalized at the declaration and left alone at the use site --
+    ``_canonicalize_let_names`` cannot rename a ``ColumnRef``, since a real
+    column of that name is a different query -- and the two spellings hashed
+    apart. The use site now builds a ``LetValueRef``, which is renamed with
+    the declaration. See ``test_let_value_ref.py`` for the node itself and
+    for the near-miss that must still hash apart.
+    """
     a = ir_builder.build("let n = 5; T | where a > n")
     b = ir_builder.build("let m = 5; T | where a > m")
 
