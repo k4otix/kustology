@@ -318,10 +318,17 @@ release is in `docs/superpowers/reports/`.
   a hyphenated or spaced table name is legal in Kusto and illegal as a bare
   identifier, so `replace_table("A", "my-new-table")` emitted
   `my-new-table | count`, which parses as arithmetic and reads no table at
-  all; a `new_name` that is not `[A-Za-z_][A-Za-z0-9_]*` is now emitted in
-  KQL's bracketed form, `['my-new-table']`, with `\` and `'` escaped so the
-  inner string literal cannot end early. An identifier is still emitted
-  verbatim.
+  all. `new_name` now goes through Microsoft's own
+  `KustoFacts.BracketNameIfNecessary`, so it is emitted bare when it is
+  usable bare and as `['my-new-table']` — or `["o'brien"]`, the form that
+  needs no escape — when it is not. **KQL keywords are the case a regex gets
+  wrong:** `project` matches `[A-Za-z_][A-Za-z0-9_]*` and is still not usable
+  bare, and `project | count` validates with *zero* diagnostics while reading
+  no table at all, which is the same silent failure reached through an input
+  that looks like an identifier. `where`, `union` and `datatable` behave the
+  same way; all four are now quoted, and a name containing a newline is
+  emitted correctly rather than as a broken literal. An ordinary identifier
+  rename is byte-for-byte what it always was.
 - **`find_time_expressions` reports a nested temporal call once (tier 1).**
   `startofday(now())` came back as two overlapping entries — the outer call
   and its own argument — so a caller counting time expressions or slicing
@@ -335,10 +342,15 @@ release is in `docs/superpowers/reports/`.
   `parse(q, schema={"T": {"x": "typo"}})` blamed a library module the caller
   does not own, `-W error::RuntimeWarning` pointed at the wrong file, and the
   default once-per-location filter folded every caller's typo into a single
-  report. It is `stacklevel=5` now — the depth of `parse` / `validate` above
-  the resolver — measured through both entry points. Calling
-  `build_global_state` directly still overshoots by one frame; that is
-  documented on the resolver.
+  report. The depth is now *computed* — the resolver walks out to the first
+  frame whose file is outside the package and warns there — rather than
+  written down. A constant cannot be right: `parse` and `validate` sit one
+  frame deeper than a direct `build_global_state` call, and PEP 709 inlined
+  comprehensions in **3.12**, so on the 3.10 and 3.11 legs of the support
+  matrix the two comprehensions in `schema_state.py` each push a frame and
+  any hardcoded number lands back inside that same file. All three entry
+  points are now attributed to their caller on every supported version,
+  including the direct `build_global_state` call that previously overshot.
 - **`kustology.PackageNotFoundError` is gone from the package namespace
   (tier 1).** `from importlib.metadata import PackageNotFoundError` bound the
   name into `kustology`, where it appeared in `dir()` and in generated
@@ -426,7 +438,6 @@ release is in `docs/superpowers/reports/`.
   `find_table_references()`. The docstring also states the other half of the
   scope, which was never written down: this is the *main* pipeline only, and
   `get_operator_stats()` is the whole-AST count.
-
 - `get_time_range()` is renamed `find_time_expressions()` on both the module
   and `KustoQuery`; the old name remains as a deprecated alias. It returns
   every time-related expression, not a resolved range, and the old name led a

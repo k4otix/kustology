@@ -42,10 +42,19 @@ def test_every_public_kustoquery_member_is_documented():
     """
     from kustology import KustoQuery
 
-    undocumented = sorted(
-        name
+    members = [
+        (name, attr)
         for name, attr in vars(KustoQuery).items()
-        if not name.startswith("_") and not (attr.__doc__ or "").strip()
+        # Methods and properties only. A plain class attribute has no
+        # docstring of its own, so `attr.__doc__` would read its *type's* —
+        # `int.__doc__` is a paragraph — and the check would silently pass
+        # for something genuinely undocumented.
+        if not name.startswith("_") and (callable(attr) or isinstance(attr, property))
+    ]
+    assert len(members) >= 15, "the walk found almost nothing; the filter is wrong"
+
+    undocumented = sorted(
+        name for name, attr in members if not (attr.__doc__ or "").strip()
     )
     assert undocumented == []
 

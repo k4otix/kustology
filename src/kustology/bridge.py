@@ -142,7 +142,7 @@ def _initialize_bridge() -> None:
 
 _initialize_bridge()
 
-from Kusto.Language import GlobalState, KustoCode
+from Kusto.Language import GlobalState, KustoCode, KustoFacts
 from Kusto.Language.Editor import FormattingOptions, KustoCodeService
 from Kusto.Language.Symbols import (
     ColumnSymbol,
@@ -160,6 +160,7 @@ __all__ = [
     "GlobalState",
     "KustoCode",
     "KustoCodeService",
+    "KustoFacts",
     "ScalarTypes",
     "TableSymbol",
 ]

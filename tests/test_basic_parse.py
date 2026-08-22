@@ -89,6 +89,8 @@ def test_diagnostics_does_not_reparse(monkeypatch):
     the text a second time, and on a bound query would silently throw the
     binder's work away — the same seam ``tests/test_to_ir_seam.py`` guards
     for ``to_ir()``."""
+    from kustology import bridge as bridge_module
+    from kustology import core as core_module
     from kustology import services as services_module
 
     query = parse("Unknown | count", schema={"Known": {"x": "string"}})
@@ -109,7 +111,14 @@ def test_diagnostics_does_not_reparse(monkeypatch):
             calls.append(("ParseAndAnalyze", text))
             raise AssertionError("diagnostics re-parsed the query text")
 
+    # Patch every name a re-parse could reach the parser through, not just
+    # `services`: `bridge` is where `KustoCode` comes from and `core` binds
+    # its own reference to it at import, so an implementation calling
+    # `KustoCode.Parse(self.text)` directly would otherwise slip past this
+    # guard with the test still green.
     monkeypatch.setattr(services_module, "KustoCode", _NoParse)
+    monkeypatch.setattr(bridge_module, "KustoCode", _NoParse)
+    monkeypatch.setattr(core_module, "KustoCode", _NoParse)
     diagnostics = query.diagnostics
 
     assert calls == []
@@ -160,9 +169,7 @@ def test_unknown_scalar_type_warning_is_attributed_to_the_caller():
     ``kustology/utils/schema_state.py`` — so the warning's location was a
     library file the caller does not own, `-W error::RuntimeWarning` blamed
     the wrong module, and the default "once per location" filter deduplicated
-    every caller's typo down to a single report. Five frames up from
-    ``_resolve_scalar_type`` is ``_build_table_symbol`` →
-    ``build_global_state`` → ``parse`` → here.
+    every caller's typo down to a single report.
     """
     with pytest.warns(RuntimeWarning) as record:
         parse("T | count", schema={"T": {"x": "not_a_real_type"}})
@@ -172,10 +179,60 @@ def test_unknown_scalar_type_warning_is_attributed_to_the_caller():
 
 
 def test_unknown_scalar_type_warning_is_attributed_to_the_caller_of_validate():
-    """``validate`` reaches the same helper through the same number of frames,
-    so the one ``stacklevel`` serves both entry points."""
+    """``validate`` reaches the helper through a different call chain, and the
+    computed attribution serves both without either being counted by hand."""
     with pytest.warns(RuntimeWarning) as record:
         validate("T | count", schema={"T": {"x": "not_a_real_type"}})
+
+    assert record[0].filename == __file__
+
+
+def test_unknown_scalar_type_warning_is_attributed_to_the_caller_of_build_global_state():
+    """``build_global_state`` is public and one frame shallower than ``parse``.
+
+    A single hardcoded ``stacklevel`` cannot be right for both, and the one
+    tuned for ``parse`` overshot here — the warning was attributed a frame
+    *past* the caller, which for a module-level call is the interpreter
+    (``sys:1``). Computing the depth fixes both at once.
+    """
+    from kustology.utils.schema_state import build_global_state
+
+    with pytest.warns(RuntimeWarning) as record:
+        build_global_state({"T": {"x": "not_a_real_type"}})
+
+    assert record[0].filename == __file__
+
+
+def test_unknown_scalar_type_warning_survives_extra_library_frames():
+    """The depth must not depend on how many frames the library happens to use.
+
+    PEP 709 inlined list/dict/set comprehensions in **3.12**; on 3.10 and 3.11
+    — both inside this project's ``requires-python`` — the two comprehensions
+    in the ``build_global_state`` → ``_build_table_symbol`` chain each push a
+    frame, so the caller sits seven frames up rather than five and any
+    hardcoded number is attributed back into ``schema_state.py`` on two of the
+    CI legs.
+
+    A **generator expression** pushes a frame on every version, so evaluating
+    the call through one whose code object is compiled with a filename inside
+    the package reproduces that deeper stack here, on 3.12. Two extra
+    in-package frames sit between this test and the resolver; the attribution
+    must be unchanged.
+    """
+    import os
+
+    from kustology.utils import schema_state
+    from kustology.utils.schema_state import build_global_state
+
+    in_package = os.path.join(os.path.dirname(schema_state.__file__), "_deeper.py")
+    deeper = compile(
+        "out = list(build(s) for s in schemas)", in_package, "exec"
+    )
+    with pytest.warns(RuntimeWarning) as record:
+        exec(  # noqa: S102 — the code object is compiled here, from a literal
+            deeper,
+            {"build": build_global_state, "schemas": [{"T": {"x": "not_a_real_type"}}]},
+        )
 
     assert record[0].filename == __file__
 

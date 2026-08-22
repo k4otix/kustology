@@ -2,10 +2,9 @@
 # Copyright 2026 Eddie Allan
 
 import hashlib
-import re
 import warnings
 
-from ..bridge import ColumnSymbol, FunctionSymbol, TableSymbol
+from ..bridge import ColumnSymbol, FunctionSymbol, KustoFacts, TableSymbol
 from ..reflection import syntax_kinds as _syntax_kinds
 from .schema_state import build_global_state  # re-exported
 from .walker import (  # re-exported
@@ -795,23 +794,24 @@ def get_time_range(kusto_code) -> list[tuple[str, int, int]]:
     return find_time_expressions(kusto_code)
 
 
-# A name that can be written bare in KQL. Anything else — a hyphen, a space,
-# a leading digit — has to go through the bracketed-name form.
-_BARE_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-
-
 def _quote_table_name(new_name: str) -> str:
     """Return ``new_name`` in a form that parses as one table name.
 
-    A bare identifier is emitted as-is. Anything else takes KQL's bracketed
-    form, ``['name']``, whose inner half is an ordinary string literal — so a
-    backslash and a single quote are escaped, or the literal would end early
-    and the rest of the name would be loose syntax.
+    Microsoft's own ``KustoFacts.BracketNameIfNecessary`` decides, because
+    "needs quoting" is a property of the grammar and not of a regex we can
+    keep in step with it. A hand-rolled
+    ``re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*")`` test looks right and passes
+    every KQL **keyword** through bare, which is the same silent failure the
+    quoting exists to prevent: ``replace_table("A", "project")`` emitted
+    ``project | count``, a query that validates with **zero** diagnostics and
+    reads no table at all. It also got the escaping wrong — a name containing
+    a newline produced a broken literal.
+
+    The helper returns the name unchanged when it is usable bare (``Z_9``),
+    ``['name']`` when it is not, and switches to the double-quoted form
+    (``["o'brien"]``) when the name contains an apostrophe.
     """
-    if _BARE_IDENTIFIER.fullmatch(new_name):
-        return new_name
-    escaped = new_name.replace("\\", "\\\\").replace("'", "\\'")
-    return f"['{escaped}']"
+    return str(KustoFacts.BracketNameIfNecessary(new_name))
 
 
 def replace_table(kusto_code, old_name: str, new_name: str, force_syntactic: bool = False) -> str:

@@ -125,16 +125,21 @@ def test_replace_brackets_a_new_name_that_is_not_an_identifier():
     assert parse(out).get_referenced_tables() == {"my-new-table"}
 
 
-def test_replace_brackets_every_occurrence_and_escapes_the_quote():
+def test_replace_brackets_every_occurrence_and_switches_quote_style():
     """Back-to-front rewriting keeps the later spans valid even though the
-    bracketed form is longer than the name it replaces. A `'` in the name
-    would close the string literal early, so it is escaped."""
+    bracketed form is longer than the name it replaces.
+
+    A `'` inside the name would close a single-quoted literal early, and
+    `KustoFacts.BracketNameIfNecessary` answers that by switching the whole
+    literal to double quotes rather than by escaping — pinned here because it
+    is the one place the emitted text is not the obvious `['...']`.
+    """
     out = parse("A | join (A) on x").replace_table("A", "space name")
     assert out == "['space name'] | join (['space name']) on x"
     assert parse(out).get_referenced_tables() == {"space name"}
 
     quoted = parse("A | count").replace_table("A", "o'brien")
-    assert quoted == "['o\\'brien'] | count"
+    assert quoted == '["o\'brien"] | count'
     assert parse(quoted).get_referenced_tables() == {"o'brien"}
 
 
@@ -158,3 +163,52 @@ def test_replace_leaves_an_identifier_new_name_unquoted():
     """The control: a plain identifier must not grow brackets, or every
     ordinary rename would start emitting noise."""
     assert parse("A | count").replace_table("A", "Z_9") == "Z_9 | count"
+
+
+@pytest.mark.parametrize(
+    "new_name",
+    [
+        # A KQL keyword matches `[A-Za-z_][A-Za-z0-9_]*` and is still not
+        # usable bare. `project` is the dangerous one: `project | count`
+        # validates with zero diagnostics and reads no table at all -- the
+        # exact silent failure the quoting exists to prevent, reached through
+        # an input the identifier regex waves through.
+        "project",
+        "where",
+        "union",
+        "datatable",
+        # Not keywords: the shapes the regex does catch, kept in the same
+        # matrix so one assertion covers both classes.
+        "my-new-table",
+        "space name",
+        "o'brien",
+        'quote"inside',
+        "line\nbreak",
+        "back\\slash",
+        "9leading",
+        # And the control that must stay bare.
+        "Z_9",
+    ],
+)
+def test_replace_emits_a_name_that_parses_and_resolves(new_name):
+    """Two assertions per name, because "it parses" is not sufficient.
+
+    `project | count` has no diagnostics and no tables, so a test that only
+    checked the parse would have called the keyword case fixed. The second
+    assertion -- the rewritten query still reads the table the caller named --
+    is what actually pins it.
+    """
+    out = parse("A | count").replace_table("A", new_name)
+    reparsed = parse(out)
+    assert reparsed.diagnostics == [], out
+    assert reparsed.get_referenced_tables() == {new_name}, out
+
+
+def test_replace_leaves_a_bare_identifier_bare_across_the_matrix():
+    """The other half of the matrix: quoting must be *necessary*, not blanket.
+
+    A rename to an ordinary identifier is the overwhelmingly common call and
+    its output must be byte-identical to what it always was.
+    """
+    for name in ("Z_9", "T", "_private", "SecurityEvent"):
+        assert parse("A | count").replace_table("A", name) == f"{name} | count"

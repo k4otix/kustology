@@ -99,8 +99,9 @@ def analyze(query_text: str) -> None:
     chain = result.get_operator_chain()
     flow = [str(node.Kind).replace("Operator", "") for node in chain]
     sources = sorted(result.get_referenced_tables())
-    print(f"  {len(chain)} operators, reading {', '.join(sources)}:")
-    print("  " + " -> ".join(flow))
+    reading = f", reading {', '.join(sources)}" if sources else ""
+    print(f"  {len(chain)} operators{reading}:")
+    print("  " + (" -> ".join(flow) if flow else "(none)"))
 
     banner("get_operator_stats()")
     stats = result.get_operator_stats()

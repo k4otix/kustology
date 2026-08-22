@@ -13,6 +13,8 @@ tree.
 
 from __future__ import annotations
 
+import os
+import sys
 import warnings
 
 from ..bridge import (
@@ -23,30 +25,63 @@ from ..bridge import (
     TableSymbol,
 )
 
+# The `kustology` package directory. Every frame at or below it belongs to this
+# library; the first frame above it is the caller a warning should name.
+_PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + os.sep
+
+
+def _caller_stacklevel() -> int:
+    """Return the ``warnings.warn`` stacklevel of the first frame outside this
+    package, counted from the caller of *this* function.
+
+    A hardcoded number cannot be right here. The depth from
+    :func:`_resolve_scalar_type` out to user code depends on which entry point
+    was used — ``parse`` and ``validate`` are one frame deeper than a direct
+    :func:`build_global_state` call — and, worse, on the Python version:
+    PEP 709 inlined comprehensions in **3.12**, and this project supports
+    3.10 and 3.11, where the two comprehensions in this module each push a
+    frame of their own. A constant tuned on 3.12 is attributed back into this
+    very file on those interpreters, which is the bug the level exists to
+    avoid. Walking out to the package boundary is correct on every version by
+    construction, and needs no maintenance when the call chain changes.
+
+    ``stacklevel=1`` means the frame that calls ``warn``; that frame is this
+    function's caller, so the walk starts there at 1 and counts outward.
+    ``skip_file_prefixes=`` does the same job in one argument and is 3.12-only.
+    """
+    frame = sys._getframe(1)
+    level = 1
+    while frame is not None:
+        if not frame.f_code.co_filename.startswith(_PACKAGE_ROOT):
+            return level
+        parent = frame.f_back
+        if parent is None:
+            # Nothing outside the package on this stack (an internal call at
+            # import time). Naming the outermost frame we have beats pointing
+            # past the top of the stack, which renders as "sys:1".
+            return level
+        frame = parent
+        level += 1
+    return level  # pragma: no cover — unreachable: the loop returns first
+
 
 def _resolve_scalar_type(type_name: str):
     """Resolve a KQL type name to a ScalarSymbol via Microsoft's lookup.
 
     A miss is the caller's typo in their own schema dict, so the warning is
-    reported against the caller's line, five frames up: this function ←
-    :func:`_build_table_symbol` ← :func:`build_global_state` ←
-    ``services.parse`` / ``services.validate`` ← the caller. (The two
-    comprehensions in that chain add no frame — PEP 709 inlines them.)
-    Attributed at the library's own file instead, the warning names a module
-    the caller does not own and the default "once per location" filter folds
+    reported against the caller's own line rather than against this file —
+    see :func:`_caller_stacklevel` for why that depth is computed and not
+    written down. Attributed at the library's own file instead, the warning
+    names a module the caller does not own, ``-W error::RuntimeWarning``
+    blames the wrong place, and the default "once per location" filter folds
     every caller's typo into a single report.
-
-    The tuned depth is for the documented entry points. Calling
-    :func:`build_global_state` directly overshoots by one, which costs a
-    warning pointed one frame too far out — the trade the two supported
-    paths are worth.
     """
     sym = ScalarTypes.GetSymbol(type_name)
     if sym is None:
         warnings.warn(
             f"Unknown KQL scalar type {type_name!r}; falling back to 'string'.",
             RuntimeWarning,
-            stacklevel=5,
+            stacklevel=_caller_stacklevel(),
         )
         return ScalarTypes.String
     return sym
