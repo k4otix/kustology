@@ -527,6 +527,52 @@ class SchemaAttacher:
                 origins=anon_origins if table is None else {},
             ))
 
+    def _split_union_type_conflicts(self, scope: list[ScopeEntry]) -> None:
+        """Rename a column the union's sides type differently.
+
+        KQL does not pick a winner when two unioned tables disagree about a
+        column's type: it emits one column per type, named ``Name_type``, and
+        no unsuffixed ``Name`` at all. ``T`` typing ``a`` ``long`` and ``U``
+        typing it ``string`` gives ``a_long`` and ``a_string``. The rule here
+        used to merge the entries and let the later side's type win, which
+        both invented a column (``a:string``) and lost one (``a:long``).
+
+        All of a name's variants are filed under the *first* entry that had
+        it, so the merged column order puts them adjacent where the name
+        used to be -- which is where Microsoft puts them. Provenance is kept
+        per variant through ``origins``, since ``a_long`` is ``T``'s column
+        and ``a_string`` is ``U``'s.
+        """
+        types: dict[str, list[tuple[str, str | None]]] = {}
+        for entry in scope:
+            for name, kt in entry.columns.items():
+                variants = types.setdefault(name, [])
+                if kt not in [t for t, _ in variants]:
+                    variants.append((kt, entry.origin_of(name)))
+        conflicting = {n for n, v in types.items() if len(v) > 1}
+        if not conflicting:
+            return
+        placed: set[str] = set()
+        rebuilt: list[ScopeEntry] = []
+        for entry in scope:
+            columns: dict[str, str] = {}
+            origins: dict[str, str | None] = {}
+            for name, kt in entry.columns.items():
+                if name not in conflicting:
+                    columns[name] = kt
+                    origins[name] = entry.origin_of(name)
+                    continue
+                if name in placed:
+                    continue
+                placed.add(name)
+                for variant_type, variant_table in types[name]:
+                    columns[f"{name}_{variant_type}"] = variant_type
+                    origins[f"{name}_{variant_type}"] = variant_table
+            rebuilt.append(ScopeEntry(
+                table=entry.table, columns=columns, origins=origins,
+            ))
+        scope[:] = rebuilt
+
     def _walk_operator(self, op: Operator, scope: list[ScopeEntry]) -> None:
         if op.result_schema is not None:
             # Microsoft already computed this operator's output. Its answer
@@ -638,6 +684,15 @@ class SchemaAttacher:
                 for entry in sub_scope:
                     if entry not in scope:
                         scope.append(entry)
+            self._split_union_type_conflicts(scope)
+            if op.withsource:
+                # ``withsource=src`` prepends the originating table's name as
+                # a leading string column.
+                scope.insert(0, ScopeEntry(
+                    table=None,
+                    columns={op.withsource: KustoType.STRING.value},
+                    origins={op.withsource: None},
+                ))
             return
         if isinstance(op, ExtendOp):
             new_cols: dict[str, str] = {}

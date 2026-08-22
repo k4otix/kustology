@@ -538,6 +538,14 @@ release is in `docs/superpowers/reports/`.
   on a fresh IR the field is the builder's and is used, and once an `enrich`
   has run the shape is re-derived from the source. Introduced in this
   release's per-operator binder work, so no released version is affected.
+- **`union` splits a column its sides type differently, and honours
+  `withsource` (tier 2).** KQL emits one column per type — `a_long` and
+  `a_string`, with no unsuffixed `a` — where two unioned tables disagree.
+  The fallback rule merged the scopes and let the later side's type win, so
+  the output both invented a column (`a:string`) and lost one (`a:long`).
+  The variants now sit adjacent where the name used to be, each keeping the
+  side it came from as provenance. `withsource=src` prepends its leading
+  `string` column, which the rule ignored entirely.
 - **Six public `KustoQuery` members gained docstrings (tier 1).**
   `get_operator_chain`, `get_referenced_columns`, `get_referenced_functions`,
   `get_structural_hash`, `syntax` and `text` delegated in silence, so

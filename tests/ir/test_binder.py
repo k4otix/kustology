@@ -1058,3 +1058,43 @@ def test_enriching_twice_already_worked_with_an_operator_present():
     SchemaAttacher({"T": {"a": "long"}}).enrich(ir)
     SchemaAttacher({"T": {"a": "real"}}).enrich(ir)
     assert ir.main_pipeline.result_schema.columns == {"a": "real"}
+
+
+# K12: union ------------------------------------------------------------------
+
+
+def test_union_splits_a_name_the_two_sides_type_differently():
+    """``T.a`` is a long and ``U.a`` a string, so the engine emits both under
+    suffixed names and no unsuffixed ``a`` at all.
+
+    The rule merged the entries and let the later side's type win, so the
+    output claimed one ``a`` typed ``string`` — a column that does not exist
+    and a lost one that does.
+    """
+    ir = _fallback("T | union U")
+    assert _columns(ir) == [
+        ("k", "string"), ("a_long", "long"), ("a_string", "string"),
+        ("t", "datetime"), ("d", "dynamic"), ("s", "string"),
+        ("g", "guid"), ("z", "long"),
+    ]
+
+
+def test_union_leaves_an_agreeing_name_alone():
+    """Only a *type* disagreement splits: ``L.k`` and ``R.k`` are both
+    strings, so ``k`` stays one column."""
+    ir = _fallback("L | union R")
+    assert _columns(ir) == [
+        ("k", "string"), ("a", "long"), ("shared", "string"), ("b", "real"),
+    ]
+
+
+def test_union_withsource_prepends_the_source_column():
+    ir = _fallback("T | union withsource=src U")
+    assert _columns(ir)[0] == ("src", "string")
+
+
+def test_union_split_columns_keep_the_side_they_came_from():
+    ir = _fallback("T | union U | where a_string == 'x' and a_long > 1")
+    tables = _tables(ir)
+    assert tables["a_long"] == {"T"}
+    assert tables["a_string"] == {"U"}
