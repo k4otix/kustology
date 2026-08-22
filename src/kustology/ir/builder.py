@@ -31,6 +31,7 @@ from ._builder_helpers import (
     literal_value_and_ticks,
     map_semantic_info,
     read_external_data,
+    read_named_params,
     read_row_schema,
     read_to_typeof,
     to_span,
@@ -1058,7 +1059,19 @@ class IRBuilder:
             )
 
         if kind == "RenderOperator":
-            return RenderOp(render_kind=n.ChartType.ToString().strip() if hasattr(n, "ChartType") else "table", span=span)
+            # ``with (title="a")`` and the legacy bare ``kind=stacked`` are
+            # the same property list written two ways -- see RenderOp -- so
+            # they merge into one dict, with the ``with`` clause last because
+            # it is the modern spelling and wins a collision.
+            properties = read_named_params(getattr(n, "Parameters", None))
+            with_clause = getattr(n, "WithClause", None)
+            if with_clause is not None:
+                properties.update(read_named_params(getattr(with_clause, "Properties", None)))
+            return RenderOp(
+                render_kind=n.ChartType.ToString().strip() if hasattr(n, "ChartType") else "table",
+                properties=properties,
+                span=span,
+            )
 
         if kind == "EvaluateOperator":
             # `evaluate <plugin>(...)` — .NET node exposes FunctionCall.

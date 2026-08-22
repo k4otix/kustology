@@ -384,3 +384,40 @@ def test_make_series_default_differs_from_no_default():
 
 def test_make_series_range_bounds_reach_the_hash():
     assert _hash(_MS_RANGE) != _hash(_MS_RANGE.replace("2024-01-02", "2024-01-03"))
+
+
+# -- render ---------------------------------------------------------------
+
+def test_render_records_with_clause_properties():
+    (op,) = _ops('T | render timechart with (title="a", xtitle="b")')
+    assert op.properties == {"title": "a", "xtitle": "b"}
+
+
+def test_render_keeps_its_chart_type():
+    (op,) = _ops('T | render timechart with (title="a")')
+    assert op.render_kind == "timechart"
+
+
+def test_render_records_the_legacy_parameter_spelling():
+    (op,) = _ops("T | render columnchart kind=stacked")
+    assert op.properties == {"kind": "stacked"}
+
+
+def test_the_two_render_property_spellings_agree():
+    """``render c kind=stacked`` and ``render c with (kind=stacked)`` are the
+    same query written two ways, so they must hash alike."""
+    assert _hash("T | render columnchart kind=stacked") == _hash(
+        "T | render columnchart with (kind=stacked)"
+    )
+
+
+def test_render_properties_reach_the_hash():
+    assert _hash('T | render timechart with (title="a")') != _hash(
+        "T | render timechart"
+    )
+
+
+def test_render_property_values_reach_the_hash():
+    assert _hash('T | render timechart with (title="a")') != _hash(
+        'T | render timechart with (title="b")'
+    )

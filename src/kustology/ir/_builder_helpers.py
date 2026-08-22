@@ -336,6 +336,63 @@ def read_to_typeof(node: Any) -> str | None:
     return text or None
 
 
+def named_param_name(param: Any) -> str | None:
+    """The name a ``NamedParameter`` declares, or ``None`` if it has none."""
+    name_node = getattr(param, "Name", None)
+    if name_node is None:
+        return None
+    return str(getattr(name_node, "SimpleName", None) or visit_name(name_node))
+
+
+def named_param_value(param: Any) -> str | None:
+    """The value a ``NamedParameter`` carries, rendered as a string.
+
+    Three shapes, in the order they have to be tried. A bare name
+    (``withsource=S``, ``kind=inner``) is a ``NameReference`` and the
+    identifier is what the caller wants, not the node's text. A literal
+    (``title="a"``, ``isfuzzy=true``) reads back through ``LiteralValue``,
+    which is already unquoted and decoded. Anything else -- an expression
+    the parser did not fold -- falls back to its source text, read with
+    ``node_text`` (``IncludeTrivia.Minimal``) rather than ``ToString()``,
+    which is ``IncludeTrivia.All`` and would carry a preceding comment into
+    the value and from there into ``semantic_hash``.
+    """
+    from ..utils.walker import node_text
+
+    expr = getattr(param, "Expression", None)
+    if expr is None:
+        return None
+    sub = getattr(expr, "Name", None)
+    if sub is not None:
+        return str(getattr(sub, "SimpleName", None) or visit_name(sub))
+    lit = getattr(expr, "LiteralValue", None)
+    if lit is not None:
+        return str(lit)
+    return node_text(expr).strip()
+
+
+def read_named_params(params: Any) -> dict[str, str]:
+    """Read a ``NamedParameter`` list into ``{name: value}``.
+
+    Takes the list itself (``operator.Parameters``,
+    ``RenderWithClause.Properties``), since the two positions reach it under
+    different member names. A duplicate name keeps the last spelling, which
+    is what Kusto itself does with a repeated parameter.
+    """
+    from ..utils.walker import iter_elements
+
+    out: dict[str, str] = {}
+    if params is None or not getattr(params, "Count", 0):
+        return out
+    for param in iter_elements(params):
+        name = named_param_name(param)
+        value = named_param_value(param)
+        if name is None or value is None:
+            continue
+        out[name] = value
+    return out
+
+
 def extract_named_param(
     node: Any, param_name: str, default: str | None = None,
 ) -> str | None:
@@ -348,28 +405,20 @@ def extract_named_param(
     has none -- an unwritten index column is not an index column named
     anything.
     """
+    from ..utils.walker import iter_elements
+
     params = getattr(node, "Parameters", None)
     if not params or not getattr(params, "Count", 0):
         return default
     target = param_name.lower()
-    for i in range(params.Count):
-        param = getattr(params[i], "Element", params[i])
-        name_node = getattr(param, "Name", None)
-        if name_node is None:
+    for param in iter_elements(params):
+        name = named_param_name(param)
+        if name is None or name.lower() != target:
             continue
-        pname = getattr(name_node, "SimpleName", None) or visit_name(name_node)
-        if str(pname).lower() != target:
+        value = named_param_value(param)
+        if value is None:
             continue
-        expr = getattr(param, "Expression", None)
-        if expr is None:
-            continue
-        sub = getattr(expr, "Name", None)
-        if sub is not None:
-            return str(getattr(sub, "SimpleName", None) or visit_name(sub))
-        lit = getattr(expr, "LiteralValue", None)
-        if lit is not None:
-            return str(lit)
-        return expr.ToString().strip()
+        return value
     return default
 
 

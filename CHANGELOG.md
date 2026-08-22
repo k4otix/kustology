@@ -622,6 +622,13 @@ release is in `docs/superpowers/reports/`.
   wildcard table, or an unmodelled source. `to_llm_dict` caps
   `DataTableSource.rows` at 20 and adds a `rows_omitted` count, since real
   IOC datatables run to thousands of rows; `model_dump_json` stays complete.
+- **`RenderOp` gains `properties`.** Everything inside `render … with (…)`
+  — `title`, `ymin`, `series` — was discarded, so every `render timechart`
+  was one node however it was configured. The dict also carries the legacy
+  bare-parameter spelling of the same properties, which is what makes
+  `render columnchart kind=stacked` and
+  `render columnchart with (kind=stacked)` — one query written two ways —
+  hash alike.
 - **`MakeSeriesOp.aggregations` is `list[MakeSeriesAggregate]`** (was
   `list[Assignment]`), and `in range(...)` now populates the range fields.
   Two losses met here: the `default=` gap-filling value was unwrapped away

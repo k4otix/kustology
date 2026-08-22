@@ -498,9 +498,22 @@ class MvExpandOp(Operator):
 
 
 class RenderOp(Operator):
+    """``render`` — the visualization hint attached to a result.
+
+    ``properties`` is everything inside ``with (...)`` (``title``, ``ymin``,
+    ``series``, …) plus the legacy bare-parameter spelling of the same
+    thing: KQL accepts both ``render columnchart kind=stacked`` and
+    ``render columnchart with (kind=stacked)``, and folding them into one
+    dict is what makes those two spellings of one query hash alike.
+
+    None of it was read, so every ``render timechart`` was one node however
+    it was configured.
+    """
+
     KIND: ClassVar[str] = "render"
     kind: Literal["render"] = "render"
     render_kind: str
+    properties: dict[str, str] = {}
 
 
 class ProjectAwayOp(Operator):
