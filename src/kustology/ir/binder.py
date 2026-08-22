@@ -157,6 +157,11 @@ class SchemaAttacher:
             if schema is not None:
                 self._let_schemas[binding.name] = dict(schema.columns)
         self._walk_pipeline(ir.main_pipeline)
+        # Later tabular statements are pipelines like any other; skipping them
+        # would leave the same column resolved in statement one and unresolved
+        # in statement two.
+        for pipeline in ir.additional_pipelines:
+            self._walk_pipeline(pipeline)
         ir.schema_attached = True
         return ir
 

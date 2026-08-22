@@ -596,6 +596,21 @@ release is in `docs/superpowers/reports/`.
   stored dump written against the old shape fails validation under
   `extra="forbid"` instead of quietly reproducing the empty branches it
   recorded.
+- **`QueryIR` gains `additional_pipelines`**, a `list[Pipeline]` holding the
+  second and later tabular statements of a multi-statement query in source
+  order. The builder read `expr_stmts[0]` and stopped, so everything past the
+  first `;` was discarded: `T | count; U | count` built exactly the IR of
+  `T | count` and carried its `semantic_hash`, the second statement was
+  unreachable through `walk`/`find_all`, and the binder never saw it. All
+  three are fixed, and `semantic_hash` changes for every multi-statement
+  query — the digest payload names the new field explicitly, so
+  `T | count; U | count` and `T | count; V | count` are now two digests
+  rather than one. `main_pipeline` still holds the first statement rather
+  than becoming `pipelines[0]`, since almost every query has exactly one;
+  iterate `[ir.main_pipeline, *ir.additional_pipelines]` for all of them. A
+  `let`-declared function body is not a statement in this sense — its
+  tabular expression hangs off the `FunctionBody` — so it does not appear
+  here.
 - **The pipeline source position gains two classes and three fields, and
   `ExternalDataExpr.uri` becomes `uris`.** Four different queries used to
   build indistinguishable sources and share one `semantic_hash`. A

@@ -432,9 +432,21 @@ class IRBuilder:
             self._let_names.add(binding.name)
 
         main_pipeline: Pipeline | None = None
+        # Every tabular statement, not just the first. ``T | count; U | count``
+        # used to build exactly the IR of ``T | count`` -- same nodes, same
+        # ``semantic_hash`` -- with the second statement unreachable through
+        # ``walk``/``find_all``. A function body is not in this list: its
+        # tabular expression hangs off the ``FunctionBody`` rather than being
+        # an ``ExpressionStatement``, so ``let f = (x:long) { T | where a > x
+        # }; T | count`` still reports exactly one.
+        additional_pipelines: list[Pipeline] = []
         expr_stmts = root.GetDescendants[ExpressionStatement]()
         if expr_stmts is not None and expr_stmts.Count > 0:
             main_pipeline = self._visit_pipeline(expr_stmts[0].Expression)
+            for i in range(1, expr_stmts.Count):
+                additional_pipelines.append(
+                    self._visit_pipeline(expr_stmts[i].Expression)
+                )
         if not main_pipeline:
             main_pipeline = self._visit_pipeline(root)
 
@@ -443,6 +455,7 @@ class IRBuilder:
             semantic_hash="",  # populated below from the canonical IR shape
             let_bindings=let_bindings,
             main_pipeline=main_pipeline,
+            additional_pipelines=additional_pipelines,
             diagnostics=diagnostics,
         )
         ir.semantic_hash = compute_semantic_hash(ir)

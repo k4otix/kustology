@@ -1057,6 +1057,20 @@ class QueryIR(BaseModel):
     semantic_hash: str
     let_bindings: list[LetBinding]
     main_pipeline: Pipeline
+    # The second and later tabular statements of a multi-statement query, in
+    # source order. KQL separates statements with ``;`` and a query may hold
+    # several tabular ones -- ``T | count; U | count`` -- of which the builder
+    # used to keep only the first, so that query built exactly the IR of
+    # ``T | count`` and carried its ``semantic_hash``. Everything past the
+    # first semicolon was gone: unreachable through ``walk``/``find_all``,
+    # invisible to the binder, and absent from the digest.
+    #
+    # ``main_pipeline`` stays the first statement rather than becoming
+    # ``pipelines[0]``: the overwhelmingly common query has exactly one, and
+    # a required field naming it keeps that case a direct read. Consumers
+    # that want every statement iterate
+    # ``[ir.main_pipeline, *ir.additional_pipelines]``.
+    additional_pipelines: list[Pipeline] = []
     diagnostics: list[Diagnostic] = []
     schema_attached: bool = False
 

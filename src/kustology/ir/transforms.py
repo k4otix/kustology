@@ -335,9 +335,13 @@ def _canonicalize_let_names(ir: QueryIR) -> None:
                 object.__setattr__(node, "name", visible.get(node.name, node.name))
         visible[binding.name] = canonical
         object.__setattr__(binding, "name", canonical)
-    for node in walk(ir.main_pipeline):
-        if isinstance(node, _LET_NAME_MODELS):
-            object.__setattr__(node, "name", visible.get(node.name, node.name))
+    # Every tabular statement, not just the first: a ``let`` declared once is
+    # in scope for all of them, so a reference written after the second
+    # semicolon has to be renamed too or the rename stops being one.
+    for pipeline in (ir.main_pipeline, *ir.additional_pipelines):
+        for node in walk(pipeline):
+            if isinstance(node, _LET_NAME_MODELS):
+                object.__setattr__(node, "name", visible.get(node.name, node.name))
 
 
 def _sort_commutative(root: BaseModel) -> None:
@@ -460,9 +464,19 @@ def compute_semantic_hash(node: BaseModel) -> str:
     # After ``_clear_volatile``, so the sort key cannot see a span offset.
     _sort_commutative(canonical)
     if isinstance(canonical, QueryIR):
+        # Named field by field rather than dumping the whole model, so that
+        # ``raw_text``, ``semantic_hash`` and ``schema_attached`` stay out of
+        # the digest. The cost of that choice is that a new field is invisible
+        # here until it is added -- ``additional_pipelines`` hashed to nothing
+        # at all while the builder filled it faithfully, so
+        # ``T | count; U | count`` and ``T | count; V | count`` were one
+        # digest. Add every field that carries query meaning.
         payload: Any = {
             "let_bindings": [lb.model_dump(mode="json") for lb in canonical.let_bindings],
             "main_pipeline": canonical.main_pipeline.model_dump(mode="json"),
+            "additional_pipelines": [
+                p.model_dump(mode="json") for p in canonical.additional_pipelines
+            ],
         }
     else:
         payload = canonical.model_dump(mode="json")
