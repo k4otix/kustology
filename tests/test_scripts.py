@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import re
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -198,6 +200,49 @@ def test_refresh_dll_tfm_matches_verify_dll_pin():
     assert f"<TargetFramework>{refresh.TFM}</TargetFramework>" in refresh._csproj_text("12.3.2")
 
 
+def test_refresh_dll_atomic_write_preserves_existing_file_mode(tmp_path):
+    """tempfile.mkstemp creates the temp file at 0600, and os.replace
+    carries the *source* file's mode to the destination -- without an
+    explicit chmod, every atomic write over an existing 0644 file (as
+    pyproject.toml, VERSION.txt, and the bundled DLL all are) would
+    silently downgrade it to owner-only."""
+    mod = _load("refresh_dll")
+    target = tmp_path / "Kusto.Language.dll"
+    target.write_bytes(b"old bytes")
+    target.chmod(0o644)
+    mod._atomic_write_bytes(target, b"new bytes")
+    assert target.read_bytes() == b"new bytes"
+    assert stat.S_IMODE(target.stat().st_mode) == 0o644
+
+
+def test_refresh_dll_atomic_write_new_file_is_group_world_readable(tmp_path):
+    """A brand new file (no prior mode to preserve) must still come out
+    readable by group/world, matching what Path.write_text/shutil.copyfile
+    would have produced under a normal umask -- not mkstemp's 0600."""
+    mod = _load("refresh_dll")
+    target = tmp_path / "VERSION.txt"
+    mod._atomic_write_text(target, "package=x\nversion=1.2.3\n")
+    mode = stat.S_IMODE(target.stat().st_mode)
+    assert mode & 0o044 == 0o044
+
+
+def test_precommit_pydantic_pin_matches_uv_lock():
+    """.pre-commit-config.yaml pins pydantic for mypy's
+    additional_dependencies independently of uv.lock -- if a future relock
+    moves pydantic, nothing else catches the drift, mirroring the TFM
+    parity check above."""
+    lock_text = (REPO_ROOT / "uv.lock").read_text()
+    m = re.search(r'name = "pydantic"\nversion = "([^"]+)"', lock_text)
+    assert m is not None, "pydantic entry not found in uv.lock"
+    locked_version = m.group(1)
+
+    precommit_text = (REPO_ROOT / ".pre-commit-config.yaml").read_text()
+    assert f"pydantic=={locked_version}" in precommit_text, (
+        f"uv.lock pins pydantic=={locked_version} but .pre-commit-config.yaml "
+        "does not pin the same version"
+    )
+
+
 # ---------------------------------------------------------------------------
 # verify_corpus.py (needs pydantic -- the [ir] extra)
 # ---------------------------------------------------------------------------
@@ -250,12 +295,14 @@ def test_verify_corpus_findings_exit_1_and_soft_exits_0(tmp_path):
 
     rc = mod.main(["--corpus", str(corpus),
                    "--schemas", str(tmp_path / "no-schemas.json"),
+                   "--workspace-id", "",
                    "--output", str(output)])
     assert rc == 1
     assert output.exists()
 
     rc_soft = mod.main(["--corpus", str(corpus), "--soft",
                         "--schemas", str(tmp_path / "no-schemas.json"),
+                        "--workspace-id", "",
                         "--output", str(output)])
     assert rc_soft == 0
 
@@ -268,6 +315,7 @@ def test_verify_corpus_clean_corpus_exits_0(tmp_path):
     (corpus / "simple.kql").write_text("T | take 1")
     rc = mod.main(["--corpus", str(corpus),
                    "--schemas", str(tmp_path / "no-schemas.json"),
+                   "--workspace-id", "",
                    "--output", str(tmp_path / "verdict.json")])
     assert rc == 0
 
@@ -283,6 +331,7 @@ def test_verify_corpus_reads_invalid_utf8_without_crashing(tmp_path):
     bad.write_bytes(b"T | where Name == 'a\xffb'")
     rc = mod.main(["--corpus", str(corpus),
                    "--schemas", str(tmp_path / "no-schemas.json"),
+                   "--workspace-id", "",
                    "--output", str(tmp_path / "verdict.json")])
     # Must complete (0 or 1, either is a real verdict) rather than raise.
     assert rc in (0, 1)
@@ -370,6 +419,7 @@ def test_sample_sentinel_corpus_repo_with_no_strata_exits_nonzero(tmp_path):
     subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
     subprocess.run(
         ["git", "-c", "user.email=test@example.com", "-c", "user.name=test",
+         "-c", "commit.gpgsign=false",
          "commit", "-q", "-m", "init"],
         cwd=repo, check=True,
     )

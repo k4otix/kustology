@@ -25,6 +25,7 @@ import datetime as dt
 import hashlib
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -56,15 +57,31 @@ def _atomic_write_bytes(path: Path, data: bytes) -> None:
     `path` -- `path` either has its old contents or its fully-written new
     ones, never something in between. os.replace is atomic on both POSIX
     and Windows as long as source and destination are on the same
-    filesystem, which a same-directory temp file guarantees.
+    filesystem, which a same-directory temp file guarantees. The
+    f.flush() + os.fsync() before the replace extends that guarantee to a
+    power loss, not just a killed process -- without it, the new bytes
+    could still be sitting in the OS page cache, never written to disk,
+    at the moment os.replace renames the temp file over `path`.
+
+    tempfile.mkstemp creates the temp file at mode 0600 (owner-only), and
+    os.replace carries the *source* file's mode to the destination -- so
+    without an explicit chmod, every atomically-written file would
+    silently lose its group/world-readable bits relative to what
+    shutil.copyfile/Path.write_text would have produced. We restore the
+    target's existing mode when overwriting a file that already exists,
+    or fall back to the umask-default 0644 for a brand new one.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
+    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o644
     fd, tmp_name = tempfile.mkstemp(
         dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
     )
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp_name, mode)
         os.replace(tmp_name, path)
     except BaseException:
         Path(tmp_name).unlink(missing_ok=True)

@@ -21,8 +21,10 @@ This is a maintainer diagnostic against a local, gitignored corpus sample
 ``scripts/sample_sentinel_corpus.py``) -- it is not wired into CI as a gate,
 since the corpus itself isn't checked in. Exit codes still mean what they
 say: 1 if the corpus was empty or any query produced a finding, 0 otherwise.
-Pass ``--soft`` to always exit 0 while still writing and printing the report,
-for callers that want the diagnostic without the verdict.
+Pass ``--soft`` to always exit 0, for callers that want the diagnostic
+without the verdict deciding their exit code; this only changes the exit
+code, not whether a report is written -- an empty corpus still writes
+nothing and returns early either way.
 """
 from __future__ import annotations
 
@@ -270,12 +272,13 @@ def main(argv: list[str] | None = None) -> int:
                              f"{_WORKSPACE_ID_ENV} environment variable; if "
                              f"unset, option C is skipped.")
     parser.add_argument("--soft", action="store_true",
-                        help="Always exit 0 (still writes and prints the "
-                             "report). This script is a maintainer "
-                             "diagnostic against a local corpus sample, not "
-                             "a CI gate; --soft is for callers that want the "
-                             "report without the verdict deciding their exit "
-                             "code.")
+                        help="Always exit 0. Does not change whether a "
+                             "report is written or printed -- an empty "
+                             "corpus writes nothing either way. This script "
+                             "is a maintainer diagnostic against a local "
+                             "corpus sample, not a CI gate; --soft is for "
+                             "callers that want the report without the "
+                             "verdict deciding their exit code.")
     args = parser.parse_args(argv)
 
     schemas, schema_source = load_schemas(args.schemas, args.corpus,
