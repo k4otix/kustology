@@ -38,20 +38,25 @@ from kustology.ir import (
 )
 
 
-def _fork(query: str) -> ForkOp:
-    ir = parse(query).to_ir()
+def _ir(query: str, **kwargs) -> QueryIR:
+    return parse(query, **kwargs).to_ir()
+
+
+def _fork(ir: QueryIR) -> ForkOp:
+    """The one ``ForkOp`` in ``ir``. Takes the IR rather than the query so a
+    test that needs both the operator and the whole tree parses once."""
     (op,) = find_all(ir, ForkOp)
     return op
 
 
 def _hash(query: str) -> str:
-    return parse(query).to_ir().semantic_hash
+    return _ir(query).semantic_hash
 
 
 # -- the branches exist and carry their contents --------------------------
 
 def test_fork_builds_one_branch_per_parenthesized_pipeline():
-    op = _fork("T | fork a=(where x == 1 | count) (take 1)")
+    op = _fork(_ir("T | fork a=(where x == 1 | count) (take 1)"))
     assert [type(b).__name__ for b in op.branches] == ["ForkBranch", "ForkBranch"]
     assert [len(b.pipeline.operators) for b in op.branches] == [2, 1]
 
@@ -59,14 +64,14 @@ def test_fork_builds_one_branch_per_parenthesized_pipeline():
 def test_fork_records_the_branch_name_and_leaves_an_unnamed_branch_none():
     """``a=`` is a ``NameEqualsClause`` on the ``ForkExpression``; it names the
     result table the branch produces, so it is data, not formatting."""
-    op = _fork("T | fork a=(where x == 1 | count) (take 1)")
+    op = _fork(_ir("T | fork a=(where x == 1 | count) (take 1)"))
     assert [b.name for b in op.branches] == ["a", None]
 
 
 def test_branch_contents_are_reachable_by_find_all():
     """The RED case. Before fork branches were built, the only ``where`` in
     this query lived inside a branch and ``find_all`` could not see it."""
-    ir = parse("T | fork a=(where x == 1 | count) (take 1)").to_ir()
+    ir = _ir("T | fork a=(where x == 1 | count) (take 1)")
     assert [type(o).__name__ for o in find_all(ir, FilterOp)] == ["FilterOp"]
     assert [type(o).__name__ for o in find_all(ir, CountOp)] == ["CountOp"]
     assert [type(o).__name__ for o in find_all(ir, TakeOp)] == ["TakeOp"]
@@ -74,7 +79,7 @@ def test_branch_contents_are_reachable_by_find_all():
 
 
 def test_branch_operators_are_in_source_order():
-    op = _fork("T | fork (where x == 1 | take 3 | count) (take 1)")
+    op = _fork(_ir("T | fork (where x == 1 | take 3 | count) (take 1)"))
     assert [type(o).__name__ for o in op.branches[0].pipeline.operators] == [
         "FilterOp", "TakeOp", "CountOp",
     ]
@@ -84,8 +89,8 @@ def test_branch_pipeline_has_an_implicit_source_not_an_unknown_one():
     """A fork branch runs against the enclosing row set — that is exactly what
     ``ImplicitSource`` means. ``UnknownSource`` would claim the builder could
     not work the source out."""
-    ir = parse("T | fork (where x == 1) (count)").to_ir()
-    op = _fork("T | fork (where x == 1) (count)")
+    ir = _ir("T | fork (where x == 1) (count)")
+    op = _fork(ir)
     assert all(isinstance(b.pipeline.source, ImplicitSource) for b in op.branches), [
         type(b.pipeline.source).__name__ for b in op.branches
     ]
@@ -94,7 +99,7 @@ def test_branch_pipeline_has_an_implicit_source_not_an_unknown_one():
 
 def test_a_single_operator_branch_still_builds_a_pipeline():
     """``(count)`` is a bare ``CountOperator``, not a ``PipeExpression``."""
-    op = _fork("T | fork (count) (take 1)")
+    op = _fork(_ir("T | fork (count) (take 1)"))
     assert all(isinstance(b.pipeline, Pipeline) for b in op.branches)
     assert [type(b.pipeline.operators[0]).__name__ for b in op.branches] == [
         "CountOp", "TakeOp",
@@ -102,7 +107,7 @@ def test_a_single_operator_branch_still_builds_a_pipeline():
 
 
 def test_nested_fork_branches_are_built_too():
-    ir = parse("T | fork (where x == 1 | fork (count) (take 2)) (take 1)").to_ir()
+    ir = _ir("T | fork (where x == 1 | fork (count) (take 2)) (take 1)")
     outer, inner = find_all(ir, ForkOp)
     assert [type(o).__name__ for o in outer.branches[0].pipeline.operators] == [
         "FilterOp", "ForkOp",
@@ -146,23 +151,18 @@ def test_binder_reaches_into_fork_branches():
     pipeline to ``_walk_pipeline`` with the enclosing scope inherited.
     Asserted on non-default values: the column's table *and* its type."""
     schema = {"T": {"x": "string", "n": "long"}}
-    ir = parse("T | fork a=(where x == 'v' | count) (top 2 by n)", schema=schema).to_ir()
+    ir = _ir("T | fork a=(where x == 'v' | count) (top 2 by n)", schema=schema)
     assert ir.schema_attached
     (filt,) = find_all(ir, FilterOp)
     assert (filt.predicate.left.table, filt.predicate.left.result_type.value) == ("T", "string")
-    key = _fork_from(ir).branches[1].pipeline.operators[0].by
+    key = _fork(ir).branches[1].pipeline.operators[0].by
     assert (key.expression.table, key.expression.result_type.value) == ("T", "long")
-
-
-def _fork_from(ir: QueryIR) -> ForkOp:
-    (op,) = find_all(ir, ForkOp)
-    return op
 
 
 # -- serialization --------------------------------------------------------
 
 def test_fork_branches_round_trip_through_json():
-    ir = parse("T | fork a=(where x == 1 | count) (take 1)").to_ir()
+    ir = _ir("T | fork a=(where x == 1 | count) (take 1)")
     again = QueryIR.model_validate_json(ir.model_dump_json())
     assert again == ir
     (op,) = find_all(again, ForkOp)
@@ -176,8 +176,8 @@ def test_the_old_pipelines_field_is_gone():
     validate into an IR whose branches are silently empty again."""
     import pydantic
 
-    ir = parse("T | fork (count) (take 1)").to_ir()
-    assert not hasattr(_fork_from(ir), "pipelines")
+    ir = _ir("T | fork (count) (take 1)")
+    assert not hasattr(_fork(ir), "pipelines")
     dumped = ir.model_dump_json().replace('"branches"', '"pipelines"')
     with pytest.raises(pydantic.ValidationError):
         QueryIR.model_validate_json(dumped)
