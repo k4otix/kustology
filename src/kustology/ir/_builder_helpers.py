@@ -354,8 +354,16 @@ def table_symbol_columns(sym: Any) -> dict[str, str] | None:
     table symbol, because an empty schema is a legitimate answer
     (``T | project-away *``) and the caller has to be able to tell "no
     columns" from "no answer".
+
+    The ``is_table_symbol`` call is what makes the first sentence true.
+    ``TupleSymbol`` -- what ``arg_max(a, *)`` puts on the aggregate
+    expression -- also carries ``Columns``, and carries no ``IsOpen`` at all,
+    so ``getattr(sym, "IsOpen", False)`` reads it as a *closed table*. Only
+    operator and pipeline nodes call in here today and those carry a
+    ``TableSymbol``, so nothing routes one in; the guard is here because the
+    docstring promises it, not because a call site currently needs it.
     """
-    if sym is None:
+    if not is_table_symbol(sym):
         return None
     columns = getattr(sym, "Columns", None)
     if columns is None:
