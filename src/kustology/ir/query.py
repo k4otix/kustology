@@ -270,6 +270,17 @@ class ExternalDataSource(BaseModel):
     a ``let``-bound feed URL, or ``strcat("https://", env)`` — the field
     records that element's source text instead (``"u"``, or the whole call
     as written). Resolving those needs the query, not just this field.
+
+    ``properties`` is the whole ``with (...)`` clause, keys verbatim, in the
+    same ``dict[str, str]`` shape :attr:`RenderOp.properties` uses. Only
+    ``format`` used to be read and the rest were dropped, which was a
+    collision rather than a cosmetic gap: ``ignoreFirstRecord=true`` skips
+    the CSV header row, so it changes the rows the feed returns, and a
+    source node has no ``raw_text`` for the dropped text to survive in.
+    ``format`` remains as its own field because the rest of the library
+    reads it; it is *also* present in ``properties`` under the name the
+    query wrote, so a consumer reconstructing the clause sees a complete
+    one.
     """
 
     model_config = {"extra": "forbid"}
@@ -278,6 +289,7 @@ class ExternalDataSource(BaseModel):
     columns: list[tuple[str, str]]
     uris: list[str]
     format: str | None = None
+    properties: dict[str, str] = {}
     span: Span
 
 

@@ -235,8 +235,10 @@ def extract_qualified_table_ref(
     return cluster, database, name, is_wildcard
 
 
-def read_external_data(node: Any) -> tuple[list[tuple[str, str]], list[str], str | None]:
-    """Read an ``ExternalDataExpression`` into ``(columns, uris, format)``.
+def read_external_data(
+    node: Any,
+) -> tuple[list[tuple[str, str]], list[str], str | None, dict[str, str]]:
+    """Read an ``ExternalDataExpression`` into ``(columns, uris, format, props)``.
 
     Shared by the source-position (:class:`ExternalDataSource`) and
     expression-position (:class:`ExternalDataExpr`) branches of the builder,
@@ -281,25 +283,32 @@ def read_external_data(node: Any) -> tuple[list[tuple[str, str]], list[str], str
             else:
                 uris.append(str(value))
 
-    # ``with (format="csv", ignoreFirstRecord=true)`` -- only the format is
-    # modeled; the rest stay in the source text. ``node_text`` in the
-    # fallback for the same reason as the URIs above: today ``LiteralValue``
-    # wins for every spelling a comment could precede, so the hazard is
-    # latent rather than live, but the two branches should not differ in
-    # which trivia they admit.
-    fmt: str | None = None
+    # ``with (format="csv", ignoreFirstRecord=true)``. Every property is
+    # kept, not just the format: ``ignoreFirstRecord`` skips the CSV header,
+    # so it changes the rows the feed yields. Only ``format`` used to be
+    # read, and the comment here claimed the rest "stay in the source text"
+    # -- they do not. A source node carries no ``raw_text``, so the dropped
+    # properties reached nothing at all and two feeds parsed differently
+    # built one node with one ``semantic_hash``.
+    #
+    # ``read_named_params`` is the same reader ``RenderOp.properties`` uses
+    # for the same job, so the two cannot drift, and it is strictly better
+    # than the inline loop it replaces: that one saw only ``LiteralValue``
+    # and a text fallback, where this also resolves a bare ``NameReference``
+    # value and guards the ``FunctionCallExpression``-has-a-``Name`` trap.
     with_clause = getattr(node, "WithClause", None)
-    if with_clause is not None:
-        for prop in iter_elements(with_clause.Properties):
-            if visit_name(prop.Name).lower() != "format":
-                continue
-            value = getattr(prop.Expression, "LiteralValue", None)
-            fmt = (
-                str(value) if value is not None
-                else node_text(prop.Expression).strip().strip("\"'")
-            )
-            break
-    return columns, uris, fmt
+    properties = read_named_params(
+        getattr(with_clause, "Properties", None) if with_clause is not None else None
+    )
+
+    # ``format`` stays promoted to its own field: it is the one property the
+    # rest of the library reads. The name is matched case-insensitively
+    # because the grammar is, while the dict keeps whatever casing the query
+    # wrote -- the same verbatim-keys rule ``hints`` and ``RenderOp`` follow.
+    fmt: str | None = next(
+        (v for k, v in properties.items() if k.lower() == "format"), None
+    )
+    return columns, uris, fmt, properties
 
 
 def is_table_symbol(sym: Any) -> bool:

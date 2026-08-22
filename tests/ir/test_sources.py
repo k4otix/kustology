@@ -94,6 +94,64 @@ def test_externaldata_at_source_position_is_an_external_data_source(builder):
     assert source.format == "csv"
 
 
+def test_externaldata_keeps_every_with_clause_property(builder):
+    """`format` was the only property read; the rest changed the rows silently.
+
+    ``with (...)`` on ``externaldata`` is not decoration.
+    ``ignoreFirstRecord=true`` skips the CSV header, so the feed yields one
+    fewer row and a header line is not matched as data. The builder read
+    ``format`` out of that clause and dropped every other property, and
+    because a source node has no ``raw_text`` to fall back on, the dropped
+    text reached nothing -- two feeds parsed differently built one node and
+    shared one ``semantic_hash``.
+
+    Property *names* are kept verbatim, in the same ``dict[str, str]`` shape
+    ``RenderOp.properties`` already uses for the same job -- via the same
+    ``read_named_params`` reader, so the two positions cannot drift. Values
+    come back through ``LiteralValue``, which renders a KQL ``true`` as
+    ``"True"``; that is the shared reader's normalization rather than
+    anything specific to ``externaldata``
+    (``render … with (accumulate=true)`` records ``"True"`` too), and it is
+    asserted here rather than worked around so that changing it has to be a
+    deliberate change to both.
+    """
+    ir = builder.build(
+        'externaldata(a:string)["https://x"] '
+        'with (format="csv", ignoreFirstRecord=true) | take 1'
+    )
+    source = ir.main_pipeline.source
+    assert isinstance(source, ExternalDataSource)
+    assert source.properties == {"format": "csv", "ignoreFirstRecord": "True"}
+    # `format` stays promoted: it is the one property the rest of the
+    # library reads, and it is matched case-insensitively where the dict
+    # keeps whatever casing the query wrote.
+    assert source.format == "csv"
+
+
+def test_externaldata_ignore_first_record_reaches_the_hash(builder):
+    """The collision the property dict closes, stated as the pair."""
+    with_header = builder.build(
+        'externaldata(a:string)["https://x"] '
+        'with (format="csv", ignoreFirstRecord=true) | count'
+    )
+    without = builder.build(
+        'externaldata(a:string)["https://x"] with (format="csv") | count'
+    )
+    assert with_header.semantic_hash != without.semantic_hash
+
+
+def test_externaldata_in_expression_position_keeps_properties_too(builder):
+    """Both positions share one reader, so neither may lag the other."""
+    ir = builder.build(
+        'T | where a !in ((externaldata(a:string)["https://x"] '
+        'with (format="csv", ignoreFirstRecord=true)))'
+    )
+    found = list(find_all(ir, ExternalDataExpr))
+    assert len(found) == 1
+    assert found[0].properties == {"format": "csv", "ignoreFirstRecord": "True"}
+    assert found[0].format == "csv"
+
+
 def test_externaldata_source_keeps_every_uri(builder):
     """Two URI sets are two different queries."""
     one = builder.build('externaldata(a:string)["https://x"] | take 1')

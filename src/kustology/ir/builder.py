@@ -661,9 +661,10 @@ class IRBuilder:
             if kind == "ExternalDataExpression":
                 # `externaldata(schema)[uris] with (...)` at source position.
                 if isinstance(source, UnknownSource):
-                    columns, uris, fmt = read_external_data(n)
+                    columns, uris, fmt, props = read_external_data(n)
                     source = ExternalDataSource(
-                        columns=columns, uris=uris, format=fmt, span=to_span(n),
+                        columns=columns, uris=uris, format=fmt,
+                        properties=props, span=to_span(n),
                     )
                 return
 
@@ -1803,8 +1804,10 @@ class IRBuilder:
         elif kind == "ExternalDataExpression":
             # Shared with the source-position branch of ``_visit_pipeline``:
             # the same construct read two ways is how the two readings drift.
-            cols, uris, fmt = read_external_data(node)
-            res = ExternalDataExpr(columns=cols, uris=uris, format=fmt, span=span)
+            cols, uris, fmt, props = read_external_data(node)
+            res = ExternalDataExpr(
+                columns=cols, uris=uris, format=fmt, properties=props, span=span,
+            )
 
         elif kind == "MakeSeriesExpression":
             res = self._visit_expr(node.Expression)

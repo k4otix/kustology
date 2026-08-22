@@ -423,6 +423,11 @@ class ExternalDataExpr(Expr):
     is **not guaranteed to be a URI**: an element that does not fold to a
     literal (a ``let``-bound feed URL, ``strcat(...)``) is recorded as its
     own source text.
+
+    ``properties`` mirrors the source class: the whole ``with (...)``
+    clause, keys verbatim, with ``format`` promoted to its own field as
+    well. See :class:`~kustology.ir.query.ExternalDataSource` for why
+    dropping the other properties was a collision.
     """
 
     KIND: ClassVar[str] = "external_data"
@@ -430,6 +435,7 @@ class ExternalDataExpr(Expr):
     columns: list[tuple[str, str]]
     uris: list[str]
     format: str | None = None
+    properties: dict[str, str] = {}
 
 
 class UnknownExpr(Expr):
