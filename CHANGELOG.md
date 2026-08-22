@@ -761,11 +761,14 @@ release is in `docs/superpowers/reports/`.
   one node and shared one `semantic_hash`. Reach the expanded expression
   through `.expression`; `.to_typeof` carries the declared element type as
   written, and the binder now uses it for the post-expand column type
-  instead of inferring `dynamic`. All four operator-level fields stay
-  optional: D8's effective-default rule applies where KQL has one value to
-  substitute, and `limit`/`with_itemindex` have none, while
-  `kind`/`bagexpansion` are two spellings of one modifier (stamping `bag`
-  into both would claim the query said something it did not).
+  instead of inferring `dynamic`. `expand_kind` is required and carries
+  KQL's effective default `"bag"` (D8), and it is **one field for two
+  spellings**: `kind=bag` and the deprecated `bagexpansion=bag` are the same
+  modifier — the DLL gives both the same value set, *"Expected one of: bag,
+  array"* — so they hash alike, and a query writing both records `kind`.
+  `row_limit` and `with_item_index` stay optional: D8 substitutes a named
+  mode, not the documented implicit `limit` of `2147483647`, which would
+  report a bound the query never set.
 - **Typed name declarations are a `TypedNameDecl`, not a `ColumnRef`.** A
   `name:type` in expression position — the typed capture of
   `parse a with 'x' b:long`, a typed column of `find … project a:string` —

@@ -481,8 +481,15 @@ class MvExpandColumn(BaseModel):
     ``to_typeof`` is the type as the query wrote it (``string``, ``long``),
     not a resolved :class:`~kustology.ir.types.KustoType` -- the same
     reasoning as :class:`~kustology.ir.expr.TypedNameDecl.declared_type`.
-    It is genuinely optional: an unwritten ``to typeof(...)`` leaves the
-    expanded column ``dynamic``, which is not a value the clause can state.
+
+    It stays optional, and *not* on the argument that the unwritten
+    behaviour is unstatable: ``mv-expand a to typeof(dynamic)`` parses and
+    binds with no diagnostic, so the clause can name what an unwritten one
+    leaves behind. It stays optional because the two are not equivalent --
+    writing ``to typeof(dynamic)`` asserts the element type where omitting
+    the clause leaves the binder to infer one from ``dynamic<T>``, and the
+    IR should not claim the query stated a type it did not. The two spellings
+    hash apart, which is a split rather than a merge.
     """
 
     model_config = {"extra": "forbid"}
@@ -501,15 +508,24 @@ class MvExpandOp(Operator):
     ``mv-expand a limit 10`` and ``mv-expand with_itemindex=i a`` were one
     node with one ``semantic_hash``.
 
-    All four are optional with a ``None``/absent default rather than an
-    effective one (D8). ``limit`` and ``with_itemindex`` have no unwritten
-    value at all — no limit is not a limit of any number, and an unwritten
-    index column adds no column. ``kind``/``bagexpansion`` are two spellings
-    of one modifier whose unwritten behaviour is ``bag``, but they are
-    recorded separately and left unstamped precisely because they are two
-    spellings: substituting the default into both would claim the query said
-    something it did not, and picking one field to carry it would make the
-    other's absence ambiguous.
+    ``expand_kind`` is required and carries KQL's effective default
+    ``"bag"`` (D8). It is **one field for two spellings**: ``kind=bag`` and
+    the deprecated ``bagexpansion=bag`` are the same modifier, which the DLL
+    confirms by giving both the same value set (``kind=bogus`` and
+    ``bagexpansion=bogus`` are each diagnosed *"Expected one of: bag,
+    array"*). Two fields split those spellings in the hash, the way reading
+    only ``render``'s ``with`` clause would have split *its* two spellings.
+    A query writing both -- which parses clean in 12.3.2 -- records
+    ``kind``, the modern spelling, as ``render``'s merge prefers its modern
+    spelling too.
+
+    ``row_limit`` and ``with_item_index`` stay optional. That is not because
+    KQL has no unwritten behaviour -- the documented implicit ``limit`` is
+    ``2147483647``, and that literal parses clean -- but because the
+    unwritten case is not *stated* by any value: recording 2147483647 on
+    every bare ``mv-expand`` would report a bound the query never set and
+    would collapse it onto the query that really did set it. D8 substitutes
+    a *named mode*, not a magic number.
     """
 
     KIND: ClassVar[str] = "mv_expand"
@@ -518,8 +534,7 @@ class MvExpandOp(Operator):
     # ``limit N``. ``int`` first for the same reason as ``TakeOp.count``.
     row_limit: int | AnyExpr | None = None
     with_item_index: str | None = None
-    bag_expansion: str | None = None
-    expand_kind: str | None = None
+    expand_kind: str
 
 
 class RenderOp(Operator):

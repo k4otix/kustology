@@ -1033,8 +1033,14 @@ class IRBuilder:
                 columns=mv_cols,
                 row_limit=self._visit_count(limit_node) if limit_node is not None else None,
                 with_item_index=extract_named_param(n, "with_itemindex"),
-                bag_expansion=extract_named_param(n, "bagexpansion"),
-                expand_kind=extract_named_param(n, "kind"),
+                # One field for two spellings of one modifier, defaulting to
+                # KQL's effective ``bag`` -- see MvExpandOp. ``kind`` is read
+                # first so a query writing both records the modern spelling.
+                expand_kind=(
+                    extract_named_param(n, "kind")
+                    or extract_named_param(n, "bagexpansion")
+                    or "bag"
+                ),
                 span=span,
             )
 

@@ -104,29 +104,61 @@ def test_mv_expand_records_with_itemindex():
     assert op.with_item_index == "i"
 
 
-def test_mv_expand_records_bagexpansion():
-    (op,) = _ops(_MV_ALL)
-    assert op.bag_expansion == "bag"
-
-
 def test_mv_expand_records_its_kind():
+    """``kind=`` and the legacy ``bagexpansion=`` are one field.
+
+    ``_MV_ALL`` writes both (which parses clean), and the modern spelling
+    wins -- see :class:`MvExpandOp`.
+    """
     (op,) = _ops(_MV_ALL)
     assert op.expand_kind == "array"
+
+
+def test_mv_expand_reads_the_legacy_bagexpansion_spelling():
+    (op,) = _ops("T | mv-expand bagexpansion=array a")
+    assert op.expand_kind == "array"
+
+
+def test_the_two_mv_expand_kind_spellings_agree():
+    """``bagexpansion=bag`` is the deprecated spelling of ``kind=bag`` --
+    the DLL gives both the same value set -- so they must hash alike."""
+    assert _hash("T | mv-expand bagexpansion=bag a") == _hash(
+        "T | mv-expand kind=bag a"
+    )
+
+
+def test_bare_mv_expand_records_kqls_effective_kind():
+    (op,) = _ops("T | mv-expand a")
+    assert op.expand_kind == "bag"
+
+
+def test_bare_mv_expand_hashes_as_its_effective_kind():
+    assert _hash("T | mv-expand a") == _hash("T | mv-expand kind=bag a")
+
+
+def test_mv_expand_kind_value_set_is_the_dlls():
+    """Pins the probe both the fold and the effective default rest on."""
+    for spelling in ("kind=bogus", "bagexpansion=bogus"):
+        messages = [d.message for d in parse(
+            f"T | mv-expand {spelling} a", schema={"T": {"a": "dynamic"}},
+        ).to_ir().diagnostics]
+        assert any("Expected one of: bag, array" in m for m in messages), spelling
 
 
 def test_mv_expand_modifiers_all_reach_the_hash():
     """Each modifier alone must move the digest, and off a common base.
 
-    Comparing the four spellings pairwise is what catches a field that is
-    modelled but not hashed: three of them could still collapse onto the
-    bare form if only one pair were checked.
+    Comparing the spellings pairwise is what catches a field that is
+    modelled but not hashed: several could still collapse onto the bare form
+    if only one pair were checked. ``bagexpansion`` is absent because it is
+    not a fifth modifier -- it is ``kind`` spelled the old way, pinned as an
+    equality above.
     """
     variants = {
         "bare": _hash("T | mv-expand a"),
         "typed": _hash("T | mv-expand a to typeof(string)"),
         "limited": _hash("T | mv-expand a limit 10"),
         "indexed": _hash("T | mv-expand with_itemindex=i a"),
-        "bagged": _hash("T | mv-expand bagexpansion=bag a"),
         "kinded": _hash("T | mv-expand kind=array a"),
     }
     assert len(set(variants.values())) == len(variants), variants
