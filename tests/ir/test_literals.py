@@ -53,6 +53,38 @@ def test_literal_kind_value_and_ticks(query, kind, value, ticks):
     assert lit.ticks == ticks
 
 
+def test_adjacent_string_literals_concatenate_into_one_literal():
+    """KQL joins adjacent string literals the way C does: ``'a' 'b'`` is the
+    single value ``"ab"``.
+
+    The parser hands that over as a ``CompoundStringLiteralExpression`` with
+    ``LiteralValue == "ab"`` already computed. The builder had no branch for
+    the kind, so the whole right-hand side fell through to ``UnknownExpr``
+    carrying the raw text ``"'a' 'b'"`` -- a filter comparing against a
+    string became a filter comparing against an unmodelled blob, invisible
+    to ``find_all(ir, LiteralExpr)`` and hashing apart from the identical
+    query written ``'ab'``.
+    """
+    from kustology.ir import UnknownExpr
+
+    lit = _first_literal("T | where x == 'a' 'b'")
+    assert lit.literal_kind == "string"
+    assert lit.value == "ab"
+    assert lit.ticks is None
+
+    ir = parse("T | where x == 'a' 'b'").to_ir()
+    assert not list(find_all(ir, UnknownExpr))
+    # The whole point of the concatenation: it means what the joined
+    # spelling means, so it must hash there too.
+    assert ir.semantic_hash == parse("T | where x == 'ab'").to_ir().semantic_hash
+
+
+def test_a_compound_string_literal_renders_as_its_joined_value():
+    lit = _first_literal('T | where x == "a" "b" "c"')
+    assert lit.value == "abc"
+    assert lit.canonical_form == '"abc"'
+
+
 def test_dynamic_literal_still_carries_its_json_body():
     lit = _first_literal('T | where D == dynamic({"a":1})')
     assert lit.literal_kind == "dynamic"

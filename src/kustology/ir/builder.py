@@ -326,6 +326,7 @@ class IRBuilder:
         "PathExpression", "ElementExpression",
         "SimpleNamedExpression", "CompoundNamedExpression", "BracketedExpression",
         "PrefixUnaryExpression", "StarExpression", "LiteralExpression",
+        "CompoundStringLiteralExpression",
         "DynamicExpression",
         "BinaryExpression",
         "OrderedExpression",
@@ -1589,6 +1590,18 @@ class IRBuilder:
                 literal_kind=literal_kind_for(node),
                 ticks=ticks,
                 span=span,
+            )
+
+        elif kind == "CompoundStringLiteralExpression":
+            # KQL concatenates adjacent string literals, C-style: ``'a' 'b'``
+            # is the one value ``"ab"``. The parser has already done the
+            # joining -- ``LiteralValue`` is the concatenated string -- so
+            # this is a ``LiteralExpr`` like any other, and the multi-token
+            # spelling is a source detail that ``span`` still records.
+            # Without the branch the whole comparison's right-hand side fell
+            # through to ``UnknownExpr``.
+            res = LiteralExpr(
+                value=str(node.LiteralValue), literal_kind="string", span=span,
             )
 
         elif kind == "DynamicExpression":

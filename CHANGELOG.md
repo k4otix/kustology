@@ -97,6 +97,12 @@ release is in `docs/superpowers/reports/`.
   `find_all(ir, FuncCall)` on `let A = T | where d > ago(1h) | where d <
   now(); A | take 1` reported `ago` and `now` twice each. Traversal now keeps
   a visited set keyed on object identity.
+- **Adjacent string literals are one literal (tier 2).** KQL concatenates
+  `'a' 'b'` into `"ab"`, C-style, and the parser hands the joined value over
+  as a `CompoundStringLiteralExpression`. The builder had no branch for the
+  kind, so `T | where x == 'a' 'b'` lowered the whole right-hand side to an
+  `UnknownExpr` holding raw text — invisible to `find_all(ir, LiteralExpr)`
+  and hashing apart from the identical `'ab'` spelling.
 - **`canonical_form` renders every expression shape (tier 2).** Eleven `Expr`
   types rendered as a bare `"?"`, so `-X > 1`, `D.a == 1` and
   `toscalar(…) > 1` were indistinguishable.
