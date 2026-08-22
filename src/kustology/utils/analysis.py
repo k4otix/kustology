@@ -189,18 +189,28 @@ def _is_wildcard_name(node) -> bool:
 
 def _collect_table_refs(syntax) -> list:
     """Return every (name, NameReference node) that occupies a table-source
-    position. Does NOT deduplicate — callers that want a set should dedupe
-    themselves.
+    position: one entry per occurrence, deduplicated by source span and
+    sorted by it, since several of the branches below see the same node.
 
     Four kinds of name occupy a table-source position without being a table,
     and each is excluded here:
 
-    * a name bound by ``let`` — but see the shadowing rule below;
-    * a name bound by ``| as X``, which is visible for the rest of the query;
-    * a table-typed parameter of a user-defined function, which is visible
-      only inside that function's body (so the exclusion is scoped to it,
-      and a real table sharing the parameter's name is still reported);
+    * a name bound by ``let``, from that ``let`` onward — but see the
+      shadowing rule below;
+    * a name bound by ``| as X``, from the ``as`` operator onward;
+    * a table-typed parameter of a user-defined function, inside the body of
+      the function that declares it;
     * a wildcard pattern such as ``union T*``.
+
+    Every exclusion is positional, not name-keyed, because a name is only
+    an alias where it is actually in scope. ``union X, (T | as X)`` reads a
+    real table ``X`` *before* the ``as`` that rebinds the name;
+    ``X | count; let X = T | take 1`` likewise reads the table ``X`` before
+    the ``let`` binds it, which Microsoft's binder confirms by resolving
+    that occurrence to a ``TableSymbol``; and in
+    ``let f = (T:(a:long)){ let g = (U:(b:long)){ U | count }; union T, U }``
+    the ``U`` of ``union T, U`` sits outside ``g``'s body, so it is the real
+    table and only ``g``'s own ``U`` is the parameter.
 
     **Shadowing.** In ``let T = T | where ...; T | take 1`` the right-hand
     side ``T`` is the real table: KQL evaluates a binding's RHS in the scope
@@ -211,11 +221,21 @@ def _collect_table_refs(syntax) -> list:
     bound by *earlier* ``let`` statements are in scope on a RHS and stay
     excluded there.
     """
-    let_vars = set()  # names bound by let statements visited so far
-    exclude = set()  # `as` aliases — visible for the remainder of the query
-    param_scopes = []  # (name, start, end) — function parameters, body-scoped
+    # (name, TextStart of its binder) — a name is in scope from there on.
+    let_vars: list[tuple[str, int]] = []
+    as_aliases: list[tuple[str, int]] = []
+    # (name, body start, body end) — a parameter is bound inside one body.
+    param_scopes: list[tuple[str, int, int]] = []
     unshadowed = set()  # (TextStart, Width) of let-RHS refs that are tables
     refs = []
+
+    # Defined before the walk because the LetStatement branch calls it: a
+    # binding's right-hand side is exempt from the filter only where the
+    # name is not already bound by an *earlier* let.
+    def _is_let_alias(name: str, start: int) -> bool:
+        return any(
+            name == bound and start >= let_start for bound, let_start in let_vars
+        )
 
     class Walker(KustoWalker):
         def pre_visit(self, node):
@@ -227,19 +247,27 @@ def _collect_table_refs(syntax) -> list:
                     for ref in _unwrap_table_expr(rhs):
                         # `let_vars` here holds only the *earlier* bindings:
                         # this statement's own name is added below.
-                        if node_name(ref) not in let_vars:
+                        if not _is_let_alias(node_name(ref), ref.TextStart):
                             unshadowed.add((ref.TextStart, ref.Width))
                         refs.append(ref)
                 name_node = node.GetChild(1)
                 if name_node is not None:
-                    let_vars.add(node_name(name_node))
+                    let_vars.append((node_name(name_node), node.TextStart))
                 return
 
             if kind == "FunctionDeclaration":
-                start = node.TextStart
-                end = start + node.Width
+                # `Parameters` is this declaration's own list and `Body` its
+                # own body. Collecting parameters from the whole node would
+                # sweep up a *nested* declaration's parameters and scope them
+                # to the outer body, where that name is not bound at all.
+                params = getattr(node, "Parameters", None)
+                body = getattr(node, "Body", None)
+                if params is None or body is None:
+                    return
+                start = body.TextStart
+                end = start + body.Width
                 for param in collect_nodes(
-                    node, lambda n: str(n.Kind) == "FunctionParameter"
+                    params, lambda n: str(n.Kind) == "FunctionParameter"
                 ):
                     name_and_type = getattr(param, "NameAndType", None)
                     if name_and_type is None:
@@ -252,7 +280,7 @@ def _collect_table_refs(syntax) -> list:
             if kind == "AsOperator":
                 alias = getattr(node, "Name", None)
                 if alias is not None:
-                    exclude.add(node_name(alias))
+                    as_aliases.append((node_name(alias), node.TextStart))
                 return
 
             if kind in ("PipeExpression", "ExpressionStatement"):
@@ -287,18 +315,27 @@ def _collect_table_refs(syntax) -> list:
             for param, body_start, body_end in param_scopes
         )
 
+    def _is_as_alias(name: str, start: int) -> bool:
+        return any(
+            name == alias and start >= as_start for alias, as_start in as_aliases
+        )
+
     out = []
+    seen = set()
     for ref in refs:
-        if _is_wildcard_name(ref):
+        span = (ref.TextStart, ref.Width)
+        if span in seen or _is_wildcard_name(ref):
             continue
         name = node_name(ref)
-        if not name or name in exclude:
+        if not name:
             continue
-        if name in let_vars and (ref.TextStart, ref.Width) not in unshadowed:
+        if _is_let_alias(name, span[0]) and span not in unshadowed:
             continue
-        if _is_function_parameter(name, ref.TextStart):
+        if _is_as_alias(name, span[0]) or _is_function_parameter(name, span[0]):
             continue
+        seen.add(span)
         out.append((name, ref))
+    out.sort(key=lambda ref: (ref[1].TextStart, ref[1].Width))
     return out
 
 
@@ -346,9 +383,9 @@ def _merge_unresolved_table_refs(syntax) -> list:
 
 
 def find_table_references(kusto_code, force_syntactic: bool = False) -> list:
-    """Return [(name, node), ...] for every table reference (one entry per
-    occurrence), in source order. Use ``get_referenced_tables`` for a
-    deduplicated set of names.
+    """Return [(name, node), ...] for every table reference: one entry per
+    occurrence, in source order, in both modes. Use ``get_referenced_tables``
+    for a deduplicated set of names.
 
     On a bound parse the binder's own references are used, and the syntactic
     walk fills in the tables the supplied schema did not describe — those
@@ -708,19 +745,27 @@ def get_time_range(kusto_code) -> list[tuple[str, int, int]]:
 def replace_table(kusto_code, old_name: str, new_name: str, force_syntactic: bool = False) -> str:
     """Rename every reference to ``old_name`` to ``new_name``; return the new text.
 
-    Rewrites exactly the spans ``find_table_references`` reports, so the two
-    always agree on what a table is. On a bound parse that includes tables
-    the supplied schema does not describe — the binder cannot resolve them,
-    but they are still in the query and still have to be retargeted. Names
-    that only look like tables (``let`` and ``as`` aliases, function
-    parameters, wildcard patterns) are left alone; so is a shadowed alias,
-    while the binding's own right-hand side is rewritten.
+    Rewrites the spans ``find_table_references`` reports, minus wildcard
+    patterns. On a bound parse that includes tables the supplied schema does
+    not describe — the binder cannot resolve them, but they are still in the
+    query and still have to be retargeted. Names that only look like tables
+    (``let`` and ``as`` aliases, function parameters) are left alone; so is a
+    shadowed alias, while the binding's own right-hand side is rewritten.
+
+    A wildcard is never rewritten, in either mode. The binder expands
+    ``union T*`` against a schema with exactly one match straight to that
+    ``TableSymbol``, so ``replace_table("T1", "Z")`` would otherwise rewrite
+    the span holding the text ``T*`` and emit ``union Z`` — a name the caller
+    never wrote over a pattern they did, silently narrowing which tables the
+    query reads as soon as a second ``T…`` table exists. The reference is
+    still *reported* (``get_referenced_tables`` says ``{'T1'}``, which is
+    true); it just cannot be retargeted this way.
     """
     refs = find_table_references(kusto_code, force_syntactic=force_syntactic)
     seen = set()
     replacements = []
     for name, node in refs:
-        if name != old_name:
+        if name != old_name or _is_wildcard_name(node):
             continue
         key = (node.TextStart, node.Width)
         if key in seen:

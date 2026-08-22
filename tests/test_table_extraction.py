@@ -170,14 +170,64 @@ def test_function_parameter_exclusion_is_scoped_to_the_body():
     """A real table sharing a parameter's name is still reported.
 
     The parameter is lexically scoped to the function body; the same name
-    used as a source outside it is the table.
+    used as a source outside it is the table. Asserting on the *set* would
+    not show that -- `{"T"}` comes back whether the body's `T` was excluded
+    as a parameter, excluded wrongly along with the outer one, or never
+    excluded at all. The occurrence list distinguishes them: exactly one
+    reference, at the outer `T`.
     """
     q = "let f = (T:(a:long)){ T | count }; T | invoke f()"
+    refs = parse(q).find_table_references()
+    assert [(name, n.TextStart, n.Width) for name, n in refs] == [("T", 35, 1)]
     assert parse(q).get_referenced_tables() == {"T"}
+
+
+def test_function_parameter_exclusion_does_not_cross_a_nested_declaration():
+    """An inner declaration's parameter is not in scope in the outer body.
+
+    Collecting parameters from the whole `FunctionDeclaration` subtree
+    registered a nested declaration's parameter against the *outer* body,
+    so the `U` of `union T, U` -- which is outside `g` entirely -- was
+    dropped as if it were `g`'s parameter.
+    """
+    q = (
+        "let f = (T:(a:long)){ let g = (U:(b:long)){ U | count }; union T, U };"
+        " T | invoke f()"
+    )
+    assert parse(q).get_referenced_tables() == {"T", "U"}
+    # Control: renaming the inner parameter cannot change the answer.
+    control = q.replace("(U:(b:long)){ U | count }", "(V:(b:long)){ V | count }")
+    assert parse(control).get_referenced_tables() == {"T", "U"}
 
 
 def test_as_alias_is_not_a_table():
     assert parse("T | as X | join (X) on a").get_referenced_tables() == {"T"}
+
+
+def test_let_alias_does_not_hide_a_real_table_of_the_same_name_before_it():
+    """A `let` binds its name from that statement onward, exactly like `as`.
+
+    Found while fixing the `as` case, and confirmed against the binder
+    rather than assumed: parsed with a schema, the leading `X` resolves to a
+    `TableSymbol`, so a bound parse always reported it and only the
+    syntactic walk lost it.
+    """
+    q = "X | count; let X = T | take 1"
+    assert parse(q).get_referenced_tables() == {"T", "X"}
+    schema = {"X": {"a": "string"}, "T": {"a": "string"}}
+    assert parse(q, schema=schema).get_referenced_tables() == {"T", "X"}
+    assert parse(q).replace_table("X", "Z") == "Z | count; let X = T | take 1"
+
+
+def test_as_alias_does_not_hide_a_real_table_of_the_same_name_before_it():
+    """`| as X` binds X from the `as` onward, not for the whole query.
+
+    The leading `X` here is read before anything rebinds the name, so it is
+    a genuine table; a name-keyed exclusion dropped it.
+    """
+    q = "union X, (T | as X) | count"
+    assert parse(q).get_referenced_tables() == {"T", "X"}
+    assert parse(q).replace_table("X", "Z") == "union Z, (T | as X) | count"
 
 
 def test_wildcard_pattern_is_not_a_table():
@@ -209,6 +259,30 @@ def test_bracketed_let_alias_is_not_a_table():
 def test_replace_table_leaves_a_bracketed_let_alias_alone():
     out = parse(BRACKETED_ALIAS_QUERY).replace_table("weird-name", "Z")
     assert out == BRACKETED_ALIAS_QUERY
+
+
+def test_table_references_are_one_per_occurrence_in_source_order():
+    """Several walker branches see the same node; callers see it once.
+
+    The unbound walk reports a pipe source from both the `ExpressionStatement`
+    and the `PipeExpression` branch, and a shadowed `let` RHS from the
+    `LetStatement` branch as well -- so the same span came back two or three
+    times, while the bound path (whose semantic half visits each node once)
+    returned it once. `find_table_references` documents one entry per
+    occurrence for both, so both now dedupe by span and sort by it.
+    """
+    unbound = parse(SHADOW_QUERY).find_table_references()
+    bound = parse(
+        SHADOW_QUERY, schema={"SecurityEvent": {"a": "string"}}
+    ).find_table_references()
+    spans = [(name, n.TextStart, n.Width) for name, n in unbound]
+    assert spans == [("SecurityEvent", 20, 13)]
+    assert spans == [(name, n.TextStart, n.Width) for name, n in bound]
+
+    multi = parse("union C, A | join (B) on x").find_table_references()
+    assert [name for name, _ in multi] == ["C", "A", "B"]
+    starts = [n.TextStart for _, n in multi]
+    assert starts == sorted(starts)
 
 
 # --- a bound parse keeps tables the schema does not know (K17) -------------

@@ -121,9 +121,11 @@ class KustoQuery:
     ) -> str:
         """Rename every reference to ``old_name``; return the rewritten query.
 
-        Rewrites exactly the spans :meth:`find_table_references` reports —
-        including, on a bound query, tables the schema does not describe,
-        and excluding aliases, function parameters and wildcard patterns.
+        Rewrites the spans :meth:`find_table_references` reports — including,
+        on a bound query, tables the schema does not describe — and leaves
+        aliases and function parameters alone. A wildcard pattern is never
+        rewritten even where the binder expanded it to the name you passed:
+        see :func:`kustology.utils.analysis.replace_table`.
         """
         return replace_table(
             self._code, old_name, new_name, force_syntactic=force_syntactic

@@ -157,8 +157,8 @@ release is in `docs/superpowers/reports/`.
   reported four kinds of name that are not tables: the name an `| as X`
   operator binds, a user-defined function's table-typed parameter
   (`let f = (T1:(a:long)){ T1 | count }` reported `T1`), and a `union T*`
-  wildcard, which names a pattern the binder resolves to a `GroupSymbol` and
-  which `replace_table` must never rewrite. It also got `let` shadowing
+  wildcard, which names a pattern rather than a table and which
+  `replace_table` must never rewrite. It also got `let` shadowing
   backwards: in `let SecurityEvent = SecurityEvent | where a; SecurityEvent
   | take 1` the right-hand `SecurityEvent` *is* the real table — KQL
   evaluates a binding's right-hand side outside its own name, so a `let`
@@ -166,12 +166,23 @@ release is in `docs/superpowers/reports/`.
   name-keyed filter dropped both and returned **no tables at all** for that
   query, with `replace_table` a silent no-op. The right-hand occurrences of
   the name a statement is itself binding are now exempted by source span
-  (names bound by *earlier* `let`s stay excluded), and the parameter
-  exclusion is scoped to the declaring function's body, so a real table
-  sharing a parameter's name still resolves. A bracketed `let` name leaked
-  the same way for a different reason: the declaring side is a
-  `NameDeclaration`, which `node_name` did not unwrap, so `let
-  ['weird-name'] = SecurityEvent; ['weird-name'] | take 1` compared
+  (names bound by *earlier* `let`s stay excluded). Every exclusion is
+  positional for the same reason — a name is only an alias where it is in
+  scope. An `| as X` binds `X` from the `as` onward, so the real table in
+  `union X, (T | as X)` survives; a `let` binds from its own statement
+  onward, so the real table in `X | count; let X = T | take 1` survives too
+  (Microsoft's binder resolves that occurrence to a `TableSymbol`, so a
+  bound parse always reported it and only the syntactic walk lost it); and a
+  parameter is bound only inside the body of the function declaring it, so
+  neither a real table sharing its name nor an outer `union T, U` beside a
+  nested `(U:(b:long)){…}` is lost. `replace_table` additionally refuses to
+  rewrite a wildcard span in either mode — the binder resolves `union T*`
+  against a one-table schema straight to that `TableSymbol`, so a
+  `replace_table("T1", "Z")` would have overwritten the pattern the caller
+  never named and narrowed which tables the query reads.
+  A bracketed `let` name leaked the same way for a different reason: the
+  declaring side is a `NameDeclaration`, which `node_name` did not unwrap,
+  so `let ['weird-name'] = SecurityEvent; ['weird-name'] | take 1` compared
   `['weird-name']` against `weird-name` and reported the alias as a second
   table — and, in `get_referenced_columns`, a bracketed scalar `let` as a
   column. `NameDeclaration` now reads back unquoted like every other name
@@ -190,7 +201,10 @@ release is in `docs/superpowers/reports/`.
   now returns the binder's references plus every syntactic reference the
   binder left unresolved (`ReferencedSymbol is None`) whose source span no
   semantic reference already covers, and both public methods read from it,
-  so they can no longer disagree about what a table is. Binding all 33
+  so they can no longer disagree about what a table is. Both modes return
+  one entry per occurrence in source order: the syntactic walk used to
+  report a pipe source two or three times, once per branch that saw the
+  node, while the bound path reported it once. Binding all 33
   fixture rules against a deliberately half-complete schema lost a table in
   13 of them before this change and none after. `get_tables_semantic()` is
   unchanged and still strictly the binder's answer.

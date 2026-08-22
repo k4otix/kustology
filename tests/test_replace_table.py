@@ -61,6 +61,21 @@ def test_replace_a_table_the_schema_does_not_know():
     assert q.replace_table("SecurityEvent", "X") == "union X, SigninLogs"
 
 
+def test_replace_never_rewrites_a_wildcard_pattern():
+    """The binder expands `T*` to a single match; the rewrite must not follow.
+
+    With one matching table the reference resolves to that `TableSymbol`, so
+    `get_referenced_tables()` reports `T1` -- correctly, that is what the
+    query reads today. Rewriting its span would replace the pattern `T*`
+    with a fixed name and silently change which tables the query reads once
+    a second `T…` table exists, and the caller never wrote `T*` in the call.
+    """
+    q = parse("union withsource=S T*", schema={"T1": {"a": "string"}})
+    assert q.get_referenced_tables() == {"T1"}
+    assert q.replace_table("T1", "Z") == "union withsource=S T*"
+    assert q.replace_table("T*", "Z") == "union withsource=S T*"
+
+
 def test_replace_repeated_references():
     """A table referenced multiple times should be renamed in every position."""
     out = parse("A | join (A) on x").replace_table("A", "Z")
