@@ -221,10 +221,11 @@ _NULL_TEST_POLARITY: dict[str, Literal["inclusion", "exclusion"]] = {
 }
 
 
-# The arithmetic operators. Neither case sensitivity nor polarity is a
-# property of arithmetic -- both are categories of *comparison* -- so a
-# ``BinOp`` built from one of these records ``None`` for both rather than
-# whatever the comparison rules happen to return.
+# ``ARITHMETIC_OPS`` lives in ``_builder_helpers`` because the binder reads it
+# too. Neither case sensitivity nor polarity is a property of arithmetic --
+# both are categories of *comparison* -- so a ``BinOp`` built from one of
+# those operators records ``None`` for both rather than whatever the
+# comparison rules happen to return.
 
 
 def _is_case_sensitive_op(op: str) -> bool | None:

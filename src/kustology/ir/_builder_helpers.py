@@ -629,7 +629,6 @@ def literal_value_and_ticks(node: Any) -> tuple[Any, int | None]:
     return raw.ToString(None, CultureInfo.InvariantCulture), None
 
 
-
 # --- aggregate output naming -------------------------------------------------
 #
 # KQL's auto-name for an unnamed aggregate is ``<function>_<first column>``
