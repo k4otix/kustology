@@ -604,6 +604,22 @@ release is in `docs/superpowers/reports/`.
   for Windows-authored `.kql`, and CI runs on LF so nothing else catches it.
   `format` output is unaffected: `format_query` normalizes CRLF to LF, and
   CRLF and LF inputs produce byte-identical output.
+- **A schemaless `to_ir()` now carries literal and built-in types (tier 2).**
+  `parse("T | where a > ago(1h) and b == 1.5").to_ir()` left `1h`, `1.5` and
+  `ago()` at `result_type = unresolved`, while `IRBuilder().build()` on the
+  same text typed all three — two "schemaless" entry points, two different
+  answers, because only the second ran Microsoft's binder. `to_ir()` on an
+  unbound parse now calls `KustoCode.Analyze(GlobalState.Default)`, which
+  binds the tree already in hand rather than re-parsing, so the seam's
+  no-second-parse invariant is untouched and `KustoQuery.has_semantics` stays
+  `False` — Tier 1 keeps every syntactic path it had. Default globals
+  describe no tables, so the `KS204` those bindings raise says nothing about
+  the query; both schemaless paths filter it (`IRBuilder.build` and
+  `build_from_code(..., ignore_unknown_tables=True)`), which also removes the
+  191 false unknown-table rows `IRBuilder().build` used to report across the
+  fixture corpus. A parse the caller bound with their own schema is
+  unchanged and still reports `KS204` for a table that schema does not
+  describe. `semantic_hash` is unmoved: `result_type` is volatile.
 
 ### Breaking (tier 2, pre-1.0)
 

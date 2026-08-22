@@ -3,7 +3,7 @@
 
 import json
 
-from .bridge import KustoCode
+from .bridge import GlobalState, KustoCode
 from .services import _diagnostic_dicts
 from .utils.analysis import (
     find_table_references,
@@ -195,6 +195,19 @@ class KustoQuery:
         nodes keep their types — Microsoft's binder populates
         ``Expr.result_type`` on the way through.
 
+        **Without a schema the binder still runs**, against
+        ``GlobalState.Default``. ``KustoCode.Analyze(globals)`` binds the
+        tree already in hand and hands back a *new* bound ``KustoCode``, so
+        this costs no second parse and leaves this object syntactic —
+        ``has_semantics`` stays ``False`` and every Tier 1 accessor keeps
+        taking its syntactic path. What it buys is real types for everything
+        that does not need a table: ``1h`` is a ``timespan``, ``1.5`` a
+        ``real``, ``ago(1h)`` a ``datetime``. Default globals describe no
+        tables, so the ``KS204`` those bindings raise is an artifact of how
+        the types were obtained and is filtered out; a parse the caller bound
+        with their own schema keeps it, because there an undescribed table is
+        a real error.
+
         Two passes populate the IR's type / provenance information:
 
         * **Microsoft binder** (runs when ``parse(query, schema=...)`` is
@@ -218,8 +231,16 @@ class KustoQuery:
         """
         from .ir.builder import IRBuilder  # local import: triggers the [ir] extra guard lazily
 
-        global_state = self._code.Globals if self._code.HasSemantics else None
-        ir = IRBuilder(global_state=global_state).build_from_code(self._code)
+        bound_by_caller = self._code.HasSemantics
+        if bound_by_caller:
+            code = self._code
+        else:
+            # D5/K27. ``Analyze`` binds this tree; it does not re-lex the
+            # text and it does not mutate ``self._code``.
+            code = self._code.Analyze(GlobalState.Default)
+        ir = IRBuilder(global_state=code.Globals).build_from_code(
+            code, ignore_unknown_tables=not bound_by_caller,
+        )
 
         # Default: attach iff we have a bound parse to extract schemas from.
         # Explicit True/False/dict always wins.

@@ -1668,3 +1668,79 @@ def test_is_time_func_agrees_with_find_time_expressions():
         assert name in _TIME_FUNCS
     assert _is_time_func_name("abs") is False
     assert "abs" not in _TIME_FUNCS
+
+
+# -- schemaless analysis against default globals (K27, Task 5.1) ----------
+
+_SCHEMALESS_Q = "T | where a > ago(1h) and b == 1.5"
+
+
+def _typed(ir):
+    """{(node kind, discriminating text): result_type} for the K27 probes."""
+    from kustology.ir import FuncCall, find_all
+
+    out: dict[str, KustoType] = {}
+    for lit in find_all(ir, LiteralExpr):
+        out[f"literal:{lit.literal_kind}"] = lit.result_type
+    for call in find_all(ir, FuncCall):
+        out[f"call:{call.name}"] = call.result_type
+    return out
+
+
+def test_schemaless_to_ir_types_literals_and_builtins():
+    """``parse(q).to_ir()`` with no schema must still carry real types.
+
+    Microsoft's binder resolves ``1h``, ``1.5`` and ``ago()`` against
+    ``GlobalState.Default`` without needing a single table, so leaving them
+    ``UNRESOLVED`` was our omission rather than a limit of the parser.
+    """
+    ir = parse(_SCHEMALESS_Q).to_ir()
+    types = _typed(ir)
+    assert types["literal:timespan"] == KustoType.TIMESPAN
+    assert types["literal:real"] == KustoType.REAL
+    assert types["call:ago"] == KustoType.DATETIME
+
+
+def test_schemaless_to_ir_reports_no_unknown_table_diagnostic():
+    """Analyzing against default globals must not invent a KS204 for ``T``.
+
+    The user asked for no schema; reporting every table as missing would be
+    an artifact of how we got the types, not something they wrote.
+    """
+    ir = parse(_SCHEMALESS_Q).to_ir()
+    assert [(d.code, d.message) for d in ir.diagnostics] == []
+
+
+def test_ir_builder_build_agrees_with_the_schemaless_to_ir_path():
+    """The two schemaless entry points must annotate and diagnose alike.
+
+    ``IRBuilder().build`` already bound against default globals and so
+    already had the types; what it also had was 191 false KS204s across the
+    corpus, which is the half of the disagreement that lands here.
+    """
+    ir = IRBuilder().build(_SCHEMALESS_Q)
+    types = _typed(ir)
+    assert types["literal:timespan"] == KustoType.TIMESPAN
+    assert types["literal:real"] == KustoType.REAL
+    assert types["call:ago"] == KustoType.DATETIME
+    assert [(d.code, d.message) for d in ir.diagnostics] == []
+
+
+def test_a_bound_parse_still_reports_its_unknown_tables():
+    """Suppression is scoped to the schemaless path, not to the IR at large.
+
+    A caller who supplied a schema and named a table it does not describe
+    has a real error, and it must survive into ``ir.diagnostics``.
+    """
+    ir = parse(
+        "Known | join Missing on x", schema={"Known": {"x": "string"}},
+    ).to_ir()
+    assert any(d.code == "KS204" for d in ir.diagnostics)
+
+
+def test_the_three_schemaless_paths_hash_the_same():
+    """``result_type`` is volatile, so acquiring it must not move the digest."""
+    a = parse(_SCHEMALESS_Q).to_ir(attach_schema=False).semantic_hash
+    b = parse(_SCHEMALESS_Q).to_ir().semantic_hash
+    c = IRBuilder().build(_SCHEMALESS_Q).semantic_hash
+    assert a == b == c

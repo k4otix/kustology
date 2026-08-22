@@ -138,3 +138,23 @@ def test_to_ir_explicit_attach_schema_dict_overrides_parse_schema():
     assert ir.schema_attached is True
     assert ir.main_pipeline.result_schema is not None
     assert "DeviceName" in dict(ir.main_pipeline.result_schema.columns)
+
+
+def test_schemaless_to_ir_analyzes_without_a_second_parse(parse_counter):
+    """K27's default-globals analysis must use ``Analyze``, not a re-parse.
+
+    ``KustoCode.Analyze(globals)`` binds the tree already in hand and returns
+    a new bound ``KustoCode``; ``ParseAndAnalyze`` would throw the tree away
+    and lex the text again. The counter cannot tell the two apart from the
+    IR, which is exactly why it is asserted here.
+    """
+    query = parse("DeviceProcessEvents | where FileName == 'cmd.exe'")
+    assert parse_counter.count == 1
+
+    ir = query.to_ir()
+    assert parse_counter.count == 1, "schemaless to_ir() must not re-parse"
+    assert query.has_semantics is False, (
+        "Analyze returns a new KustoCode; the receiver stays syntactic so "
+        "Tier 1 keeps its syntactic path"
+    )
+    assert ir.schema_attached is False
