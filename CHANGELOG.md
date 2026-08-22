@@ -67,14 +67,25 @@ release is in `docs/superpowers/reports/`.
   Microsoft Sentinel rules.
 - **`ExternalDataExpr` carries real data (tier 2).** `uris`, `columns` and
   `format` were placeholders — the URI was literally the string `"url"`.
-- **Comments no longer reach `semantic_hash` through a column type
-  (tier 2).** `AssertSchemaOp.columns`, `ParseKvOp.columns` and
-  `ExternalDataExpr.columns` read each declared type with `ToString()`,
+- **Comments no longer reach `semantic_hash` through a column type or a
+  non-literal URI (tier 2).** `AssertSchemaOp.columns`, `ParseKvOp.columns`
+  and `ExternalDataExpr.columns` read each declared type with `ToString()`,
   which is `IncludeTrivia.All` and prepends the node's leading trivia: `T |
   assert-schema (a: // note`↵`long)` recorded the type as
   `"// note\nlong"` and hashed differently from the identical query without
-  the comment. All three (and the new `DataTableSource.columns`) read
-  `IncludeTrivia.Minimal` now.
+  the comment. All three, and the new `DataTableSource.columns`, now go
+  through one shared `read_row_schema` reader on `IncludeTrivia.Minimal` —
+  one reader rather than four copies, since three of the four copies were
+  wrong. The same leak sat on the URI fallback in `externaldata`: an
+  element that does not fold to a literal (a `let`-bound feed URL,
+  `strcat(...)`) is recorded as its source text, and that text carried a
+  preceding comment. Note the fallback itself is by design — a `uris` entry
+  is **not guaranteed to be a URI**, and both `ExternalDataSource` and
+  `ExternalDataExpr` document that. A comment *interior* to an unmodelled
+  node still reaches `UnknownSource.raw_text` and the URI fallback; no
+  `IncludeTrivia` mode strips interior trivia, and this splits a digest
+  rather than merging two, so it is documented on `UnknownSource.raw_text`
+  rather than papered over.
 - **`ParseKvOp.columns`, `MacroExpandOp.pipeline` and `Expr.result_type_inner`
   are populated (tier 2).** Each was empty for every query ever parsed.
 - **`walk()` / `find_all()` descend tuple-valued fields (tier 2).** A
