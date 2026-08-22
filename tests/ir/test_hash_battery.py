@@ -398,6 +398,14 @@ MUST_EQUAL = [
     ("top-bare-is-desc", "T | top 5 by a", "T | top 5 by a desc"),
     ("mv-expand-bare-is-bag", "T | mv-expand a", "T | mv-expand kind=bag a"),
     ("parse-bare-is-simple", "T | parse x with 'a' y", "T | parse kind=simple x with 'a' y"),
+    # `parse-where` is a separate operator class carrying its own copy of the
+    # field, so the default is a second decision rather than the same one
+    # observed twice -- it is only shared by the docstring saying so.
+    (
+        "parse-where-bare-is-simple",
+        "T | parse-where x with 'a' y",
+        "T | parse-where kind=simple x with 'a' y",
+    ),
     ("union-bare-is-outer", "union A, B", "union kind=outer A, B"),
     ("search-bare-is-default", "search 'x'", "search kind=default 'x'"),
     ("join-bare-is-innerunique", "T | join U on a", "T | join kind=innerunique U on a"),
