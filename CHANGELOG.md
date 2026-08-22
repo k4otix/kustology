@@ -97,6 +97,14 @@ release is in `docs/superpowers/reports/`.
   `find_all(ir, FuncCall)` on `let A = T | where d > ago(1h) | where d <
   now(); A | take 1` reported `ago` and `now` twice each. Traversal now keeps
   a visited set keyed on object identity.
+- **A bare `*` is a `StarExpr`, not a column named `*` (tier 2).** Kusto
+  parses the `*` of `project-reorder *, a` (and of `project-away *` /
+  `project-keep *`) as a `NameReference` — the same class it uses for an
+  ordinary column — so the builder lowered it to `ColumnRef(name="*")` and
+  `find_all(ir, ColumnRef)`, the documented way to ask which columns a query
+  names, answered with a column that does not exist. A *prefix* wildcard
+  (`a*`) stays a `ColumnRef`: it names real columns by pattern and the
+  pattern text is the only record of which ones.
 - **Adjacent string literals are one literal (tier 2).** KQL concatenates
   `'a' 'b'` into `"ab"`, C-style, and the parser hands the joined value over
   as a `CompoundStringLiteralExpression`. The builder had no branch for the

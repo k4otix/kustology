@@ -332,18 +332,65 @@ def test_project_reorder_records_each_term_independently():
 
 def test_project_reorder_wildcard_terms_survive_with_their_direction():
     """``*`` and prefix wildcards are where ``asc``/``desc`` earn their keep --
-    the direction orders the columns the wildcard matched. Kusto parses both
-    as a ``NameReference``, so they land as a ``ColumnRef`` whose name is the
-    wildcard text rather than as a ``StarExpr``; pinned as observed."""
+    the direction orders the columns the wildcard matched.
+
+    A bare ``*`` is *every remaining column*, not a column named ``*``. Kusto
+    parses it as a ``NameReference`` (with a ``WildcardedName`` inside), the
+    same class it uses for an ordinary column, so the builder lowered it to
+    ``ColumnRef(name="*")`` -- and ``find_all(ir, ColumnRef)``, the documented
+    way to ask which columns a query names, answered with a column that does
+    not exist. It is a :class:`~kustology.ir.StarExpr`, the node the IR
+    already has for exactly this, and the one ``distinct *`` has always
+    produced.
+
+    A *prefix* wildcard stays a ``ColumnRef``: ``a*`` names a set of real
+    columns by pattern, and the pattern text is the only record of which
+    ones, so there is something to keep. ``StarExpr`` has no field to keep it
+    in.
+    """
+    from kustology.ir import StarExpr
+
     (star,) = _reorder_keys("T | project-reorder * asc")
-    assert (type(star.expression).__name__, star.expression.name, star.direction) == (
-        "ColumnRef", "*", "asc",
-    )
+    assert isinstance(star.expression, StarExpr), type(star.expression).__name__
+    assert star.direction == "asc"
+
     (prefix,) = _reorder_keys("T | project-reorder a* desc")
+    assert isinstance(prefix.expression, ColumnRef), type(prefix.expression).__name__
     assert (prefix.expression.name, prefix.direction) == ("a*", "desc")
-    assert [(k.expression.name, k.direction) for k in _reorder_keys("T | project-reorder *, a")] == [
-        ("*", None), ("a", None),
-    ]
+
+    keys = _reorder_keys("T | project-reorder *, a")
+    assert isinstance(keys[0].expression, StarExpr), type(keys[0].expression).__name__
+    assert (type(keys[1].expression).__name__, keys[1].expression.name) == ("ColumnRef", "a")
+    assert [k.direction for k in keys] == [None, None]
+
+
+def test_a_bare_wildcard_is_not_reported_as_a_column():
+    """The consequence the node change exists for: ``find_all(ir, ColumnRef)``
+    must not name ``*``. Pinned across all three operators that put a bare
+    wildcard in expression position, since they share ``_visit_expr``."""
+    from kustology.ir import StarExpr, find_all
+
+    for query in (
+        "T | project-reorder *, a",
+        "T | project-away *",
+        "T | project-keep *",
+    ):
+        ir = parse(query).to_ir()
+        assert "*" not in [c.name for c in find_all(ir, ColumnRef)], query
+        assert len(list(find_all(ir, StarExpr))) == 1, query
+
+
+def test_a_prefix_wildcard_and_a_bare_one_do_not_hash_alike():
+    """Guards the near-miss implementation of the change above: keying the
+    ``StarExpr`` rewrite on ``WildcardedName`` alone -- rather than on
+    ``WildcardedName`` *and* the text being exactly ``*`` -- would swallow
+    ``a*`` too, and ``StarExpr`` has no field to carry the pattern, so every
+    prefix wildcard would collapse onto every other one and onto a bare
+    ``*``."""
+    assert (
+        parse("T | project-reorder *").to_ir().semantic_hash
+        != parse("T | project-reorder a*").to_ir().semantic_hash
+    )
 
 
 REORDER_MUST_DIFFER = [

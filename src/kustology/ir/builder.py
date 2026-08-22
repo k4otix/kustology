@@ -1471,13 +1471,28 @@ class IRBuilder:
 
         elif kind == "NameReference":
             name = visit_name(node.Name)
+            # A bare ``*`` is *every remaining column*, not a column called
+            # ``*``. The parser spells it as a ``NameReference`` -- the same
+            # class it uses for an ordinary column, separated only by the
+            # inner name node's ``WildcardedName`` kind -- so it lowered to
+            # ``ColumnRef(name="*")`` and ``find_all(ir, ColumnRef)`` named a
+            # column that does not exist. ``StarExpr`` is the node the IR
+            # already has for it, and what ``distinct *`` has always built.
+            #
+            # A *prefix* wildcard (``a*``) stays a ``ColumnRef``: it names a
+            # set of real columns by pattern, the pattern text is the only
+            # record of which ones, and ``StarExpr`` has nowhere to keep it.
+            # Hence the text check as well as the kind check -- keying on the
+            # kind alone would collapse every prefix wildcard onto ``*``.
+            if name == "*" and is_wildcarded_name(node.Name):
+                res = StarExpr(span=span)
             # A name an *earlier* ``let`` bound is a query-local value, not a
             # column of whatever the pipeline reads -- the expression-position
             # twin of the ``LetRef`` check in ``_visit_source``, and decided
             # from the statement text alone so it does not depend on whether a
             # schema was supplied. Lowering it to a ``ColumnRef`` made
             # ``find_all(ir, ColumnRef)`` report a column that does not exist.
-            if name in self._let_names:
+            elif name in self._let_names:
                 res = LetValueRef(name=name, span=span)
             else:
                 res = ColumnRef(name=name, span=span)
