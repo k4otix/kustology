@@ -899,3 +899,39 @@ def test_wildcard_matching_is_case_sensitive():
 def test_wildcard_and_plain_terms_combine_in_source_order():
     ir = _fallback("T | project-keep s*, k")
     assert _columns(ir) == [("k", "string"), ("s", "string")]
+
+
+# K09: mv-expand -------------------------------------------------------------
+
+
+def test_mv_expand_with_itemindex_adds_the_index_column():
+    """``with_itemindex=i`` emits a trailing ``long``; the rule ignored it."""
+    ir = _fallback("T | mv-expand with_itemindex=i d")
+    assert _columns(ir)[-1] == ("i", "long")
+
+
+def test_mv_expand_with_itemindex_and_to_typeof_together():
+    ir = _fallback("T | mv-expand with_itemindex=idx d to typeof(long)")
+    cols = dict(_columns(ir))
+    assert cols["d"] == "long"
+    assert cols["idx"] == "long"
+
+
+def test_mv_expand_does_not_read_the_element_type_off_result_type_inner():
+    """``result_type_inner`` is the *element* type of the array expression,
+    and the expanded column is not typed as its element.
+
+    ``extend arr = pack_array(1, 2) | mv-expand arr`` records
+    ``result_type_inner == long``, and the branch that read it typed ``arr``
+    as ``long``. Microsoft leaves it ``dynamic``: without ``to typeof(...)``
+    each expanded row still holds a dynamic value.
+    """
+    ir = _fallback("T | extend arr = pack_array(1, 2) | mv-expand arr")
+    assert dict(_columns(ir))["arr"] == "dynamic"
+
+
+def test_mv_expand_keeps_the_column_type_it_already_had():
+    """Expanding a typed column does not retype it -- ``s`` stays ``string``
+    -- and a column the scope does not know defaults to ``dynamic``."""
+    assert dict(_columns(_fallback("T | mv-expand s")))["s"] == "string"
+    assert dict(_columns(_fallback("Unknown | mv-expand q")))["q"] == "dynamic"

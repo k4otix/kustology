@@ -511,6 +511,14 @@ release is in `docs/superpowers/reports/`.
   glob, case-sensitively (`project-keep A*` over a column `a` keeps nothing,
   as the engine says), and a bare `*` — a `StarExpr`, not a column called
   `*` — keeps or drops everything.
+- **`mv-expand` adds its item-index column and stops retyping the expanded
+  one (tier 2).** `with_itemindex=i` emits a trailing `long` the fallback
+  rule never added, so the column existed in the engine's output and not in
+  ours. In the other direction the rule read `result_type_inner` — the
+  *element* type of the array expression — and retyped the column to it, so
+  `extend arr = pack_array(1, 2) | mv-expand arr` reported `arr` as `long`
+  where the engine reports `dynamic`. Without `to typeof(...)` an expanded
+  column keeps the type it had.
 - **Six public `KustoQuery` members gained docstrings (tier 1).**
   `get_operator_chain`, `get_referenced_columns`, `get_referenced_functions`,
   `get_structural_hash`, `syntax` and `text` delegated in silence, so

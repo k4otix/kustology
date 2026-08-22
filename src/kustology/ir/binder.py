@@ -733,15 +733,25 @@ class SchemaAttacher:
                     continue
                 if col.to_typeof:
                     # The query states the expanded element's type, so there
-                    # is nothing to infer from the binder's dynamic<T>.
+                    # is nothing to infer.
                     current[name] = col.to_typeof
                     continue
-                inner = getattr(c, "result_type_inner", None)
-                if inner is not None:
-                    current[name] = inner.value if hasattr(inner, "value") else str(inner)
-                else:
-                    # Post-expand row has unspecified element type.
-                    current[name] = current.get(name, "dynamic")
+                # Without ``to typeof(...)`` the column keeps the type it had
+                # -- ``mv-expand s`` leaves ``s`` a string -- and defaults to
+                # ``dynamic`` when the scope does not know it.
+                #
+                # Reading ``result_type_inner`` here was the mistake: it is
+                # the *element* type of the array expression, and the engine
+                # does not retype the column to it. ``extend arr =
+                # pack_array(1, 2) | mv-expand arr`` records ``inner == long``
+                # and Microsoft still reports ``arr`` as ``dynamic``, because
+                # each expanded row holds a dynamic value until the query
+                # says otherwise.
+                current[name] = current.get(name, "dynamic")
+            if op.with_item_index:
+                # ``with_itemindex=i`` appends the zero-based position of the
+                # expanded element as a trailing long column.
+                current[op.with_item_index] = KustoType.LONG.value
             self._set_scope(scope, current)
             return
         if isinstance(op, MakeSeriesOp):
