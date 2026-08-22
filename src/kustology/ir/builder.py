@@ -1161,33 +1161,70 @@ class IRBuilder:
         effective default, ``desc`` — never ``None``. See :class:`SortKey`
         for why the field is declared required.
 
-        The keyword text is passed straight into a two-value ``Literal``
-        because the grammar admits exactly two spellings: ``ascending`` and
-        ``descending`` are syntax errors (one diagnostic each on a real
-        parse), so ``AscOrDescKeyword.Text`` is always ``asc`` or ``desc``.
+        Both keyword reads go through :meth:`_ordering_keyword`, which
+        validates the text against the ``Literal``'s own two values rather
+        than trusting the token's presence — see there for the malformed
+        input that made the difference.
         """
         span = to_span(node)
-        if str(type(node).__name__) != "OrderedExpression":
+        if type(node).__name__ != "OrderedExpression":
             return SortKey(
                 expression=self._visit_expr(node), direction="desc", span=span,
             )
 
-        direction = "desc"
-        nulls = None
-        ordering = node.Ordering
-        if ordering is not None:
-            keyword = ordering.AscOrDescKeyword
-            if keyword is not None:
-                direction = str(keyword.Text).strip().lower()
-            nulls_clause = ordering.NullsClause
-            if nulls_clause is not None:
-                nulls = str(nulls_clause.FirstOrLastKeyword.Text).strip().lower()
+        ordering = getattr(node, "Ordering", None)
+        # ``or "desc"`` supplies the effective default for both the
+        # not-written case and the unreadable one. See :class:`SortKey`.
+        direction = self._ordering_keyword(
+            ordering, "AscOrDescKeyword", ("asc", "desc"),
+        ) or "desc"
+        nulls = self._ordering_keyword(
+            getattr(ordering, "NullsClause", None) if ordering is not None else None,
+            "FirstOrLastKeyword", ("first", "last"),
+        )
         return SortKey(
             expression=self._visit_expr(node.Expression),
             direction=direction,
             nulls=nulls,
             span=span,
         )
+
+    @staticmethod
+    def _ordering_keyword(
+        clause: Any, member: str, allowed: tuple[str, ...],
+    ) -> str | None:
+        """One keyword token off an ordering clause, or ``None``.
+
+        Kusto's error recovery has two ways of saying "the keyword isn't
+        there" and only one of them is ``None``. ``sort by x nulls`` builds
+        an ``OrderingNullsClause`` that *exists*, holding a
+        ``FirstOrLastKeyword`` that also exists but is a missing token whose
+        ``Text`` is ``""`` (``IsMissing`` is ``True``). A presence check
+        alone therefore let an empty string reach ``Literal["first",
+        "last"]``, and ``to_ir()`` raised ``ValidationError`` on a typo —
+        a hard crash where ``T | take``, ``T | where``, ``T | summarize by``
+        and ``T | sort by`` all build a degraded operator and leave the
+        complaint to the diagnostics. ``nulls firs`` and ``nulls xyz``
+        recover the same way.
+
+        Checking membership in ``allowed`` rather than ``IsMissing`` is the
+        deliberate choice: it is the same check the ``Literal`` will apply,
+        so nothing can get past here that pydantic would then reject, and it
+        holds for a recovery shape that keeps the garbage text as well as for
+        one that blanks it. It is applied to the direction keyword too. The
+        argument that a bad direction cannot happen — ``ascending`` and
+        ``descending`` are syntax errors that never reach the token, and
+        ``ASC``/``Desc`` case-fold cleanly — is empirical, and an empirical
+        argument is exactly what ``FirstOrLastKeyword`` had until this input
+        turned up.
+        """
+        if clause is None:
+            return None
+        token = getattr(clause, member, None)
+        if token is None:
+            return None
+        text = str(token.Text).strip().lower()
+        return text if text in allowed else None
 
     # -- expression dispatch ---------------------------------------------
 

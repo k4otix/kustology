@@ -220,3 +220,53 @@ def test_sort_key_rejects_an_unknown_direction():
     dumped = ir.model_dump_json().replace('"direction":"desc"', '"direction":"down"')
     with pytest.raises(pydantic.ValidationError):
         QueryIR.model_validate_json(dumped)
+
+
+# -- malformed input degrades, it does not raise --------------------------
+
+MALFORMED_NULLS = [
+    ("no-keyword", "T | sort by x nulls", "desc"),
+    ("truncated-keyword", "T | sort by x nulls firs", "desc"),
+    ("after-a-direction", "T | sort by x asc nulls", "asc"),
+    ("garbage-keyword", "T | top 5 by x nulls xyz", "desc"),
+]
+
+
+@pytest.mark.parametrize(
+    "case_id, query, direction", MALFORMED_NULLS, ids=[c[0] for c in MALFORMED_NULLS],
+)
+def test_a_malformed_nulls_clause_degrades_instead_of_raising(case_id, query, direction):
+    """``to_ir()`` must not be the thing that fails on bad KQL.
+
+    Kusto's error recovery has two ways of saying "the keyword isn't there",
+    and only one of them is ``None``. ``sort by x nulls`` builds an
+    ``OrderingNullsClause`` that *exists*, holding a ``FirstOrLastKeyword``
+    that also exists but is a missing token whose ``Text`` is ``""``. A
+    presence check alone let that empty string reach
+    ``Literal["first", "last"]`` and turned a typo into a ``ValidationError``
+    out of ``to_ir()`` -- a hard crash where ``T | take``, ``T | where``,
+    ``T | summarize by`` and ``T | sort by`` all build a degraded operator
+    and leave the complaint to the diagnostics.
+    """
+    parsed = parse(query)
+    assert parsed.diagnostics, f"{case_id}: expected the parser to complain about {query!r}"
+    ir = parsed.to_ir()  # must not raise
+    keys = [
+        k for op in ir.main_pipeline.operators if isinstance(op, (SortOp, TopOp))
+        for k in (op.expressions if isinstance(op, SortOp) else [op.by])
+    ]
+    key = keys[0]
+    assert key.nulls is None
+    assert key.direction == direction, "an unreadable nulls clause must not eat the direction"
+    assert key.expression.name == "x", "the ordering expression survives the bad clause"
+
+
+def test_a_truncated_nulls_keyword_recovers_as_a_second_key():
+    """Recovery is the parser's call, not ours, and it is worth pinning what
+    it actually does: ``nulls firs`` drops the unreadable clause and reads
+    ``firs`` as a second ordering key. The point is that the builder reports
+    that shape rather than dying on it."""
+    keys = _sort_keys("T | sort by x nulls firs")
+    assert [(k.expression.name, k.direction, k.nulls) for k in keys] == [
+        ("x", "desc", None), ("firs", "desc", None),
+    ]

@@ -552,7 +552,10 @@ release is in `docs/superpowers/reports/`.
   the field has no pydantic default so `to_llm_dict` renders it.
   `SortKey.nulls` is `Literal["first", "last"] | None`. Reach the expression
   through `.expression`; `semantic_hash` changes for every query with a
-  `sort`, `order by` or `top`.
+  `sort`, `order by` or `top`. An unreadable modifier degrades rather than
+  raising: `sort by x nulls` (and `nulls firs`, `nulls xyz`) records
+  `nulls=None` and keeps the direction, leaving the complaint to the
+  diagnostics, which is what every other operator does with malformed input.
 - **`ForkOp.pipelines` is replaced by `ForkOp.branches`**, a
   `list[ForkBranch]` where each `ForkBranch` carries an optional `name` (the
   `a=` prefix, which names the result table the branch produces) and its
