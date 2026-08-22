@@ -114,6 +114,7 @@ from .query import (
     QueryIR,
     RangeOp,
     RenderOp,
+    ReorderKey,
     SampleDistinctOp,
     SampleOp,
     ScanOp,
@@ -306,13 +307,32 @@ class IRBuilder:
         "DynamicExpression",
         "BinaryExpression",
         "OrderedExpression",
-        # OrderedExpression is handled, but by ``_visit_sort_key`` rather than
-        # by ``_visit_expr``: it is a sort/top ordering key, not an
-        # expression, and lowering it to its bare inner expression is what
-        # threw away ``asc``/``desc`` and ``nulls first``/``last``. It stays
-        # listed for the same reason MaterializeExpression below does -- the
-        # kind *is* modelled, and dropping it would make the coverage audit
-        # report a fully-handled shape as unhandled.
+        # OrderedExpression is handled, but not by ``_visit_expr``: it is an
+        # ordering key, not an expression, and lowering it to its bare inner
+        # expression is what threw away ``asc``/``desc`` and ``nulls
+        # first``/``last``. It stays listed for the same reason
+        # MaterializeExpression below does -- the kind *is* modelled, and
+        # dropping it would make the coverage audit report a fully-handled
+        # shape as unhandled.
+        #
+        # It has FOUR owners, and the count matters: deleting the
+        # ``_visit_expr`` branch for the sake of the first two silently
+        # regressed the third to ``UnknownExpr``, losing the column identity
+        # a bare ``project-reorder x`` keeps. Enumerated by parsing each
+        # construct and walking to the nearest ``*Operator`` ancestor of every
+        # ``OrderedExpression`` in the tree:
+        #
+        #   SortOperator (``sort by`` / ``order by``)  -> ``_visit_sort_key``
+        #   TopOperator (``top N by``)                 -> ``_visit_sort_key``
+        #   ProjectReorderOperator                     -> ``_visit_reorder_key``
+        #   TopNestedOperator (``top-nested … by x asc``)
+        #       -> not visited at all. ``TopNestedOp`` is one of the
+        #          preserve-raw-text operators, so the whole operator is
+        #          recorded as source text and no child expression, ordered
+        #          or otherwise, is ever handed to ``_visit_expr``.
+        #
+        # Add a fifth owner and it needs a case here, or it lands on
+        # ``UnknownExpr`` while this list claims otherwise.
         "InExpression", "HasAnyExpression", "HasAllExpression",
         "BetweenExpression", "FunctionCallExpression", "MaterializeExpression",
         # MaterializeExpression is handled, but by ``_visit_pipeline`` --
@@ -762,11 +782,11 @@ class IRBuilder:
             return ProjectKeepOp(columns=cols, span=span)
 
         if kind == "ProjectReorderOperator":
-            cols = []
+            reorder_cols = []
             if hasattr(n, "Expressions"):
                 for el in _iter_elements(n.Expressions):
-                    cols.append(self._visit_expr(el))
-            return ProjectReorderOp(columns=cols, span=span)
+                    reorder_cols.append(self._visit_reorder_key(el))
+            return ProjectReorderOp(columns=reorder_cols, span=span)
 
         if kind == "ProjectRenameOperator":
             cols = []
@@ -1186,6 +1206,36 @@ class IRBuilder:
             expression=self._visit_expr(node.Expression),
             direction=direction,
             nulls=nulls,
+            span=span,
+        )
+
+    def _visit_reorder_key(self, node: Any) -> ReorderKey:
+        """One ``project-reorder`` term.
+
+        The same ``OrderedExpression`` shape as :meth:`_visit_sort_key`, and
+        the same bare-node common case — ``project-reorder x`` puts a plain
+        ``NameReference`` into ``Expressions``, and so does the ``*`` of
+        ``project-reorder *, a``, which is why a wildcard arrives here as a
+        ``ColumnRef`` whose name is the wildcard text rather than as a
+        ``StarExpr``.
+
+        What differs is the missing modifier. There is no effective default
+        to supply: ``direction`` stays ``None``. See :class:`ReorderKey` for
+        why that is not the same decision as ``SortKey``'s, and why making it
+        the same would reintroduce a collision.
+
+        ``NullsClause`` is not read. The grammar attaches one only to a sort
+        ordering, and ``project-reorder x nulls first`` is a syntax error
+        (checked on a real parse), so there is nothing to record.
+        """
+        span = to_span(node)
+        if type(node).__name__ != "OrderedExpression":
+            return ReorderKey(expression=self._visit_expr(node), span=span)
+        return ReorderKey(
+            expression=self._visit_expr(node.Expression),
+            direction=self._ordering_keyword(
+                getattr(node, "Ordering", None), "AscOrDescKeyword", ("asc", "desc"),
+            ),
             span=span,
         )
 

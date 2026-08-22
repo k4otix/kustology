@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-"""Ordering keys: ``sort by`` / ``order by`` / ``top … by``.
+"""Ordering keys: ``sort by`` / ``order by`` / ``top … by`` / ``project-reorder``.
 
 ``SortOp.expressions`` and ``TopOp.by`` used to hold bare expressions, so
 ``sort by x asc`` and ``sort by x desc`` — which return rows in opposite
@@ -21,12 +21,30 @@ Two properties are pinned here that are easy to conflate:
   pydantic default — which is why ``SortKey.direction`` is declared required
   with no default at all: a defaulted field would be dropped from
   ``to_llm_dict``'s output and a reader could not tell ``desc`` was in force.
+
+``project-reorder`` is here because it is the third consumer of the same
+``OrderedExpression`` wrapper, and the one that makes the two properties
+above come apart. Its ``asc``/``desc`` orders *columns*, not rows, and its
+no-modifier case means "keep the order they are listed in" — there is no
+effective default to substitute, so :class:`ReorderKey` gives ``direction``
+a genuine ``None`` where :class:`SortKey` cannot. Reusing ``SortKey`` here
+would stamp ``desc`` on a bare column, misreporting it and collapsing it
+against an explicit ``desc``.
 """
 
 import pytest
 
 from kustology import parse
-from kustology.ir import QueryIR, SortKey, SortOp, TopOp
+from kustology.ir import (
+    ColumnRef,
+    ProjectReorderOp,
+    QueryIR,
+    ReorderKey,
+    SortKey,
+    SortOp,
+    TopOp,
+    find_all,
+)
 
 
 def _hash(query: str) -> str:
@@ -270,3 +288,129 @@ def test_a_truncated_nulls_keyword_recovers_as_a_second_key():
     assert [(k.expression.name, k.direction, k.nulls) for k in keys] == [
         ("x", "desc", None), ("firs", "desc", None),
     ]
+
+
+# -- project-reorder: the third consumer of OrderedExpression -------------
+
+def _reorder_keys(query: str) -> list[ReorderKey]:
+    ir = parse(query).to_ir()
+    (op,) = find_all(ir, ProjectReorderOp)
+    return op.columns
+
+
+def test_project_reorder_keeps_the_column_and_records_the_direction():
+    """The regression this exists for. Deleting the ``OrderedExpression``
+    branch of ``_visit_expr`` fixed ``sort``/``top`` and broke this third
+    site: ``project-reorder x asc`` fell through to ``UnknownExpr`` and the
+    column identity was gone -- unbindable, invisible to ``find_all``, an
+    opaque blob in the LLM view."""
+    (key,) = _reorder_keys("T | project-reorder x asc")
+    assert isinstance(key, ReorderKey), type(key).__name__
+    assert isinstance(key.expression, ColumnRef), type(key.expression).__name__
+    assert (key.expression.name, key.direction) == ("x", "asc")
+
+
+def test_project_reorder_column_is_reachable_by_find_all():
+    ir = parse("T | project-reorder x asc").to_ir()
+    assert [c.name for c in find_all(ir, ColumnRef)] == ["x"]
+
+
+def test_project_reorder_without_a_modifier_has_no_direction():
+    """Not ``desc``. ``project-reorder x`` keeps the listed order; there is no
+    KQL default to record, which is why ``ReorderKey`` is a separate model
+    from ``SortKey`` rather than a reuse of it."""
+    (key,) = _reorder_keys("T | project-reorder x")
+    assert key.direction is None
+
+
+def test_project_reorder_records_each_term_independently():
+    keys = _reorder_keys("T | project-reorder x asc, y desc, z")
+    assert [(k.expression.name, k.direction) for k in keys] == [
+        ("x", "asc"), ("y", "desc"), ("z", None),
+    ]
+
+
+def test_project_reorder_wildcard_terms_survive_with_their_direction():
+    """``*`` and prefix wildcards are where ``asc``/``desc`` earn their keep --
+    the direction orders the columns the wildcard matched. Kusto parses both
+    as a ``NameReference``, so they land as a ``ColumnRef`` whose name is the
+    wildcard text rather than as a ``StarExpr``; pinned as observed."""
+    (star,) = _reorder_keys("T | project-reorder * asc")
+    assert (type(star.expression).__name__, star.expression.name, star.direction) == (
+        "ColumnRef", "*", "asc",
+    )
+    (prefix,) = _reorder_keys("T | project-reorder a* desc")
+    assert (prefix.expression.name, prefix.direction) == ("a*", "desc")
+    assert [(k.expression.name, k.direction) for k in _reorder_keys("T | project-reorder *, a")] == [
+        ("*", None), ("a", None),
+    ]
+
+
+REORDER_MUST_DIFFER = [
+    ("asc-vs-desc", "T | project-reorder x asc", "T | project-reorder x desc"),
+    ("asc-vs-bare", "T | project-reorder x asc", "T | project-reorder x"),
+    ("desc-vs-bare", "T | project-reorder x desc", "T | project-reorder x"),
+    ("per-term", "T | project-reorder x asc, y desc", "T | project-reorder x desc, y asc"),
+]
+
+
+@pytest.mark.parametrize(
+    "case_id, a, b", REORDER_MUST_DIFFER, ids=[c[0] for c in REORDER_MUST_DIFFER],
+)
+def test_project_reorder_directions_hash_apart(case_id, a, b):
+    """All three forms hashed distinctly *before* this fix too -- but only
+    because the direction survived inside an ``UnknownExpr``'s raw text.
+    Restoring the column identity must not buy it back at the cost of a
+    collision."""
+    assert _hash(a) != _hash(b), f"{case_id}: {a!r} and {b!r} order columns differently"
+
+
+def test_project_reorder_binder_reaches_the_column_and_reorders_the_scope():
+    """The column has to be a real expression for either half of this to
+    work: ``_fill`` types it, and ``_extract_target_name`` reads the name
+    that decides the emitted column order."""
+    schema = {"T": {"x": "string", "n": "long"}}
+    ir = parse("T | project-reorder n asc", schema=schema).to_ir()
+    assert ir.schema_attached
+    (key,) = _reorder_keys_from(ir)
+    assert (key.expression.table, key.expression.result_type.value) == ("T", "long")
+    # KQL emits listed columns first, then the rest in source order.
+    assert list(ir.main_pipeline.result_schema.columns) == ["n", "x"]
+
+
+def _reorder_keys_from(ir: QueryIR) -> list[ReorderKey]:
+    (op,) = find_all(ir, ProjectReorderOp)
+    return op.columns
+
+
+def test_project_reorder_round_trips_through_json():
+    ir = parse("T | project-reorder x asc, y desc, z").to_ir()
+    again = QueryIR.model_validate_json(ir.model_dump_json())
+    assert again == ir
+    assert [(k.expression.name, k.direction) for k in _reorder_keys_from(again)] == [
+        ("x", "asc"), ("y", "desc"), ("z", None),
+    ]
+
+
+def test_project_reorder_rejects_an_unknown_direction():
+    import pydantic
+
+    ir = parse("T | project-reorder x asc").to_ir()
+    dumped = ir.model_dump_json().replace('"direction":"asc"', '"direction":"sideways"')
+    with pytest.raises(pydantic.ValidationError):
+        QueryIR.model_validate_json(dumped)
+
+
+def test_reorder_direction_is_optional_so_the_llm_view_shows_only_written_ones():
+    """The mirror image of ``SortKey.direction``: here ``None`` is the honest
+    value for an unwritten modifier, so it keeps a pydantic default and
+    ``to_llm_dict`` drops it -- while a written one still renders."""
+    from kustology.ir import to_llm_dict
+
+    ir = parse("T | project-reorder x asc, z").to_ir()
+    (view,) = [
+        op for op in to_llm_dict(ir)["main_pipeline"]["operators"]
+        if op["kind"] == "project_reorder"
+    ]
+    assert view["columns"][0]["direction"] == "asc"
+    assert "direction" not in view["columns"][1]

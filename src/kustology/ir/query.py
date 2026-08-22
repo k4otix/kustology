@@ -374,10 +374,40 @@ class ProjectKeepOp(Operator):
     columns: list[ColumnRef | AnyExpr]
 
 
+class ReorderKey(BaseModel):
+    """One term of ``project-reorder``: a column or wildcard, plus its order.
+
+    Sibling to :class:`SortKey` — both wrap the parser's ``OrderedExpression``
+    — but the two differ on exactly the point D8 turns on, and reusing
+    ``SortKey`` here would be wrong twice over.
+
+    ``project-reorder``'s ``asc``/``desc`` orders **columns**, not rows: it
+    decides the left-to-right order of the columns a term matches, which is
+    why it earns its keep on wildcards (``project-reorder a* asc``). Omitting
+    it does not select a KQL default the way a bare ``sort by x`` selects
+    ``desc``; it means "emit these in the order I listed them". There is no
+    effective value to substitute, so ``direction`` is genuinely optional and
+    ``None`` is the honest record. Stamping ``"desc"`` on a bare term would
+    both misreport it and collapse it against an explicit ``desc`` — a new
+    hash collision in the act of fixing one.
+
+    Because ``None`` is a real declared default here, ``to_llm_dict`` drops
+    the field on unwritten terms and renders it on written ones, which is the
+    correct reading in both directions.
+    """
+
+    model_config = {"extra": "forbid"}
+    KIND: ClassVar[str] = "reorder_key"
+    kind: Literal["reorder_key"] = "reorder_key"
+    expression: AnyExpr
+    direction: Literal["asc", "desc"] | None = None
+    span: Span
+
+
 class ProjectReorderOp(Operator):
     KIND: ClassVar[str] = "project_reorder"
     kind: Literal["project_reorder"] = "project_reorder"
-    columns: list[ColumnRef | AnyExpr]
+    columns: list[ReorderKey]
 
 
 class ProjectRenameOp(Operator):

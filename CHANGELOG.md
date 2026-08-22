@@ -556,6 +556,19 @@ release is in `docs/superpowers/reports/`.
   raising: `sort by x nulls` (and `nulls firs`, `nulls xyz`) records
   `nulls=None` and keeps the direction, leaving the complaint to the
   diagnostics, which is what every other operator does with malformed input.
+- **`ProjectReorderOp.columns` is `list[ReorderKey]`** (was
+  `list[ColumnRef | AnyExpr]`). `project-reorder` is the third consumer of
+  the same `OrderedExpression` wrapper, so `project-reorder x asc` used to
+  reach `_visit_expr`'s unwrap; with that unwrap gone it fell through to an
+  `UnknownExpr` and the column identity went with it — unbindable, invisible
+  to `find_all(ir, ColumnRef)`, an opaque blob in the LLM view, while a bare
+  `project-reorder x` was unaffected. Each term is now a `ReorderKey`
+  carrying its `expression` and an **optional** `direction`. Optional is the
+  difference from `SortKey`: `project-reorder`'s `asc`/`desc` orders
+  *columns* rather than rows, and omitting it means "keep the listed order"
+  rather than selecting a KQL default, so `None` is the honest record and
+  D8's effective-default rule does not apply. `asc`, `desc` and unwritten all
+  hash distinctly. Reach the column through `.expression`.
 - **`ForkOp.pipelines` is replaced by `ForkOp.branches`**, a
   `list[ForkBranch]` where each `ForkBranch` carries an optional `name` (the
   `a=` prefix, which names the result table the branch produces) and its

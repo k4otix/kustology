@@ -403,13 +403,23 @@ class SchemaAttacher:
             return
         if isinstance(op, ProjectReorderOp):
             # KQL emits listed columns first (in listed order), then remaining
-            # columns in source order. Wildcards/asc/desc aren't reordered here —
-            # they fall through unmodified.
+            # columns in source order. A wildcard term contributes no name to
+            # ``listed`` (``*`` and ``a*`` are not columns in ``current``), so
+            # the columns it matches keep their source order — which is also
+            # why the term's ``asc``/``desc``, being a rule for ordering those
+            # matches, is not modelled in the scope here.
+            #
+            # ``columns`` is uniformly ``list[ReorderKey]``, so the expression
+            # is reached through ``.expression`` rather than the old
+            # ``getattr(c, "expr", c)`` guess. That guess is what would break
+            # here: ``ReorderKey`` has no ``expr``, so it would have handed
+            # the wrapper itself to ``_fill``, which reads ``result_type`` off
+            # an ``Expr``.
             current = self._scope_columns(scope)
             listed: list[str] = []
             for c in op.columns:
-                self._fill(getattr(c, "expr", c) if not isinstance(c, Expr) else c, scope)
-                name = self._extract_target_name(c)
+                self._fill(c.expression, scope)
+                name = self._extract_target_name(c.expression)
                 if name and name in current and name not in listed:
                     listed.append(name)
             if listed:

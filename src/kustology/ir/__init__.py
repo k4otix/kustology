@@ -43,7 +43,8 @@ from .query import (
     MakeGraphOp, MakeSeriesOp, MvApplyOp, MvExpandOp, Operator, ParseKvOp,
     ParseOp, ParseWhereOp, PartitionOp, Pipeline, PrintOp, ProjectAwayOp,
     ProjectByNamesOp, ProjectKeepOp, ProjectOp, ProjectRenameOp,
-    ProjectReorderOp, QueryIR, RangeOp, RenderOp, SampleDistinctOp, SampleOp,
+    ProjectReorderOp, QueryIR, RangeOp, RenderOp, ReorderKey,
+    SampleDistinctOp, SampleOp,
     ScanOp, SearchOp, SerializeOp, SortKey, SortOp, SummarizeOp, TableRef,
     TabularSchema, TakeOp, TopHittersOp, TopNestedOp, TopOp, UnionOp,
     UnknownOp, UnknownSource,
@@ -70,7 +71,7 @@ __all__ = [
     "Finding", "AnalyzerFn", "Severity",
     # Top-level / container
     "QueryIR", "Pipeline", "LetBinding", "LetFunction", "Diagnostic", "Assignment",
-    "ForkBranch", "SortKey", "Span",
+    "ForkBranch", "ReorderKey", "SortKey", "Span",
     "KustoType", "TabularSchema",
     # Expressions
     "Expr", "AnyExpr", "ColumnRef", "BinOp", "SetMembership", "Between",
