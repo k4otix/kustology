@@ -266,10 +266,26 @@ def _heuristic_schema(query: str) -> dict[str, dict[str, str]]:
     *closed* table symbol — Microsoft only computes a result schema it can
     fully determine, and an unknown table leaves every downstream symbol
     open, so an empty schema would make the corpus sweep assert nothing.
+
+    Both the column list and the table list are **sorted**. They come from
+    ``set``s, so their iteration order varies with ``PYTHONHASHSEED``, and
+    that order reaches the assertion: it decides the column order of the
+    ``GlobalState``, which decides Microsoft's output order, which this gate
+    compares as an ordered list. Every case agrees on every seed today, so
+    nothing is flaky now — but a gate whose expected value depends on the
+    seed is one change away from passing on CI and failing on a laptop, and
+    the ``xfail(strict=True)`` markers would turn that into an xpass failure
+    with no visible cause.
     """
     q = parse(query)
-    columns = {c: "string" for c in q.get_referenced_columns(force_syntactic=True)}
-    return {t: dict(columns) for t in q.get_referenced_tables(force_syntactic=True)}
+    columns = {
+        c: "string"
+        for c in sorted(q.get_referenced_columns(force_syntactic=True))
+    }
+    return {
+        t: dict(columns)
+        for t in sorted(q.get_referenced_tables(force_syntactic=True))
+    }
 
 
 def _load_corpus() -> list[tuple[str, str]]:
@@ -299,19 +315,21 @@ def microsoft_columns(query: str, schema: dict) -> list[tuple[str, str]] | None:
     ]
 
 
-def our_columns(query: str, schema: dict) -> list[tuple[str, str]] | None:
-    ir = parse(query, schema=schema).to_ir()
+def our_columns(query: str, schema: dict, ir=None) -> list[tuple[str, str]] | None:
+    """Our answer. Pass ``ir`` when the caller already built one."""
+    if ir is None:
+        ir = parse(query, schema=schema).to_ir()
     result_schema = ir.main_pipeline.result_schema
     return list(result_schema.columns.items()) if result_schema is not None else None
 
 
-def assert_agrees(query: str, schema: dict) -> None:
+def assert_agrees(query: str, schema: dict, ir=None) -> None:
     theirs = microsoft_columns(query, schema)
     if theirs is None:
         # ``facet`` and ``fork`` return several tables, so there is no single
         # ``ResultType`` to compare against — not a divergence, an absence.
         pytest.skip("Microsoft reports no tabular ResultType for this query")
-    ours = our_columns(query, schema)
+    ours = our_columns(query, schema, ir)
     assert ours == theirs, (
         f"result_schema disagrees with Microsoft's binder for {query!r}\n"
         f"  ours: {ours}\n"
@@ -330,12 +348,15 @@ def test_operator_matrix_matches_microsoft(query_id: str, query: str):
 def test_corpus_fixture_matches_microsoft(name: str, query: str):
     schema = _heuristic_schema(query)
     ir = parse(query, schema=schema).to_ir()
-    if ir.additional_pipelines:
-        pytest.skip(
-            "multi-statement query: code.ResultType describes the last "
-            "statement, main_pipeline the first"
-        )
-    assert_agrees(query, schema)
+    # ``code.ResultType`` describes the *last* statement and ``main_pipeline``
+    # the first, so the comparison is only meaningful for a single-statement
+    # query. No fixture has a second one today; the guard is here so that
+    # adding one produces this sentence rather than a mystifying column diff.
+    assert not ir.additional_pipelines, (
+        f"{name} has {len(ir.additional_pipelines)} extra tabular statements; "
+        "compare the last pipeline, not main_pipeline"
+    )
+    assert_agrees(query, schema, ir)
 
 
 # --- the same matrix, against the fallback walk ------------------------------
