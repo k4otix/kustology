@@ -15,6 +15,7 @@ import pytest
 
 pytest.importorskip("pydantic")
 
+from kustology import core as _core
 from kustology import parse
 from kustology import services as _services
 from kustology.ir import builder as _builder
@@ -43,6 +44,11 @@ def parse_counter(monkeypatch):
     _Counter.count = 0
     monkeypatch.setattr(_services, "KustoCode", _Counter)
     monkeypatch.setattr(_builder, "KustoCode", _Counter)
+    # ``core`` binds ``KustoCode`` at module scope too, and ``core.to_ir``
+    # is the function every test in this file is actually about. Leaving it
+    # out pointed the instrument away from the code under test; see
+    # ``test_the_counter_is_wired_to_every_module_to_ir_parses_through``.
+    monkeypatch.setattr(_core, "KustoCode", _Counter)
     yield _Counter
 
 
@@ -187,3 +193,26 @@ def test_a_schemaless_parse_still_has_no_result_schema():
     """
     ir = parse("DeviceProcessEvents | project FileName").to_ir()
     assert ir.main_pipeline.result_schema is None
+
+
+def test_the_counter_is_wired_to_every_module_to_ir_parses_through(parse_counter):
+    """The fixture must patch ``core``, or the tests above guard nothing.
+
+    ``core.to_ir`` is where 5.1's decision lives, and ``core`` binds
+    ``KustoCode`` at module scope (``from .bridge import GlobalState,
+    KustoCode``). Patching ``services`` and ``ir.builder`` leaves that
+    binding pointing at the real class, so a re-parse introduced *there* --
+    the one place a re-parse would actually be introduced -- would not move
+    the counter and every assertion in this file would stay green through
+    it. The invariant is real; without this the instrument is not.
+    """
+    import kustology.bridge
+
+    patched = {
+        name
+        for name, module in (
+            ("core", _core), ("services", _services), ("builder", _builder),
+        )
+        if getattr(module, "KustoCode", None) is not kustology.bridge.KustoCode
+    }
+    assert patched == {"core", "services", "builder"}
