@@ -176,9 +176,9 @@ release is in `docs/superpowers/reports/`.
   `x - (y - z)` no longer reads as `x - y - z`, and neither does
   `x * (y / z)`, which under integer division is a different number
   (`2 * (7 / 2)` is 6; `2 * 7 / 2` is 7).
-  Redundant brackets are still dropped: the parser discards them before the
-  builder sees them, so `(a and b) or c` and `a and b or c` build identical
-  IR and render identically. String literals are escaped, so the one-argument
+  Redundant brackets are still dropped: the builder unwraps every
+  `ParenthesizedExpression`, so `(a and b) or c` and `a and b or c` build
+  identical IR and render identically — as do `(X) > 1` and `X > 1`. String literals are escaped, so the one-argument
   call `f("a\", \"b")` no longer renders as the two-argument `f("a", "b")`.
   `true` / `false` / `null` replace Python's `True` / `False` / `None` —
   which also means the LLM view's redundant-`canonical_form` drop fires on

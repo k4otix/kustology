@@ -173,11 +173,14 @@ def _kql_literal(value: Any, literal_kind: str) -> str:
 def canonical(expr: Any) -> str:
     """Stable, commutative-aware string representation for diffing.
 
-    Parenthesized **by precedence**, not by what the source wrote. The parser
-    discards redundant parentheses before the builder ever sees them -- ``(a
-    and b) or c`` and ``a and b or c`` build byte-identical IR -- so
-    reproducing the source's brackets is not an option even in principle, and
-    ``BracketedExpr`` stays dropped. What the renderer owes the reader is that
+    Parenthesized **by precedence**, not by what the source wrote. The
+    parentheses *are* in the .NET tree -- ``ParenthesizedExpression`` -- but
+    ``IRBuilder._visit_expr`` unwraps every one of them unconditionally, so
+    ``(a and b) or c`` and ``a and b or c`` build byte-identical IR and this
+    function has no bracket left to reproduce. That unwrap is the right call
+    on its own terms, and it is why ``BracketedExpr`` stays dropped here:
+    rendering the source's brackets would make ``(X) > 1`` and ``X > 1`` two
+    strings for one predicate. What the renderer owes the reader is that
     the string it emits parses back to the tree it came from: ``a and (b or
     c)`` keeps its parentheses because ``or`` binds looser than ``and``, and
     ``x - (y - z)`` keeps them because arithmetic is left-associative, so a

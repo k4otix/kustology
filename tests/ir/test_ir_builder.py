@@ -688,10 +688,11 @@ def test_a_conjunction_inside_a_disjunction_needs_no_parentheses():
     """The other direction, and the reason the fix is a precedence table
     rather than "keep the parentheses the source wrote". ``and`` already
     binds tighter than ``or``, so the parentheses in ``(a and b) or c`` are
-    redundant: it is the *same* predicate as ``a and b or c``, the parser
-    discards them, and the two build byte-identical IR that has to render
-    one way. What matters is that it no longer renders the same as the
-    conjunction-of-a-disjunction above."""
+    redundant: it is the *same* predicate as ``a and b or c``. The .NET tree
+    does hold a ``ParenthesizedExpression`` for the first spelling, but
+    ``_visit_expr`` unwraps it, so both build byte-identical IR and have to
+    render one way. What matters is that it no longer renders the same as
+    the conjunction-of-a-disjunction above."""
     redundant = _form("T | where (a and b) or c")
     assert redundant == "a and b or c"
     assert redundant == _form("T | where a and b or c")
