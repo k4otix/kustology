@@ -15,6 +15,14 @@ Schema-loading priority:
 Per query: build → enrich → roundtrip. Classifies six structural failure
 categories. Semantic diagnostics from the .NET binder are recorded as
 informational metadata only; they don't count as failures.
+
+This is a maintainer diagnostic against a local, gitignored corpus sample
+(``tests/fixtures/sentinel_sample``, populated by
+``scripts/sample_sentinel_corpus.py``) -- it is not wired into CI as a gate,
+since the corpus itself isn't checked in. Exit codes still mean what they
+say: 1 if the corpus was empty or any query produced a finding, 0 otherwise.
+Pass ``--soft`` to always exit 0 while still writing and printing the report,
+for callers that want the diagnostic without the verdict.
 """
 from __future__ import annotations
 
@@ -24,6 +32,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from kustology.ir import (
@@ -85,7 +94,7 @@ def load_schemas_b(path: Path) -> dict[str, dict[str, str]] | None:
 def _scan_table_names(corpus_root: Path) -> set[str]:
     found: set[str] = set()
     for path in corpus_root.rglob("*.kql"):
-        body = path.read_text(encoding="utf-8")
+        body = path.read_text(encoding="utf-8", errors="replace")
         for m in TABLE_NAME_PATTERN.finditer(body):
             name = m.group(1)
             if name.lower() in KQL_KEYWORDS:
@@ -237,10 +246,12 @@ def verify_query(builder: IRBuilder, attacher: SchemaAttacher,
 
 def iter_corpus(root: Path):
     for path in sorted(root.rglob("*.kql")):
-        yield str(path.relative_to(root)), path.read_text(encoding="utf-8")
+        yield str(path.relative_to(root)), path.read_text(
+            encoding="utf-8", errors="replace"
+        )
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", type=Path, default=DEFAULT_CORPUS,
                         help="Directory of .kql files to verify.")
@@ -258,7 +269,14 @@ def main() -> int:
                              f"az CLI lookup). Defaults to the "
                              f"{_WORKSPACE_ID_ENV} environment variable; if "
                              f"unset, option C is skipped.")
-    args = parser.parse_args()
+    parser.add_argument("--soft", action="store_true",
+                        help="Always exit 0 (still writes and prints the "
+                             "report). This script is a maintainer "
+                             "diagnostic against a local corpus sample, not "
+                             "a CI gate; --soft is for callers that want the "
+                             "report without the verdict deciding their exit "
+                             "code.")
+    args = parser.parse_args(argv)
 
     schemas, schema_source = load_schemas(args.schemas, args.corpus,
                                           args.az_bin,
@@ -282,6 +300,19 @@ def main() -> int:
             for cat in verdict["categories"]:
                 failures_by_cat[cat].append(verdict)
 
+    total = len(passed) + len(all_failures)
+    if total == 0:
+        # An empty corpus is not "0 failures" -- it's the sample never
+        # having been populated (scripts/sample_sentinel_corpus.py wasn't
+        # run) or --corpus pointing somewhere with no .kql files. Either way
+        # it means this run verified nothing, which used to read as success.
+        print(
+            f"FAIL: corpus is empty -- no .kql files found under "
+            f"{args.corpus}",
+            file=sys.stderr,
+        )
+        return 0 if args.soft else 1
+
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps({
         "schema_source": schema_source,
@@ -297,7 +328,10 @@ def main() -> int:
     print(f"failed: {len(all_failures)}")
     for cat, hits in failures_by_cat.items():
         print(f"  {cat}: {len(hits)}")
-    return 0
+
+    if args.soft:
+        return 0
+    return 1 if all_failures else 0
 
 
 if __name__ == "__main__":

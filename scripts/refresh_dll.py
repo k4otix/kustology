@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
+import os
 import shutil
 import subprocess
 import sys
@@ -40,6 +41,38 @@ PYPROJECT = REPO_ROOT / "pyproject.toml"
 BIN_DIR = REPO_ROOT / "src" / "kustology" / "bin"
 DLL_NAME = "Kusto.Language.dll"
 PACKAGE = "Microsoft.Azure.Kusto.Language"
+
+# Must match verify_dll.py's TFM pin -- that script only accepts
+# lib/net6.0/Kusto.Language.dll as "the" DLL, so publishing against a
+# different TargetFramework here would fetch a build verify_dll.py can never
+# match, even when it is a legitimate copy from the same package version.
+TFM = "net6.0"
+
+
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    """Write `data` to `path` via a same-directory temp file + os.replace.
+
+    A crash or kill mid-write leaves the temp file, never a truncated
+    `path` -- `path` either has its old contents or its fully-written new
+    ones, never something in between. os.replace is atomic on both POSIX
+    and Windows as long as source and destination are on the same
+    filesystem, which a same-directory temp file guarantees.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.replace(tmp_name, path)
+    except BaseException:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
+
+
+def _atomic_write_text(path: Path, text: str, encoding: str = "utf-8") -> None:
+    _atomic_write_bytes(path, text.encode(encoding))
 
 
 def read_pinned_version() -> str | None:
@@ -81,16 +114,18 @@ def write_pinned_version(version: str) -> None:
         if not text.endswith("\n"):
             text += "\n"
         text += "\n" + block
-    PYPROJECT.write_text(text)
+    _atomic_write_text(PYPROJECT, text)
 
 
-def restore_and_publish(version: str, work_dir: Path) -> Path:
-    """Run `dotnet publish` to materialize the package and return the DLL path."""
-    csproj = work_dir / "fetch.csproj"
-    csproj.write_text(textwrap.dedent(f"""\
+def _csproj_text(version: str) -> str:
+    """The throwaway project file dotnet publish resolves PACKAGE@version
+    against. Split out from restore_and_publish so the TFM pin can be
+    asserted on without invoking dotnet (which would need network access to
+    restore the package)."""
+    return textwrap.dedent(f"""\
         <Project Sdk="Microsoft.NET.Sdk">
           <PropertyGroup>
-            <TargetFramework>net8.0</TargetFramework>
+            <TargetFramework>{TFM}</TargetFramework>
             <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
             <EnableDefaultItems>false</EnableDefaultItems>
           </PropertyGroup>
@@ -98,7 +133,13 @@ def restore_and_publish(version: str, work_dir: Path) -> Path:
             <PackageReference Include="{PACKAGE}" Version="{version}" />
           </ItemGroup>
         </Project>
-        """))
+        """)
+
+
+def restore_and_publish(version: str, work_dir: Path) -> Path:
+    """Run `dotnet publish` to materialize the package and return the DLL path."""
+    csproj = work_dir / "fetch.csproj"
+    csproj.write_text(_csproj_text(version))
 
     out_dir = work_dir / "out"
     subprocess.run(
@@ -124,7 +165,7 @@ def sha256_of(path: Path) -> str:
     return h.hexdigest()
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -139,7 +180,7 @@ def main() -> int:
         action="store_true",
         help="Update [tool.kustology] kusto_language_version in pyproject.toml.",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     version = args.version or read_pinned_version()
     if not version:
@@ -158,18 +199,22 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="kustology-dll-") as tmp:
         work_dir = Path(tmp)
-        print(f"Fetching {PACKAGE} {version} via dotnet publish...")
+        print(f"Fetching {PACKAGE} {version} via dotnet publish (TFM={TFM})...")
         dll = restore_and_publish(version, work_dir)
         sha = sha256_of(dll)
         target = BIN_DIR / DLL_NAME
-        shutil.copyfile(dll, target)
+        # Same rationale as the VERSION.txt / pyproject.toml writes below: a
+        # reader (or a concurrent test run) must never observe a
+        # partially-written DLL.
+        _atomic_write_bytes(target, dll.read_bytes())
 
     timestamp = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
-    (BIN_DIR / "VERSION.txt").write_text(
+    _atomic_write_text(
+        BIN_DIR / "VERSION.txt",
         f"package={PACKAGE}\n"
         f"version={version}\n"
         f"sha256={sha}\n"
-        f"refreshed={timestamp}\n"
+        f"refreshed={timestamp}\n",
     )
     print(f"Wrote {target} ({sha[:16]}...)")
     print(f"Wrote {BIN_DIR / 'VERSION.txt'}")

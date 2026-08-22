@@ -64,12 +64,12 @@ def parse_reference(md_path: Path) -> dict[str, dict[str, str]]:
     return schemas
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--reference-md", type=Path, required=True,
                         help="Path to a Sentinel reference markdown file")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if not args.reference_md.exists():
         print(f"error: reference markdown not found at {args.reference_md}",
@@ -77,17 +77,22 @@ def main() -> int:
         return 1
 
     schemas = parse_reference(args.reference_md)
+    n_tables = len(schemas)
+    n_cols = sum(len(cols) for cols in schemas.values())
+
+    if n_tables == 0:
+        # Write nothing. args.output defaults to the in-repo fixture that
+        # verify_corpus.py's option (B) reads; a zero-table write here used
+        # to clobber whatever a previous good run had produced, turning one
+        # bad markdown parse into two failures.
+        print("error: no tables parsed — check markdown format",
+              file=sys.stderr)
+        return 1
+
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(schemas, indent=2, sort_keys=True),
                            encoding="utf-8")
-
-    n_tables = len(schemas)
-    n_cols = sum(len(cols) for cols in schemas.values())
     print(f"wrote {n_tables} tables ({n_cols} columns) to {args.output}")
-    if n_tables == 0:
-        print("warning: no tables parsed — check markdown format",
-              file=sys.stderr)
-        return 1
     return 0
 
 

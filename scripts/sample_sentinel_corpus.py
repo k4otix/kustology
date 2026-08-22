@@ -128,6 +128,7 @@ def _git_sha(repo: Path) -> str | None:
     try:
         return subprocess.check_output(
             ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True,
+            stderr=subprocess.DEVNULL,
         ).strip()
     except Exception:
         return None
@@ -169,7 +170,7 @@ def write_sample(sentinel_root: Path, plan: dict) -> dict:
     return manifest
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sentinel-root", type=Path, required=True,
                         help="Path to a local Azure-Sentinel clone")
@@ -177,12 +178,25 @@ def main() -> int:
                         help="Random seed for diversity-based sampling (default: 42).")
     parser.add_argument("--dry-run", action="store_true",
                         help="Print counts without writing files")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if not args.sentinel_root.exists():
         print(f"error: Azure-Sentinel not found at {args.sentinel_root}",
               file=sys.stderr)
         return 1
+    if not args.sentinel_root.is_dir():
+        print(f"error: {args.sentinel_root} is not a directory",
+              file=sys.stderr)
+        return 1
+    if _git_sha(args.sentinel_root) is None:
+        # A directory that exists but isn't a git checkout (empty scratch
+        # dir, wrong path, clone that failed partway) used to sample zero
+        # queries from empty stratum folders and exit 0 with an empty
+        # manifest -- indistinguishable from "ran fine, nothing matched."
+        print(f"error: {args.sentinel_root} is not a git repository "
+              "(expected a clone of Azure/Azure-Sentinel)", file=sys.stderr)
+        return 1
+
     plan = sample(args.sentinel_root, args.seed)
     total = len(plan["diversity_picks"]) + sum(
         len(v) for v in plan["stratified_picks"].values()
@@ -191,6 +205,10 @@ def main() -> int:
     for k, v in plan["stratified_picks"].items():
         print(f"  {k}: {len(v)}")
     print(f"  total: {total}")
+    if total == 0:
+        print("error: sampled 0 queries -- is this really an "
+              "Azure-Sentinel clone?", file=sys.stderr)
+        return 1
     if args.dry_run:
         return 0
     manifest = write_sample(args.sentinel_root, plan)

@@ -5,9 +5,9 @@
 Verify that the bundled Kusto.Language.dll matches what nuget.org publishes.
 
 This script downloads the Microsoft.Azure.Kusto.Language NuGet package at the
-pinned version, extracts every Kusto.Language.dll inside it (one per TFM),
-hashes each, and confirms that one of them is byte-identical to the DLL
-shipped in src/kustology/bin/.
+pinned version, extracts the Kusto.Language.dll for the pinned TFM
+(lib/net6.0/) inside it, hashes it, and confirms it is byte-identical to the
+DLL shipped in src/kustology/bin/.
 
 This converts "trust the maintainer" into "trust Microsoft + you can verify
 offline." Run this in CI on every PR, and re-run it locally when you need to
@@ -16,11 +16,15 @@ prove provenance to your security team.
 Usage:
     python scripts/verify_dll.py             # verify against pinned version
     python scripts/verify_dll.py --version 12.3.2
+    python scripts/verify_dll.py --offline    # no network; check the local
+                                               # pin in bin/VERSION.txt only
 
 Exit codes:
     0  bundled DLL matches an exact byte-for-byte copy in the NuGet package
-    1  mismatch — the bundled DLL is NOT what nuget.org currently ships
-    2  configuration error (no pin, network failure, missing files)
+       (or, under --offline, matches the recorded sha256 pin)
+    1  hash mismatch -- the bundled DLL is NOT what it claims to be
+    2  configuration or network error (no pin, missing files, nuget.org
+       unreachable, unexpected package layout) -- NOT evidence of tampering
 """
 
 from __future__ import annotations
@@ -45,7 +49,34 @@ BIN_DIR = REPO_ROOT / "src" / "kustology" / "bin"
 DLL_NAME = "Kusto.Language.dll"
 PACKAGE = "Microsoft.Azure.Kusto.Language"
 
+# Pinned so the byte-identity check is deterministic: a nupkg can carry the
+# DLL under several lib/<TFM>/ folders (net6.0, netstandard2.0, ...), and
+# comparing against "any of them" would pass even if the specific build we
+# bundle drifted from the one this pin names. refresh_dll.py targets the
+# same TFM when it fetches, so the two scripts agree on which copy is "the"
+# DLL.
+TFM = "net6.0"
+
 NUGET_FLATCONTAINER = "https://api.nuget.org/v3-flatcontainer"
+
+
+class VerifyDLLError(Exception):
+    """Base class for verify_dll failures."""
+
+
+class ConfigError(VerifyDLLError):
+    """Local misconfiguration: no pin, missing bundled file, bad package
+    layout. Not evidence the bundled DLL is wrong -- we just couldn't check."""
+
+
+class NetworkError(VerifyDLLError):
+    """nuget.org could not be reached or returned an unexpected response.
+    Not evidence the bundled DLL is wrong -- we just couldn't check."""
+
+
+class HashMismatchError(VerifyDLLError):
+    """The bundled DLL's sha256 does not match the expected reference hash.
+    This is the one case that means the bundled binary itself is suspect."""
 
 
 def read_pinned_version() -> str | None:
@@ -93,64 +124,80 @@ def fetch_nupkg(version: str) -> bytes:
         with urllib.request.urlopen(url, timeout=60) as resp:
             return resp.read()
     except urllib.error.HTTPError as e:
-        raise SystemExit(
-            f"FAIL: nuget.org returned HTTP {e.code} for {PACKAGE} {version}. "
+        raise NetworkError(
+            f"nuget.org returned HTTP {e.code} for {PACKAGE} {version}. "
             "Check the version is correct and the package is public."
         ) from e
     except urllib.error.URLError as e:
-        raise SystemExit(f"FAIL: network error fetching {url}: {e.reason}") from e
+        raise NetworkError(f"network error fetching {url}: {e.reason}") from e
 
 
-def find_dll_hashes(nupkg_bytes: bytes) -> dict[str, str]:
-    """Return {nupkg_internal_path: sha256} for every Kusto.Language.dll in the .nupkg."""
-    out: dict[str, str] = {}
+def find_dll_hash(nupkg_bytes: bytes) -> str | None:
+    """Return the sha256 of lib/<TFM>/Kusto.Language.dll inside the .nupkg,
+    or None if that exact path isn't present."""
+    target = f"lib/{TFM}/{DLL_NAME}"
     with zipfile.ZipFile(io.BytesIO(nupkg_bytes)) as z:
-        for member in z.namelist():
-            if member.endswith(f"/{DLL_NAME}") or member == DLL_NAME:
-                with z.open(member) as f:
-                    out[member] = sha256_of(f.read())
-    return out
+        if target not in z.namelist():
+            return None
+        with z.open(target) as f:
+            return sha256_of(f.read())
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument(
-        "--version",
-        help=f"Override the version of {PACKAGE} to verify against. "
-             "Defaults to the pin in pyproject.toml.",
-    )
-    args = parser.parse_args()
+def _verify_offline() -> int:
+    """Check the bundled DLL against the locally recorded pin only. No
+    network access -- cannot detect drift from what nuget.org currently
+    ships, only whether the bundled file still matches its own pin."""
+    bundled_path = BIN_DIR / DLL_NAME
+    if not bundled_path.exists():
+        raise ConfigError(f"{bundled_path} does not exist.")
 
-    version = args.version or read_pinned_version()
-    if not version:
-        print(
-            "FAIL: no version pin found. "
-            "Set [tool.kustology] kusto_language_version in pyproject.toml "
-            "or pass --version.",
-            file=sys.stderr,
+    bundled_sha = sha256_of_file(bundled_path)
+    print(f"Bundled  {DLL_NAME} : {bundled_sha}")
+
+    pinned_version, pinned_sha = read_version_txt_sha()
+    if not pinned_sha:
+        raise ConfigError(
+            "bin/VERSION.txt has no sha256 pin to verify against -- "
+            "--offline has nothing to check against. Run without --offline, "
+            "or run scripts/refresh_dll.py to record a pin."
         )
-        return 2
+
+    if pinned_sha != bundled_sha:
+        raise HashMismatchError(
+            "bundled DLL hash does not match bin/VERSION.txt.\n"
+            f"  bundled  : {bundled_sha}\n"
+            f"  pin says : {pinned_sha}"
+        )
+
+    print(
+        f"OK (offline): bundled {DLL_NAME} matches the recorded sha256 pin "
+        f"for {PACKAGE} {pinned_version or '?'} in bin/VERSION.txt."
+    )
+    return 0
+
+
+def _verify_online(version_override: str | None) -> int:
+    version = version_override or read_pinned_version()
+    if not version:
+        raise ConfigError(
+            "no version pin found. Set [tool.kustology] "
+            "kusto_language_version in pyproject.toml or pass --version."
+        )
 
     bundled_path = BIN_DIR / DLL_NAME
     if not bundled_path.exists():
-        print(f"FAIL: {bundled_path} does not exist.", file=sys.stderr)
-        return 2
+        raise ConfigError(f"{bundled_path} does not exist.")
 
     bundled_sha = sha256_of_file(bundled_path)
     print(f"Bundled  {DLL_NAME} : {bundled_sha}")
 
     pinned_version, pinned_sha = read_version_txt_sha()
     if pinned_sha and pinned_sha != bundled_sha:
-        print(
-            f"FAIL: bundled DLL hash does not match bin/VERSION.txt.\n"
+        raise HashMismatchError(
+            "bundled DLL hash does not match bin/VERSION.txt.\n"
             f"  bundled  : {bundled_sha}\n"
-            f"  pin says : {pinned_sha}",
-            file=sys.stderr,
+            f"  pin says : {pinned_sha}"
         )
-        return 1
     if pinned_version and pinned_version != version:
         print(
             f"WARN: bin/VERSION.txt records version {pinned_version!r} "
@@ -161,34 +208,61 @@ def main() -> int:
     print(f"Fetching {PACKAGE} {version} from nuget.org...")
     nupkg = fetch_nupkg(version)
 
-    candidates = find_dll_hashes(nupkg)
-    if not candidates:
-        print(
-            f"FAIL: no {DLL_NAME} found inside the NuGet package.",
-            file=sys.stderr,
+    nuget_sha = find_dll_hash(nupkg)
+    if nuget_sha is None:
+        raise ConfigError(
+            f"no lib/{TFM}/{DLL_NAME} found inside {PACKAGE} {version}. "
+            f"The package layout may have changed and the TFM pin (currently "
+            f"{TFM!r}) needs updating."
         )
-        return 1
+    print(f"  lib/{TFM}/{DLL_NAME}: {nuget_sha}")
 
-    print("NuGet package contents:")
-    for path, sha in sorted(candidates.items()):
-        match = " <-- match" if sha == bundled_sha else ""
-        print(f"  {sha}  {path}{match}")
-
-    if bundled_sha in candidates.values():
+    if bundled_sha == nuget_sha:
         print(
-            f"\nOK: bundled {DLL_NAME} is byte-identical to a copy inside "
-            f"{PACKAGE} {version} on nuget.org."
+            f"\nOK: bundled {DLL_NAME} is byte-identical to lib/{TFM}/{DLL_NAME} "
+            f"inside {PACKAGE} {version} on nuget.org."
         )
         return 0
 
-    print(
-        f"\nFAIL: bundled {DLL_NAME} does NOT match any DLL in "
-        f"{PACKAGE} {version} on nuget.org. "
-        "The bundled binary may have been tampered with or built from "
-        "a different version. Re-run scripts/refresh_dll.py to refresh.",
-        file=sys.stderr,
+    raise HashMismatchError(
+        f"bundled {DLL_NAME} does NOT match lib/{TFM}/{DLL_NAME} in "
+        f"{PACKAGE} {version} on nuget.org.\n"
+        f"  bundled : {bundled_sha}\n"
+        f"  nuget   : {nuget_sha}\n"
+        "The bundled binary may have been tampered with or built from a "
+        "different version. Re-run scripts/refresh_dll.py to refresh."
     )
-    return 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--version",
+        help=f"Override the version of {PACKAGE} to verify against. "
+             "Defaults to the pin in pyproject.toml. Ignored with --offline.",
+    )
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Verify only against the local pin in bin/VERSION.txt; makes "
+             "no network request. Cannot detect drift from what nuget.org "
+             "currently ships.",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        if args.offline:
+            return _verify_offline()
+        return _verify_online(args.version)
+    except HashMismatchError as e:
+        print(f"FAIL: {e}", file=sys.stderr)
+        return 1
+    except (ConfigError, NetworkError) as e:
+        print(f"FAIL: {e}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
