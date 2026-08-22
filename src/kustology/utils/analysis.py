@@ -60,18 +60,41 @@ def collect_nodes(syntax, predicate) -> list:
     return results
 
 
+# Functions a query uses to *work with* time whose return type does not say
+# so, which is the only signal reflection has. `format_datetime` and
+# `format_timespan` return strings; `datetime_diff`, `datetime_part`,
+# `dayofmonth`, `dayofyear`, `getyear`, `getmonth`, `hourofday`,
+# `monthofyear` and `weekofyear` return numbers; `bin_auto` resolves its
+# return type from the query's own `query_bin_auto_size` at the call site.
+# Twelve of the entries below are invisible to `time_functions()` for that
+# reason -- the rest overlap it and are listed anyway so this set reads as
+# the intended list rather than as a diff against whatever reflection
+# currently returns. Deliberately hand-curated and deliberately visible: no
+# property on a FunctionSymbol says "temporal", so this is a judgement about
+# what a reader of a detection rule cares about and it should be reviewable.
+_TEMPORAL_RELEVANT = frozenset({
+    "ago", "now",
+    "bin", "bin_at", "bin_auto", "floor",
+    "startofday", "endofday", "startofweek", "endofweek",
+    "startofmonth", "endofmonth", "startofyear", "endofyear",
+    "datetime_add", "datetime_diff", "datetime_part",
+    "datetime_local_to_utc", "datetime_utc_to_local",
+    "dayofmonth", "dayofweek", "dayofyear",
+    "getyear", "getmonth", "hourofday", "monthofyear", "weekofyear",
+    "format_datetime", "format_timespan",
+    "make_datetime", "make_timespan",
+    "todatetime", "totimespan",
+    "unixtime_seconds_todatetime", "unixtime_milliseconds_todatetime",
+    "unixtime_microseconds_todatetime", "unixtime_nanoseconds_todatetime",
+})
+
 # See kustology.reflection.time_functions for the reflected source.
 try:
     from ..reflection import time_functions as _time_functions
 
-    _TIME_FUNCS = _time_functions()
+    _TIME_FUNCS = _time_functions() | _TEMPORAL_RELEVANT
 except Exception:  # pragma: no cover — defensive
-    _TIME_FUNCS = frozenset({
-        "ago", "now", "datetime", "startofday", "endofday",
-        "startofweek", "endofweek", "startofmonth", "endofmonth",
-        "startofyear", "endofyear", "bin", "format_datetime", "todatetime",
-        "totimespan", "datetime_add", "datetime_diff",
-    })
+    _TIME_FUNCS = _TEMPORAL_RELEVANT
 
 _STRUCTURAL_NOISE_KINDS = frozenset({"List", "SeparatedElement"})
 
@@ -389,12 +412,57 @@ def get_operator_chain(kusto_code) -> list:
     return chain
 
 
+def _is_path_selector(node) -> bool:
+    """True when this NameReference is the ``.member`` half of a PathExpression.
+
+    ``tostring(InitiatedBy.user.userPrincipalName)`` references exactly one
+    column — ``InitiatedBy``. Everything after a dot is a key inside that
+    column's dynamic value, and no table has a column named ``user`` or
+    ``userPrincipalName``; reporting them as columns is how a caller ends up
+    querying a schema for names that cannot exist.
+
+    ``$left.x`` / ``$right.x`` are the inverse: there the selector *is* a
+    real column of the joined table and the ``$``-prefixed half is the macro,
+    so those selectors are kept.
+    """
+    parent = node.Parent
+    if parent is None or str(parent.Kind) != "PathExpression":
+        return False
+    selector = getattr(parent, "Selector", None)
+    if (
+        selector is None
+        or selector.TextStart != node.TextStart
+        or selector.Width != node.Width
+    ):
+        return False
+    base = getattr(parent, "Expression", None)
+    if base is not None and str(base.Kind) == "NameReference":
+        return node_name(base) not in ("$left", "$right")
+    return True
+
+
 def get_referenced_columns(kusto_code, force_syntactic: bool = False) -> set[str]:
     """Return the set of column names referenced in the query.
 
     Semantic mode keeps only NameReferences whose ReferencedSymbol is a
-    ColumnSymbol — function names and aliases drop out naturally. Syntactic
-    mode skips function callees but cannot distinguish columns from aliases.
+    ColumnSymbol — function names and aliases drop out naturally.
+
+    Syntactic mode reconstructs the same answer from position. A name is a
+    column unless it occupies one of the positions that are not: a function
+    callee, a wildcard pattern, a ``let`` or ``| as`` alias, a ``$``-prefixed
+    macro, the selector half of a path into a dynamic value, or a source span
+    :func:`find_table_references` already reported as a table. That last test
+    is by ``(TextStart, Width)``, not by name — matching on the name meant a
+    genuine column that happens to be spelled like some table in the same
+    query disappeared, so ``T | where T2 > 1 | join (T2) on a`` lost ``T2``
+    from both places at once.
+
+    The two modes differ on a column the query *creates* and never reads
+    back. Syntactic mode reports it — the ``a`` of ``T | extend a = x + y``
+    — because a ``SimpleNamedExpression``'s name declaration is one. Semantic
+    mode does not, because the binder attaches a ``ColumnSymbol`` to
+    *references*, and there is no reference to attach one to. Where the query
+    does read the alias back the two agree.
     """
     if not force_syntactic and kusto_code.HasSemantics:
         cols = set()
@@ -406,32 +474,57 @@ def get_referenced_columns(kusto_code, force_syntactic: bool = False) -> set[str
                 cols.add(sym.Name)
         return cols
 
-    table_names = {name for name, _ in _collect_table_refs(kusto_code.Syntax)}
+    table_spans = {
+        (node.TextStart, node.Width)
+        for _, node in _collect_table_refs(kusto_code.Syntax)
+    }
     let_vars = set()
+    as_aliases = set()
 
-    class LetCollector(KustoWalker):
+    class AliasCollector(KustoWalker):
         def pre_visit(self, node):
-            if str(node.Kind) == "LetStatement":
+            kind = str(node.Kind)
+            if kind == "LetStatement":
                 name_node = node.GetChild(1)
                 if name_node is not None:
                     let_vars.add(node_name(name_node))
+            elif kind == "AsOperator":
+                # `| as X` is visible for the rest of the query and is not a
+                # table span, so nothing else here would exclude it.
+                alias = getattr(node, "Name", None)
+                if alias is not None:
+                    as_aliases.add(node_name(alias))
 
-    LetCollector().visit(kusto_code.Syntax)
+    AliasCollector().visit(kusto_code.Syntax)
 
     cols = set()
 
     class ColumnExtractor(KustoWalker):
         def pre_visit(self, node):
-            if str(node.Kind) != "NameReference":
-                return
-            if _is_function_callee(node):
-                return
-            # A `union T*` pattern is not a column either, and it no longer
-            # lands in `table_names` to be filtered out that way.
-            if _is_wildcard_name(node):
+            kind = str(node.Kind)
+            if kind == "NameReference":
+                if _is_function_callee(node):
+                    return
+                # A `union T*` pattern is not a column either, and it no
+                # longer lands among the table refs to be filtered out there.
+                if _is_wildcard_name(node):
+                    return
+                if (node.TextStart, node.Width) in table_spans:
+                    return
+                if _is_path_selector(node):
+                    return
+            elif kind == "NameDeclaration":
+                # `extend actor = ...` and `summarize n = count()` create a
+                # column. A named parameter's `kind=`, a `let` name and an
+                # `| as` alias are the same node kind and are not columns —
+                # only a `SimpleNamedExpression` names a projected column.
+                parent = node.Parent
+                if parent is None or str(parent.Kind) != "SimpleNamedExpression":
+                    return
+            else:
                 return
             name = node_name(node)
-            if not name or name in table_names or name in let_vars:
+            if not name or name in let_vars or name in as_aliases:
                 return
             # `$left` / `$right` and other `$`-prefixed names are KQL macros.
             if name.startswith("$"):

@@ -14,6 +14,7 @@ from .core import KustoQuery
 from .reflection import (
     aggregate_functions,
     all_function_names,
+    plugin_functions,
     scalar_functions,
     string_functions,
     syntax_kinds,
@@ -37,6 +38,7 @@ __all__ = [
     "aggregate_functions",
     "string_functions",
     "scalar_functions",
+    "plugin_functions",
     "all_function_names",
     "syntax_kinds",
 ]

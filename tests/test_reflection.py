@@ -8,6 +8,8 @@ from __future__ import annotations
 from kustology.reflection import (
     aggregate_functions,
     all_function_names,
+    plugin_functions,
+    scalar_functions,
     string_functions,
     syntax_kinds,
     time_functions,
@@ -18,12 +20,24 @@ def test_time_functions_contains_canonical_names():
     funcs = time_functions()
     # Anchor on the canonical handful — the set is a superset (possibly larger
     # after future Kusto.Language upgrades), so test for membership not equality.
-    # ``datetime`` and ``bin`` are deliberately omitted: ``datetime`` is parsed
-    # as a literal (not in Kusto.Language.Functions), and ``bin`` has a
-    # parameter-typed return so DeclaredReturnType is None and reflection puts
-    # it in ``scalar_functions()``.
+    # ``datetime`` is deliberately omitted: it is parsed as a literal, so it is
+    # not a member of Kusto.Language.Functions at all.
     for canonical in ("ago", "now", "startofday", "endofweek", "todatetime"):
         assert canonical in funcs, f"expected {canonical!r} in time_functions(); got {sorted(funcs)[:20]}"
+
+
+def test_time_functions_reads_every_overload_not_just_the_first():
+    """``bin`` and ``bin_at`` declare no return type on their *first* signature.
+
+    Their overload lists are ``[None, timespan, datetime, datetime]`` and
+    ``[None, timespan, timespan, datetime]``: reading signature zero alone
+    saw ``None`` and filed the two most common temporal functions in KQL
+    under ``scalar_functions()``.
+    """
+    funcs = time_functions()
+    assert "bin" in funcs
+    assert "bin_at" in funcs
+    assert {"bin", "bin_at"}.isdisjoint(scalar_functions())
 
 
 def test_aggregate_functions_contains_canonical_names():
@@ -43,6 +57,47 @@ def test_all_function_names_supersets_categories():
     assert time_functions().issubset(everything)
     assert aggregate_functions().issubset(everything)
     assert string_functions().issubset(everything)
+    assert scalar_functions().issubset(everything)
+    assert plugin_functions().issubset(everything)
+
+
+def test_all_function_names_includes_names_dir_cannot_see():
+    """``dir()`` loses any static whose name collides with an object member.
+
+    ``Functions.ToString``, ``Functions.GetType`` and ``Functions.All`` are
+    shadowed by ``System.Object.ToString`` / ``GetType`` and by the symbol
+    list itself, so enumerating with ``dir()`` silently dropped ``tostring``
+    — the most-called scalar function in Sentinel content — along with
+    ``gettype`` and ``all``. ``Functions.All`` lists all three.
+    """
+    everything = all_function_names()
+    for shadowed in ("tostring", "gettype", "all"):
+        assert shadowed in everything, f"{shadowed!r} missing from all_function_names()"
+
+
+def test_scalar_and_aggregate_functions_are_disjoint():
+    """``any``, ``hll_merge``, ``merge_tdigest`` and ``tdigest_merge`` are
+    declared in both ``Functions`` and ``Aggregates``. They are aggregates;
+    a caller asking "is this a scalar function?" got yes for all four."""
+    overlap = aggregate_functions() & scalar_functions()
+    assert overlap == set(), f"scalar_functions() still carries aggregates: {sorted(overlap)}"
+    for agg in ("any", "hll_merge", "merge_tdigest", "tdigest_merge"):
+        assert agg in aggregate_functions()
+
+
+def test_plugin_functions_lists_evaluate_plugins():
+    """``evaluate`` plug-ins live in ``Kusto.Language.PlugIns``, which nothing
+    reflected over — so ``bag_unpack`` and ``pivot`` were absent from every
+    category and from ``all_function_names()``."""
+    plugins = plugin_functions()
+    for canonical in ("bag_unpack", "pivot", "narrow", "sql_request"):
+        assert canonical in plugins, f"expected {canonical!r} in plugin_functions(); got {sorted(plugins)[:20]}"
+    assert "bag_unpack" in all_function_names()
+    # Plug-ins are invoked by `evaluate`, not as scalar calls; keeping them
+    # out of the scalar bucket is what makes the four categories mean
+    # something.
+    assert plugins.isdisjoint(scalar_functions())
+    assert plugins.isdisjoint(aggregate_functions())
 
 
 def test_syntax_kinds_has_expected_breadth():

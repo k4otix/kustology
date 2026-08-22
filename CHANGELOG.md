@@ -209,6 +209,38 @@ release is in `docs/superpowers/reports/`.
   halves of that boundary. **Stored hashes from 0.2-dev are invalidated** —
   the token-kind exclusion is now matched by suffix, so `TokenName` nodes
   changed the digest of every query as well.
+- **`get_referenced_columns()` excludes tables by position, and stops walking
+  into dynamic paths (tier 1).** Syntactic mode filtered extracted names
+  against the *set of table names*, so a genuine column spelled like some
+  table elsewhere in the same query vanished from every occurrence at once —
+  `T | where T2 > 1 | join (T2) on a` reported no `T2` at all. The exclusion
+  is now by `(TextStart, Width)`, the same spans `find_table_references`
+  reports. Separately, it descended into `PathExpression` selectors, so
+  `tostring(InitiatedBy.user.userPrincipalName)` reported three columns when
+  the table has one: `user` and `userPrincipalName` are keys inside a dynamic
+  value, and a caller resolving that list against a schema is looking up
+  names that cannot exist. Selectors are skipped unless the left side is
+  `$left` / `$right`, where the selector is the real column. Syntactic mode
+  also now reports the columns an `extend` / `summarize` creates, which
+  semantic mode always did. Across the 33 fixture rules this drops 100
+  dynamic-bag keys and adds 105 projected columns.
+- **Reflection reads every overload, sees shadowed statics, and lists
+  `evaluate` plug-ins (tier 1).** Three separate defects in
+  `kustology.reflection`. It read only *signature zero*'s
+  `DeclaredReturnType`, and `bin` declares `[None, timespan, datetime,
+  datetime]` — so the two functions almost every Sentinel query uses to
+  bucket time, `bin` and `bin_at`, were classified as ordinary scalars and
+  `find_time_expressions()` skipped them, reporting the bare `1h` instead of
+  the `bin(TimeGenerated, 1h)` around it and missing `bin(TimeGenerated,
+  BinTime)` entirely. It enumerated containers with `dir()`, which loses any
+  static whose name collides with a member of `System.Object` — so
+  `tostring`, `gettype` and `all` were in no category at all; `container.All`
+  is now read as well. And `scalar_functions()` overlapped
+  `aggregate_functions()` on `any`, `hll_merge`, `merge_tdigest` and
+  `tdigest_merge`, which are aggregates; the two sets are now disjoint.
+  `time_functions()` 24 → 28, `string_functions()` 66 → 68,
+  `scalar_functions()` 335 → 328, `all_function_names()` 482 → 532,
+  `aggregate_functions()` unchanged at 61.
 
 ### Added
 
@@ -229,6 +261,12 @@ release is in `docs/superpowers/reports/`.
   `datetime` / `timespan`; `ticks // 10` gives exact microseconds.
 - `iter_elements()` (tier 1) — unwraps the `SeparatedElement` wrappers .NET
   list properties yield, passing plain `SyntaxList` through unchanged.
+- `plugin_functions()` (tier 1) — the 47 `evaluate` plug-ins reflected from
+  `Kusto.Language.PlugIns`, a container nothing enumerated before, so
+  `bag_unpack`, `pivot`, `narrow` and the rest were in no category and
+  absent from `all_function_names()`. Disjoint from the scalar and aggregate
+  sets, since a plug-in is invoked by `evaluate` and never as a scalar call.
+  Exported from `kustology` alongside the other reflection helpers.
 - `SEMANTIC_HASH_SCHEME` is exported from `kustology.ir`, beside
   `IR_SCHEMA_VERSION`. Both are the consumer's compatibility contract; only
   one of them was reachable without importing a private module.

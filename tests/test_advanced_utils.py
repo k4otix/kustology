@@ -85,6 +85,69 @@ def test_referenced_columns_excludes_a_bracketed_let_alias():
     assert "Account" in cols
 
 
+def test_referenced_columns_keeps_a_column_that_shares_a_table_name():
+    """A column is excluded by *position*, not by spelling.
+
+    ``T2`` is the join's source table in one place and an ordinary column in
+    another. Filtering the extracted names against the set of table names
+    dropped both occurrences, so a query that filters on a column named after
+    some other table reported that column as absent.
+    """
+    cols = parse("T | where T2 > 1 | join (T2) on a").get_referenced_columns(
+        force_syntactic=True
+    )
+    assert {"T2", "a"}.issubset(cols)
+    assert "T" not in cols
+
+
+def test_referenced_columns_reports_only_the_root_of_a_dynamic_path():
+    """``InitiatedBy.user.userPrincipalName`` is one column, not three.
+
+    Only the root of the path is a column of the table; everything after a
+    dot is a key inside a dynamic value, and no table has a column called
+    ``userPrincipalName``. ``actor`` is a column the query creates.
+    """
+    query = "AuditLogs | extend actor = tostring(InitiatedBy.user.userPrincipalName)"
+    cols = parse(query).get_referenced_columns(force_syntactic=True)
+    assert cols == {"InitiatedBy", "actor"}
+
+
+def test_referenced_columns_syntactic_reports_a_column_the_query_creates():
+    """``extend a = …`` creates a column even where nothing reads it back.
+
+    The alias is a ``NameDeclaration``, not a ``NameReference``, so a walk
+    that only collected references saw ``x`` and ``y`` and missed ``a``
+    entirely. Semantic mode is the mirror image here — the binder attaches a
+    ``ColumnSymbol`` to references, and there is no reference — so the two
+    modes are asserted separately rather than for equality.
+    """
+    query = "T | extend a = x + y"
+    assert parse(query).get_referenced_columns(force_syntactic=True) == {"x", "y", "a"}
+    schema = {"T": {"x": "long", "y": "long"}}
+    assert parse(query, schema=schema).get_referenced_columns() == {"x", "y"}
+
+
+def test_referenced_columns_excludes_named_parameter_names():
+    """`kind` in `kind=inner` and `S` in `withsource=S` are not columns.
+
+    All three are ``NameDeclaration`` nodes, the same node kind an ``extend``
+    alias uses — so collecting declarations wholesale would report them.
+    """
+    cols = parse(
+        "union isfuzzy=true withsource=S kind=inner A, B | where x == 1"
+    ).get_referenced_columns(force_syntactic=True)
+    assert cols == {"x"}
+
+
+def test_referenced_columns_excludes_an_as_alias():
+    """`| as X` binds a name for the rest of the query; it is not a column."""
+    cols = parse("T | as X | join (X) on a").get_referenced_columns(
+        force_syntactic=True
+    )
+    assert "X" not in cols
+    assert "a" in cols
+
+
 def test_referenced_columns_semantic_resolves_aliases():
     """Semantic mode includes both columns and extend-aliases as ColumnSymbols."""
     schema = {"T": {"x": "long", "y": "long"}}
@@ -156,6 +219,26 @@ def test_find_time_expressions_returns_tuples_in_source_order():
     times = parse(query).find_time_expressions()
     assert [t[0] for t in times] == ["ago(1h)", "now()"]
     assert times == sorted(times, key=lambda t: t[1])
+
+
+def test_find_time_expressions_finds_bin():
+    """`bin` is how nearly every real Sentinel query buckets time.
+
+    Its first signature declares no return type, so reading signature zero
+    alone put it in ``scalar_functions()`` and this discovery aid skipped
+    the single most common temporal construct in the corpus.
+    """
+    times = parse("T | summarize count() by bin(TimeGenerated, 1h)").find_time_expressions()
+    assert [t[0] for t in times] == ["bin(TimeGenerated, 1h)"]
+
+
+def test_find_time_expressions_finds_bin_at():
+    times = parse(
+        "T | summarize count() by bin_at(TimeGenerated, 1d, datetime(2024-01-01))"
+    ).find_time_expressions()
+    assert [t[0] for t in times] == [
+        "bin_at(TimeGenerated, 1d, datetime(2024-01-01))"
+    ]
 
 
 def test_find_time_expressions_ignores_string_literal_text():
