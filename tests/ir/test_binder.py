@@ -1537,3 +1537,47 @@ def test_an_unparseable_query_gets_no_result_schema():
     assert not ir.main_pipeline.operators
     SchemaAttacher(FALLBACK_SCHEMA).enrich(ir)
     assert ir.main_pipeline.result_schema is None
+
+
+def test_the_unknown_column_type_sentinel_is_documented_on_tabular_schema():
+    """``TabularSchema.columns`` maps a column to a type *string*, and the
+    string for "no type known" is ``"unknown"`` — not
+    ``KustoType.UNRESOLVED.value``, which is ``"unresolved"``.
+
+    Two sentinels for one idea, and nothing said which lived where: a
+    consumer reading ``Expr.result_type`` learns to test against
+    ``KustoType.UNRESOLVED`` and then finds the *other* spelling one field
+    away, in a plain ``dict[str, str]`` a `KustoType` never validates. The
+    reason for the split is that ``columns`` values are Microsoft's type
+    *names*: ``ScalarTypes.Unknown.Name`` is literally ``"unknown"``, so a
+    bound parse propagating the binder's answer and ``SchemaAttacher``
+    falling back on an expression it could not type must agree, and they
+    agree on Microsoft's word rather than on the IR enum's.
+
+    Both producers are exercised here so the docstring is pinned to
+    behaviour and not to itself.
+    """
+    import warnings
+
+    from kustology import parse
+    from kustology.ir.query import TabularSchema
+    from kustology.ir.types import KustoType
+
+    assert KustoType.UNRESOLVED.value == "unresolved"
+
+    # Producer 1 — the bound path. Microsoft's schema parser types `n`
+    # `ScalarTypes.Unknown` and the builder publishes its `Name`.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        bound = parse("T | project n | extend m = n", schema={"T": "(n:bogus)"}).to_ir()
+    assert bound.main_pipeline.result_schema.columns == {"n": "unknown", "m": "unknown"}
+
+    # Producer 2 — `SchemaAttacher`'s own fallback for an expression whose
+    # `result_type` stayed `KustoType.UNRESOLVED`. Same string.
+    ir = IRBuilder().build("T | extend n = some_fn(x) | project n")
+    SchemaAttacher({"T": {"x": "long"}}).enrich(ir)
+    assert ir.main_pipeline.result_schema.columns == {"n": "unknown"}
+
+    doc = TabularSchema.__doc__
+    assert '"unknown"' in doc, doc
+    assert "KustoType.UNRESOLVED" in doc, doc

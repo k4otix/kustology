@@ -502,6 +502,21 @@ release is in `docs/superpowers/reports/`.
   `{"T": {"['my col']": "string"}}` declares a column literally named
   `['my col']` that no query can reach. The behaviour is correct and
   unchanged; nothing said so.
+- **`TabularSchema.columns` documents its `"unknown"` sentinel (tier 2).**
+  The IR carries two sentinels for "type not known" and nothing said which
+  lived where: `Expr.result_type` is a `KustoType`, so an unplaced
+  expression type is `KustoType.UNRESOLVED` (`"unresolved"`), while
+  `columns` values are Microsoft's type *names* as strings and its own name
+  for the absent one is `ScalarTypes.Unknown.Name` — `"unknown"`. Both
+  producers agree on Microsoft's word: a bound parse propagating a column
+  the binder could not type, and `SchemaAttacher` falling back on an
+  expression whose `result_type` stayed `UNRESOLVED`. The docstring also
+  separates both from `result_schema is None` ("no schema determined") and
+  `columns == {}` ("this step emits no columns"). `KustoQuery.to_ir`'s
+  docstring, which still described the schemaless filter as `KS204` alone,
+  now names the twelve-code family it has filtered since the widening
+  above; a test ties the count in both that docstring and
+  `IRBuilder.build_from_code`'s to the live set.
 - **`kustology.PackageNotFoundError` is gone from the package namespace
   (tier 1).** `from importlib.metadata import PackageNotFoundError` bound the
   name into `kustology`, where it appeared in `dir()` and in generated

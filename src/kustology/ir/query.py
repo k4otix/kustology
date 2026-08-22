@@ -61,7 +61,25 @@ class TabularSchema(BaseModel):
 
     Carried by :class:`Operator` and :class:`Pipeline`. On a bound parse it
     is Microsoft's binder's answer, captured at build time; otherwise
-    ``SchemaAttacher``'s, derived from its own walk."""
+    ``SchemaAttacher``'s, derived from its own walk.
+
+    **A column whose type is not known is the string ``"unknown"``** — not
+    ``KustoType.UNRESOLVED``, whose value is ``"unresolved"``. The two
+    sentinels are not interchangeable and live in different fields:
+    :attr:`Expr.result_type` is a :class:`~kustology.ir.types.KustoType`, so
+    an unplaced expression type is ``KustoType.UNRESOLVED``; ``columns``
+    values are Microsoft's type *names* as strings, and Microsoft's own name
+    for the absent one is ``ScalarTypes.Unknown.Name`` == ``"unknown"``.
+    Both producers therefore agree on Microsoft's word: a bound parse
+    propagating a column the binder could not type, and
+    ``SchemaAttacher`` falling back on an expression whose ``result_type``
+    stayed ``KustoType.UNRESOLVED``. Test a ``columns`` value against
+    ``"unknown"``; test a ``result_type`` against ``KustoType.UNRESOLVED``.
+
+    Distinct again from ``columns is None`` on the enclosing
+    :attr:`Operator.result_schema` / :attr:`Pipeline.result_schema`, which
+    means *no schema was determined at all*, and from ``columns == {}``,
+    which claims the step emits no columns."""
     model_config = {"extra": "forbid"}
     KIND: ClassVar[str] = "tabular_schema"
     kind: Literal["tabular_schema"] = "tabular_schema"
