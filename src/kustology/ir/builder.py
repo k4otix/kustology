@@ -58,6 +58,7 @@ from .expr import (
     StarExpr,
     SubqueryExpr,
     ToScalarExpr,
+    TypedNameDecl,
     UnaryOp,
     UnknownExpr,
 )
@@ -1279,8 +1280,27 @@ class IRBuilder:
             name = visit_name(node.Name)
             res = ColumnRef(name=name, span=span)
 
-        elif kind == "NameDeclaration" or kind == "NameAndTypeDeclaration":
+        elif kind == "NameDeclaration":
             res = ColumnRef(name=visit_name(node), span=span)
+
+        elif kind == "NameAndTypeDeclaration":
+            # ``b:long`` in a ``parse`` pattern or a ``find … project`` list.
+            # This shared a branch with ``NameDeclaration`` and so lowered to
+            # a bare ``ColumnRef``: ``visit_name`` reads the ``Name`` child
+            # and the declared type went nowhere, making a typed capture and
+            # an untyped one one node with one hash. ``node_text`` on the
+            # type rather than ``ToString()`` for the reason every other type
+            # read in this builder uses it -- the no-argument overload is
+            # ``IncludeTrivia.All`` and would put a preceding comment in the
+            # type string, and from there into the hash.
+            type_node = getattr(node, "Type", None)
+            res = TypedNameDecl(
+                name=visit_name(node.Name),
+                declared_type=(
+                    _node_text(type_node).strip() if type_node is not None else "unknown"
+                ),
+                span=span,
+            )
 
         elif kind == "PathExpression":
             # Collapse `$left.X` / `$right.X` (syntactic) and `T.X` (via binder

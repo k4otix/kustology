@@ -23,6 +23,7 @@ from .expr import (
     Not,
     Or,
     SetMembership,
+    TypedNameDecl,
 )
 from .query import (
     Assignment,
@@ -439,6 +440,14 @@ class SchemaAttacher:
             new_cap: dict[str, str] = {}
             for p in op.patterns:
                 self._fill(p, scope)
+                if isinstance(p, TypedNameDecl):
+                    # ``parse a with 'x' b:long`` states the capture's type,
+                    # so there is nothing to infer. Before typed captures had
+                    # their own node they arrived as a bare ``ColumnRef`` and
+                    # fell into the ``"string"`` default below -- the type the
+                    # query wrote was not merely unused, it was unreadable.
+                    new_cap[p.name] = p.declared_type
+                    continue
                 if isinstance(p, ColumnRef):
                     kt = getattr(p, "result_type", KustoType.UNRESOLVED)
                     new_cap[p.name] = kt.value if kt != KustoType.UNRESOLVED else "string"

@@ -10,7 +10,8 @@ from .types import KustoType
 
 AnyExpr = Union[
     "BinOp", "UnaryOp", "SetMembership", "Between", "And", "Or", "Not",
-    "Exists", "RegexMatch", "CaseExpr", "ColumnRef", "LiteralExpr",
+    "Exists", "RegexMatch", "CaseExpr", "ColumnRef", "TypedNameDecl",
+    "LiteralExpr",
     "FuncCall", "PathExpr", "ElementExpr", "StarExpr", "NamedExpr",
     "CompoundNamedExpr", "BracketedExpr", "ToScalarExpr",
     "SubqueryExpr", "ExternalDataExpr", "UnknownExpr", "Expr",
@@ -84,6 +85,34 @@ class ColumnRef(Expr):
     # bound parse would otherwise lose the side entirely -- and the side is
     # semantic: `$left.a == $left.b` is not the join `$left.a == $right.b`.
     join_side: Literal["left", "right"] | None = None
+
+
+class TypedNameDecl(Expr):
+    """A ``name:type`` declaration sitting in expression position.
+
+    The parser's ``NameAndTypeDeclaration``: the typed capture of
+    ``parse a with 'x' b:long``, a typed column of ``find … project a:string``,
+    a ``scan declare`` slot. It is a *declaration*, not a reference — the
+    column does not exist until this operator creates it — which is why it is
+    its own node rather than a :class:`ColumnRef` with a type hanging off it.
+
+    Both halves used to be thrown away. The builder lowered the whole
+    declaration to ``ColumnRef(name=visit_name(node))``, which reads the
+    ``Name`` child and never the ``Type``, so ``parse a with 'x' b:long`` and
+    ``parse a with 'x' b`` built identical IR and carried the same
+    ``semantic_hash`` — though the first states the capture's type and the
+    second leaves it a string. ``declared_type`` is the type as the query
+    wrote it (``long``, ``string``, ``datetime``), not a resolved
+    :class:`~kustology.ir.types.KustoType`: it is source text, and a
+    consumer that wants the enum can map it, while a consumer that wants to
+    know what the query said cannot recover it from a mapped-and-defaulted
+    value.
+    """
+
+    KIND: ClassVar[str] = "typed_name"
+    kind: Literal["typed_name"] = "typed_name"
+    name: str
+    declared_type: str
 
 
 class FuncCall(Expr):
@@ -283,7 +312,7 @@ class UnknownExpr(Expr):
 
 
 for _cls in (
-    LiteralExpr, ColumnRef, BinOp, SetMembership, Between, And, Or, Not,
+    LiteralExpr, ColumnRef, TypedNameDecl, BinOp, SetMembership, Between, And, Or, Not,
     FuncCall, CaseExpr, RegexMatch, Exists, PathExpr, ElementExpr, StarExpr,
     NamedExpr, CompoundNamedExpr, UnaryOp, BracketedExpr,
     ToScalarExpr, SubqueryExpr, ExternalDataExpr,

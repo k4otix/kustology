@@ -35,6 +35,7 @@ from .expr import (
     StarExpr,
     SubqueryExpr,
     ToScalarExpr,
+    TypedNameDecl,
     UnaryOp,
 )
 
@@ -118,6 +119,11 @@ def canonical(expr: Any) -> str:
         return str(expr.value)
     if isinstance(expr, ColumnRef):
         return f"{expr.table}.{expr.name}" if expr.table else expr.name
+    if isinstance(expr, TypedNameDecl):
+        # ``name:type`` — the KQL spelling. Rendering the bare name would
+        # make a typed capture indistinguishable from an untyped one, which
+        # is the collision the node exists to close.
+        return f"{expr.name}:{expr.declared_type}"
     if isinstance(expr, BinOp):
         return f"{canonical(expr.left)} {expr.op} {canonical(expr.right)}"
     if isinstance(expr, And):

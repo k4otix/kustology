@@ -29,7 +29,8 @@ from .expr import (
     And, AnyExpr, Between, BinOp, BracketedExpr, CaseExpr, ColumnRef,
     CompoundNamedExpr, ElementExpr, Exists, Expr, ExternalDataExpr, FuncCall,
     LiteralExpr, NamedExpr, Not, Or, PathExpr, RegexMatch,
-    SetMembership, StarExpr, SubqueryExpr, ToScalarExpr, UnaryOp, UnknownExpr,
+    SetMembership, StarExpr, SubqueryExpr, ToScalarExpr, TypedNameDecl,
+    UnaryOp, UnknownExpr,
 )
 from .query import (
     AsOp, AssertSchemaOp, Assignment, ConsumeOp, CountOp, DataTableSource,
@@ -78,6 +79,7 @@ __all__ = [
     "And", "Or", "Not", "Exists", "RegexMatch", "CaseExpr", "UnknownExpr",
     "LiteralExpr", "FuncCall", "PathExpr", "ElementExpr", "StarExpr",
     "NamedExpr", "UnaryOp", "BracketedExpr", "CompoundNamedExpr",
+    "TypedNameDecl",
     "ToScalarExpr", "SubqueryExpr", "ExternalDataExpr",
     # Operators
     "Operator", "FilterOp", "ExtendOp", "SummarizeOp", "ProjectOp",

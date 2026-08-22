@@ -622,6 +622,18 @@ release is in `docs/superpowers/reports/`.
   wildcard table, or an unmodelled source. `to_llm_dict` caps
   `DataTableSource.rows` at 20 and adds a `rows_omitted` count, since real
   IOC datatables run to thousands of rows; `model_dump_json` stays complete.
+- **Typed name declarations are a `TypedNameDecl`, not a `ColumnRef`.** A
+  `name:type` in expression position — the typed capture of
+  `parse a with 'x' b:long`, a typed column of `find … project a:string` —
+  lowered to `ColumnRef(name="b")`, which reads the declaration's `Name`
+  child and never its `Type`. `parse a with 'x' b:long` and
+  `parse a with 'x' b` therefore built identical IR and shared one
+  `semantic_hash`, though the first states the capture's type and the second
+  leaves it a string. The new node carries `name` and `declared_type` (the
+  type as written, not a resolved `KustoType`), renders as `name:type` in
+  `canonical_form`, and gives the binder the declared type for the capture
+  column instead of defaulting it to `string`. `semantic_hash` changes for
+  every query with a typed capture.
 - **`KustoWalker.visit` takes a `depth` argument** (tier 1, listed here for
   want of a tier-1 breaking section): `visit(self, node)` →
   `visit(self, node, depth=0)`, so the base class can stop at
