@@ -1230,10 +1230,10 @@ class IRBuilder:
             )
             # ``Keys`` is a RowSchema -- the same shape ``Schema`` is on the
             # other three readers, under a different member name, which is
-            # why ``read_row_schema`` takes the owner and not the schema. A
-            # previous guard tested ``Keys`` for a ``Count`` member, which
-            # RowSchema does not have, so the loop body never ran and the
-            # field was always empty.
+            # why ``read_row_schema`` accepts the owner as well as the
+            # schema. A previous guard tested ``Keys`` for a ``Count``
+            # member, which RowSchema does not have, so the loop body never
+            # ran and the field was always empty.
             return ParseKvOp(
                 target=target,
                 columns=dict(read_row_schema(getattr(n, "Keys", None))),

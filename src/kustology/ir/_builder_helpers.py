@@ -106,17 +106,31 @@ def read_row_schema(node: Any) -> list[tuple[str, str]]:
     query without the comment. Fixing four copies leaves a fifth copy free
     to reintroduce it; there is now nothing to copy.
 
-    ``node`` is the *owner* of the schema (the operator or expression), not
-    the ``RowSchema`` itself, because the member is called ``Schema`` on
-    three of the four and ``Keys`` on ``ParseKvOperator``. Callers pass
-    whichever they have.
+    ``node`` may be either the ``RowSchema`` itself or the node that owns
+    one -- the operator or expression -- and the ambiguity is deliberate,
+    because the owning member has two names: ``Schema`` on ``datatable``,
+    ``externaldata`` and ``assert-schema``, ``Keys`` on ``ParseKvOperator``.
+    A caller that pre-extracts either one is right, and so is a caller that
+    passes the owner.
+
+    Accepting both is a correction rather than a convenience. The docstring
+    used to say the owner was the required argument while the code required
+    the ``RowSchema``, and getting that backwards returned an **empty list
+    with no exception** -- reinstating, silently, exactly the dropped-schema
+    collapse this function was extracted to prevent. A contract whose two
+    readings differ only by which one silently yields nothing is not one to
+    leave to documentation.
     """
     from ..utils.walker import iter_elements, node_text
 
     columns: list[tuple[str, str]] = []
-    if node is None or not hasattr(node, "Columns"):
+    schema = node
+    if schema is not None and not hasattr(schema, "Columns"):
+        owned = getattr(node, "Schema", None)
+        schema = owned if owned is not None else getattr(node, "Keys", None)
+    if schema is None or not hasattr(schema, "Columns"):
         return columns
-    for col in iter_elements(node.Columns):
+    for col in iter_elements(schema.Columns):
         type_node = getattr(col, "Type", None)
         columns.append((
             visit_name(col),

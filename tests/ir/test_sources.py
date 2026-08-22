@@ -361,3 +361,33 @@ def test_column_type_reads_do_not_carry_comments(builder, commented, plain):
     ``node_text`` (``IncludeTrivia.Minimal``) reads the node's own source.
     """
     assert builder.build(commented).semantic_hash == builder.build(plain).semantic_hash
+
+
+def test_read_row_schema_accepts_the_schema_and_its_owner():
+    """The one reader takes either the ``RowSchema`` or the node holding it.
+
+    The two are easy to confuse -- the owning member is ``Schema`` on three
+    of the four call sites and ``Keys`` on ``parse-kv`` -- and the failure
+    mode of confusing them is an empty column list and no exception, which
+    is the silent dropped-schema collapse extracting this reader was meant
+    to end. Pinning both shapes is what stops the contract living only in a
+    docstring, where it was previously stated backwards.
+    """
+    from kustology import parse
+    from kustology.ir._builder_helpers import read_row_schema
+    from kustology.utils.analysis import collect_nodes
+
+    (owner,) = collect_nodes(
+        parse('datatable(a:int, b:string)[1, "x"] | take 1').syntax,
+        lambda n: str(n.Kind) == "DataTableExpression",
+    )
+    expected = [("a", "int"), ("b", "string")]
+    assert read_row_schema(owner.Schema) == expected
+    assert read_row_schema(owner) == expected
+
+    (kv,) = collect_nodes(
+        parse("T | parse-kv Msg as (a:long)").syntax,
+        lambda n: str(n.Kind) == "ParseKvOperator",
+    )
+    assert read_row_schema(kv.Keys) == [("a", "long")]
+    assert read_row_schema(kv) == [("a", "long")]
