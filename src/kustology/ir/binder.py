@@ -209,25 +209,50 @@ class SchemaAttacher:
     ``schemas`` is a flat ``{table_name: {column_name: kusto_type_string}}``.
     Tables not present here are treated as opaque (no enrichment).
 
+    **On a bound parse most of this is not used.** ``Operator.result_schema``
+    carries Microsoft's own ``ResultType`` wherever the binder could compute
+    one, and :meth:`_walk_operator` prefers it for names and types, overlaying
+    it onto the scope so provenance — which ``ResultType`` does not carry —
+    still comes from the walk. The rules below answer where it is ``None``:
+    an unbound parse, a syntactic-only one, and any operator downstream of
+    something the binder could not determine (an unknown table, an
+    ``evaluate``).
+
     **Two levels of coverage, deliberately distinguished.** Every operator
     gets its expressions filled and its sub-pipelines walked — that part is
     derived from ``model_fields`` and cannot drift as the model grows. Only
     some operators additionally *reshape* the scope, because only some have
-    an output schema we can derive without guessing:
+    an output schema we can derive without guessing. Twenty-five of the 53
+    ``Operator`` subclasses have a branch here:
 
     ``project`` / ``project-away`` / ``project-keep`` / ``project-rename`` /
     ``project-reorder`` / ``summarize`` / ``extend`` / ``distinct`` /
-    ``count`` / ``parse`` / ``parse-where`` / ``mv-expand`` / ``make-series``
-    / ``join`` / ``lookup`` / ``union`` / ``where`` / ``project-by-names``.
+    ``count`` / ``parse`` / ``parse-where`` / ``parse-kv`` / ``mv-expand`` /
+    ``make-series`` / ``join`` / ``lookup`` / ``union`` / ``search`` /
+    ``getschema`` / ``print`` / ``range`` / ``serialize`` / ``evaluate``,
+    plus ``where`` and ``project-by-names``, which fill their expressions
+    and deliberately leave the scope alone (``project-by-names`` takes its
+    names from a dynamic expression, so there is nothing static to reshape).
 
-    Operators outside that set pass the scope through unchanged. For the
-    ones that genuinely preserve their input schema (``sort``, ``top``,
-    ``take``, ``search``, the graph predicates) that is exact; for ones that
-    do reshape (``print``, ``range``, ``evaluate``, ``facet``, ``fork``,
-    ``mv-apply``, ``partition``, ``parse-kv``, ``serialize``, ``top-nested``)
-    the scope downstream is stale. Stale is worse than exact and better than
-    the previous behavior, which was to skip those operators entirely so
-    their own column references never resolved at all.
+    Some of those are partial by nature. ``search`` reads the searched
+    tables out of the schema dict, which stands in for "every table in the
+    database" when the query names none. ``evaluate`` only knows
+    ``bag_unpack``, and only that it *consumes* its argument — the keys a
+    plug-in adds are not enumerable, which is why Microsoft leaves the symbol
+    open there too.
+
+    The remaining 28 pass the scope through unchanged. For the ones that
+    genuinely preserve their input schema (``sort``, ``top``, ``take``,
+    ``sample``, ``as``, ``render``, ``consume``, ``assert-schema``, the graph
+    ``where`` predicates) that is exact; for ones that do reshape (``find``,
+    ``scan``, ``facet``, ``fork``, ``mv-apply``, ``partition``,
+    ``top-nested``, ``top-hitters``, ``sample-distinct``, ``invoke``,
+    ``macro-expand``, the graph operators) the scope downstream is stale.
+    Stale is worse than exact and better than the previous behavior, which
+    was to skip those operators entirely so their own column references never
+    resolved at all. ``tests/ir/test_binder_oracle.py`` runs an unbound leg
+    over an operator matrix and 49 corpus fixtures precisely to keep that
+    list honest: the ones still wrong are xfailed there by name.
     """
 
     def __init__(self, schemas: dict[str, dict[str, str]] | None = None):
@@ -263,7 +288,7 @@ class SchemaAttacher:
         gives ``Account`` the type ``string`` and the provenance ``"Base"``
         rather than leaving both unresolved.
 
-        Two boundaries remain, and are boundaries rather than bugs:
+        Three boundaries remain, and are boundaries rather than bugs:
 
         * A binding naming one declared *later* is not a ``LetRef`` at all
           (see :class:`LetRef`), so there is nothing to thread — it stays an
@@ -1189,16 +1214,20 @@ class SchemaAttacher:
         # leaving the scope unchanged.
         #
         # The branches above are the operators whose *output schema* we can
-        # derive; there are 17 of them against 53 operator subclasses. Before
+        # derive; there are 25 of them against 53 operator subclasses. Before
         # this fallback existed the function simply fell off the end for the
-        # other 36, so `| sort by X` left X with no table while a `| project`
+        # other 28, so `| sort by X` left X with no table while a `| project`
         # in the same query resolved fine. Filling without reshaping is the
         # honest position: correct for the operators that pass their schema
-        # through (sort, top, take, search, the graph predicates), and for
-        # the ones that do reshape (print, range, evaluate, facet, fork,
-        # mv-apply, partition, parse-kv, serialize, top-nested) it leaves a
-        # stale scope rather than an empty one — strictly closer than
-        # skipping them, and visible here rather than silent.
+        # through (sort, top, take, sample, as, render, consume,
+        # assert-schema, the graph where-predicates), and for the ones that
+        # do reshape (find, scan, facet, fork, mv-apply, partition,
+        # top-nested, top-hitters, sample-distinct, invoke, macro-expand,
+        # the graph operators) it leaves a stale scope rather than an empty
+        # one — strictly closer than skipping them, and visible here rather
+        # than silent. The class docstring carries the full split, and the
+        # unbound leg of `tests/ir/test_binder_oracle.py` is what keeps it
+        # from drifting.
         #
         # Sub-pipelines inherit the current scope: an mv-apply / partition /
         # fork / facet body has an implicit source and runs against the
