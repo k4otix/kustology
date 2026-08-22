@@ -737,13 +737,25 @@ release is in `docs/superpowers/reports/`.
   binds the tree already in hand rather than re-parsing, so the seam's
   no-second-parse invariant is untouched and `KustoQuery.has_semantics` stays
   `False` — Tier 1 keeps every syntactic path it had. Default globals
-  describe no tables, so the `KS204` those bindings raise says nothing about
-  the query; both schemaless paths filter it (`IRBuilder.build` and
-  `build_from_code(..., ignore_unknown_tables=True)`), which also removes the
-  191 false unknown-table rows `IRBuilder().build` used to report across the
-  fixture corpus. A parse the caller bound with their own schema is
-  unchanged and still reports `KS204` for a table that schema does not
-  describe. Acquiring the types does not itself move `semantic_hash` —
+  describe Kusto's built-in functions and nothing else — no tables, no
+  databases, no clusters, no user functions — so every name the query brings
+  with it is unresolvable there by construction, and the diagnostics that
+  raises describe how the types were obtained rather than anything the
+  caller wrote. Both schemaless paths (`IRBuilder.build` and
+  `build_from_code(..., ignore_unknown_tables=True)`) drop the whole
+  unknown-*name* family: twelve codes, of which `KS204` is one, alongside
+  `KS205` (`union isfuzzy=true`), `KS207` (`cluster(...)`), `KS211` (an
+  unknown function — ASIM parsers) and `KS142` (a `T*` wildcard). Four of
+  those families occur in the fixture corpus and two are `Error` severity,
+  so a consumer gating on `any(d.severity == "Error" …)` used to flip on a
+  call where no schema had been asked for; the corpus now reports zero
+  diagnostics on both paths, against 26 before and 191 before that. A parse
+  the caller bound with their own schema is unchanged and still reports
+  every one of them — there, a name the schema does not describe is a real
+  error. `validate(..., ignore_unknown_tables=True)` deliberately stays
+  narrower and waives `KS204` alone: it only binds when the caller passed a
+  schema, so it is waiving one dimension of a query the caller owns.
+  Acquiring the types does not itself move `semantic_hash` —
   `result_type` is volatile — but the digest does move in this release, for
   the reason given in the next entry.
 - **Result schemas come from Microsoft's binder, not from our rules (tier
