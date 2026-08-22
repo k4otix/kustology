@@ -935,3 +935,72 @@ def test_mv_expand_keeps_the_column_type_it_already_had():
     -- and a column the scope does not know defaults to ``dynamic``."""
     assert dict(_columns(_fallback("T | mv-expand s")))["s"] == "string"
     assert dict(_columns(_fallback("Unknown | mv-expand q")))["q"] == "dynamic"
+
+
+# K10 / K11: resolving inside a join's on-clause ------------------------------
+
+
+def _on_refs(ir, index: int = -1) -> list:
+    """Every ``ColumnRef`` in the ``on`` clause of one join, in order."""
+    from kustology.ir import ColumnRef, JoinOp, find_all
+
+    joins = [op for op in ir.main_pipeline.operators if isinstance(op, JoinOp)]
+    return [c for e in joins[index].on for c in find_all(e, ColumnRef)]
+
+
+def test_dollar_left_resolves_by_name_across_the_whole_left_side():
+    """``$left`` is the accumulated left row set, not the last entry in it.
+
+    The rule read ``scope[-2]``, which is the entry appended by the *previous*
+    join. After ``L | join (R) …`` a second join's ``$left.a`` therefore
+    reported ``R`` — a table that does not have an ``a`` at all — while the
+    column plainly comes from ``L``.
+    """
+    ir = _fallback("L | join (R) on k | join (T) on $left.a == $right.a")
+    left, right = _on_refs(ir)
+    assert left.name == "a" and left.join_side == "left"
+    assert left.table == "L"
+    assert right.table == "T"
+
+
+def test_dollar_right_resolves_against_the_appended_right_entry():
+    ir = _fallback("L | join (R) on $left.k == $right.b")
+    left, right = _on_refs(ir)
+    assert (left.table, right.table) == ("L", "R")
+
+
+def test_dollar_right_resolves_through_the_right_pipelines_own_operators():
+    """The right side is a pipeline, so its scope may be anonymous with the
+    provenance carried in ``origins`` -- ``$right.b`` is still ``R``'s."""
+    ir = _fallback("L | join (R | project b) on $left.k == $right.b")
+    _left, right = _on_refs(ir)
+    assert right.table == "R"
+
+
+def test_an_unresolvable_dollar_side_keeps_its_marker():
+    """A right side that is not a table leaves ``$right`` in place rather
+    than inventing a name -- the marker is the honest answer."""
+    ir = _fallback("L | join (datatable(z:long)[1]) on $left.k == $right.z")
+    _left, right = _on_refs(ir)
+    assert right.table == "$right"
+
+
+def test_a_bare_on_key_resolves_against_the_left_side():
+    """``on k`` is shorthand for ``$left.k == $right.k``, and both sides have
+    a ``k``. The scope holds the right side too at that point, so the general
+    ambiguity rule would answer ``None``; the left is the side the engine
+    keeps the column from."""
+    ir = _fallback("L | join (R) on k")
+    (key,) = _on_refs(ir)
+    assert key.table == "L"
+
+
+def test_a_bare_on_key_only_the_right_side_has_still_resolves():
+    ir = _fallback("L | lookup (R) on k")
+    from kustology.ir import ColumnRef, LookupOp, find_all
+
+    lookup = next(
+        op for op in ir.main_pipeline.operators if isinstance(op, LookupOp)
+    )
+    (key,) = [c for e in lookup.on for c in find_all(e, ColumnRef)]
+    assert key.table == "L"

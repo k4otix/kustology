@@ -70,6 +70,20 @@ _RIGHT_ONLY_JOIN_KINDS = frozenset({
 })
 
 
+def _side_marker(table: str | None) -> str | None:
+    """``"left"`` / ``"right"`` for the ``$left`` / ``$right`` sentinels.
+
+    ``ColumnRef.join_side`` is the primary signal and is set by the builder;
+    this covers an IR that predates it or was assembled by hand, and is what
+    keeps a second ``enrich()`` from re-resolving an already-placed column.
+    """
+    if table == "$left":
+        return "left"
+    if table == "$right":
+        return "right"
+    return None
+
+
 def _matches_any(patterns: list[str], name: str) -> bool:
     """Does ``name`` match any ``project-keep`` / ``project-away`` term?
 
@@ -174,6 +188,11 @@ class SchemaAttacher:
         # Reset per call, not per instance: a reused attacher must not carry
         # one query's binding names into the next.
         self._let_schemas: dict[str, dict[str, str]] = {}
+        # (left entries, right entries) while filling a join's ``on`` clause,
+        # None everywhere else. Saved and restored around the fill and around
+        # every nested pipeline walk, so a join inside an ``on`` clause
+        # cannot leak its sides to the enclosing one or vice versa.
+        self._join_sides: tuple[list[ScopeEntry], list[ScopeEntry]] | None = None
 
     def enrich(self, ir: QueryIR) -> QueryIR:
         """Enrich the whole IR in place and mark it attached.
@@ -298,12 +317,25 @@ class SchemaAttacher:
         source_entry = self._source_entry(pipeline)
         if inherited is not None and not source_entry.table and not source_entry.columns:
             scope: list[ScopeEntry] = [
-                ScopeEntry(table=e.table, columns=dict(e.columns)) for e in inherited
+                ScopeEntry(
+                    table=e.table, columns=dict(e.columns), origins=dict(e.origins),
+                )
+                for e in inherited
             ]
         else:
             scope = [source_entry]
-        for op in pipeline.operators:
-            self._walk_operator(op, scope)
+        # ``$left`` / ``$right`` name the sides of the join whose ``on``
+        # clause we are inside. A pipeline nested in that clause -- a
+        # ``toscalar(...)`` subquery -- is a new row scope, so the sides do
+        # not reach into it, and neither does the "left side first" rule for
+        # a bare key name.
+        outer_sides = self._join_sides
+        self._join_sides = None
+        try:
+            for op in pipeline.operators:
+                self._walk_operator(op, scope)
+        finally:
+            self._join_sides = outer_sides
         # Snapshot final scope so downstream consumers don't re-walk operators.
         #
         # The last operator's own ``result_schema`` is preferred when it has
@@ -502,9 +534,20 @@ class SchemaAttacher:
             return
         if isinstance(op, (JoinOp, LookupOp)):
             rhs_scope = self._walk_pipeline(op.right)
-            on_scope = scope + rhs_scope[:1]
-            for e in op.on:
-                self._fill(e, on_scope)
+            # Snapshot the left before the right entry is appended: ``$left``
+            # is the accumulated left row set, which after a previous join is
+            # several entries, and resolving it positionally (``scope[-2]``)
+            # named whichever table that join happened to add.
+            left_side = list(scope)
+            right_side = rhs_scope[:1]
+            on_scope = left_side + right_side
+            previous_sides = self._join_sides
+            self._join_sides = (left_side, right_side)
+            try:
+                for e in op.on:
+                    self._fill(e, on_scope)
+            finally:
+                self._join_sides = previous_sides
             if isinstance(op, JoinOp):
                 # A semi or anti join is a *filter*, not a widening: it emits
                 # rows of one side and columns of one side. ``lookup`` has no
@@ -804,6 +847,24 @@ class SchemaAttacher:
         # enclosing row set.
         self._fill_children(op, scope, inherited=scope)
 
+    def _resolve_side(self, name: str, entries: list[ScopeEntry]) -> str | None:
+        """Place ``name`` within one side of a join.
+
+        By name first, which is the whole point for ``$left``: after
+        ``L | join (R) …`` the left side is two entries and only one of them
+        has the column. Where the name is unknown -- an unbound right-hand
+        table, a column the schema dict does not describe -- a *single* entry
+        still names the side unambiguously, so its table stands in; two or
+        more and there is nothing to pick between them, and the ``$left`` /
+        ``$right`` marker is left in place rather than guessed at.
+        """
+        resolved = self._resolve_column_table(name, entries)
+        if resolved:
+            return resolved
+        if len(entries) == 1:
+            return entries[0].table
+        return None
+
     def _resolve_column_table(self, name: str, scope: list[ScopeEntry]) -> str | None:
         # ``_column_origins`` reads ``ScopeEntry.origins`` as well as
         # ``table``, so a column a ``project`` moved into the anonymous entry
@@ -849,12 +910,28 @@ class SchemaAttacher:
         self._fill_children(expr, scope)
 
         if isinstance(expr, ColumnRef):
-            if expr.table == "$left" and len(scope) >= 2:
-                expr.table = scope[-2].table or expr.table
-            elif expr.table == "$right" and len(scope) >= 1:
-                expr.table = scope[-1].table or expr.table
-            if expr.table is None:
-                resolved = self._resolve_column_table(expr.name, scope)
+            side = expr.join_side or _side_marker(expr.table)
+            sides = self._join_sides
+            if side is not None:
+                if sides is not None:
+                    resolved = self._resolve_side(
+                        expr.name, sides[0] if side == "left" else sides[1],
+                    )
+                    if resolved:
+                        expr.table = resolved
+            elif expr.table is None:
+                if sides is not None:
+                    # A bare ``on k`` is shorthand for ``$left.k == $right.k``
+                    # and both sides usually have a ``k``, so the general
+                    # ambiguity rule would answer None. The engine keeps the
+                    # left side's column (the right's is dropped by ``lookup``
+                    # and suffixed by ``join``), so the left side answers
+                    # first.
+                    resolved = self._resolve_side(
+                        expr.name, sides[0],
+                    ) or self._resolve_side(expr.name, sides[1])
+                else:
+                    resolved = self._resolve_column_table(expr.name, scope)
                 if resolved:
                     expr.table = resolved
             if expr.result_type == KustoType.UNRESOLVED and expr.table:

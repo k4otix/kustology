@@ -519,6 +519,16 @@ release is in `docs/superpowers/reports/`.
   `extend arr = pack_array(1, 2) | mv-expand arr` reported `arr` as `long`
   where the engine reports `dynamic`. Without `to typeof(...)` an expanded
   column keeps the type it had.
+- **`$left` / `$right` and a bare `on` key resolve to the right table (tier
+  2).** `$left` was read positionally, as `scope[-2]`, which is the entry the
+  *previous* join appended: in `L | join (R) on k | join (T) on $left.a ==
+  $right.a`, `$left.a` reported `R`, a table with no `a` in it. It is now
+  resolved by name across the whole accumulated left side, falling back to
+  the side's table when there is exactly one entry and leaving the `$left` /
+  `$right` marker when there is nothing to pick. A bare `on k` — shorthand
+  for `$left.k == $right.k`, where both sides have a `k` — resolves to the
+  left, the side whose column the engine keeps; the general ambiguity rule
+  would have answered `None`.
 - **Six public `KustoQuery` members gained docstrings (tier 1).**
   `get_operator_chain`, `get_referenced_columns`, `get_referenced_functions`,
   `get_structural_hash`, `syntax` and `text` delegated in silence, so
