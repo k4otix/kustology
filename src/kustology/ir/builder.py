@@ -98,6 +98,7 @@ from .query import (
     LookupOp,
     MacroExpandOp,
     MakeGraphOp,
+    MakeSeriesAggregate,
     MakeSeriesOp,
     MvApplyOp,
     MvExpandColumn,
@@ -903,9 +904,27 @@ class IRBuilder:
             if hasattr(n, "Aggregates"):
                 for el in _iter_elements(n.Aggregates):
                     # Aggregates arrive as MakeSeriesExpression wrapping the
-                    # actual SimpleNamedExpression (Count = count()).
+                    # actual SimpleNamedExpression (Count = count()) plus the
+                    # `default=` clause. Unwrapping to `.Expression` -- what
+                    # this branch used to do -- dropped the default, so a
+                    # series gap-filled with 0 and one gap-filled with 1
+                    # built the same node.
                     inner = getattr(el, "Expression", el)
-                    aggs.append(self._visit_assignment(inner, mode="aggregation"))
+                    assign = self._visit_assignment(inner, mode="aggregation")
+                    default_clause = getattr(el, "DefaultExpression", None)
+                    default_expr = (
+                        getattr(default_clause, "Expression", None)
+                        if default_clause is not None else None
+                    )
+                    aggs.append(MakeSeriesAggregate(
+                        name=assign.name,
+                        expr=assign.expr,
+                        default=(
+                            self._visit_expr(default_expr)
+                            if default_expr is not None else None
+                        ),
+                        span=to_span(el),
+                    ))
             by = []
             if hasattr(n, "ByClause") and n.ByClause:
                 for el in _iter_elements(n.ByClause.Expressions):
@@ -918,7 +937,23 @@ class IRBuilder:
                     on_col = self._visit_expr(on_expr)
             r_from = r_to = r_step = None
             range_clause = getattr(n, "RangeClause", None)
-            if range_clause is not None:
+            if range_clause is not None and str(
+                type(range_clause).__name__
+            ) == "MakeSeriesInRangeClause":
+                # `in range(from, to, step)` is a *different clause class*
+                # from `from … to … step …`, with the three bounds as
+                # positional `Arguments` rather than named sub-clauses. Only
+                # the second shape was read, so every `in range(...)` query
+                # recorded no bounds at all -- and two series over different
+                # windows hashed alike.
+                arguments = getattr(range_clause, "Arguments", None)
+                exprs = getattr(arguments, "Expressions", None) if arguments is not None else None
+                if exprs is not None:
+                    bounds = [self._visit_expr(el) for el in _iter_elements(exprs)]
+                    r_from = bounds[0] if len(bounds) > 0 else None
+                    r_to = bounds[1] if len(bounds) > 1 else None
+                    r_step = bounds[2] if len(bounds) > 2 else None
+            elif range_clause is not None:
                 fc = getattr(range_clause, "MakeSeriesFromClause", None)
                 if fc is not None and getattr(fc, "Expression", None) is not None:
                     r_from = self._visit_expr(fc.Expression)

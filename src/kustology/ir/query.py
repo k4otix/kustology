@@ -410,10 +410,33 @@ class UnionOp(Operator):
     withsource: str | None = None
 
 
+class MakeSeriesAggregate(BaseModel):
+    """One ``make-series`` aggregate, with the value that fills its gaps.
+
+    ``default=0`` and ``default=1`` produce different series -- the value
+    substituted into every bucket with no rows -- and the builder unwrapped
+    the parser's ``MakeSeriesExpression`` to the inner assignment, so the
+    clause was dropped and all three of ``default=0``, ``default=1`` and no
+    default built the same node.
+
+    ``name`` and ``expr`` are spelled as on :class:`Assignment` deliberately:
+    the binder reads ``a.name`` / ``a.expr`` over this list and needs no
+    change for the element type having grown a third field.
+    """
+
+    model_config = {"extra": "forbid"}
+    KIND: ClassVar[str] = "make_series_aggregate"
+    kind: Literal["make_series_aggregate"] = "make_series_aggregate"
+    name: str
+    expr: AnyExpr
+    default: AnyExpr | None = None
+    span: Span
+
+
 class MakeSeriesOp(Operator):
     KIND: ClassVar[str] = "make_series"
     kind: Literal["make_series"] = "make_series"
-    aggregations: list[Assignment]
+    aggregations: list[MakeSeriesAggregate]
     by: list[Assignment]
     on_column: AnyExpr | None = None
     range_from: AnyExpr | None = None

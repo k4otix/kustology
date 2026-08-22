@@ -333,3 +333,54 @@ def test_a_comment_before_a_found_table_does_not_reach_the_hash():
     assert _hash("find in (// note\n T) where x == 1") == _hash(
         "find in (T) where x == 1"
     )
+
+
+# -- make-series ----------------------------------------------------------
+
+_MS_RANGE = (
+    "T | make-series n=count() default=0 on t in "
+    "range(datetime(2024-01-01), datetime(2024-01-02), 1h) by g"
+)
+
+
+def test_make_series_keeps_the_aggregate_name_and_expression():
+    (op,) = _ops(_MS_RANGE)
+    (agg,) = op.aggregations
+    assert (agg.name, agg.expr.name) == ("n", "count")
+
+
+def test_make_series_records_the_gap_filling_default():
+    (op,) = _ops(_MS_RANGE)
+    assert op.aggregations[0].default.value == 0
+
+
+def test_in_range_populates_from_to_and_step():
+    (op,) = _ops(_MS_RANGE)
+    assert op.range_from.value.startswith("2024-01-01")
+    assert op.range_to.value.startswith("2024-01-02")
+    assert op.step.value == "01:00:00"
+
+
+def test_from_to_step_clause_still_populates_the_same_fields():
+    (op,) = _ops(
+        "T | make-series n=count() on t from datetime(2024-01-01) "
+        "to datetime(2024-01-02) step 1h by g"
+    )
+    assert op.range_from is not None and op.range_to is not None
+    assert op.step.value == "01:00:00"
+
+
+def test_make_series_default_reaches_the_hash():
+    assert _hash("T | make-series n=count() default=0 on t step 1h") != _hash(
+        "T | make-series n=count() default=1 on t step 1h"
+    )
+
+
+def test_make_series_default_differs_from_no_default():
+    assert _hash("T | make-series n=count() default=0 on t step 1h") != _hash(
+        "T | make-series n=count() on t step 1h"
+    )
+
+
+def test_make_series_range_bounds_reach_the_hash():
+    assert _hash(_MS_RANGE) != _hash(_MS_RANGE.replace("2024-01-02", "2024-01-03"))

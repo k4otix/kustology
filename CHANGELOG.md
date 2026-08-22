@@ -622,6 +622,15 @@ release is in `docs/superpowers/reports/`.
   wildcard table, or an unmodelled source. `to_llm_dict` caps
   `DataTableSource.rows` at 20 and adds a `rows_omitted` count, since real
   IOC datatables run to thousands of rows; `model_dump_json` stays complete.
+- **`MakeSeriesOp.aggregations` is `list[MakeSeriesAggregate]`** (was
+  `list[Assignment]`), and `in range(...)` now populates the range fields.
+  Two losses met here: the `default=` gap-filling value was unwrapped away
+  with the parser's `MakeSeriesExpression`, so `default=0`, `default=1` and
+  no default built one node; and `in range(from, to, step)` is a different
+  clause class from `from … to … step …`, with the bounds as positional
+  arguments, so every `in range(...)` query recorded no window at all and
+  two series over different windows hashed alike. `MakeSeriesAggregate`
+  keeps `Assignment`'s `.name` / `.expr` spelling and adds `.default`.
 - **`FindOp.tables` is `list[TableRef | LetRef]`** (was `list[str]`), and
   the operator gains `withsource` and `project`. The string list was read
   with `el.ToString().strip()` — the no-argument overload, which is
