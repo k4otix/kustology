@@ -622,6 +622,14 @@ release is in `docs/superpowers/reports/`.
   wildcard table, or an unmodelled source. `to_llm_dict` caps
   `DataTableSource.rows` at 20 and adds a `rows_omitted` count, since real
   IOC datatables run to thousands of rows; `model_dump_json` stays complete.
+- **Every operator gains `hints`,** a `dict[str, str]` of the `hint.*`
+  named parameters the query wrote (`hint.strategy`, `hint.shufflekey`,
+  `hint.spread`, `hint.remote`), keys kept verbatim. It is **excluded from
+  `semantic_hash`** — the one field in this release that is source-derived
+  and still volatile: a hint asks the engine to execute a query
+  differently and does not change the rows it returns, so
+  `join hint.strategy=shuffle` and `join` deduplicate to one digest while
+  the tuning stays readable on the node.
 - **`JoinOp.join_kind` and `LookupOp.lookup_kind` are required, and carry
   KQL's effective default** (D8): a bare `join` records `"innerunique"`
   and a bare `lookup` records `"leftouter"`, never `None`. Both previously

@@ -456,3 +456,49 @@ def test_bare_lookup_hashes_as_leftouter():
 
 def test_lookup_kind_reaches_the_hash():
     assert _hash("T | lookup U on k") != _hash("T | lookup kind=inner U on k")
+
+
+# -- hints (volatile: recorded, never hashed) -----------------------------
+
+def test_join_hint_is_recorded():
+    (op,) = _ops("T | join hint.strategy=shuffle (U) on k")
+    assert op.hints == {"hint.strategy": "shuffle"}
+
+
+def test_join_hint_does_not_reach_the_hash():
+    """A hint is an execution instruction, not a change of meaning: the two
+    queries return the same rows and must share a digest."""
+    assert _hash("T | join hint.strategy=shuffle (U) on k") == _hash(
+        "T | join (U) on k"
+    )
+
+
+def test_summarize_hint_is_recorded_and_not_hashed():
+    (op,) = _ops("T | summarize hint.shufflekey=a count() by a")
+    assert op.hints == {"hint.shufflekey": "a"}
+    assert _hash("T | summarize hint.shufflekey=a count() by a") == _hash(
+        "T | summarize count() by a"
+    )
+
+
+def test_mv_expand_hint_is_recorded_and_not_hashed():
+    (op,) = _ops("T | mv-expand hint.spread=2 a")
+    assert op.hints == {"hint.spread": "2"}
+    assert _hash("T | mv-expand hint.spread=2 a") == _hash("T | mv-expand a")
+
+
+def test_two_different_hints_are_kept_apart():
+    (op,) = _ops("T | join hint.strategy=shuffle hint.remote=left (U) on k")
+    assert op.hints == {"hint.strategy": "shuffle", "hint.remote": "left"}
+
+
+def test_a_non_hint_parameter_is_not_a_hint():
+    """``kind=`` changes the operator and is modelled as a field; only
+    ``hint.*`` is advisory."""
+    (op,) = _ops("T | join kind=inner (U) on k")
+    assert op.hints == {}
+
+
+def test_an_operator_with_no_parameters_has_no_hints():
+    (op,) = _ops("T | where a == 1")
+    assert op.hints == {}

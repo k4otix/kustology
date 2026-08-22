@@ -23,6 +23,7 @@ from ..bridge import GlobalState, KustoCode  # re-export-friendly; also triggers
 from ..utils.walker import iter_elements as _iter_elements
 from ..utils.walker import node_text as _node_text
 from ._builder_helpers import (
+    extract_hints,
     extract_named_param,
     extract_qualified_table_ref,
     is_table_symbol,
@@ -705,6 +706,23 @@ class IRBuilder:
         return DataTableSource(columns=columns, rows=rows, span=to_span(node))
 
     def _visit_operator(self, node: Any) -> Operator | None:
+        """Dispatch one operator and stamp the ``hint.*`` parameters on it.
+
+        The hints are read here rather than in each branch on purpose. Many
+        operators admit them (``join``, ``summarize``, ``mv-expand``,
+        ``partition``, ``evaluate``, …), the reading is identical for all of
+        them, and a per-branch call is a list to maintain -- the shape
+        AGENTS.md records as drifting every time. One call site cannot miss
+        an operator, including one added later.
+        """
+        op = self._dispatch_operator(node)
+        if op is not None:
+            hints = extract_hints(node)
+            if hints:
+                op.hints = hints
+        return op
+
+    def _dispatch_operator(self, node: Any) -> Operator | None:
         kind = str(type(node).__name__)
         span = to_span(node)
         n = node

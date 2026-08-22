@@ -181,6 +181,17 @@ def _merge_at_one_level(ops: list) -> list:
 # -- but that call is exactly what the field's own docstring tells consumers
 # to make after mutating the IR.
 #
+# ``hints`` is the one member of this set the binder does *not* write: it is
+# source-derived, read straight off the query's ``hint.*`` named parameters.
+# It is stripped because a hint is an execution instruction rather than a
+# statement about the result -- ``join hint.strategy=shuffle`` and ``join``
+# return the same rows -- so two rules differing only in tuning must
+# deduplicate to one. That makes it the exception to the "source-derived
+# information must keep hashing" rule two paragraphs down, and the exception
+# is decided by what the field *means*, not by where it comes from. A future
+# field only belongs here if the query would return identical rows without
+# it.
+#
 # ``join_side`` is deliberately *not* stripped, and is why it exists as a
 # field at all. ``table`` carries two different things: the source-derived
 # ``$left`` / ``$right`` sentinel, and the table the binder resolves -- which
@@ -203,7 +214,7 @@ def _merge_at_one_level(ops: list) -> list:
 # ``let`` are unaffected.
 _VOLATILE_FIELDS = frozenset({
     "span", "body_span", "result_type", "result_type_inner", "table",
-    "result_schema",
+    "result_schema", "hints",
 })
 
 # ``span`` and ``body_span`` are required and have no default, so unlike the

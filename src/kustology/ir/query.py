@@ -82,6 +82,23 @@ class Operator(BaseModel):
     KIND: ClassVar[str] = "operator"
     kind: Literal["operator"] = "operator"
     span: Span
+    # ``hint.*`` named parameters, verbatim keys included: ``hint.strategy``,
+    # ``hint.shufflekey``, ``hint.spread``, ``hint.remote``. Declared on the
+    # base class because the grammar admits them on many operators
+    # (``join``, ``summarize``, ``mv-expand``, ``partition``, ``evaluate``,
+    # …) and the builder stamps them from one place, so a new operator
+    # cannot be added without them.
+    #
+    # **Volatile: excluded from ``semantic_hash``** (``hints`` is in
+    # ``transforms._VOLATILE_FIELDS``). A hint asks the engine to execute a
+    # query differently -- shuffle the join, spread the expansion -- and does
+    # not change the rows it returns, so ``join hint.strategy=shuffle`` and
+    # ``join`` are the same query for deduplication purposes. That is the
+    # opposite call from every other field in this task, and it is the whole
+    # reason the field is here rather than being folded into an operator's
+    # own parameters: a consumer that wants to see the tuning can read it,
+    # and a consumer deduplicating rules does not see two rules.
+    hints: dict[str, str] = {}
 
 
 class FilterOp(Operator):

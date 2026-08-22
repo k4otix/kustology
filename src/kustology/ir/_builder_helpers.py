@@ -393,6 +393,22 @@ def read_named_params(params: Any) -> dict[str, str]:
     return out
 
 
+def extract_hints(node: Any) -> dict[str, str]:
+    """Every ``hint.*`` named parameter an operator carries.
+
+    Keys keep the ``hint.`` prefix, because that is what the query wrote and
+    stripping it would make ``hint.remote`` indistinguishable from a
+    hypothetical plain ``remote=``. Non-hint parameters are left for the
+    operator's own fields -- ``kind=`` changes what the operator *does* and
+    is modelled; a hint only changes how the engine runs it.
+    """
+    return {
+        name: value
+        for name, value in read_named_params(getattr(node, "Parameters", None)).items()
+        if name.lower().startswith("hint.")
+    }
+
+
 def extract_named_param(
     node: Any, param_name: str, default: str | None = None,
 ) -> str | None:
