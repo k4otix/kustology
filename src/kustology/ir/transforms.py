@@ -281,6 +281,15 @@ def _clear_volatile(root: BaseModel) -> None:
                 # Back to the declared default, so a cleared field is
                 # indistinguishable from one the binder never touched.
                 # A field with no default (none currently) clears to None.
+                #
+                # A *mutable* declared default -- ``hints`` is ``{}`` -- is
+                # installed by reference, so every node carrying that field
+                # ends up sharing one object. Safe for exactly the reason
+                # ``_ZERO_SPAN`` is: this runs only on the hash's private
+                # deep copy, which is dumped and discarded, and nothing
+                # between here and the dump mutates a cleared field in
+                # place. A future step that wanted to *edit* one of these
+                # would have to copy it first.
                 default = fields[name].default
                 object.__setattr__(
                     node, name, None if default is PydanticUndefined else default,

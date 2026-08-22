@@ -433,11 +433,20 @@ def extract_hints(node: Any) -> dict[str, str]:
     hypothetical plain ``remote=``. Non-hint parameters are left for the
     operator's own fields -- ``kind=`` changes what the operator *does* and
     is modelled; a hint only changes how the engine runs it.
+
+    The prefix match is **case-sensitive**, matching the grammar rather than
+    being lenient about it. ``HINT.strategy=shuffle``, ``hint.STRATEGY=``
+    and ``Hint.Strategy=`` are none of them named parameters in 12.3.2: each
+    fails to parse as one and is diagnosed as an unknown name. A
+    case-insensitive match therefore could not admit anything extra, and
+    pairing one with verbatim keys would have been the worse of both -- two
+    dictionary entries for one hint, the first time a parser did accept a
+    second casing.
     """
     return {
         name: value
         for name, value in read_named_params(getattr(node, "Parameters", None)).items()
-        if name.lower().startswith("hint.")
+        if name.startswith("hint.")
     }
 
 

@@ -578,3 +578,46 @@ def test_search_kind_value_set_is_the_dlls():
         "search kind=bogus 'x'", schema={"T": {"a": "string"}},
     ).to_ir().diagnostics]
     assert any("default, case_insensitive, case_sensitive" in m for m in messages)
+
+
+def test_only_the_grammars_hint_spelling_is_a_hint():
+    """The prefix match is case-sensitive because the grammar is.
+
+    ``HINT.strategy=shuffle`` is not a named parameter at all -- the parser
+    reads ``HINT`` as a name and complains -- so a lenient match could not
+    admit anything a strict one misses, and would risk two dict entries for
+    one hint if a later DLL did accept a second casing.
+    """
+    ir = parse(
+        "T | join HINT.strategy=shuffle (U) on k",
+        schema={"T": {"k": "string"}, "U": {"k": "string"}},
+    ).to_ir()
+    assert any("HINT" in d.message for d in ir.diagnostics)
+    (op,) = ir.main_pipeline.operators
+    assert op.hints == {}
+
+
+def test_the_render_with_clause_wins_a_property_collision():
+    """Both spellings in one query: the modern ``with`` clause is the value.
+
+    Documented in the merge and otherwise unpinned, so a reordering of the
+    two ``read_named_params`` calls would flip it silently.
+    """
+    (op,) = _ops("T | render columnchart kind=stacked with (kind=unstacked)")
+    assert op.properties == {"kind": "unstacked"}
+
+
+def test_find_qualified_table_keeps_its_database():
+    """``find`` shares ``search``'s table reader, so it gains the same
+    qualifier fidelity -- asserted rather than assumed from the sharing."""
+    (op,) = _ops("find in (database('d').T) where a == 1")
+    assert (op.tables[0].name, op.tables[0].database) == ("T", "d")
+
+
+def test_find_project_smart_is_the_default_projection():
+    """``project-smart`` is what a bare ``find`` does, so the two must hash
+    alike. True today because the clause holds no columns; pinned so a
+    future read of ``ProjectKeyword`` cannot split them by accident."""
+    assert _hash("find in (T) where a == 1 project-smart") == _hash(
+        "find in (T) where a == 1"
+    )
