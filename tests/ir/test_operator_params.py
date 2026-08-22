@@ -502,3 +502,20 @@ def test_a_non_hint_parameter_is_not_a_hint():
 def test_an_operator_with_no_parameters_has_no_hints():
     (op,) = _ops("T | where a == 1")
     assert op.hints == {}
+
+
+def test_a_function_call_render_property_is_recorded_as_written():
+    """A property value is not always a bare name or a literal.
+
+    ``strcat("a","b")`` is a ``FunctionCallExpression``, which *has* a
+    ``Name`` member -- so the bare-name branch fired and recorded the
+    function's name, ``"strcat"``, for every call whatever its arguments.
+    """
+    (op,) = _ops('T | render timechart with (title=strcat("a","b"))')
+    assert op.properties == {"title": 'strcat("a","b")'}
+
+
+def test_two_function_call_render_properties_hash_apart():
+    assert _hash('T | render timechart with (title=strcat("a","b"))') != _hash(
+        'T | render timechart with (title=strcat("c","d"))'
+    )

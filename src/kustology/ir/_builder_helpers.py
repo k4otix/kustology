@@ -376,15 +376,27 @@ def named_param_value(param: Any) -> str | None:
     ``node_text`` (``IncludeTrivia.Minimal``) rather than ``ToString()``,
     which is ``IncludeTrivia.All`` and would carry a preceding comment into
     the value and from there into ``semantic_hash``.
+
+    **The bare-name branch is gated on the node class, not on the presence
+    of a ``Name`` member**, and that is the whole reason the check is
+    written this way. ``FunctionCallExpression`` also has a ``Name`` -- the
+    function's -- so an unguarded probe recorded
+    ``with (title=strcat("a","b"))`` as ``title="strcat"``: not what the
+    query said, and identical for every call whatever its arguments, so two
+    differently-titled charts shared a ``semantic_hash``. Only a
+    ``NameReference`` means "the identifier is the value"; everything else
+    belongs to the two branches below, and ``node_text`` renders the call as
+    written.
     """
     from ..utils.walker import node_text
 
     expr = getattr(param, "Expression", None)
     if expr is None:
         return None
-    sub = getattr(expr, "Name", None)
-    if sub is not None:
-        return str(getattr(sub, "SimpleName", None) or visit_name(sub))
+    if str(type(expr).__name__) == "NameReference":
+        sub = getattr(expr, "Name", None)
+        if sub is not None:
+            return str(getattr(sub, "SimpleName", None) or visit_name(sub))
     lit = getattr(expr, "LiteralValue", None)
     if lit is not None:
         return str(lit)
