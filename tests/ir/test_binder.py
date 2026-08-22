@@ -1503,3 +1503,37 @@ def test_search_provenance_survives_an_authoritative_result_schema():
         op for op in ir.main_pipeline.operators if isinstance(op, FilterOp)
     )
     assert {c.table for c in find_all(where, ColumnRef)} == {"T"}
+
+
+def test_a_search_predicate_resolves_against_the_tables_being_searched():
+    """``search`` has an implicit source, so the scope *before* it is empty.
+
+    Its own predicate was filled against that empty scope, so
+    ``search in (T) a > 1`` left ``a`` with no table while the same column one
+    operator later (``search in (T) 'x' | where a > 1``) resolved to ``T``.
+    The rule has the searched entries in hand; filling the predicate after it
+    installs them is what makes the two agree.
+    """
+    from kustology.ir import ColumnRef, SearchOp, find_all
+
+    ir = _fallback("search in (T) a > 1")
+    search_op = next(
+        op for op in ir.main_pipeline.operators if isinstance(op, SearchOp)
+    )
+    assert {c.table for c in find_all(search_op, ColumnRef)} == {"T"}
+
+
+def test_an_unparseable_query_gets_no_result_schema():
+    """``UnknownSource`` with no operators is reachable from a real string.
+
+    The builder emits it for anything it cannot model as a source at all, and
+    the pipeline then claims nothing about its own output -- where before it
+    claimed, with ``columns={}``, that the query emits no columns.
+    """
+    ir = IRBuilder().build("not a query at all")
+    from kustology.ir.query import UnknownSource
+
+    assert isinstance(ir.main_pipeline.source, UnknownSource)
+    assert not ir.main_pipeline.operators
+    SchemaAttacher(FALLBACK_SCHEMA).enrich(ir)
+    assert ir.main_pipeline.result_schema is None

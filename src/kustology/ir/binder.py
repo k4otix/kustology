@@ -248,6 +248,10 @@ class SchemaAttacher:
     ``scan``, ``facet``, ``fork``, ``mv-apply``, ``partition``,
     ``top-nested``, ``top-hitters``, ``sample-distinct``, ``invoke``,
     ``macro-expand``, the graph operators) the scope downstream is stale.
+    Two are in neither camp: ``execute-and-cache`` is a directive with no
+    row-set effect at all, and ``unknown-op`` is the builder's fallback for
+    an operator it did not model, whose effect on the schema is by
+    definition not known here.
     Stale is worse than exact and better than the previous behavior, which
     was to skip those operators entirely so their own column references never
     resolved at all. ``tests/ir/test_binder_oracle.py`` runs an unbound leg
@@ -426,11 +430,21 @@ class SchemaAttacher:
         and seeding them would invent provenance the query never expressed.
         """
         if isinstance(pipeline.source, UnknownSource) and not pipeline.operators:
-            # The builder could not model this at all. Seeding it from the
-            # enclosing scope -- which every other implicit-source
-            # sub-pipeline wants -- would state that the unmodelled branch
-            # emits the enclosing columns, which is a guess about a shape we
-            # have already admitted we do not understand.
+            # The builder could not model this at all -- reachable from a
+            # real string, since `IRBuilder().build("not a query at all")`
+            # produces exactly this shape. Two things follow. The pipeline
+            # claims nothing about its own output, rather than claiming with
+            # `columns={}` that it emits none. And it does not inherit: every
+            # other implicit-source sub-pipeline runs against the enclosing
+            # rows and wants to, but saying that an *unmodelled* one emits
+            # the enclosing columns is a guess about a shape we have already
+            # admitted we do not understand. (That second half is defensive
+            # only -- a fork or mv-apply body is an ``ImplicitSource``, never
+            # this.)
+            #
+            # Whatever the builder left on ``result_schema`` stays: if the
+            # binder closed a symbol here, its answer is real and is the one
+            # thing about this pipeline anybody knows.
             return []
         source_entry = self._source_entry(pipeline)
         if inherited is not None and not source_entry.table and not source_entry.columns:
@@ -938,7 +952,11 @@ class SchemaAttacher:
                     # stale, but the binder still typed the node from the
                     # parse-time schema. Reporting ``unknown`` for a type
                     # sitting on the reference throws it away.
-                    kept[c.name] = current.get(c.name) or self._expr_type(c)
+                    known = current.get(c.name)
+                    kept[c.name] = (
+                        known if known and known != "unknown"
+                        else self._expr_type(c)
+                    )
                 else:
                     name = self._extract_target_name(c)
                     if name:
@@ -1192,7 +1210,6 @@ class SchemaAttacher:
             # Named tables scope it; an unqualified ``search`` covers every
             # table the caller described, which is the schema-dict analogue
             # of "every table in the database".
-            self._fill(op.predicate, scope)
             names = [t.name for t in op.tables if isinstance(t, TableRef)]
             if not names:
                 names = list(self.schemas)
@@ -1210,6 +1227,11 @@ class SchemaAttacher:
                 ),
                 *searched,
             ]
+            # After, not before: ``search`` has an implicit source, so the
+            # pre-operator scope is empty and its own predicate would resolve
+            # against nothing -- ``search in (T) a > 1`` left ``a`` unplaced
+            # while ``search in (T) 'x' | where a > 1`` placed it in ``T``.
+            self._fill(op.predicate, scope)
             return
 
         # No bespoke scope rule for this operator kind. Fill provenance on

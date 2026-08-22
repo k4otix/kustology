@@ -247,8 +247,12 @@ XFAIL_FALLBACK: dict[str, str] = {
         "of `SchemaAttacher.enrich`, so both union arms contribute nothing."
     ),
     "CertifiedPreOwned_TGTs_requested": (
-        "A `parse` capture the walk drops: the query parses `EventData` into "
-        "`CIN` and the fallback's capture set misses it."
+        "`MvApplyOp` has no scope rule, so the body's output columns never "
+        "reach the enclosing scope: `CIN` is created by a `project` inside "
+        "`mv-apply d=... on (...)` and is missing from ours. The walk "
+        "computes the body's own `result_schema` correctly (`{CIN: string}`) "
+        "and then discards it. The `parse ... MachineName` further down is "
+        "handled correctly and is not the defect here."
     ),
     "Find_WithSourceScoped": (
         "`find withsource=SourceTable in (...)` -- the same missing FindOp "
