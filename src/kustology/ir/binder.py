@@ -12,6 +12,7 @@ dict directly — callers handle JSON/YAML/IO themselves.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from fnmatch import fnmatchcase
 
 from .expr import (
     And,
@@ -67,6 +68,28 @@ _LEFT_ONLY_JOIN_KINDS = frozenset({
 _RIGHT_ONLY_JOIN_KINDS = frozenset({
     "rightanti", "rightantisemi", "rightsemi",
 })
+
+
+def _matches_any(patterns: list[str], name: str) -> bool:
+    """Does ``name`` match any ``project-keep`` / ``project-away`` term?
+
+    KQL's only wildcard here is ``*``, and matching is **case-sensitive** --
+    ``project-keep A*`` over a table whose column is ``a`` returns nothing.
+    ``fnmatch.fnmatch`` folds case on macOS and Windows, so the case-sensitive
+    ``fnmatchcase`` is the one that is right on every platform.
+
+    A term with no ``*`` compares by equality rather than as a glob, so a
+    bracket-quoted name containing ``?`` or ``[`` -- both meaningful to
+    ``fnmatch`` and neither meaningful to KQL -- cannot match the wrong
+    column.
+    """
+    for pattern in patterns:
+        if "*" in pattern:
+            if fnmatchcase(name, pattern):
+                return True
+        elif pattern == name:
+            return True
+    return False
 
 
 def _join_kind(text: str | None) -> str:
@@ -361,6 +384,29 @@ class SchemaAttacher:
         scope.clear()
         scope.append(ScopeEntry(table=None, columns=columns, origins=origins))
 
+    def _project_patterns(self, columns, scope: list[ScopeEntry]) -> list[str]:
+        """Fill each ``project-keep`` / ``project-away`` term and name it.
+
+        A bare ``*`` lowers to :class:`~kustology.ir.expr.StarExpr` -- it is
+        not a column called ``*`` -- so it is turned back into the pattern
+        that matches everything. A prefix wildcard (``a*``) stays a
+        ``ColumnRef`` whose *name* is the pattern, which is why the term list
+        and the match set are the same list of strings.
+        """
+        from .expr import StarExpr
+
+        patterns: list[str] = []
+        for c in columns:
+            inner = c if isinstance(c, Expr) else getattr(c, "expr", c)
+            self._fill(inner, scope)
+            if isinstance(inner, StarExpr):
+                patterns.append("*")
+                continue
+            name = self._extract_target_name(c)
+            if name:
+                patterns.append(name)
+        return patterns
+
     def _extract_target_name(self, expr) -> str | None:
         """Pull a bare column name from a ColumnRef / Assignment / similar."""
         if isinstance(expr, ColumnRef):
@@ -607,23 +653,18 @@ class SchemaAttacher:
             return
         if isinstance(op, ProjectAwayOp):
             current = self._scope_columns(scope)
-            for c in op.columns:
-                self._fill(getattr(c, "expr", c) if not isinstance(c, Expr) else c, scope)
-                name = self._extract_target_name(c)
-                if name and name in current:
-                    current.pop(name)
+            patterns = self._project_patterns(op.columns, scope)
+            current = {
+                k: v for k, v in current.items()
+                if not _matches_any(patterns, k)
+            }
             self._set_scope(scope, current)
             return
         if isinstance(op, ProjectKeepOp):
             current = self._scope_columns(scope)
-            keep_names: set[str] = set()
-            for c in op.columns:
-                self._fill(getattr(c, "expr", c) if not isinstance(c, Expr) else c, scope)
-                name = self._extract_target_name(c)
-                if name:
-                    keep_names.add(name)
+            patterns = self._project_patterns(op.columns, scope)
             # KQL preserves source-table column order.
-            kept = {k: v for k, v in current.items() if k in keep_names}
+            kept = {k: v for k, v in current.items() if _matches_any(patterns, k)}
             self._set_scope(scope, kept)
             return
         if isinstance(op, ProjectReorderOp):

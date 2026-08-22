@@ -859,3 +859,43 @@ def test_lookup_is_never_semi_or_anti():
         ("k", "string"), ("a", "long"), ("shared", "string"),
         ("b", "real"), ("shared1", "string"),
     ]
+
+
+# K08: wildcard project-keep / project-away ----------------------------------
+
+
+def test_project_keep_matches_a_wildcard_term():
+    """``a*`` contributed no name, so the term matched nothing and was
+    silently dropped from the kept set."""
+    ir = _fallback("T | project-keep k, a*")
+    assert _columns(ir) == [("k", "string"), ("a", "long")]
+
+
+def test_project_away_matches_a_wildcard_term():
+    ir = _fallback("T | project-away a*")
+    assert _columns(ir) == [
+        ("k", "string"), ("t", "datetime"), ("d", "dynamic"),
+        ("s", "string"), ("g", "guid"),
+    ]
+
+
+def test_a_bare_star_keeps_or_drops_everything():
+    """A bare ``*`` lowers to ``StarExpr``, not a column named ``*``."""
+    assert _columns(_fallback("T | project-keep *")) == [
+        ("k", "string"), ("a", "long"), ("t", "datetime"),
+        ("d", "dynamic"), ("s", "string"), ("g", "guid"),
+    ]
+    assert _columns(_fallback("T | project-away *")) == []
+
+
+def test_wildcard_matching_is_case_sensitive():
+    """KQL column names are case-sensitive and so is the pattern: Microsoft
+    answers ``[]`` for ``project-keep A*`` over a table whose column is
+    ``a``. ``fnmatch.fnmatch`` folds case on macOS and Windows, which would
+    have made this pass by accident on two of the three CI platforms."""
+    assert _columns(_fallback("T | project-keep A*")) == []
+
+
+def test_wildcard_and_plain_terms_combine_in_source_order():
+    ir = _fallback("T | project-keep s*, k")
+    assert _columns(ir) == [("k", "string"), ("s", "string")]

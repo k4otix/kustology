@@ -504,6 +504,13 @@ release is in `docs/superpowers/reports/`.
   than the discarded `L`. A bare `join` is `innerunique`, and the kind is
   matched case-insensitively — wider than the parser, which rejects
   `kind=LeftAnti`, but the right answer for an IR built or edited directly.
+- **Wildcard `project-keep` / `project-away` terms match (tier 2).** A
+  pattern term contributed no column name, so `T | project-keep k, a*`
+  dropped every column `a*` names and `T | project-away a*` removed none of
+  them — the operator's whole point silently did nothing. Terms now match by
+  glob, case-sensitively (`project-keep A*` over a column `a` keeps nothing,
+  as the engine says), and a bare `*` — a `StarExpr`, not a column called
+  `*` — keeps or drops everything.
 - **Six public `KustoQuery` members gained docstrings (tier 1).**
   `get_operator_chain`, `get_referenced_columns`, `get_referenced_functions`,
   `get_structural_hash`, `syntax` and `text` delegated in silence, so
