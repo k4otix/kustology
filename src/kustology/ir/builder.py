@@ -31,6 +31,7 @@ from ._builder_helpers import (
     literal_value_and_ticks,
     map_semantic_info,
     read_external_data,
+    read_row_schema,
     to_span,
     visit_name,
 )
@@ -656,21 +657,11 @@ class IRBuilder:
         discarded: the query is malformed (the parser says so with its own
         diagnostic) and dropping the values would hide what it wrote.
 
-        Column types are read with ``node_text`` (``IncludeTrivia.Minimal``),
-        never ``ToString()``: the latter is ``IncludeTrivia.All`` and
-        prepends leading trivia, so ``datatable(a: // note\\n long)`` would
-        record the type as ``"// note\\n long"``.
+        The schema comes from :func:`read_row_schema`, the single reader for
+        every ``name:type`` list in the grammar — see its docstring for why
+        that is shared rather than copied.
         """
-        columns: list[tuple[str, str]] = []
-        schema_node = getattr(node, "Schema", None)
-        if schema_node is not None and hasattr(schema_node, "Columns"):
-            for col in _iter_elements(schema_node.Columns):
-                type_node = getattr(col, "Type", None)
-                columns.append((
-                    visit_name(col),
-                    _node_text(type_node).strip() if type_node is not None else "unknown",
-                ))
-
+        columns = read_row_schema(getattr(node, "Schema", None))
         cells = [self._visit_expr(el) for el in _iter_elements(node.Values)]
         width = len(columns) or len(cells) or 1
         rows = [cells[i:i + width] for i in range(0, len(cells), width)]
@@ -1043,23 +1034,20 @@ class IRBuilder:
             return ForkOp(branches=branches, span=span)
 
         if kind == "AssertSchemaOperator":
-            # ``_node_text`` is ``ToString(IncludeTrivia.Minimal)``. The bare
-            # ``ToString()`` this replaced is ``IncludeTrivia.All``, which
-            # prepends the node's leading trivia: ``assert-schema (a: //
-            # note\n long)`` recorded the type as ``"// note\n long"`` and
-            # hashed differently from the identical query without the
-            # comment. ``columns`` became load-bearing for the hash when the
+            # ``read_row_schema`` reads the type with
+            # ``ToString(IncludeTrivia.Minimal)``. The bare ``ToString()``
+            # this replaced is ``IncludeTrivia.All``, which prepends the
+            # node's leading trivia: ``assert-schema (a: // note\n long)``
+            # recorded the type as ``"// note\n long"`` and hashed
+            # differently from the identical query without the comment.
+            # ``columns`` became load-bearing for the hash when the
             # volatile-field set stopped filtering the dump by key name.
-            asserted: dict[str, str] = {}
-            schema_node = getattr(n, "Schema", None)
-            if schema_node is not None and hasattr(schema_node, "Columns"):
-                for col in _iter_elements(schema_node.Columns):
-                    cname = visit_name(col)
-                    ctype_node = getattr(col, "Type", None)
-                    asserted[cname] = (
-                        _node_text(ctype_node).strip() if ctype_node else "unknown"
-                    )
-            return AssertSchemaOp(columns=asserted, span=span)
+            # The dict is the only thing this site does not share with the
+            # other three readers.
+            return AssertSchemaOp(
+                columns=dict(read_row_schema(getattr(n, "Schema", None))),
+                span=span,
+            )
 
         if kind == "ParseKvOperator":
             target = (
@@ -1069,22 +1057,17 @@ class IRBuilder:
                     reason="Missing parse-kv target",
                 )
             )
-            # ``Keys`` is a RowSchema. The previous guard tested it for a
-            # ``Count`` member, which RowSchema does not have -- the loop
-            # body never ran and the field was always empty.
-            #
-            # The type read is ``_node_text``, not ``ToString()``, for the
-            # same reason as ``AssertSchemaOperator`` above: the no-argument
-            # overload carries the node's leading comment into the value.
-            declared: dict[str, str] = {}
-            keys = getattr(n, "Keys", None)
-            if keys is not None and hasattr(keys, "Columns"):
-                for col in _iter_elements(keys.Columns):
-                    ctype_node = getattr(col, "Type", None)
-                    declared[visit_name(col)] = (
-                        _node_text(ctype_node).strip() if ctype_node else "unknown"
-                    )
-            return ParseKvOp(target=target, columns=declared, span=span)
+            # ``Keys`` is a RowSchema -- the same shape ``Schema`` is on the
+            # other three readers, under a different member name, which is
+            # why ``read_row_schema`` takes the owner and not the schema. A
+            # previous guard tested ``Keys`` for a ``Count`` member, which
+            # RowSchema does not have, so the loop body never ran and the
+            # field was always empty.
+            return ParseKvOp(
+                target=target,
+                columns=dict(read_row_schema(getattr(n, "Keys", None))),
+                span=span,
+            )
 
         if kind == "SampleDistinctOperator":
             # ``Expression`` is unreachable-missing on a real parse (it's a

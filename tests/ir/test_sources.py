@@ -98,9 +98,45 @@ def test_externaldata_source_keeps_every_uri(builder):
     """Two URI sets are two different queries."""
     one = builder.build('externaldata(a:string)["https://x"] | take 1')
     two = builder.build('externaldata(a:string)["https://x","https://y"] | take 1')
+    assert isinstance(one.main_pipeline.source, ExternalDataSource)
+    assert isinstance(two.main_pipeline.source, ExternalDataSource)
     assert one.main_pipeline.source.uris == ["https://x"]
     assert two.main_pipeline.source.uris == ["https://x", "https://y"]
     assert one.semantic_hash != two.semantic_hash
+
+
+def test_uris_hold_source_text_when_an_element_is_not_a_literal(builder):
+    """Documented boundary: a ``uris`` entry need not be a URI.
+
+    A Sentinel rule that binds its feed URL to a ``let``, or builds it with
+    ``strcat``, hands the parser an element with no ``LiteralValue``. The
+    field records that element's source text rather than inventing a URI or
+    dropping it, so the query stays reconstructible from the IR.
+    """
+    bound = builder.build(
+        'let u = "https://x"; externaldata(a:string)[u] | take 1'
+    )
+    assert bound.main_pipeline.source.uris == ["u"]
+    built = builder.build('externaldata(a:string)[strcat("https://","x")] | take 1')
+    assert built.main_pipeline.source.uris == ['strcat("https://","x")']
+
+
+def test_a_comment_before_a_non_literal_uri_does_not_reach_the_hash(builder):
+    """The URI *fallback* had the same comment leak the column types had.
+
+    ``el.ToString()`` is ``IncludeTrivia.All``, so
+    ``externaldata(a:string)[// note<newline>u]`` recorded the URI as
+    ``"// note\\nu"``. The branch is reachable on exactly the queries the
+    test above describes, which is why it is not a dead path.
+    """
+    commented = builder.build(
+        'let u = "https://x"; externaldata(a:string)[// note\nu] | take 1'
+    )
+    plain = builder.build(
+        'let u = "https://x"; externaldata(a:string)[u] | take 1'
+    )
+    assert commented.main_pipeline.source.uris == ["u"]
+    assert commented.semantic_hash == plain.semantic_hash
 
 
 def test_let_externaldata_rhs_is_a_pipeline(builder):
@@ -203,6 +239,19 @@ def test_qualified_wildcard_keeps_the_database(builder):
     assert inner.is_wildcard is True
 
 
+def test_all_three_table_ref_fields_land_on_one_composite(builder):
+    """``cluster('c').database('d').T*`` is the only shape exercising all three.
+
+    It needs both halves working together: the left-spine walk for the two
+    qualifiers, and the name node's ``Kind`` for the flag.
+    """
+    ir = builder.build("union cluster('c').database('d').T*")
+    inner = ir.main_pipeline.operators[0].pipelines[0].source
+    assert (inner.cluster, inner.database, inner.name, inner.is_wildcard) == (
+        "c", "d", "T*", True,
+    )
+
+
 def test_wildcard_and_literal_table_hash_differently(builder):
     """``T*`` matches a set of tables; a table *named* ``T*`` is one table."""
     a = builder.build("union T*").semantic_hash
@@ -266,11 +315,16 @@ def test_llm_view_caps_datatable_rows(builder):
     assert source["rows_omitted"] == 5
 
 
-def test_llm_view_leaves_a_short_datatable_uncapped(builder):
-    ir = builder.build(_big_datatable(3))
-    source = to_llm_dict(ir)["main_pipeline"]["source"]
-    assert len(source["rows"]) == 3
-    assert "rows_omitted" not in source
+@pytest.mark.parametrize("n", [3, 20, 21])
+def test_llm_view_row_cap_boundary(builder, n):
+    """Exactly at the cap nothing is omitted; one over, one is.
+
+    An off-by-one here would either announce an omission that did not happen
+    or hide one that did.
+    """
+    source = to_llm_dict(builder.build(_big_datatable(n)))["main_pipeline"]["source"]
+    assert len(source["rows"]) == min(n, 20)
+    assert source.get("rows_omitted") == (n - 20 if n > 20 else None)
 
 
 def test_model_dump_json_keeps_every_datatable_row(builder):

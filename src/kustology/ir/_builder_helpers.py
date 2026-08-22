@@ -89,6 +89,42 @@ def to_span(node: Any) -> Span:
     return Span(text_start=node.TextStart, width=node.Width)
 
 
+def read_row_schema(node: Any) -> list[tuple[str, str]]:
+    """Read a ``RowSchema``-bearing node into ``[(column_name, type), …]``.
+
+    The one reader for every ``name:type`` declaration list in the grammar:
+    ``datatable(a:int, b:string)``, ``externaldata(a:string)``,
+    ``| assert-schema (a:long)`` and ``| parse-kv … as (a:long)``. The two
+    dict-shaped consumers wrap the result in ``dict(...)``; the shape
+    difference is the *only* thing that ever differed between them.
+
+    Sharing it is the point rather than a tidy-up. This loop existed in four
+    independent copies and three of them read the column type with a bare
+    ``ToString()`` — which is ``IncludeTrivia.All`` and prepends the node's
+    leading trivia, so ``assert-schema (a: // note\\n long)`` recorded the
+    type as ``"// note\\n long"`` and hashed differently from the identical
+    query without the comment. Fixing four copies leaves a fifth copy free
+    to reintroduce it; there is now nothing to copy.
+
+    ``node`` is the *owner* of the schema (the operator or expression), not
+    the ``RowSchema`` itself, because the member is called ``Schema`` on
+    three of the four and ``Keys`` on ``ParseKvOperator``. Callers pass
+    whichever they have.
+    """
+    from ..utils.walker import iter_elements, node_text
+
+    columns: list[tuple[str, str]] = []
+    if node is None or not hasattr(node, "Columns"):
+        return columns
+    for col in iter_elements(node.Columns):
+        type_node = getattr(col, "Type", None)
+        columns.append((
+            visit_name(col),
+            node_text(type_node).strip() if type_node is not None else "unknown",
+        ))
+    return columns
+
+
 def is_wildcarded_name(name_node: Any) -> bool:
     """True when a name node is a ``WildcardedName`` (``T*``, ``*``).
 
@@ -107,6 +143,12 @@ def _qualifier_argument(node: Any) -> tuple[str, str] | None:
 
     The argument is read through ``LiteralValue`` rather than the node's
     text so the quoting style (``'d'`` / ``"d"``) does not reach the IR.
+    The fallback uses ``node_text`` (``IncludeTrivia.Minimal``) rather than
+    ``ToString()`` (``IncludeTrivia.All``) so a comment before the argument
+    cannot reach the hash. ``LiteralValue`` wins for every spelling a
+    comment could currently precede here, so this is hardening against a
+    latent hazard rather than a live one -- but it is the same defect class
+    the URI fallback above really did have.
     """
     if str(type(node).__name__) != "FunctionCallExpression":
         return None
@@ -124,7 +166,8 @@ def _qualifier_argument(node: Any) -> tuple[str, str] | None:
     first = getattr(first, "Element", first)
     value = getattr(first, "LiteralValue", None)
     if value is None:
-        return fname, first.ToString().strip().strip("@").strip("\"'")
+        from ..utils.walker import node_text
+        return fname, node_text(first).strip().strip("@").strip("\"'")
     return fname, str(value)
 
 
@@ -189,26 +232,30 @@ def read_external_data(node: Any) -> tuple[list[tuple[str, str]], list[str], str
     URIs come from ``el.LiteralValue`` because the DLL decodes KQL's
     obfuscated string literal for us -- ``h"https://x"`` reads back as
     ``https://x``, where the node's own text keeps the ``h`` and the quotes.
-    The text fallback exists for a URI expression the parser could not fold
-    to a literal at all.
 
-    Column types are read with ``node_text`` (``IncludeTrivia.Minimal``) and
-    not ``ToString()``, which is ``IncludeTrivia.All`` and prepends the
-    node's leading trivia: ``externaldata(a: // note\\n string)`` recorded
-    the type as ``"// note\\n string"`` and hashed differently from the
-    identical query without the comment.
+    **The text fallback is reachable and is not a URI.** An element the
+    parser cannot fold to a literal has no ``LiteralValue``, so ``uris``
+    records that element's *source text* instead: a ``let``-bound feed URL
+    (``let u = "https://x"; externaldata(a:string)[u]``) yields ``["u"]``,
+    and ``externaldata(a:string)[strcat("https://","x")]`` yields the whole
+    call as written. A consumer resolving these has to read the query, not
+    just the field. The fallback uses ``node_text``
+    (``IncludeTrivia.Minimal``) rather than ``ToString()``, which is
+    ``IncludeTrivia.All``: with the latter, ``externaldata(a:string)[//
+    note\\n u]`` recorded the URI as ``"// note\\n u"`` and hashed
+    differently from the same query without the comment. A comment
+    *interior* to the element -- ``strcat(// note\\n "https://","x")`` --
+    still reaches the text, because no ``IncludeTrivia`` mode strips
+    interior trivia; that is the same accepted boundary as
+    :attr:`~kustology.ir.query.UnknownSource.raw_text`, and it splits a
+    digest rather than merging two.
+
+    Column types come from :func:`read_row_schema`, which is the single
+    reader for every ``name:type`` list in the grammar.
     """
     from ..utils.walker import iter_elements, node_text
 
-    columns: list[tuple[str, str]] = []
-    schema_node = getattr(node, "Schema", None)
-    if schema_node is not None and hasattr(schema_node, "Columns"):
-        for col in iter_elements(schema_node.Columns):
-            type_node = getattr(col, "Type", None)
-            columns.append((
-                visit_name(col),
-                node_text(type_node).strip() if type_node is not None else "unknown",
-            ))
+    columns = read_row_schema(getattr(node, "Schema", None))
 
     uris: list[str] = []
     uri_nodes = getattr(node, "URIs", None)
@@ -216,12 +263,16 @@ def read_external_data(node: Any) -> tuple[list[tuple[str, str]], list[str], str
         for el in iter_elements(uri_nodes):
             value = getattr(el, "LiteralValue", None)
             if value is None:
-                uris.append(el.ToString().strip().strip("@").strip("\"'"))
+                uris.append(node_text(el).strip().strip("@").strip("\"'"))
             else:
                 uris.append(str(value))
 
     # ``with (format="csv", ignoreFirstRecord=true)`` -- only the format is
-    # modeled; the rest stay in the source text.
+    # modeled; the rest stay in the source text. ``node_text`` in the
+    # fallback for the same reason as the URIs above: today ``LiteralValue``
+    # wins for every spelling a comment could precede, so the hazard is
+    # latent rather than live, but the two branches should not differ in
+    # which trivia they admit.
     fmt: str | None = None
     with_clause = getattr(node, "WithClause", None)
     if with_clause is not None:
@@ -231,7 +282,7 @@ def read_external_data(node: Any) -> tuple[list[tuple[str, str]], list[str], str
             value = getattr(prop.Expression, "LiteralValue", None)
             fmt = (
                 str(value) if value is not None
-                else prop.Expression.ToString().strip().strip("\"'")
+                else node_text(prop.Expression).strip().strip("\"'")
             )
             break
     return columns, uris, fmt
