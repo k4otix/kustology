@@ -396,3 +396,47 @@ def test_only_the_root_carries_the_schema_version():
     # And a sub-tree dumped on its own is not a document, so it is untagged.
     sub = to_llm_dict(IRBuilder().build("T | count").main_pipeline)
     assert "ir_schema_version" not in sub
+
+
+def test_the_null_flag_strip_is_scoped_to_binop():
+    """``polarity``/``case_sensitive`` are stripped when ``None`` *on BinOp*,
+    where ``None`` means "the operator is arithmetic, so neither question
+    applies". The strip used to be typeless -- it took only the output dict
+    -- so it reached into every node in the IR, and any future model with a
+    legitimately-optional ``case_sensitive`` would have had it silently
+    removed from the view with no way to tell an absent field from a null
+    one.
+
+    Exercised through a plain ``BaseModel`` rather than an ``Expr``
+    subclass: defining one of those inside a test registers it on
+    ``Expr.__subclasses__()`` for the rest of the session, which
+    ``test_canonical_coverage`` walks.
+    """
+    from pydantic import BaseModel
+
+    from kustology.ir.llm_view import _drop_inapplicable_operator_flags
+
+    class NotABinOp(BaseModel):
+        # Required, so the default-stripping pass cannot drop it either.
+        polarity: str | None
+        case_sensitive: bool | None
+
+    out = to_llm_dict(NotABinOp(polarity=None, case_sensitive=None))
+    assert out["polarity"] is None
+    assert out["case_sensitive"] is None
+
+    # And the helper itself declines the class, rather than the result above
+    # depending on some other pass having run first.
+    direct = {"polarity": None, "case_sensitive": None}
+    _drop_inapplicable_operator_flags(direct, NotABinOp)
+    assert direct == {"polarity": None, "case_sensitive": None}
+
+
+def test_the_null_flag_strip_still_fires_on_an_arithmetic_binop():
+    """The other side of the scoping: it must still do its job."""
+    from kustology.ir import BinOp, find_all
+
+    dumped = to_llm_dict(next(iter(find_all(IRBuilder().build("T | extend y = a + 2"), BinOp))))
+    assert dumped["op"] == "+"
+    assert "polarity" not in dumped
+    assert "case_sensitive" not in dumped

@@ -126,7 +126,7 @@ def _convert(node: Any) -> Any:
         if isinstance(node, Expr):
             out["canonical_form"] = node.canonical_form
         _drop_redundant_canonical_form(out, cls)
-        _drop_inapplicable_operator_flags(out)
+        _drop_inapplicable_operator_flags(out, cls)
         _collapse_polarity_into_op(out, cls)
         _cap_datatable_rows(out, cls)
         return out
@@ -212,21 +212,30 @@ def _cap_datatable_rows(out: dict[str, Any], cls: type) -> None:
     out["rows_omitted"] = len(rows) - _MAX_LLM_DATATABLE_ROWS
 
 
-def _drop_inapplicable_operator_flags(out: dict[str, Any]) -> None:
-    """Remove ``polarity`` / ``case_sensitive`` when they are ``None``.
+def _drop_inapplicable_operator_flags(out: dict[str, Any], cls: type) -> None:
+    """Remove ``BinOp``'s ``polarity`` / ``case_sensitive`` when ``None``.
 
-    ``None`` on ``BinOp`` means "this operator is arithmetic, so the question
-    does not apply" — see :class:`~kustology.ir.expr.BinOp`. ``polarity`` is
-    a *required* field there, so the default-stripping pass above cannot drop
-    it and the dump would carry an explicit ``"polarity": null``. A null
-    field is worse than an absent one for a model reading the dump: it
-    invites the question of what a null case-sensitivity means, when the
-    answer is that the node was never asked.
+    ``None`` there means "this operator is arithmetic, so the question does
+    not apply" — see :class:`~kustology.ir.expr.BinOp`. ``polarity`` is a
+    *required* field, so the default-stripping pass above cannot drop it and
+    the dump would carry an explicit ``"polarity": null``. A null field is
+    worse than an absent one for a model reading the dump: it invites the
+    question of what a null case-sensitivity means, when the answer is that
+    the node was never asked.
+
+    Scoped to ``BinOp`` by ``issubclass``, like both its siblings. Written
+    without the class it took only the dict, so it reached every node in the
+    IR and would silently strip a future model's legitimately-optional
+    ``case_sensitive`` — leaving the reader unable to tell an absent field
+    from a null one, which is the exact distinction this function exists to
+    make.
 
     Runs before :func:`_collapse_polarity_into_op`, whose ``None`` guard then
     reads the key as absent and leaves the node alone — the right outcome,
     since there is no polarity to fold into ``op``.
     """
+    if not issubclass(cls, BinOp):
+        return
     for field in ("polarity", "case_sensitive"):
         if field in out and out[field] is None:
             del out[field]
