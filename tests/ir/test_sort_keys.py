@@ -366,14 +366,24 @@ def test_project_reorder_wildcard_terms_survive_with_their_direction():
 
 def test_a_bare_wildcard_is_not_reported_as_a_column():
     """The consequence the node change exists for: ``find_all(ir, ColumnRef)``
-    must not name ``*``. Pinned across all three operators that put a bare
-    wildcard in expression position, since they share ``_visit_expr``."""
+    must not name ``*``.
+
+    The rule lives in ``_visit_expr``'s ``NameReference`` branch, which every
+    operator that puts an expression in that position shares, so the reach is
+    wider than ``project-reorder``: ``search *``, ``summarize arg_max(*, x)``
+    and ``evaluate bag_unpack(*)`` all wrote a phantom column into the IR
+    too. Enumerated here rather than described, because the shared branch is
+    exactly what makes the blast radius easy to under-report.
+    """
     from kustology.ir import StarExpr, find_all
 
     for query in (
         "T | project-reorder *, a",
         "T | project-away *",
         "T | project-keep *",
+        "search *",
+        "T | summarize arg_max(*, x)",
+        "T | evaluate bag_unpack(*)",
     ):
         ir = parse(query).to_ir()
         assert "*" not in [c.name for c in find_all(ir, ColumnRef)], query
