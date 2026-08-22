@@ -64,10 +64,31 @@ class ScopeEntry:
 
     Joins, lookups, and unions append entries; project / summarize replace
     them with a synthesized anonymous entry (``table=None``).
+
+    ``origins`` is what keeps provenance alive across that replacement. The
+    anonymous entry has no ``table``, so before it existed every column
+    reference *after* a ``project`` reported ``table=None`` while the same
+    column before it reported the real table — one query, two answers for one
+    column, and any lineage consumer reading ``ColumnRef.table`` silently got
+    the wrong one. ``origins`` maps a column name to the table it came from,
+    which is not always ``entry.table``: a projected column keeps ``"T"``
+    while living in a table-less entry, and a computed one (``extend n =
+    a + 1``) maps to ``None`` explicitly, so "invented here" is recorded
+    rather than inferred from a missing key.
+
+    A name absent from ``origins`` falls back to ``table`` — the ordinary
+    case of a real source table, where restating every column would be noise.
     """
 
     table: str | None
     columns: dict[str, str] = field(default_factory=dict)
+    origins: dict[str, str | None] = field(default_factory=dict)
+
+    def origin_of(self, name: str) -> str | None:
+        """The table ``name`` came from, or None if unknown/invented."""
+        if name in self.origins:
+            return self.origins[name]
+        return self.table
 
 
 class SchemaAttacher:
@@ -271,10 +292,47 @@ class SchemaAttacher:
             merged.update(entry.columns)
         return merged
 
-    def _set_scope(self, scope: list[ScopeEntry], columns: dict[str, str]) -> None:
-        """Replace scope with a single anonymous entry containing `columns`."""
+    def _column_origins(self, scope: list[ScopeEntry]) -> dict[str, str | None]:
+        """``{column: originating table}`` over the whole scope.
+
+        A name carried by two entries that disagree about where it came from
+        is **ambiguous**, and maps to ``None``. That is KQL's own answer:
+        after ``T | union U`` an unqualified ``k`` is neither table's ``k``,
+        and the previous rule -- "the most recently appended side wins" --
+        was a guess dressed as provenance. Join collisions do not reach this
+        branch, because the join rule renames the right side's ``k`` to
+        ``k1`` before the scope ever holds both.
+        """
+        seen: dict[str, str | None] = {}
+        ambiguous: set[str] = set()
+        for entry in scope:
+            for name in entry.columns:
+                origin = entry.origin_of(name)
+                if name in seen and seen[name] != origin:
+                    ambiguous.add(name)
+                seen[name] = origin
+        for name in ambiguous:
+            seen[name] = None
+        return seen
+
+    def _set_scope(
+        self,
+        scope: list[ScopeEntry],
+        columns: dict[str, str],
+        origins: dict[str, str | None] | None = None,
+    ) -> None:
+        """Replace scope with a single anonymous entry containing `columns`.
+
+        Provenance is carried over by default: a column the replaced scope
+        knew survives ``project`` / ``distinct`` / ``project-keep`` under the
+        same name, so it keeps the table it had. Pass ``origins`` explicitly
+        where the operator renames (``project-rename``).
+        """
+        if origins is None:
+            carried = self._column_origins(scope)
+            origins = {n: carried[n] for n in columns if n in carried}
         scope.clear()
-        scope.append(ScopeEntry(table=None, columns=columns))
+        scope.append(ScopeEntry(table=None, columns=columns, origins=origins))
 
     def _extract_target_name(self, expr) -> str | None:
         """Pull a bare column name from a ColumnRef / Assignment / similar."""
@@ -307,24 +365,34 @@ class SchemaAttacher:
         provenance for every operator the binder can type: ``T | where a > 1
         | project a`` would stop reporting ``a.table == "T"``.
         """
-        origin: dict[str, str] = {}
+        origin = self._column_origins(scope)
         tables: list[str | None] = []
         for entry in scope:
             if entry.table not in tables:
                 tables.append(entry.table)
-            if entry.table:
-                for name in entry.columns:
-                    # Later entries win, matching ``_resolve_column_table``'s
-                    # "most recently joined side" rule.
-                    origin[name] = entry.table
         if None not in tables:
             tables.append(None)
         buckets: dict[str | None, dict[str, str]] = {t: {} for t in tables}
+        # A column whose origin is a table no *entry* is keyed on -- one that
+        # a ``project`` already moved into the anonymous entry -- goes to the
+        # anonymous bucket and keeps its provenance in ``origins``. Adding a
+        # fresh table entry for it instead would reorder the merged scope,
+        # which ``project-keep`` / ``project-away`` read as column order.
+        anon_origins: dict[str, str | None] = {}
         for name, type_name in columns.items():
-            buckets[origin.get(name)][name] = type_name
+            table = origin.get(name)
+            if table in buckets:
+                buckets[table][name] = type_name
+            else:
+                buckets[None][name] = type_name
+                anon_origins[name] = table
         scope.clear()
         for table in tables:
-            scope.append(ScopeEntry(table=table, columns=buckets[table]))
+            scope.append(ScopeEntry(
+                table=table,
+                columns=buckets[table],
+                origins=anon_origins if table is None else {},
+            ))
 
     def _walk_operator(self, op: Operator, scope: list[ScopeEntry]) -> None:
         if op.result_schema is not None:
@@ -377,11 +445,13 @@ class SchemaAttacher:
                 }
             for entry in rhs_scope[:1]:
                 renamed: dict[str, str] = {}
+                renamed_origins: dict[str, str | None] = {}
                 for name, kt in entry.columns.items():
                     if name in drop_keys:
                         continue
                     if name not in left_names:
                         renamed[name] = kt
+                        renamed_origins[name] = entry.origin_of(name)
                         left_names.add(name)
                         continue
                     n = 1
@@ -390,8 +460,13 @@ class SchemaAttacher:
                         n += 1
                         candidate = f"{name}{n}"
                     renamed[candidate] = kt
+                    # ``shared1`` is the right side's ``shared``, so it keeps
+                    # the right side's provenance under the new name.
+                    renamed_origins[candidate] = entry.origin_of(name)
                     left_names.add(candidate)
-                scope.append(ScopeEntry(table=entry.table, columns=renamed))
+                scope.append(ScopeEntry(
+                    table=entry.table, columns=renamed, origins=renamed_origins,
+                ))
             return
         if isinstance(op, UnionOp):
             for sub in op.pipelines:
@@ -449,12 +524,17 @@ class SchemaAttacher:
                 old = self._extract_target_name(c.expr)
                 if old and old in current:
                     rename_map[old] = c.name
+            # A renamed column is still the source table's column, so its
+            # provenance is carried under the *new* name -- ``_set_scope``'s
+            # default carry works by name and would drop it.
+            carried = self._column_origins(scope)
+            origins = {rename_map.get(k, k): v for k, v in carried.items()}
             if rename_map:
                 rebuilt: dict[str, str] = {}
                 for k, v in current.items():
                     rebuilt[rename_map.get(k, k)] = v
                 current = rebuilt
-            self._set_scope(scope, current)
+            self._set_scope(scope, current, origins)
             return
         if isinstance(op, DistinctOp):
             # KQL: `distinct *` keeps the full scope; `distinct C1, C2` narrows
@@ -627,11 +707,11 @@ class SchemaAttacher:
         self._fill_children(op, scope, inherited=scope)
 
     def _resolve_column_table(self, name: str, scope: list[ScopeEntry]) -> str | None:
-        # Most recently joined side wins on collisions (matches KQL binding).
-        matches = [e.table for e in scope if e.table and name in e.columns]
-        if not matches:
-            return None
-        return matches[-1]
+        # ``_column_origins`` reads ``ScopeEntry.origins`` as well as
+        # ``table``, so a column a ``project`` moved into the anonymous entry
+        # still resolves, and a name two entries disagree about resolves to
+        # None rather than to whichever side was appended last.
+        return self._column_origins(scope).get(name)
 
     def _fill_children(
         self,

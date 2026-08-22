@@ -680,3 +680,110 @@ def test_microsoft_decides_the_column_order_not_the_scope_grouping():
         ("DeviceId1", "string"),
         ("TimeGenerated", "datetime"),
     ]
+
+
+# --- Task 5.3: the fallback scope walk ------------------------------------
+#
+# Everything below exercises ``SchemaAttacher({...}).enrich(parse(q).to_ir())``
+# -- the *unbound* path. ``parse(q)`` alone binds against ``GlobalState.Default``,
+# which describes no tables, so every operator's ``result_schema`` is ``None``
+# and the hand-rolled rules answer alone. That is a supported public entry
+# point (a caller who has a schema dict but no cluster to bind against), and
+# it is also the only way to reach these rules now that a bound parse takes
+# Microsoft's answer.
+
+FALLBACK_SCHEMA = {
+    "L": {"k": "string", "a": "long", "shared": "string"},
+    "R": {"k": "string", "b": "real", "shared": "string"},
+    "T": {
+        "k": "string", "a": "long", "t": "datetime",
+        "d": "dynamic", "s": "string", "g": "guid",
+    },
+    "U": {"k": "string", "a": "string", "z": "long"},
+}
+
+
+def _fallback(query: str, schemas: dict | None = None):
+    """``SchemaAttacher(schemas).enrich(parse(query).to_ir())``.
+
+    Asserts the premise as it goes: if any operator carried Microsoft's own
+    ``result_schema`` the hand-rolled rule under test never ran and the
+    assertions downstream would be proving the wrong thing.
+    """
+    from kustology import parse
+
+    ir = parse(query).to_ir()
+    assert all(
+        op.result_schema is None for op in ir.main_pipeline.operators
+    ), "premise: the unbound path must leave the fallback rules to answer"
+    return SchemaAttacher(schemas if schemas is not None else FALLBACK_SCHEMA).enrich(ir)
+
+
+def _columns(ir) -> list[tuple[str, str]]:
+    schema = ir.main_pipeline.result_schema
+    return list(schema.columns.items()) if schema is not None else None
+
+
+def _tables(ir) -> dict[str, set]:
+    """``{column name: {table, ...}}`` over every ``ColumnRef`` in the IR."""
+    from kustology.ir import ColumnRef, find_all
+
+    out: dict[str, set] = {}
+    for c in find_all(ir, ColumnRef):
+        out.setdefault(c.name, set()).add(c.table)
+    return out
+
+
+# K28 (provenance): ScopeEntry.origins ---------------------------------------
+
+
+def test_project_carries_provenance_into_a_later_operator():
+    """``project`` replaced the scope with a table-less entry, so every
+    column reference *after* it lost its table -- the same column resolved
+    to ``T`` before the project and to ``None`` after it, in one query."""
+    ir = _fallback("T | project a, k | where a > 1")
+    assert _tables(ir)["a"] == {"T"}
+
+
+def test_project_away_and_project_keep_carry_provenance():
+    away = _fallback("T | project-away s | where a > 1")
+    assert _tables(away)["a"] == {"T"}
+    keep = _fallback("T | project-keep a | where a > 1")
+    assert _tables(keep)["a"] == {"T"}
+
+
+def test_distinct_carries_provenance():
+    ir = _fallback("T | distinct k | where k == 'x'")
+    assert _tables(ir)["k"] == {"T"}
+
+
+def test_project_rename_carries_provenance_under_the_new_name():
+    """The renamed column is still the source table's column."""
+    ir = _fallback("T | project-rename kk = k | where kk == 'x'")
+    assert _tables(ir)["kk"] == {"T"}
+
+
+def test_a_computed_column_has_no_table_and_does_not_borrow_one():
+    """``origins`` must record "invented here", not inherit the neighbours'."""
+    ir = _fallback("T | project n = a + 1, k | where n > 1")
+    tables = _tables(ir)
+    assert tables["k"] == {"T"}
+    assert tables["n"] == {None}
+
+
+def test_summarize_keys_keep_provenance_and_aggregates_do_not():
+    ir = _fallback("T | summarize c = count() by k | where c > 1 and k == 'x'")
+    tables = _tables(ir)
+    assert tables["k"] == {"T"}
+    assert tables["c"] == {None}
+
+
+def test_an_ambiguous_unqualified_column_resolves_to_no_table():
+    """``T | union U`` puts ``k`` in two scope entries with different tables.
+
+    Picking the most recently appended side was a guess: KQL's own answer is
+    that the unqualified name is ambiguous, so the honest provenance is
+    "unknown", not "U".
+    """
+    ir = _fallback("T | union U | where k == 'x'")
+    assert _tables(ir)["k"] == {None}

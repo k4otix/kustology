@@ -481,6 +481,19 @@ release is in `docs/superpowers/reports/`.
   documentation as if it were part of this library's API. `__all__` never
   listed it, which is why nothing caught it; it is imported under an
   underscored alias now. `__version__` is unchanged.
+- **Column provenance survives `project` / `project-*` / `distinct`, and an
+  ambiguous name no longer picks a side (tier 2).** These operators replace
+  the scope with one table-less entry, so every reference *after* a
+  `project` reported `ColumnRef.table = None` while the same column before
+  it reported the real table — one query, two answers, and a lineage
+  consumer reading the field got whichever it happened to look at.
+  `ScopeEntry` now carries an `origins` map so a projected column keeps the
+  table it came from, and a renamed one keeps it under the new name. The
+  same map fixes the opposite error: a column two scope entries disagree
+  about (`T | union U | where k == 'x'`) resolved to whichever side was
+  appended last, which was a guess presented as provenance; it resolves to
+  `None` now. Join collisions are unaffected — the right side's `k` is
+  renamed to `k1` before the scope holds both.
 - **Six public `KustoQuery` members gained docstrings (tier 1).**
   `get_operator_chain`, `get_referenced_columns`, `get_referenced_functions`,
   `get_structural_hash`, `syntax` and `text` delegated in silence, so
