@@ -143,3 +143,49 @@ def test_mv_expand_still_binds_the_expanded_column():
         "T | mv-expand a | where a == 'x'", schema={"T": {"a": "dynamic"}},
     ).to_ir()
     assert "a" in ir.main_pipeline.result_schema.columns
+
+
+# -- parse / parse-where --------------------------------------------------
+
+def test_parse_records_a_written_kind():
+    (op,) = _ops("T | parse kind=regex flags='i' a with 'x' b")
+    assert op.parse_kind == "regex"
+
+
+def test_parse_records_regex_flags():
+    (op,) = _ops("T | parse kind=regex flags='i' a with 'x' b")
+    assert op.flags == "i"
+
+
+def test_bare_parse_records_kqls_effective_kind():
+    """D8: an unwritten modifier records the value KQL applies, not ``None``."""
+    (op,) = _ops("T | parse a with 'x' b")
+    assert op.parse_kind == "simple"
+
+
+def test_parse_where_records_a_written_kind():
+    (op,) = _ops("T | parse-where kind=relaxed a with 'x' b")
+    assert op.parse_kind == "relaxed"
+
+
+def test_bare_parse_where_records_kqls_effective_kind():
+    (op,) = _ops("T | parse-where a with 'x' b")
+    assert op.parse_kind == "simple"
+
+
+def test_parse_kind_reaches_the_hash():
+    assert _hash("T | parse kind=regex a with 'x' b") != _hash(
+        "T | parse kind=simple a with 'x' b"
+    )
+
+
+def test_bare_parse_hashes_as_its_effective_kind():
+    assert _hash("T | parse a with 'x' b") == _hash(
+        "T | parse kind=simple a with 'x' b"
+    )
+
+
+def test_parse_flags_reach_the_hash():
+    assert _hash("T | parse kind=regex flags='i' a with 'x' b") != _hash(
+        "T | parse kind=regex a with 'x' b"
+    )

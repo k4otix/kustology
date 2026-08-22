@@ -622,6 +622,14 @@ release is in `docs/superpowers/reports/`.
   wildcard table, or an unmodelled source. `to_llm_dict` caps
   `DataTableSource.rows` at 20 and adds a `rows_omitted` count, since real
   IOC datatables run to thousands of rows; `model_dump_json` stays complete.
+- **`ParseOp` and `ParseWhereOp` gain a required `parse_kind` and an
+  optional `flags`.** `parse kind=simple`, `kind=regex` and `kind=relaxed`
+  are three different matching engines and the builder read none of them,
+  so all three — and the `flags='i'` regex modifier — built one node with
+  one `semantic_hash`. `parse_kind` carries KQL's *effective* value (D8): a
+  bare `parse` records `"simple"`, so it hashes identically to an explicit
+  `kind=simple` and differently from `kind=regex`. It is declared required
+  precisely so `to_llm_dict` renders it.
 - **`MvExpandOp.columns` is `list[MvExpandColumn]`** (was `list[AnyExpr]`),
   and the operator gains `row_limit`, `with_item_index`, `bag_expansion` and
   `expand_kind`. Every modifier `mv-expand` takes was discarded, so

@@ -937,7 +937,11 @@ class IRBuilder:
             return ParseOp(
                 target=self._visit_expr(n.Expression) if hasattr(n, "Expression")
                 else UnknownExpr(span=span, raw_text="?", ast_kind="None", reason="Missing parse target"),
-                patterns=patterns, span=span,
+                patterns=patterns,
+                # KQL's effective default, never None -- see ParseOp.
+                parse_kind=extract_named_param(n, "kind", default="simple") or "simple",
+                flags=extract_named_param(n, "flags"),
+                span=span,
             )
 
         if kind == "ParseWhereOperator":
@@ -949,7 +953,10 @@ class IRBuilder:
             return ParseWhereOp(
                 target=self._visit_expr(n.Expression) if hasattr(n, "Expression")
                 else UnknownExpr(span=span, raw_text="?", ast_kind="None", reason="Missing parse target"),
-                patterns=patterns, span=span,
+                patterns=patterns,
+                parse_kind=extract_named_param(n, "kind", default="simple") or "simple",
+                flags=extract_named_param(n, "flags"),
+                span=span,
             )
 
         if kind == "AsOperator":

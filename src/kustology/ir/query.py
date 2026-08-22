@@ -504,17 +504,46 @@ class MvApplyOp(Operator):
 
 
 class ParseOp(Operator):
+    """``parse`` — extract capture columns from a string expression.
+
+    ``parse_kind`` selects the matching engine and the three values are not
+    interchangeable: ``simple`` matches the pattern literally, ``regex``
+    treats it as a regular expression, ``relaxed`` tolerates a failed match
+    instead of nulling the row. The builder read none of them, so all three
+    built the same node.
+
+    It is **required and has no default**, carrying KQL's *effective* value
+    (D8): a bare ``parse`` records ``"simple"``, never ``None``. As on
+    :class:`SortKey.direction`, declaring it required is what makes the
+    value visible — ``to_llm_dict`` drops a field still holding its declared
+    default, so a defaulted ``parse_kind`` would vanish exactly where the
+    reader has no other way to tell which engine is in force.
+
+    ``flags`` is the ``flags='i'`` regex modifier and is genuinely optional:
+    no flags is not a flag string.
+    """
+
     KIND: ClassVar[str] = "parse"
     kind: Literal["parse"] = "parse"
     target: AnyExpr
     patterns: list[AnyExpr]
+    parse_kind: str
+    flags: str | None = None
 
 
 class ParseWhereOp(Operator):
+    """``parse-where`` — ``parse`` that drops rows the pattern misses.
+
+    Same parameters as :class:`ParseOp`, including the required
+    ``parse_kind`` with its effective default of ``"simple"``.
+    """
+
     KIND: ClassVar[str] = "parse_where"
     kind: Literal["parse_where"] = "parse_where"
     target: AnyExpr
     patterns: list[AnyExpr]
+    parse_kind: str
+    flags: str | None = None
 
 
 class EvaluateOp(Operator):
