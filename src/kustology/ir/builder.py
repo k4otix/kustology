@@ -18,10 +18,10 @@ from typing import Any, Literal
 
 from ..bridge import GlobalState, KustoCode  # re-export-friendly; also triggers CLR init
 
-# One definition of the unknown-table diagnostic code, shared with
-# ``validate(..., ignore_unknown_tables=True)``. Two spellings of "KS204" is
-# exactly the drift a DLL refresh turns into a silent behaviour split.
-from ..services import _UNKNOWN_TABLE_CODE
+# The diagnostic codes live in one module. Two spellings of "KS204" is
+# exactly the drift a DLL refresh turns into a silent behaviour split -- and
+# the two sets are deliberately different sizes; ``services`` documents why.
+from ..services import _UNKNOWN_NAME_CODES
 
 # Moved to Tier 1 so consumers walking the .NET tree can reach it without the
 # [ir] extra. The private alias keeps this module's call sites untouched.
@@ -442,11 +442,12 @@ class IRBuilder:
 
         Binding happens against ``self.global_state``, which defaults to
         ``GlobalState.Default`` — a state that describes Kusto's built-in
-        functions and no tables at all. Every table the query names is
-        therefore "unknown" to it, so the ``KS204`` those bindings raise
-        describes how the IR was built rather than anything the caller wrote,
-        and is filtered out (:data:`_UNKNOWN_TABLE_CODE`). A caller who
-        supplied a real ``global_state`` and wants the unknown-table rows
+        functions and nothing else: no tables, no databases, no clusters, no
+        user functions. Every name the query brings with it is therefore
+        unresolvable, so the diagnostics those bindings raise describe how
+        the IR was built rather than anything the caller wrote, and the
+        unknown-name family is filtered out (:data:`_UNKNOWN_NAME_CODES`). A
+        caller who supplied a real ``global_state`` and wants those rows
         should call :meth:`build_from_code` directly, which keeps them.
         """
         code = KustoCode.ParseAndAnalyze(query, self.global_state)
@@ -457,16 +458,27 @@ class IRBuilder:
     ) -> QueryIR:
         """Build the IR from an already-parsed ``KustoCode``.
 
-        ``ignore_unknown_tables`` drops ``KS204`` ("the name X does not refer
-        to any known table") from :attr:`QueryIR.diagnostics`. Set it when
-        the binding was done against globals the *caller* never chose — the
-        schemaless paths, :meth:`build` and
+        ``ignore_unknown_tables`` drops the whole unknown-*name* family from
+        :attr:`QueryIR.diagnostics` — :data:`_UNKNOWN_NAME_CODES`, twelve
+        codes of which KS204 ("the name X does not refer to any known
+        table") is one. Set it when the binding was done against globals the
+        *caller* never chose: the schemaless paths, :meth:`build` and
         :meth:`kustology.KustoQuery.to_ir` on an unbound parse, both analyze
         against ``GlobalState.Default`` purely to get literal and built-in
-        types, and reporting every table in the query as missing would be an
-        artifact of that. A parse the caller bound with their own schema
-        keeps the diagnostic: there, a table the schema does not describe is
-        a real error.
+        types, and every name in the query is unresolvable there by
+        construction.
+
+        The parameter is named for the table case because that is the one
+        callers reach for, but filtering only that code left three families
+        behind across the fixture corpus — ``KS205`` on `union isfuzzy=true`,
+        ``KS207`` on a `cluster(...)` qualifier, ``KS211`` on an ASIM parser
+        function, ``KS142`` on a `T*` wildcard — two of them ``Error``
+        severity, so a consumer gating on
+        ``any(d.severity == "Error" for d in ir.diagnostics)`` flipped on a
+        call where the caller had asked for no schema at all.
+
+        A parse the caller bound with their own schema keeps every one of
+        them: there, a name the schema does not describe is a real error.
         """
         raw_text = str(code.Text)
 
@@ -479,7 +491,7 @@ class IRBuilder:
                     code_val = str(diag.Code)
             except Exception as e:  # pragma: no cover
                 logger.debug("diagnostic Code probe fell through: %s", e)
-            if ignore_unknown_tables and code_val == _UNKNOWN_TABLE_CODE:
+            if ignore_unknown_tables and code_val in _UNKNOWN_NAME_CODES:
                 continue
             try:
                 if diag.Category:

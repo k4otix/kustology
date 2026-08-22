@@ -380,3 +380,54 @@ def test_allowlist_has_no_stale_entries(dotnet_members):
         if name not in probed or name in dotnet_members
     }
     assert not stale, f"remove these from ALLOWED_ELSEWHERE: {sorted(stale)}"
+
+
+# -- diagnostic codes are also a .NET fact -----------------------------------
+
+def test_unknown_name_codes_match_the_assembly():
+    """``_UNKNOWN_NAME_CODES`` is pinned; the DLL decides whether it is right.
+
+    The set is written out rather than reflected at runtime, so the filter is
+    a frozenset lookup and every code is greppable. That trades one risk for
+    another: AGENTS.md warns that refreshing the DLL "can shift diagnostic
+    codes (KS204 etc.)", and a shifted code would turn the filter into a
+    silent no-op for one family. So the pin is re-derived here from
+    ``Kusto.Language.DiagnosticFacts``, whose method *names* say which
+    family each belongs to — ``GetNameDoesNotReferToAnyKnown<X>`` and
+    ``GetFuzzy<X>NotDefined`` are, by construction, "this name is not among
+    the things the GlobalState describes".
+
+    A refresh that renumbers a code, adds a name kind, or renames a factory
+    fails here with the new set to paste in.
+    """
+    # The CLR and the bundled assembly are already loaded by this module's
+    # top-level ``import kustology``.
+    from Kusto.Language import DiagnosticFacts
+
+    from kustology.services import _UNKNOWN_NAME_CODES, _UNKNOWN_TABLE_CODE
+
+    factories = [
+        name for name in dir(DiagnosticFacts)
+        if name.startswith("GetNameDoesNotReferToAnyKnown")
+        or (name.startswith("GetFuzzy") and name.endswith("NotDefined"))
+    ]
+    assert len(factories) >= 20, "DiagnosticFacts lost its unknown-name family"
+
+    derived = set()
+    for name in factories:
+        factory = getattr(DiagnosticFacts, name)
+        # Arity differs across the family (a graph snapshot names its model
+        # too); the message text is irrelevant here, only the code is.
+        for args in (("x",), ("x", "y")):
+            try:
+                derived.add(str(factory(*args).Code))
+                break
+            except TypeError:
+                continue
+        else:  # pragma: no cover — a new arity would need handling
+            raise AssertionError(f"could not call DiagnosticFacts.{name}")
+
+    assert derived == set(_UNKNOWN_NAME_CODES)
+    # The narrow Tier 1 waiver must stay a member of the wide one, or the two
+    # filters disagree about the case they do share.
+    assert _UNKNOWN_TABLE_CODE in _UNKNOWN_NAME_CODES

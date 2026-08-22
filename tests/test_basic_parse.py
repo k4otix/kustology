@@ -57,6 +57,29 @@ def test_validate_unknown_table_default_emits_ks204():
     assert any(d["code"] == "KS204" for d in diagnostics)
 
 
+def test_validate_ignore_unknown_tables_stays_narrower_than_the_ir_filter():
+    """One code here, twelve on the schemaless IR path — deliberately.
+
+    ``validate`` only reaches the binder when the caller passed a schema, so
+    the caller owns every name in the query and is waiving exactly one
+    dimension of that: tables their schema does not cover. An unknown
+    *function* is still an error they need to see. The IR's schemaless build
+    is the opposite case — globals the caller never chose, describing
+    nothing — so it waives the whole unknown-name family
+    (``services._UNKNOWN_NAME_CODES``).
+
+    Pinned so the two are not "unified" into whichever is nearest to hand.
+    """
+    from kustology.services import _UNKNOWN_NAME_CODES
+
+    schema = {"Known": {"x": "string"}}
+    diagnostics = validate(
+        "_Im_WebSession() | take 1", schema=schema, ignore_unknown_tables=True,
+    )
+    assert [d["code"] for d in diagnostics] == ["KS211"]
+    assert "KS211" in _UNKNOWN_NAME_CODES
+
+
 def test_diagnostics_matches_validate_on_an_unbound_parse():
     """``KustoQuery.diagnostics`` is ``validate()``'s answer for a query you
     already hold, so a caller that parsed once does not have to hand the text

@@ -1832,3 +1832,106 @@ def test_table_symbol_columns_declines_an_open_symbol():
     }
     assert table_symbol_columns(_filter_result_type({})) is None
     assert table_symbol_columns(None) is None
+
+
+# -- the schemaless artifact family, not just KS204 (Task 5.1 follow-up) --
+
+# One reproducer per code the fixture corpus produces on a schemaless build.
+# Every one is the binder saying "the globals I was handed describe nothing",
+# which is the same sentence KS204 says about a table.
+_SCHEMALESS_ARTIFACTS = [
+    ("KS204", "T | take 1", "unknown table"),
+    ("KS205", "union isfuzzy=true Foo, Bar", "fuzzy union member"),
+    ("KS207", 'cluster("x.kusto.windows.net").database("d").T | take 1',
+     "unreachable cluster"),
+    ("KS211", "_Im_WebSession(starttime=ago(1d)) | take 1", "unknown function"),
+    ("KS142", "union Security* | take 1", "wildcard table pattern"),
+]
+
+
+@pytest.mark.parametrize(
+    "code,query,label", _SCHEMALESS_ARTIFACTS, ids=[c[0] for c in _SCHEMALESS_ARTIFACTS],
+)
+def test_no_schemaless_path_reports_an_unknown_name_artifact(code, query, label):
+    """All four families are artifacts of default globals, not of the query.
+
+    Filtering only ``KS204`` left three of them, and two are ``Error``
+    severity — so a consumer gating on ``any(d.severity == "Error" ...)``
+    flipped for `union Security*` and for every ASIM-parser query, on a call
+    where the caller had asked for no schema at all.
+    """
+    assert [d.code for d in parse(query).to_ir().diagnostics] == []
+    assert [d.code for d in IRBuilder().build(query).diagnostics] == []
+
+
+def test_the_fixture_corpus_is_clean_on_both_schemaless_paths():
+    """The measurement that found this: 26 diagnostics across 49 queries."""
+    from pathlib import Path
+
+    corpus = sorted(
+        (Path(__file__).resolve().parent.parent / "fixtures" / "complex_queries")
+        .glob("*.kql")
+    )
+    assert corpus, "corpus fixtures missing"
+    found: list[tuple[str, str, str]] = []
+    for path in corpus:
+        text = path.read_text().strip()
+        for label, ir in (
+            ("to_ir", parse(text).to_ir()),
+            ("build", IRBuilder().build(text)),
+        ):
+            found += [(path.stem, label, d.code) for d in ir.diagnostics]
+    assert found == []
+
+
+def test_a_bound_parse_still_reports_every_unknown_name():
+    """Suppression is scoped to globals the caller never chose.
+
+    A caller who supplied a schema owns the names in their query — an
+    unknown function is as real an error there as an unknown table, and
+    neither may be filtered.
+    """
+    schema = {"Known": {"x": "string"}}
+    codes = {
+        d.code
+        for query in ("Known | join Missing on x", "_Im_WebSession() | take 1")
+        for d in parse(query, schema=schema).to_ir().diagnostics
+    }
+    assert {"KS204", "KS211"} <= codes
+
+
+def test_table_symbol_columns_declines_a_tuple_symbol():
+    """The docstring promises a ``TableSymbol``; the guard must check for one.
+
+    ``TupleSymbol`` — what ``arg_max(a, *)`` puts on the aggregate expression
+    — carries ``Columns`` and has no ``IsOpen`` at all, so a duck-typed
+    ``getattr(sym, "IsOpen", False)`` read it as a *closed table* and would
+    have published its columns as an operator's result schema. Nothing routes
+    one here today (only operator and pipeline nodes call in, and those carry
+    ``TableSymbol``), which is exactly why the promise has to be enforced by
+    the code rather than by the call sites that happen to exist.
+    """
+    from kustology.bridge import KustoCode
+    from kustology.ir._builder_helpers import is_table_symbol, table_symbol_columns
+    from kustology.utils.analysis import build_global_state, collect_nodes
+
+    code = KustoCode.ParseAndAnalyze(
+        "T | summarize arg_max(a, *)",
+        build_global_state({"T": {"a": "long", "s": "string"}}),
+    )
+    tuples = [
+        n.ResultType
+        for n in collect_nodes(
+            code.Syntax,
+            lambda n: type(getattr(n, "ResultType", None)).__name__ == "TupleSymbol",
+        )
+    ]
+    assert tuples, "no TupleSymbol in this parse — pick another query"
+    sym = tuples[0]
+
+    # It really does look like a closed table to a duck-typed guard.
+    assert sym.Columns.Count > 0
+    assert getattr(sym, "IsOpen", False) is False
+    assert is_table_symbol(sym) is False
+
+    assert table_symbol_columns(sym) is None

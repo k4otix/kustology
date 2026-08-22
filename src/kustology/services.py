@@ -12,7 +12,37 @@ from .bridge import FormattingOptions, KustoCode, KustoCodeService
 SchemaLike = dict | None
 
 # Binder code emitted when a name doesn't refer to any known table/variable/function.
+# This one code, and no other, is what ``validate(..., ignore_unknown_tables=True)``
+# waives -- see ``_UNKNOWN_NAME_CODES`` for why that stays narrow.
 _UNKNOWN_TABLE_CODE = "KS204"
+
+# Every binder code for "this name is not among the things the GlobalState
+# describes". Microsoft raises one per *kind* of name, so the family is wider
+# than KS204 by eleven codes, eight of them ``Error`` severity:
+#
+#   KS142 item        KS204 table   KS205 fuzzy name   KS207 cluster
+#   KS208 database    KS209 external table             KS210 materialized view
+#   KS211 function    KS247 entity group               KS248 stored query result
+#   KS260 graph model KS261 graph snapshot
+#
+# The set is pinned rather than reflected so the filter is a frozenset lookup
+# and the codes are greppable; ``tests/test_reflection_audit.py`` re-derives
+# it from ``Kusto.Language.DiagnosticFacts`` and fails if a DLL refresh moves
+# or adds one, which is the drift AGENTS.md warns about by name.
+#
+# **Deliberately not what ``validate(ignore_unknown_tables=True)`` waives.**
+# The two flags answer different questions. ``validate`` only reaches the
+# binder when the caller passed a schema, so there the caller owns every name
+# in the query and is waiving exactly one dimension of it -- tables outside
+# their schema. Suppressing "unknown function" there would hide an error
+# about a name their schema was supposed to describe. This set is for the
+# opposite case: a binding run against ``GlobalState.Default``, globals the
+# caller never chose and which describe nothing, where every name-resolution
+# failure is an artifact of how the types were obtained.
+_UNKNOWN_NAME_CODES = frozenset({
+    "KS142", "KS204", "KS205", "KS207", "KS208", "KS209",
+    "KS210", "KS211", "KS247", "KS248", "KS260", "KS261",
+})
 
 
 def parse(query_text: str, schema: SchemaLike = None):
