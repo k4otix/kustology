@@ -98,6 +98,16 @@ MATRIX: list[tuple[str, str]] = [
     ("arg-max-star", "T | summarize arg_max(t, *)"),
     ("arg-min-star", "T | summarize arg_min(t, *)"),
     ("arg-max-columns", "T | summarize arg_max(t, a, s)"),
+    # A multi-output aggregate *alongside* another one. Every other entry
+    # here has its multi-output aggregate alone, which is what let a
+    # bind-dependent alignment guard through the bind-state sweep below:
+    # `arg_max(t, *)` reports six columns bound and one unbound, so a
+    # `summarize` holding it plus anything else lines up in exactly one bind
+    # state and the *other* aggregate is named two different ways.
+    (
+        "arg-max-star-beside-another-aggregate",
+        "T | summarize arg_max(t, *), buildschema(d)",
+    ),
     ("make-set", "T | summarize make_set(s)"),
     ("make-list", "T | summarize make_list(s)"),
     ("take-any", "T | summarize take_any(a)"),
@@ -195,6 +205,16 @@ XFAIL_FALLBACK: dict[str, str] = {
         "`project-reorder * desc` orders the columns a wildcard term matched "
         "by name, descending. The direction is recorded on ReorderKey and the "
         "rule ignores it, leaving the matched columns in source order."
+    ),
+    "arg-max-star-beside-another-aggregate": (
+        "The hand-rolled auto-name for `buildschema(d)` is `buildschema_d` "
+        "where the engine says `schema_d`. The binder's own name cannot be "
+        "read here: `arg_max(t, *)` reports six columns bound and one "
+        "unbound, so any per-index alignment across it varies with bind "
+        "state, and `Assignment.name` is hashed. Fixing this needs the name "
+        "for `buildschema` (and `binary_all_*`, `tdigest_merge`, "
+        "`series_stats_dynamic`, which are each irregular in a different "
+        "way) in the hand rules, not a wider read of `ResultType`."
     ),
     "mv-apply": (
         "`mv-apply d on (...)` moves the applied column to the end of the "

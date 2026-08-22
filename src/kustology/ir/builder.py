@@ -2024,21 +2024,44 @@ class IRBuilder:
         exactly one column. A multi-output aggregate breaks the alignment,
         and it breaks it *differently* depending on how much the binder
         knows: bound, ``arg_max(t, *)`` reports six columns; open, it reports
-        one. Reading a name off a misaligned list would therefore make the
-        same query hash two ways depending on whether a schema was passed, so
-        the count is checked and the known multi-output functions are skipped
-        outright.
+        one. ``Assignment.name`` is hashed, so a name read off a misaligned
+        list makes the same query hash two ways depending on whether a schema
+        was passed.
+
+        **The gate against that has to be syntactic.** An earlier version
+        compared ``Columns.Count`` against ``len(by) + len(aggs)`` and skipped
+        the multi-output functions individually, and that is not enough,
+        because the *count* is exactly the thing that varies:
+        ``summarize arg_max(t, *), buildschema(d)`` lines up in the unbound
+        state (1 + 1 == 2) and not in the bound one (6 + 1 != 2), so the
+        early return fired in one state only and ``buildschema`` -- which the
+        skip-list does not cover, because it is single-output -- was named
+        ``schema_d`` bound and ``buildschema_d`` unbound. Six of the common
+        aggregates behave that way beside an ``arg_max(t, *)``.
+
+        So the decision is made from the function names alone, before the
+        count is looked at: if any aggregate in this ``summarize`` is
+        multi-output, none of them takes a binder name and every one falls to
+        the hand rules, in both bind states. That is what the code did before
+        this read existed. Aligning the aggregates *before* the first
+        multi-output one -- whose indices genuinely do not move -- would
+        recover a little of it, and is deliberately not done: it reintroduces
+        a length-sensitive read (``len(by) + i`` must exist in both states)
+        for the sake of an argument order nobody writes.
         """
+        if any(
+            aggregate_function_name(getattr(agg, "expr", None))
+            in MULTI_OUTPUT_AGGREGATES
+            for agg in aggs
+        ):
+            return
         result_type = getattr(node, "ResultType", None)
         columns = getattr(result_type, "Columns", None) if result_type else None
         if columns is None or columns.Count != len(by) + len(aggs):
             return
         for i, agg in enumerate(aggs):
-            if not isinstance(agg, Assignment):
-                continue
-            if aggregate_function_name(agg.expr) in MULTI_OUTPUT_AGGREGATES:
-                continue
-            agg.name = str(columns[len(by) + i].Name)
+            if isinstance(agg, Assignment):
+                agg.name = str(columns[len(by) + i].Name)
 
     def _visit_list(self, node: Any) -> list[AnyExpr]:
         exprs: list[AnyExpr] = []

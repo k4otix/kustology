@@ -557,8 +557,12 @@ release is in `docs/superpowers/reports/`.
   `<function>_<column>` rule produces. Unnamed aggregates now take their name
   from Microsoft's own `ResultType` where its column list lines up with the
   aggregate list, and from the corrected rules otherwise. `Assignment.name`
-  is hashed, so a length check and a skip-list keep the name identical bound
-  and unbound — asserted across the whole oracle matrix and corpus.
+  is hashed, so that read is gated on the aggregates' *function names* — a
+  `summarize` holding any multi-output aggregate takes none of the binder's
+  names — because a length check alone varies with bind state and would make
+  the same query hash two ways. Asserted across the whole oracle matrix and
+  corpus, including a `summarize` that mixes a multi-output aggregate with a
+  single-output one.
 - **`search`, `parse-kv`, `getschema`, `print` and `range` reshape the
   fallback scope (tier 2).** None of them had a rule, so the scope after them
   was the scope before them. `search in (T) 'x'` produced nothing at all —
