@@ -34,8 +34,9 @@ from .expr import (
 from .query import (
     AsOp, AssertSchemaOp, Assignment, ConsumeOp, CountOp, Diagnostic,
     DistinctOp, EvaluateOp, ExecuteAndCacheOp, ExtendOp, FacetOp, FilterOp,
-    FindOp, ForkOp, FuncCallSource, GetSchemaOp, GraphMarkComponentsOp,
-    GraphMatchOp, GraphShortestPathsOp, GraphToTableOp, GraphWhereEdgesOp,
+    FindOp, ForkBranch, ForkOp, FuncCallSource, GetSchemaOp,
+    GraphMarkComponentsOp, GraphMatchOp, GraphShortestPathsOp,
+    GraphToTableOp, GraphWhereEdgesOp,
     GraphWhereNodesOp, ImplicitSource,
     InvokeOp, JoinOp, LetBinding, LetFunction, LetRef, LookupOp, MacroExpandOp,
     MakeGraphOp, MakeSeriesOp, MvApplyOp, MvExpandOp, Operator, ParseKvOp,
@@ -68,7 +69,7 @@ __all__ = [
     "Finding", "AnalyzerFn", "Severity",
     # Top-level / container
     "QueryIR", "Pipeline", "LetBinding", "LetFunction", "Diagnostic", "Assignment",
-    "SortKey", "Span",
+    "ForkBranch", "SortKey", "Span",
     "KustoType", "TabularSchema",
     # Expressions
     "Expr", "AnyExpr", "ColumnRef", "BinOp", "SetMembership", "Between",

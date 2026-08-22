@@ -420,10 +420,46 @@ class FindOp(Operator):
     tables: list[str] = []
 
 
+class ForkBranch(BaseModel):
+    """One parenthesized sub-pipeline of ``fork``, with the name it was given.
+
+    ``fork`` runs each branch over the same input rows and returns one result
+    table per branch. ``name`` is the ``a=`` prefix — a ``NameEqualsClause``
+    in the AST — which names that result table, so it is data rather than
+    formatting and two forks differing only in a branch name are two
+    different queries.
+
+    The branch is a wrapper rather than a bare :class:`Pipeline` because the
+    name has nowhere else to live: hanging a parallel ``list[str | None]``
+    off :class:`ForkOp` would pair name to pipeline by index, which is the
+    kind of coupling that silently misaligns the first time a branch is
+    dropped or reordered.
+    """
+
+    model_config = {"extra": "forbid"}
+    KIND: ClassVar[str] = "fork_branch"
+    kind: Literal["fork_branch"] = "fork_branch"
+    name: str | None = None
+    pipeline: "Pipeline"
+    span: Span
+
+
 class ForkOp(Operator):
+    """``fork`` — one branch per parenthesized sub-pipeline.
+
+    The field is ``branches`` and not ``pipelines`` because it used to be
+    ``pipelines`` and it used to be empty: the builder handed each
+    ``ForkExpression`` to ``_visit_pipeline``, whose walker had no case for
+    that node kind, so every branch came back with no operators and an
+    ``UnknownSource``. Renaming the field is what stops a dump written
+    against the old shape from validating -- under ``extra="forbid"`` a
+    stored ``pipelines`` key now fails loudly instead of quietly producing
+    the empty branches it recorded.
+    """
+
     KIND: ClassVar[str] = "fork"
     kind: Literal["fork"] = "fork"
-    pipelines: list["Pipeline"] = []
+    branches: list[ForkBranch]
 
 
 class ScanOp(Operator):
@@ -678,5 +714,6 @@ MvApplyOp.model_rebuild()
 LookupOp.model_rebuild()
 PartitionOp.model_rebuild()
 FacetOp.model_rebuild()
+ForkBranch.model_rebuild()
 ForkOp.model_rebuild()
 MacroExpandOp.model_rebuild()

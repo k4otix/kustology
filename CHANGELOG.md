@@ -545,6 +545,22 @@ release is in `docs/superpowers/reports/`.
   `SortKey.nulls` is `Literal["first", "last"] | None`. Reach the expression
   through `.expression`; `semantic_hash` changes for every query with a
   `sort`, `order by` or `top`.
+- **`ForkOp.pipelines` is replaced by `ForkOp.branches`**, a
+  `list[ForkBranch]` where each `ForkBranch` carries an optional `name` (the
+  `a=` prefix, which names the result table the branch produces) and its
+  `pipeline`. The old field was declared but never populated: the builder
+  handed each `ForkExpression` to `_visit_pipeline`, whose walker has no case
+  for that node kind, so every branch came back with no operators and an
+  `UnknownSource`. `T | fork (take 1) (count)` and
+  `T | fork (count) (where x == 1)` therefore built identical IR and one
+  `semantic_hash`, and nothing inside a branch was reachable —
+  `find_all(ir, FilterOp)` returned an empty list for a query whose only
+  `where` sat in a fork. Branch pipelines now carry an `ImplicitSource`, the
+  binder descends into them, and `semantic_hash` changes for every query
+  containing a `fork`. The field is renamed rather than retyped so that a
+  stored dump written against the old shape fails validation under
+  `extra="forbid"` instead of quietly reproducing the empty branches it
+  recorded.
 - **`KustoWalker.visit` takes a `depth` argument** (tier 1, listed here for
   want of a tier-1 breaking section): `visit(self, node)` →
   `visit(self, node, depth=0)`, so the base class can stop at

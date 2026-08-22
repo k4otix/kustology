@@ -71,6 +71,7 @@ from .query import (
     FacetOp,
     FilterOp,
     FindOp,
+    ForkBranch,
     ForkOp,
     FuncCallSource,
     GetSchemaOp,
@@ -320,6 +321,12 @@ class IRBuilder:
         # shape as unhandled.
         "ToScalarExpression", "PipeExpression", "ExternalDataExpression",
         "MakeSeriesExpression",
+        "ForkExpression",
+        # ForkExpression joins the same two: handled, but by the
+        # ``ForkOperator`` branch of ``_visit_operator``, which reads its
+        # ``NameEquals`` into ``ForkBranch.name`` and its ``Expression`` into
+        # a nested ``Pipeline``. It was listed as *unhandled* for as long as
+        # the branches were empty, which was accurate then and is not now.
     })
 
     def __init__(self, global_state: GlobalState | None = None):
@@ -488,6 +495,19 @@ class IRBuilder:
             if kind == "ParenthesizedExpression":
                 # `join (T)` and `join (T | where X)` arrive wrapped in parens;
                 # without unwrapping the RHS pipeline gets UnknownSource.
+                walk(n.Expression)
+                return
+
+            if kind == "ForkExpression":
+                # `fork`'s own branch handling descends to `.Expression`
+                # before calling here, so this is the belt to that braces:
+                # falling through on a `ForkExpression` is precisely the bug
+                # that left every fork branch empty, and any future caller
+                # that reaches one by another route gets the operators rather
+                # than silence. The `a=` name is not readable from here --
+                # a `Pipeline` has nowhere to put it -- so it is recorded by
+                # `_visit_operator`'s `ForkOperator` branch, which is why
+                # that branch does not route through this case.
                 walk(n.Expression)
                 return
 
@@ -911,11 +931,24 @@ class IRBuilder:
             return FacetOp(columns=cols, with_pipeline=with_pipeline, span=span)
 
         if kind == "ForkOperator":
-            pipes = []
+            # Each element is a ``ForkExpression`` -- the parens belong to it
+            # (``OpenParen``/``CloseParen``), the optional ``a=`` prefix is
+            # its ``NameEquals`` (a ``NameEqualsClause``), and the branch
+            # body is its ``Expression``. Handing the ``ForkExpression``
+            # itself to ``_visit_pipeline`` is what produced empty branches:
+            # the walker has no case for that kind, so it fell through
+            # without collecting a single operator. Descend to
+            # ``.Expression``.
+            branches = []
             if hasattr(n, "Expressions"):
                 for el in _iter_elements(n.Expressions):
-                    pipes.append(self._visit_pipeline(el))
-            return ForkOp(pipelines=pipes, span=span)
+                    name_equals = getattr(el, "NameEquals", None)
+                    branches.append(ForkBranch(
+                        name=visit_name(name_equals.Name) if name_equals is not None else None,
+                        pipeline=self._visit_pipeline(el.Expression),
+                        span=to_span(el),
+                    ))
+            return ForkOp(branches=branches, span=span)
 
         if kind == "AssertSchemaOperator":
             asserted: dict[str, str] = {}
