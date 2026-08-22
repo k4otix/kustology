@@ -227,4 +227,5 @@ __marimo__/
 
 # Agent workspaces: git worktrees and subagent-driven-development scratch
 /.claude/worktrees/
+/.claude/settings.local.json
 /.superpowers/

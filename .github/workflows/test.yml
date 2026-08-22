@@ -1,5 +1,16 @@
 name: Tests
 
+# Every job below hardens its runner with step-security/harden-runner at
+# egress-policy: audit, not block. block requires an explicit allowlist of
+# every outbound host a job touches, and this workflow's jobs collectively
+# reach pypi.org, api.nuget.org, github.com (checkout + the microsoft/
+# Kusto-Query-Language clone in corpus-regression), codecov.io and the
+# actions/* runner toolcache -- none of it catalogued. audit still reports
+# every outbound call in the job summary, which is the actionable half of
+# the control without the risk of block silently breaking a step on a host
+# nobody remembered to allowlist. Revisit once the reached-host set is
+# enumerated and stable.
+
 on:
   push:
     branches: [main]
@@ -21,6 +32,13 @@ jobs:
     timeout-minutes: 5
     # This job only needs to run on Pull Requests, not on pushes to main.
     if: github.event_name == 'pull_request'
+    # Job-level permissions replace (not merge with) the workflow-level
+    # block above, so contents: read is restated here alongside the write
+    # scope actions/dependency-review-action needs to post its
+    # comment-summary-in-pr: on-failure PR comment.
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
@@ -41,10 +59,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
-      fail-fast: true
+      # Every cell reports: a Windows or macOS failure must not hide behind a
+      # cancelled Linux matrix, and vice versa.
+      fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        python: ["3.10", "3.11", "3.12"]
+        python: ["3.10", "3.11", "3.12", "3.13"]
         include:
           - os: windows-latest
             python: "3.12"  # Sanity check latest Python on Windows
@@ -71,8 +91,24 @@ jobs:
 
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
-      - name: Install package (base + test, no IR)
-        run: uv sync --locked --extra test --python ${{ matrix.python }}
+      # tests/ir/ used to run on exactly one matrix cell (the standalone
+      # test-ir job below), so a python-version- or OS-specific IR regression
+      # had five other cells to hide behind. Every cell now installs the [ir]
+      # extra and runs the whole suite except one -- ubuntu-latest / py3.10 --
+      # which stays on --extra test alone so `pip install kustology` without
+      # [ir] is still proven to work on every push.
+      - name: Determine extras for this cell
+        id: extras
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ] && [ "${{ matrix.python }}" = "3.10" ]; then
+            echo "flags=--extra test" >> "$GITHUB_OUTPUT"
+          else
+            echo "flags=--extra test --extra ir" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install package (${{ steps.extras.outputs.flags }})
+        run: uv sync --locked ${{ steps.extras.outputs.flags }} --python ${{ matrix.python }}
 
       - name: Run pytest with coverage
         run: uv run pytest --cov=kustology --cov-report=xml --cov-report=term
@@ -112,14 +148,24 @@ jobs:
         run: uv run pytest -v
 
   test-locale:
-    name: Locale ${{ matrix.locale }}
+    name: Locale ${{ matrix.locale }}${{ matrix.tz && format(' / TZ={0}', matrix.tz) || '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
-      # Both locales report: de-DE and fr-FR fail differently (10x vs zero).
+      # Every cell reports: de-DE and fr-FR fail differently (10x vs zero),
+      # and the Asia/Tokyo cell guards a distinct bug class -- a
+      # timezone-dependent defect that was just fixed and that a UTC-only
+      # runner can never exercise, since UTC+0 hides the difference between
+      # "converted" and "not converted."
       fail-fast: false
       matrix:
-        locale: ["de_DE.UTF-8", "fr_FR.UTF-8"]
+        include:
+          - locale: "de_DE.UTF-8"
+            tz: ""
+          - locale: "fr_FR.UTF-8"
+            tz: ""
+          - locale: "en_US.UTF-8"
+            tz: "Asia/Tokyo"
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
@@ -139,17 +185,20 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y locales
-          sudo locale-gen de_DE.UTF-8 fr_FR.UTF-8
+          sudo locale-gen de_DE.UTF-8 fr_FR.UTF-8 en_US.UTF-8
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       - name: Install package with [ir] extras
         run: uv sync --locked --extra test --extra ir
-      # Guards the culture pin. Without it, fractional duration literals parse
-      # 10x too large under de-DE and to zero under fr-FR. See
-      # bridge._pin_invariant_culture.
-      - name: Run full pytest under ${{ matrix.locale }}
+      # de-DE / fr-FR guard the culture pin: without it, fractional duration
+      # literals parse 10x too large under de-DE and to zero under fr-FR --
+      # see bridge._pin_invariant_culture. The Asia/Tokyo cell guards the
+      # separate TZ-dependent bug; TZ is exported only where the matrix sets
+      # one; the other two cells run under the runner's default UTC.
+      - name: Run full pytest under ${{ matrix.locale }}${{ matrix.tz && format(' / TZ={0}', matrix.tz) || '' }}
         env:
           LANG: ${{ matrix.locale }}
           LC_ALL: ${{ matrix.locale }}
+          TZ: ${{ matrix.tz }}
         run: uv run pytest -v
 
   coverage-audit:
