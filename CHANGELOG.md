@@ -534,6 +534,17 @@ release is in `docs/superpowers/reports/`.
   all one digest. Only *consecutive* filters merge — `| where A | take 5`
   and `| take 5 | where A` still hash apart. Still `kustology-sem-v2`, which
   covers the whole unreleased window since `v0.1.0`.
+- **`SortOp.expressions` is `list[SortKey]`** (was `list[AnyExpr]`) and
+  **`TopOp.by` is a `SortKey`** (was `AnyExpr`). The builder unwrapped the
+  parser's `OrderedExpression` and dropped its ordering clause, so
+  `sort by x asc` and `sort by x desc` — opposite orderings — built identical
+  IR and one `semantic_hash`, as did `nulls first` against `nulls last`.
+  `SortKey.direction` is a required `Literal["asc", "desc"]` carrying KQL's
+  *effective* value: a bare `sort by x` records `"desc"`, never `None`, and
+  the field has no pydantic default so `to_llm_dict` renders it.
+  `SortKey.nulls` is `Literal["first", "last"] | None`. Reach the expression
+  through `.expression`; `semantic_hash` changes for every query with a
+  `sort`, `order by` or `top`.
 - **`KustoWalker.visit` takes a `depth` argument** (tier 1, listed here for
   want of a tier-1 breaking section): `visit(self, node)` →
   `visit(self, node, depth=0)`, so the base class can stop at

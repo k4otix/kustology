@@ -185,17 +185,49 @@ class TakeOp(Operator):
     count: int | AnyExpr
 
 
+class SortKey(BaseModel):
+    """One ordering key of ``sort by`` / ``order by`` / ``top … by``.
+
+    The expression alone is not the key: ``sort by x asc`` and
+    ``sort by x desc`` return rows in opposite orders and used to build
+    identical IR, because the builder unwrapped the AST's
+    ``OrderedExpression`` and dropped its ordering clause on the floor.
+
+    ``direction`` is **required and has no default**, which is deliberate and
+    is not the same statement as "the query always writes it". KQL's
+    unwritten default is ``desc``, so a bare ``sort by x`` records
+    ``direction="desc"`` — the *effective* value, never ``None``. Declaring
+    it required is what makes that value visible: ``ir.llm_view.to_llm_dict``
+    drops any field still holding its declared default, so a defaulted
+    ``direction`` would vanish from the LLM view exactly on the queries where
+    the reader has no other way to tell which way the rows come back.
+
+    ``nulls`` is genuinely optional and keeps its ``None``: KQL has no
+    documented default null placement to substitute, and the clause is
+    grammatically independent of ``asc``/``desc`` (``sort by x nulls first``
+    parses to an ``OrderingClause`` with no direction keyword at all).
+    """
+
+    model_config = {"extra": "forbid"}
+    KIND: ClassVar[str] = "sort_key"
+    kind: Literal["sort_key"] = "sort_key"
+    expression: AnyExpr
+    direction: Literal["asc", "desc"]
+    nulls: Literal["first", "last"] | None = None
+    span: Span
+
+
 class SortOp(Operator):
     KIND: ClassVar[str] = "sort"
     kind: Literal["sort"] = "sort"
-    expressions: list[AnyExpr]
+    expressions: list[SortKey]
 
 
 class TopOp(Operator):
     KIND: ClassVar[str] = "top"
     kind: Literal["top"] = "top"
     count: int | AnyExpr
-    by: AnyExpr
+    by: SortKey
 
 
 class TopHittersOp(Operator):

@@ -42,7 +42,7 @@ from .query import (
     ParseOp, ParseWhereOp, PartitionOp, Pipeline, PrintOp, ProjectAwayOp,
     ProjectByNamesOp, ProjectKeepOp, ProjectOp, ProjectRenameOp,
     ProjectReorderOp, QueryIR, RangeOp, RenderOp, SampleDistinctOp, SampleOp,
-    ScanOp, SearchOp, SerializeOp, SortOp, SummarizeOp, TableRef,
+    ScanOp, SearchOp, SerializeOp, SortKey, SortOp, SummarizeOp, TableRef,
     TabularSchema, TakeOp, TopHittersOp, TopNestedOp, TopOp, UnionOp,
     UnknownOp, UnknownSource,
 )
@@ -67,7 +67,8 @@ __all__ = [
     # Analyzer protocol
     "Finding", "AnalyzerFn", "Severity",
     # Top-level / container
-    "QueryIR", "Pipeline", "LetBinding", "LetFunction", "Diagnostic", "Assignment", "Span",
+    "QueryIR", "Pipeline", "LetBinding", "LetFunction", "Diagnostic", "Assignment",
+    "SortKey", "Span",
     "KustoType", "TabularSchema",
     # Expressions
     "Expr", "AnyExpr", "ColumnRef", "BinOp", "SetMembership", "Between",

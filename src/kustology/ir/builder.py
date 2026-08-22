@@ -113,6 +113,7 @@ from .query import (
     ScanOp,
     SearchOp,
     SerializeOp,
+    SortKey,
     SortOp,
     SummarizeOp,
     TableRef,
@@ -300,7 +301,15 @@ class IRBuilder:
         "SimpleNamedExpression", "CompoundNamedExpression", "BracketedExpression",
         "PrefixUnaryExpression", "StarExpression", "LiteralExpression",
         "DynamicExpression",
-        "OrderedExpression", "BinaryExpression",
+        "BinaryExpression",
+        "OrderedExpression",
+        # OrderedExpression is handled, but by ``_visit_sort_key`` rather than
+        # by ``_visit_expr``: it is a sort/top ordering key, not an
+        # expression, and lowering it to its bare inner expression is what
+        # threw away ``asc``/``desc`` and ``nulls first``/``last``. It stays
+        # listed for the same reason MaterializeExpression below does -- the
+        # kind *is* modelled, and dropping it would make the coverage audit
+        # report a fully-handled shape as unhandled.
         "InExpression", "HasAnyExpression", "HasAllExpression",
         "BetweenExpression", "FunctionCallExpression", "MaterializeExpression",
         # MaterializeExpression is handled, but by ``_visit_pipeline`` --
@@ -695,15 +704,18 @@ class IRBuilder:
             return SampleOp(count=self._visit_count(n.Expression), span=span)
 
         if kind == "SortOperator":
-            exprs = []
+            keys = []
             if hasattr(n, "Expressions"):
                 for el in _iter_elements(n.Expressions):
-                    inner = getattr(el, "Expression", el)
-                    exprs.append(self._visit_expr(inner))
-            return SortOp(expressions=exprs, span=span)
+                    keys.append(self._visit_sort_key(el))
+            return SortOp(expressions=keys, span=span)
 
         if kind == "TopOperator":
-            return TopOp(count=self._visit_count(n.Expression), by=self._visit_expr(n.ByExpression), span=span)
+            return TopOp(
+                count=self._visit_count(n.Expression),
+                by=self._visit_sort_key(n.ByExpression),
+                span=span,
+            )
 
         if kind == "TopHittersOperator":
             # `top-hitters N of C [by V]` spreads over three members --
@@ -1015,6 +1027,50 @@ class IRBuilder:
             return int(node.LiteralValue)
         return self._visit_expr(node)
 
+    def _visit_sort_key(self, node: Any) -> SortKey:
+        """One ``sort by`` / ``order by`` / ``top … by`` ordering key.
+
+        Two AST shapes reach here and only one of them carries modifiers.
+        A key with any modifier is an ``OrderedExpression`` wrapping the
+        expression plus an ``OrderingClause``; a bare key is *not* wrapped at
+        all — ``sort by x`` puts a plain ``NameReference`` straight into
+        ``SortOperator.Expressions`` (verified on a real parse). So the
+        ``else`` branch is not a defensive fallback, it is the common case.
+
+        Both keywords of the clause are independently optional:
+        ``sort by x nulls first`` yields an ``OrderingClause`` whose
+        ``AscOrDescKeyword`` is ``None``. Unwritten direction becomes KQL's
+        effective default, ``desc`` — never ``None``. See :class:`SortKey`
+        for why the field is declared required.
+
+        The keyword text is passed straight into a two-value ``Literal``
+        because the grammar admits exactly two spellings: ``ascending`` and
+        ``descending`` are syntax errors (one diagnostic each on a real
+        parse), so ``AscOrDescKeyword.Text`` is always ``asc`` or ``desc``.
+        """
+        span = to_span(node)
+        if str(type(node).__name__) != "OrderedExpression":
+            return SortKey(
+                expression=self._visit_expr(node), direction="desc", span=span,
+            )
+
+        direction = "desc"
+        nulls = None
+        ordering = node.Ordering
+        if ordering is not None:
+            keyword = ordering.AscOrDescKeyword
+            if keyword is not None:
+                direction = str(keyword.Text).strip().lower()
+            nulls_clause = ordering.NullsClause
+            if nulls_clause is not None:
+                nulls = str(nulls_clause.FirstOrLastKeyword.Text).strip().lower()
+        return SortKey(
+            expression=self._visit_expr(node.Expression),
+            direction=direction,
+            nulls=nulls,
+            span=span,
+        )
+
     # -- expression dispatch ---------------------------------------------
 
     def _visit_expr(self, node: Any) -> AnyExpr:
@@ -1124,9 +1180,6 @@ class IRBuilder:
             # LiteralValue is the JSON body as a string; consumers can json.loads.
             body = node.LiteralValue if hasattr(node, "LiteralValue") else node.ToString()
             res = LiteralExpr(value=str(body), literal_kind="dynamic", span=span)
-
-        elif kind == "OrderedExpression":
-            res = self._visit_expr(node.Expression)
 
         elif kind == "BinaryExpression":
             op = node.Operator.ToString().strip().lower()
