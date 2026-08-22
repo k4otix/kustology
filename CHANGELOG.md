@@ -44,9 +44,9 @@ release is in `docs/superpowers/reports/`.
   `isnotnull` / `isnotempty` — so hash-based deduplication merged queries
   that mean different things (`has_any` and `has_all` are opposites). Both
   nodes now carry `op`.
-- **Every remaining operator-modifier collision is closed (tier 2).** The
-  same defect class as the bullet above, swept across the whole operator
-  surface. It is invisible to the obvious check: a lowering that drops a
+- **Operator-modifier collisions are closed across every operator this
+  release re-modelled (tier 2).** The same defect class as the bullet above.
+  It is invisible to the obvious check: a lowering that drops a
   modifier leaves a node with every field populated, so nothing reads as
   stubbed, and the loss shows up only as two different queries sharing one
   `semantic_hash` — which a rule library deduplicating on the digest
@@ -69,13 +69,24 @@ release is in `docs/superpowers/reports/`.
   `in range(…)` windows; every `render` however configured; `find in (A)`
   against `in (B)`, and `withsource=`; a typed capture `b:long` against an
   untyped `b`; a `let`-bound scalar against a real column of the same name;
-  and `T | count; U | count` against `T | count`, since everything past the
+  `externaldata … with (ignoreFirstRecord=true)` against the same feed
+  without it, which skips the CSV header and so returns different rows; and
+  `T | count; U | count` against `T | count`, since everything past the
   first `;` was discarded. The reverse direction is pinned too: where KQL
   applies an effective default, the bare spelling and the explicit one stay
   one digest, so `join` still hashes with `join kind=innerunique` (not
   `kind=inner`) and `mv-expand bagexpansion=array` with
   `mv-expand kind=array`. `### Breaking` below carries the field-by-field
   detail for each.
+
+  **Two known survivors, both out of scope for this release.** `mv-apply`
+  discards `to typeof(…)` and `limit`, and `parse-kv` discards its
+  `with (…)` properties — `pair_delimiter`, `kv_delimiter` and the rest — so
+  two queries differing only in one of those still share a digest. Both need
+  new fields on operators this release did not otherwise touch, which is a
+  change with its own tests rather than a footnote to this one. They are
+  named here so the boundary is stated rather than implied: everything above
+  is closed, these two are not.
 - **`BinOp.case_sensitive` is correct across the operator family (tier 2).**
   Eight operators were reported backwards, including every negated string
   operator (`!has`, `!contains`, …) and `hasprefix`/`hassuffix`. `search
@@ -779,7 +790,8 @@ release is in `docs/superpowers/reports/`.
   now a `DataTableSource` carrying `columns` and `rows` (the parser hands
   over a flat value list, which the builder reshapes by the column count).
   An `externaldata` in source position had no source class at all and is now
-  an `ExternalDataSource` with `columns`, `uris` and `format` — which also
+  an `ExternalDataSource` with `columns`, `uris`, `format` and
+  `properties` — which also
   makes `let X = externaldata(...)` a tabular binding on `rhs_pipeline`
   rather than an `ExternalDataExpr` on `rhs_expr`, so `rhs_pipeline is not
   None` is a reliable "is this binding tabular" test again. `TableRef` gains
@@ -788,7 +800,20 @@ release is in `docs/superpowers/reports/`.
   tables where `union ['T*']` names one table called `T*`. Both
   `ExternalDataExpr.uri` and the single URI it held are gone — the field is
   `uris: list[str]`, because a feed stitched from two URIs is not the feed
-  from either one. `Pipeline.source` becomes an explicitly ordered
+  from either one. **Both externaldata classes also gain
+  `properties: dict[str, str]`,** the whole `with (…)` clause with keys
+  verbatim, in the shape `RenderOp.properties` already uses. Only `format`
+  was read out of that clause and the rest were dropped, which was a
+  collision rather than a fidelity gap: `ignoreFirstRecord=true` skips the
+  CSV header, so it changes the rows the feed returns, and a source node
+  carries no `raw_text` for the dropped text to survive in — two feeds
+  parsed differently shared one `semantic_hash`. `format` remains its own
+  field because the rest of the library reads it, and is *also* present in
+  the dict under the name the query wrote, so a consumer reconstructing the
+  clause gets a complete one. Values render through `LiteralValue`, so a KQL
+  `true` reads back `"True"` — the shared reader's existing normalization,
+  the same one `render … with (accumulate=true)` has always applied.
+  `Pipeline.source` becomes an explicitly ordered
   `union_mode="left_to_right"` union (fields-less `ImplicitSource` after the
   classes that add fields, as `Pipeline.operators` already did), and
   `UnknownSource.raw_text` records the real source text instead of the
