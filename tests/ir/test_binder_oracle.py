@@ -264,3 +264,34 @@ def test_corpus_fixture_matches_microsoft(name: str, query: str):
             "statement, main_pipeline the first"
         )
     assert_agrees(query, schema)
+
+
+def test_auto_names_do_not_depend_on_the_bind_state():
+    """``Assignment.name`` must be the same bound and unbound.
+
+    The builder prefers Microsoft's own ``ResultType`` column name for an
+    unnamed aggregate, and that list is *shorter* when the binder cannot
+    determine the schema: bound, ``arg_max(t, *)`` reports six columns;
+    against a table nobody described, one. A per-index read would therefore
+    give the same query two different names -- and ``Assignment.name`` is
+    hashed, so it would give it two different ``semantic_hash`` values.
+
+    The guard in the builder is a length check plus a skip-list of the
+    multi-output aggregates. This asserts the guard holds over the whole
+    matrix and corpus rather than over the two cases that motivated it.
+    """
+    from kustology.ir import compute_semantic_hash
+
+    divergent = []
+    for case_id, query in MATRIX:
+        bound = compute_semantic_hash(parse(query, schema=SCHEMA).to_ir())
+        unbound = compute_semantic_hash(parse(query).to_ir())
+        if bound != unbound:
+            divergent.append(case_id)
+    for name, query in CORPUS:
+        schema = _heuristic_schema(query)
+        bound = compute_semantic_hash(parse(query, schema=schema).to_ir())
+        unbound = compute_semantic_hash(parse(query).to_ir())
+        if bound != unbound:
+            divergent.append(name)
+    assert divergent == []

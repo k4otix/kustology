@@ -1098,3 +1098,105 @@ def test_union_split_columns_keep_the_side_they_came_from():
     tables = _tables(ir)
     assert tables["a_long"] == {"T"}
     assert tables["a_string"] == {"U"}
+
+
+# K13 / K14: aggregate output columns and their names -------------------------
+
+
+def _names(ir) -> list[str]:
+    return [n for n, _ in _columns(ir)]
+
+
+def test_arg_max_star_emits_the_ordering_column_then_the_rest():
+    """``arg_max(t, *)`` returns a whole row, not one value.
+
+    The rule emitted a single column named after the function, so five of
+    the six columns the engine returns were missing from the scope.
+    """
+    assert _columns(_fallback("T | summarize arg_max(t, *)")) == [
+        ("t", "datetime"), ("k", "string"), ("a", "long"),
+        ("d", "dynamic"), ("s", "string"), ("g", "guid"),
+    ]
+    assert _names(_fallback("T | summarize arg_min(t, *)")) == [
+        "t", "k", "a", "d", "s", "g",
+    ]
+
+
+def test_arg_max_with_listed_columns_emits_exactly_those():
+    assert _columns(_fallback("T | summarize arg_max(t, a, s)")) == [
+        ("t", "datetime"), ("a", "long"), ("s", "string"),
+    ]
+
+
+def test_arg_max_star_excludes_the_grouping_keys():
+    """A ``by`` key is already emitted, so ``*`` does not repeat it."""
+    assert _names(_fallback("T | summarize arg_max(t, *) by k")) == [
+        "k", "t", "a", "d", "s", "g",
+    ]
+
+
+def test_a_named_arg_max_names_only_its_first_column():
+    assert _names(_fallback("T | summarize m = arg_max(t, *)")) == [
+        "m", "k", "a", "d", "s", "g",
+    ]
+
+
+def test_take_any_emits_its_columns_under_their_own_names():
+    assert _columns(_fallback("T | summarize take_any(a)")) == [("a", "long")]
+    assert _names(_fallback("T | summarize take_any(a, s)")) == ["a", "s"]
+    assert _names(_fallback("T | summarize take_any(*)")) == [
+        "k", "a", "t", "d", "s", "g",
+    ]
+
+
+def test_take_anyif_ignores_its_predicate_argument():
+    """The second argument is a filter, not a column to emit."""
+    assert _names(_fallback("T | summarize take_anyif(a, a > 1)")) == ["a"]
+
+
+def test_percentiles_emits_one_column_per_percentile():
+    assert _names(_fallback("T | summarize percentiles(a, 5, 50, 95)")) == [
+        "percentile_a_5", "percentile_a_50", "percentile_a_95",
+    ]
+
+
+def test_make_set_list_and_bag_use_kqls_own_prefixes():
+    """KQL drops the ``make_`` and any ``_if``: ``make_set_if(s, …)`` is
+    ``set_s``, not ``make_set_if_s``."""
+    assert _names(_fallback("T | summarize make_set(s)")) == ["set_s"]
+    assert _names(_fallback("T | summarize make_list(s)")) == ["list_s"]
+    assert _names(_fallback("T | summarize make_bag(d)")) == ["bag_d"]
+    assert _names(_fallback("T | summarize make_set_if(s, a > 1)")) == ["set_s"]
+    assert _names(_fallback("T | summarize make_list_if(s, a > 1)")) == ["list_s"]
+
+
+def test_percentile_names_carry_the_percentile_value():
+    assert _names(_fallback("T | summarize percentile(a, 95)")) == [
+        "percentile_a_95",
+    ]
+    # A fractional percentile spells the point as an underscore.
+    assert _names(_fallback("T | summarize percentile(a, 95.5)")) == [
+        "percentile_a_95_5",
+    ]
+
+
+def test_the_auto_name_lands_on_the_assignment_not_only_the_schema():
+    """``Assignment.name`` is what a consumer reads to label the column."""
+    from kustology import parse
+    from kustology.ir import SummarizeOp
+
+    ir = parse("T | summarize make_set(s), percentile(a, 95)").to_ir()
+    op = next(
+        o for o in ir.main_pipeline.operators if isinstance(o, SummarizeOp)
+    )
+    assert [a.name for a in op.aggregations] == ["set_s", "percentile_a_95"]
+
+
+def test_unaffected_aggregate_names_stay_as_they_were():
+    """The must-not-change direction: the generic ``fname_column`` rule is
+    already what the engine does for most aggregates."""
+    assert _names(_fallback("T | summarize countif(a > 1)")) == ["countif_"]
+    assert _names(_fallback("T | summarize dcountif(a, a > 1)")) == ["dcountif_a"]
+    assert _names(_fallback("T | summarize any(a)")) == ["any_a"]
+    assert _names(_fallback("T | summarize hll(a)")) == ["hll_a"]
+    assert _names(_fallback("T | summarize c = count() by k")) == ["k", "c"]

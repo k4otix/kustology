@@ -14,6 +14,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 
+from ._builder_helpers import (
+    MULTI_OUTPUT_AGGREGATES,
+    aggregate_function_name,
+    percentile_token,
+)
 from .expr import (
     And,
     Between,
@@ -24,6 +29,7 @@ from .expr import (
     Not,
     Or,
     SetMembership,
+    StarExpr,
     TypedNameDecl,
 )
 from .query import (
@@ -453,8 +459,6 @@ class SchemaAttacher:
         ``ColumnRef`` whose *name* is the pattern, which is why the term list
         and the match set are the same list of strings.
         """
-        from .expr import StarExpr
-
         patterns: list[str] = []
         for c in columns:
             inner = c if isinstance(c, Expr) else getattr(c, "expr", c)
@@ -526,6 +530,81 @@ class SchemaAttacher:
                 columns=buckets[table],
                 origins=anon_origins if table is None else {},
             ))
+
+    def _aggregate_columns(
+        self,
+        agg: Assignment,
+        scope: list[ScopeEntry],
+        emitted: dict[str, str],
+    ) -> dict[str, str] | None:
+        """Columns one aggregate emits, or None if it emits just ``agg.name``.
+
+        Most aggregates return a single value and the ``Assignment`` says
+        everything about it. Three families do not, and the rule that gave
+        each of them one column named after the function was inventing a
+        column and losing several real ones:
+
+        * ``arg_max(t, *)`` returns the whole row that maximises ``t`` --
+          ``t`` first, then every other column in scope. ``arg_max(t, a, s)``
+          returns exactly the listed ones. A ``by`` key is already emitted,
+          so ``*`` does not repeat it.
+        * ``take_any(a, s)`` returns both columns under their own names, and
+          ``take_any(*)`` the whole row. ``take_anyif``'s second argument is
+          a predicate, not a column.
+        * ``percentiles(a, 5, 50)`` returns one column per percentile.
+
+        Where the query named the aggregate, the name applies to the *first*
+        column only: ``m = arg_max(t, *)`` is ``m`` followed by the rest of
+        the row, which is what the engine does.
+        """
+        fname = aggregate_function_name(agg.expr)
+        if fname not in MULTI_OUTPUT_AGGREGATES:
+            return None
+        args = list(getattr(agg.expr, "args", []))
+        current = self._scope_columns(scope)
+        agg_type = getattr(agg.expr, "result_type", KustoType.UNRESOLVED)
+        agg_type_name = (
+            agg_type.value if agg_type != KustoType.UNRESOLVED else "unknown"
+        )
+        out: dict[str, str] = {}
+
+        if fname in ("percentiles", "percentilesw"):
+            column = next(
+                (a.name for a in args if isinstance(a, ColumnRef)), None,
+            )
+            values = [a.value for a in args if isinstance(a, LiteralExpr)]
+            for index, value in enumerate(values):
+                name = (
+                    agg.name if index == 0
+                    else f"percentile_{column}_{percentile_token(value)}"
+                )
+                out[name] = agg_type_name
+            return out or None
+
+        if fname in ("arg_max", "arg_min"):
+            # The first argument is the ordering column and is emitted too.
+            terms = args
+        elif fname == "take_anyif":
+            terms = args[:1]
+        else:  # take_any
+            terms = args
+        listed = {t.name for t in terms if isinstance(t, ColumnRef)}
+        first = True
+        for term in terms:
+            if isinstance(term, StarExpr):
+                for name, kt in current.items():
+                    if name in listed or name in emitted or name in out:
+                        continue
+                    out[name] = kt
+                first = False
+                continue
+            if not isinstance(term, ColumnRef):
+                continue
+            out[agg.name if first else term.name] = current.get(
+                term.name, "unknown",
+            )
+            first = False
+        return out or None
 
     def _split_union_type_conflicts(self, scope: list[ScopeEntry]) -> None:
         """Rename a column the union's sides type differently.
@@ -714,6 +793,10 @@ class SchemaAttacher:
                     out_cols[name] = kt.value if kt != KustoType.UNRESOLVED else "unknown"
             for a in op.aggregations:
                 self._fill(a.expr, scope)
+                expanded = self._aggregate_columns(a, scope, out_cols)
+                if expanded is not None:
+                    out_cols.update(expanded)
+                    continue
                 kt = getattr(a.expr, "result_type", KustoType.UNRESOLVED)
                 out_cols[a.name] = kt.value if kt != KustoType.UNRESOLVED else "unknown"
             self._set_scope(scope, out_cols)
@@ -759,8 +842,6 @@ class SchemaAttacher:
             # KQL: `distinct *` keeps the full scope; `distinct C1, C2` narrows
             # the output schema to the listed columns in listed order
             # (semantically equivalent to ``summarize by C1, C2``).
-            from .expr import StarExpr
-
             has_star = any(
                 isinstance(c, StarExpr) or isinstance(getattr(c, "expr", None), StarExpr)
                 for c in op.columns

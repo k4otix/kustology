@@ -546,6 +546,19 @@ release is in `docs/superpowers/reports/`.
   The variants now sit adjacent where the name used to be, each keeping the
   side it came from as provenance. `withsource=src` prepends its leading
   `string` column, which the rule ignored entirely.
+- **Multi-output aggregates emit all their columns, and unnamed aggregates
+  use KQL's own names (tier 2).** `arg_max(t, *)` returns a whole row and
+  `take_any(*)` the same; `percentiles(a, 5, 50, 95)` returns three columns.
+  Each produced exactly one column named after the function — a column that
+  does not exist, in place of several that do. Naming was wrong in a quieter
+  way: KQL calls `make_set(s)` → `set_s`, `make_list_if(s, …)` → `list_s`,
+  `make_bag(d)` → `bag_d`, `take_any(a)` → `a`, and
+  `percentile(a, 95.5)` → `percentile_a_95_5`, none of which the
+  `<function>_<column>` rule produces. Unnamed aggregates now take their name
+  from Microsoft's own `ResultType` where its column list lines up with the
+  aggregate list, and from the corrected rules otherwise. `Assignment.name`
+  is hashed, so a length check and a skip-list keep the name identical bound
+  and unbound — asserted across the whole oracle matrix and corpus.
 - **Six public `KustoQuery` members gained docstrings (tier 1).**
   `get_operator_chain`, `get_referenced_columns`, `get_referenced_functions`,
   `get_structural_hash`, `syntax` and `text` delegated in silence, so

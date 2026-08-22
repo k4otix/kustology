@@ -28,6 +28,10 @@ from ..services import _UNKNOWN_TABLE_CODE
 from ..utils.walker import iter_elements as _iter_elements
 from ..utils.walker import node_text as _node_text
 from ._builder_helpers import (
+    AGGREGATE_NAME_PREFIXES,
+    COLUMN_NAMED_AGGREGATES,
+    MULTI_OUTPUT_AGGREGATES,
+    aggregate_function_name,
     extract_hints,
     extract_named_param,
     extract_qualified_table_ref,
@@ -36,6 +40,7 @@ from ._builder_helpers import (
     literal_kind_for,
     literal_value_and_ticks,
     map_semantic_info,
+    percentile_token,
     read_external_data,
     read_named_params,
     read_row_schema,
@@ -849,6 +854,7 @@ class IRBuilder:
             if hasattr(n, "ByClause") and n.ByClause and hasattr(n.ByClause, "Expressions"):
                 for el in _iter_elements(n.ByClause.Expressions):
                     by.append(self._visit_expr_as_assignment(el, mode="grouping"))
+            self._take_binder_aggregate_names(n, aggs, by)
             return SummarizeOp(aggregations=aggs, by=by, span=span)
 
         if kind == "JoinOperator":
@@ -1952,16 +1958,18 @@ class IRBuilder:
                 fname = None
 
         first_col: str | None = None
+        first_literal: Any = None
         if hasattr(node, "ArgumentList") and node.ArgumentList:
             try:
                 for el in _iter_elements(node.ArgumentList.Expressions):
                     inner_kind = str(type(el).__name__)
-                    if inner_kind == "NameReference":
+                    if inner_kind == "NameReference" and first_col is None:
                         try:
                             first_col = visit_name(el.Name)
                         except Exception as e:  # pragma: no cover
                             logger.debug("first-column name probe fell through: %s", e)
-                        break
+                    elif inner_kind == "LiteralExpression" and first_literal is None:
+                        first_literal = getattr(el, "LiteralValue", None)
             except Exception as e:  # pragma: no cover
                 logger.debug("argument-list walk fell through: %s", e)
 
@@ -1970,7 +1978,54 @@ class IRBuilder:
         # aggregation mode
         if not fname:
             return None
+        lowered = fname.lower()
+        if lowered in COLUMN_NAMED_AGGREGATES:
+            # ``take_any(a)`` is ``a`` and ``arg_max(t, *)`` starts with ``t``
+            # -- the column keeps its own name. With no named column
+            # (``take_any(*)``) there is nothing to borrow and the generic
+            # form stands; the scope rule expands the star itself.
+            return first_col or f"{lowered}_"
+        prefix = AGGREGATE_NAME_PREFIXES.get(lowered)
+        if prefix and first_col:
+            if prefix == "percentile" and first_literal is not None:
+                return f"percentile_{first_col}_{percentile_token(first_literal)}"
+            return f"{prefix}_{first_col}"
         return f"{fname}_{first_col}" if first_col else f"{fname}_"
+
+    def _take_binder_aggregate_names(
+        self, node: Any, aggs: list[Any], by: list[Any],
+    ) -> None:
+        """Rename each aggregate to the column Microsoft says it produces.
+
+        The hand-written rules above mirror KQL's auto-naming, and mirrors
+        drift: every aggregate the library does not know about falls back to
+        ``<function>_<column>``, which is right for most of them and silently
+        wrong for the rest. ``SummarizeOperator.ResultType`` is the binder's
+        own answer, and it carries the right names even for an *open* symbol
+        -- a query over a table nobody described still reports ``set_s`` for
+        ``make_set(s)``, because the name does not depend on the schema.
+        Types do, which is why only the name is taken here.
+
+        The columns are ``by`` keys followed by aggregates, so aggregate *i*
+        is column ``len(by) + i`` -- but only while every aggregate produces
+        exactly one column. A multi-output aggregate breaks the alignment,
+        and it breaks it *differently* depending on how much the binder
+        knows: bound, ``arg_max(t, *)`` reports six columns; open, it reports
+        one. Reading a name off a misaligned list would therefore make the
+        same query hash two ways depending on whether a schema was passed, so
+        the count is checked and the known multi-output functions are skipped
+        outright.
+        """
+        result_type = getattr(node, "ResultType", None)
+        columns = getattr(result_type, "Columns", None) if result_type else None
+        if columns is None or columns.Count != len(by) + len(aggs):
+            return
+        for i, agg in enumerate(aggs):
+            if not isinstance(agg, Assignment):
+                continue
+            if aggregate_function_name(agg.expr) in MULTI_OUTPUT_AGGREGATES:
+                continue
+            agg.name = str(columns[len(by) + i].Name)
 
     def _visit_list(self, node: Any) -> list[AnyExpr]:
         exprs: list[AnyExpr] = []

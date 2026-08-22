@@ -623,3 +623,64 @@ def literal_value_and_ticks(node: Any) -> tuple[Any, int | None]:
     # more ambient-culture dependency from the rendering step itself.
     return raw.ToString(None, CultureInfo.InvariantCulture), None
 
+
+
+# --- aggregate output naming -------------------------------------------------
+#
+# KQL's auto-name for an unnamed aggregate is ``<function>_<first column>``
+# for most of the library, and the exceptions below are not derivable from
+# the function's name -- they have to be listed.
+
+# ``make_set(s)`` is ``set_s``, not ``make_set_s``, and the ``_if`` variants
+# share the plain form's prefix.
+AGGREGATE_NAME_PREFIXES: dict[str, str] = {
+    "make_set": "set",
+    "make_set_if": "set",
+    "make_list": "list",
+    "make_list_if": "list",
+    "make_bag": "bag",
+    "make_bag_if": "bag",
+    "percentile": "percentile",
+    "percentilew": "percentile",
+    "percentiles": "percentile",
+    "percentilesw": "percentile",
+}
+
+# Aggregates that emit their argument columns under the columns' own names:
+# ``take_any(a)`` is ``a`` and ``arg_max(t, *)`` starts with ``t``.
+COLUMN_NAMED_AGGREGATES = frozenset({
+    "arg_max", "arg_min", "take_any", "take_anyif",
+})
+
+# Aggregates that can emit more than one column, so no single
+# ``Assignment.name`` describes their output and the scope rule has to
+# expand them. Their names are also the ones a ``ResultType``-per-aggregate
+# alignment cannot be read for -- the counts do not line up.
+MULTI_OUTPUT_AGGREGATES = COLUMN_NAMED_AGGREGATES | {
+    "percentiles", "percentilesw",
+}
+
+
+def percentile_token(value: Any) -> str:
+    """Spell a percentile argument the way KQL spells it in a column name.
+
+    ``percentile(a, 95)`` is ``percentile_a_95`` and ``percentile(a, 95.5)``
+    is ``percentile_a_95_5`` -- the decimal point becomes an underscore,
+    since a column name cannot hold one.
+    """
+    text = str(value)
+    text = text.removesuffix(".0")
+    return text.replace(".", "_")
+
+
+def aggregate_function_name(expr: Any) -> str:
+    """Lower-cased function name of an aggregate expression, ``""`` if none.
+
+    Discriminates on ``kind`` rather than by ``isinstance``: a bare
+    ``ColumnRef`` also has a ``name``, and reading that as a function name
+    would classify a column called ``arg_max`` as the aggregate.
+    """
+    if getattr(expr, "kind", None) != "func_call":
+        return ""
+    name = getattr(expr, "name", None)
+    return name.lower() if isinstance(name, str) else ""
