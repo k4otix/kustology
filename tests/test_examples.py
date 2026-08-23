@@ -29,7 +29,8 @@ EXAMPLES_DIR = REPO_ROOT / "examples"
 
 # Examples that touch ``kustology.ir.*`` need the [ir] extra.
 IR_EXAMPLES = {
-    "walk_ir", "llm_view", "find_all_demo", "linter",
+    "analyzer_demo", "find_all_demo", "linter", "llm_view",
+    "semantic_hash_demo", "walk_ir",
 }
 
 
