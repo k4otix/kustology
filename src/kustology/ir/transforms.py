@@ -502,27 +502,33 @@ def compute_semantic_hash(node: BaseModel) -> str:
     ``let`` are unaffected. See the note above :data:`_VOLATILE_FIELDS`
     for why that is preferred to guessing.
 
-    **Equal digests are not a proof of equivalence.** As of 0.2.0 four
-    operators still drop a modifier that changes what a query returns, so
-    two queries that differ only there share one digest: ``mv-apply``'s
-    ``to typeof(…)`` / ``limit`` / ``with_itemindex=``, ``parse-kv``'s
-    ``with (…)`` properties, ``getschema kind=csl``, and ``consume
-    decodeblocks=``. Two literal collapses are deliberate rather than
-    outstanding — typed nulls and obfuscated strings; see
-    :class:`~kustology.ir.expr.LiteralExpr`.
+    **Equal digests are not a proof of equivalence.** Three kinds of thing
+    still merge, and they differ in whether that is a decision or a gap:
 
-    A third category is easy to miss because it is not an operator at all:
-    **a statement that is neither ``let`` nor tabular is discarded, and
-    hashes as though it were absent.** ``set query_now=datetime(2020-01-01);
-    T | take 1`` shares a digest with a bare ``T | take 1`` *and* with the
-    same query pinned to a different ``query_now``; two ``declare
-    query_parameters`` defaults differing only in value collide; so does an
-    ``alias database`` declaration. All parse with zero diagnostics, so
-    nothing signals the loss.
+    * **Deliberate**, in literals — typed nulls and obfuscated strings; see
+      :class:`~kustology.ir.expr.LiteralExpr` for why neither is a
+      difference in what a query returns.
+    * **Operator modifiers the builder drops.** Where an operator's IR node
+      has no field for a modifier, the modifier cannot reach the digest, so
+      two queries differing only there collide — ``mv-apply``'s
+      ``to typeof(…)``, ``limit`` and ``with_itemindex=``, ``parse-kv``'s
+      ``with (…)`` properties, ``getschema kind=csl``, ``consume
+      decodeblocks=`` as of 0.2.0.
+    * **Statements that are neither ``let`` nor tabular.** These are
+      discarded wholesale rather than modelled and lossily lowered, so the
+      rule needs no list: if a statement is not a ``let`` and not a
+      pipeline, it hashes as though it were absent. That covers ``set``,
+      ``declare query_parameters``, ``declare pattern``, ``alias database``
+      and ``restrict access`` today, and it will cover whatever is added
+      next until they are modelled. Two *different* values of one such
+      statement therefore collide with each other, not merely with a query
+      that omits it — and all of them parse with zero diagnostics, so
+      nothing signals the loss.
 
     A dedup consumer that must not merge across any of these has to compare
-    more than the hash. ``examples/semantic_hash_demo.py`` hashes every case
-    named here, so the list can be re-derived rather than trusted.
+    more than the hash. Rather than trusting the lists above,
+    run ``examples/semantic_hash_demo.py``: it hashes every case named here
+    and raises if any stops behaving as filed.
 
     The hash operates on a deep copy of ``node`` — does not mutate the
     input, and the result reflects the IR shape at call time. Stale if

@@ -22,13 +22,17 @@ recording which, so ``has_any`` and ``has_all``, which are opposites,
 shared a digest. ``SetMembership.op`` is what separates them now, and
 ``Exists.op`` does the same for ``isnotnull`` / ``isnotempty``.
 
-**Merges you may not want.** Two literal collapses are deliberate. Six
-modifiers across four operators are known gaps, as is every statement kind
-that is neither ``let`` nor tabular. All of them are *listed below and
-hashed*, not summarized — a consumer who reads "here is what you are
-buying" and then dedups on the digest has to be shown every row, so the
-count in this paragraph and the rows in ``KNOWN_MERGES`` are the same set.
-It matches the list in ``compute_semantic_hash``'s docstring.
+**Merges you may not want.** Two of them are deliberate collapses in
+literals; the rest are known gaps, in operator modifiers and in statement
+kinds. There is no tally in this sentence on purpose. Every case is a row
+in ``KNOWN_MERGES`` below and every row is hashed when this file runs, so
+the list *is* the claim — a number quoted about the list is one more thing
+that can drift away from it, and in this file it twice did.
+
+A consumer deduplicating on the digest acts on that third group, so the
+rows are load-bearing rather than illustrative: if any of them stops
+matching the group it is filed under, ``main()`` raises instead of printing
+a table that is quietly wrong.
 
 The digest carries its scheme as a prefix (``kustology-sem-v2:``) so a
 stored hash from an older canonicalization cannot silently compare unequal
@@ -119,8 +123,27 @@ KNOWN_MERGES = [
      "T | getschema kind=csl", "T | getschema"),
     ("consume drops `decodeblocks=` — known gap",
      "T | consume decodeblocks=true", "T | consume"),
-    ("a `set` statement is discarded entirely — known gap",
+    # Every statement kind that is neither `let` nor tabular is discarded
+    # outright and hashes as though it were absent. All five are here, each
+    # with the variant that costs a dedup consumer the most — not "vs a
+    # query without one", which is easy to shrug off, but two *different*
+    # values of the same statement colliding with each other.
+    ("`set` vanishes: pinned query_now == no query_now — known gap",
      "set query_now=datetime(2020-01-01); T | take 1", "T | take 1"),
+    ("`set` vanishes: two different query_now values — known gap",
+     "set query_now=datetime(2020-01-01); T | take 1",
+     "set query_now=datetime(2021-01-01); T | take 1"),
+    ("`declare query_parameters` vanishes: two different defaults — known gap",
+     "declare query_parameters(n:long = 5); T | take 1",
+     "declare query_parameters(n:long = 9); T | take 1"),
+    ("`alias database` vanishes entirely — known gap",
+     "alias database D = cluster('c').database('d'); T | take 1", "T | take 1"),
+    ("`declare pattern` vanishes: two different bodies — known gap",
+     'declare pattern P = (a:string) { ("x") = { T | take 1 }; }; T | take 1',
+     'declare pattern P = (a:string) { ("x") = { U | take 9 }; }; T | take 1'),
+    ("`restrict access` vanishes: two different targets — known gap",
+     'restrict access to (database("d")); T | take 1',
+     'restrict access to (database("e")); T | take 1'),
 ]
 
 
@@ -129,7 +152,14 @@ def errors(query: str) -> list[str]:
     return [d["code"] for d in parse(query).diagnostics if d["severity"] == "Error"]
 
 
-def report(title: str, pairs, expect_equal: bool) -> None:
+def report(title: str, pairs, expect_equal: bool) -> int:
+    """Hash every pair, print the measured verdict, return how many ran.
+
+    Raises rather than printing a wrong table. ``tests/test_examples.py``
+    calls ``main()``, so every row here is a claim the suite enforces —
+    which is the only thing that stops this file drifting away from the
+    library the way its own prose twice did.
+    """
     print(f"\n=== {title}")
     for label, left, right in pairs:
         # A pair that does not parse is the trap here, not a result. KQL's
@@ -140,22 +170,30 @@ def report(title: str, pairs, expect_equal: bool) -> None:
         # Check the input before believing the verdict.
         bad = errors(left) + errors(right)
         if bad:
-            print(f"  BROKEN {label}   <-- does not parse: {bad}")
-            continue
+            raise AssertionError(f"{label}: demo query does not parse: {bad}")
         same = digest(left) == digest(right)
-        verdict = "merge " if same else "split "
-        flag = "" if same == expect_equal else "   <-- UNEXPECTED"
-        print(f"  {verdict} {label}{flag}")
+        if same != expect_equal:
+            want = "merge" if expect_equal else "split"
+            got = "merge" if same else "split"
+            raise AssertionError(
+                f"{label}: filed under {want}, measured {got} — this file's "
+                f"claim has drifted from the library"
+            )
+        print(f"  {'merge ' if same else 'split '} {label}")
+    return len(pairs)
 
 
 def main() -> None:
     print(f"Scheme: {SEMANTIC_HASH_SCHEME}")
     print(f"Example digest: {digest('T | take 1')}")
 
-    report("Merges the contract promises", MERGES, expect_equal=True)
-    report("Splits the contract promises", SPLITS, expect_equal=False)
-    report("Merges to know about before deduplicating",
-           KNOWN_MERGES, expect_equal=True)
+    measured = report("Merges the contract promises", MERGES, expect_equal=True)
+    measured += report("Splits the contract promises", SPLITS, expect_equal=False)
+    measured += report("Merges to know about before deduplicating",
+                       KNOWN_MERGES, expect_equal=True)
+    # Derived, never written down: the only count in this file's output is
+    # one it just computed.
+    print(f"\n  {measured} pairs measured, every verdict computed at run time.")
 
     print("\n=== Bind state")
     # Every binder-written field is stripped, so a schema does not move the
