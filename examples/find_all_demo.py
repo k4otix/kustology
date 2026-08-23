@@ -17,11 +17,18 @@ Pair this with ``examples/walk_ir.py`` to see the trade-off:
   Use this when you want every node of a given type regardless of where
   it lives.
 
+The query joins with an explicit ``on $left.DeviceId == $right.DeviceId``,
+which is what makes ``ColumnRef.join_side`` observable. ``join_side`` is a
+separate field from ``table`` because the binder *overwrites* the
+``$left`` / ``$right`` sentinel with the table it resolves to — so on a
+bound parse the side would otherwise be gone, and `$left.a == $left.b` is
+not the join `$left.a == $right.b`.
+
 Requires the ``[ir]`` extras: ``pip install 'kustology[ir]'``.
 """
 
 from kustology import parse
-from kustology.ir import ColumnRef, FilterOp, LetRef, TableRef, find_all
+from kustology.ir import ColumnRef, FilterOp, JoinOp, LetRef, TableRef, find_all
 
 SCHEMA = {
     "DeviceProcessEvents": {
@@ -35,7 +42,8 @@ SCHEMA = {
 QUERY = """
 let powershell_procs = DeviceProcessEvents | where FileName == 'powershell.exe';
 powershell_procs
-| join (DeviceNetworkEvents | where RemoteIP != '127.0.0.1') on DeviceId
+| join (DeviceNetworkEvents | where RemoteIP != '127.0.0.1')
+    on $left.DeviceId == $right.DeviceId
 | project DeviceName, FileName, RemoteIP
 """
 
@@ -55,17 +63,32 @@ def main() -> None:
     aliases = {n.name for n in find_all(ir, LetRef)}
     print(f"Let aliases: {aliases}")
 
-    # Every column reference, regardless of role (filter, project,
-    # join key). Binder-resolved table provenance is on each node, and it
-    # names the *immediate* source: columns downstream of the alias resolve
-    # to `powershell_procs`, not to the DeviceProcessEvents behind it.
-    provenance = {(n.name, n.table) for n in find_all(ir, ColumnRef)}
-    print("Column provenance:")
-    for col, table in sorted(provenance):
-        print(f"  {col} <- {table}")
+    # Every column reference, regardless of role (filter, project, join
+    # key), with the three things a bound parse puts on each one.
+    #
+    # `result_type` comes from Microsoft's binder. `table` is the scope the
+    # column resolved against, and names the *immediate* source: columns
+    # downstream of the alias resolve to `powershell_procs`, not to the
+    # DeviceProcessEvents behind it. `join_side` is set only where the
+    # query wrote `$left.` / `$right.`, and survives the binder replacing
+    # the sentinel in `table`.
+    print("Columns:")
+    print(f"  {'name':<12} {'result_type':<12} {'table':<20} join_side")
+    for col in find_all(ir, ColumnRef):
+        side = col.join_side or "-"
+        print(f"  {col.name:<12} {col.result_type!s:<12} {col.table!s:<20} {side}")
+
+    # The join itself. This query writes no `kind=`, and `join_kind` reads
+    # `innerunique` — KQL's effective default, which is *not* `inner`:
+    # innerunique deduplicates the left side's join keys first, so a bare
+    # join and `join kind=inner` return different row counts from the same
+    # data. The field is never None, so an analyzer can compare it directly.
+    for op in find_all(ir, JoinOp):
+        print(f"Join: kind={op.join_kind}  on {op.on[0].canonical_form}")
 
     # A five-line "analyzer": every filter in the query, with its
-    # canonical predicate form.
+    # canonical predicate form. `find_all` reaches the one inside the
+    # join's right-hand sub-pipeline as well as the one in the let body.
     print("Filters:")
     for op in find_all(ir, FilterOp):
         print(f"  {op.predicate.canonical_form}")
