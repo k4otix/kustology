@@ -450,9 +450,9 @@ class IRBuilder:
         from a database is therefore unresolvable, so the diagnostics those
         failures raise describe how the IR was built rather than anything
         the caller wrote, and the unknown-name family is filtered out
-        (:data:`_UNKNOWN_NAME_CODES`). A
-        caller who supplied a real ``global_state`` and wants those rows
-        should call :meth:`build_from_code` directly, which keeps them.
+        (:data:`_UNKNOWN_NAME_CODES`). A caller who supplied a real
+        ``global_state`` and wants those rows should call
+        :meth:`build_from_code` directly, which keeps them.
         """
         code = KustoCode.ParseAndAnalyze(query, self.global_state)
         return self.build_from_code(code, ignore_unknown_tables=True)
