@@ -6,7 +6,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.2.0] — 2026-08-20
+## [0.2.0] — 2026-08-23
 
 First release since 0.1.0. Two themes: values the library reported wrongly
 (culture-corrupted literals, mis-assigned column provenance, conflated
