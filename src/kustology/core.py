@@ -72,6 +72,15 @@ class KustoQuery:
         On a bound query the result is *not* limited to what the binder
         resolved: a table the schema does not describe is still reported, so
         a partial schema cannot make a table disappear.
+
+        One position is bind-dependent in the other direction: the node
+        table in ``make-graph``'s ``with`` clause. The syntactic walk does
+        not reach it, so ``parse("Edges | make-graph src --> dst with Nodes
+        on n").get_referenced_tables()`` answers ``{"Edges"}`` while the
+        same query bound answers ``{"Edges", "Nodes"}``.
+        :meth:`replace_table` inherits the split — a no-op unbound, a
+        correct rewrite bound. Bind before migrating tables in a query that
+        builds a graph.
         """
         return {
             name
@@ -182,6 +191,10 @@ class KustoQuery:
         aliases and function parameters alone. A wildcard pattern is never
         rewritten even where the binder expanded it to the name you passed:
         see :func:`kustology.utils.analysis.replace_table`.
+
+        Because it rewrites what :meth:`find_table_references` reports, it
+        inherits that method's bind-state split on ``make-graph``'s ``with``
+        clause — unbound, renaming the node table there is a silent no-op.
         """
         return replace_table(
             self._code, old_name, new_name, force_syntactic=force_syntactic
