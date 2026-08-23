@@ -890,11 +890,15 @@ class ScanOp(Operator):
     through ``model_dump_json`` and they participate in ``semantic_hash``
     as text rather than as structure. There is nothing typed inside them
     to walk: ``find_all(ir, ColumnRef)`` will not report a column that
-    appears only in a ``scan`` step, and :class:`SchemaAttacher` has no
-    scope rule for any of them, so downstream column provenance is stale
-    rather than reshaped. Hashing text also means the formatting
-    sensitivity :class:`UnknownSource` documents applies here too —
-    interior comments and interior spacing are part of the digest.
+    appears only in a ``scan`` step. Downstream *scope* is the better
+    case, and it splits by bind state — ``Operator.result_schema`` carries
+    Microsoft's ``ResultType``, which knows the columns a ``scan``'s
+    ``declare`` adds, and :class:`SchemaAttacher` prefers it; on an
+    unbound parse there is no such answer and none of these operators has
+    a scope rule, so the scope downstream is the one they inherited.
+    Hashing text also means the formatting sensitivity
+    :class:`UnknownSource` documents applies here too — interior comments
+    and interior spacing are part of the digest.
 
     ``scan``'s own body is a state machine: ``declare`` variables plus
     ``step`` rules with guards and assignments. Modeling it is a feature,
@@ -1000,8 +1004,11 @@ class GraphMatchOp(Operator):
 
     The pattern, its ``where`` constraint and its ``project`` list are all
     text, so a column named only in a graph pattern does not reach
-    ``find_all(ir, ColumnRef)`` and the columns this operator emits are
-    not in any downstream scope.
+    ``find_all(ir, ColumnRef)``, and the columns this operator emits are
+    not in any downstream scope. That second half is a boundary of the
+    graph surface rather than a gap here: Microsoft's binder does not
+    place them either, and reports KS142 for a ``| project`` naming one on
+    a bound parse.
     """
 
     KIND: ClassVar[str] = "graph_match"
@@ -1013,7 +1020,8 @@ class GraphMarkComponentsOp(Operator):
     """``graph-mark-components`` — text only; see :class:`ScanOp`.
 
     ``with_component_id=`` names a column this operator adds. It is inside
-    ``raw_text``, so the added column is not in the downstream scope.
+    ``raw_text``, so the added column is not in the downstream scope — and,
+    as with :class:`GraphMatchOp`, nor is it in Microsoft's.
     """
 
     KIND: ClassVar[str] = "graph_mark_components"
