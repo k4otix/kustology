@@ -36,7 +36,8 @@ scripts/             # Tooling
   audit_syntax_kinds.py     # Coverage gate: HANDLED_*_KINDS vs the DLL's kinds
   mine_corpus.py            # Unknown-node census over the corpus (CI gate)
   verify_corpus.py          # Full build+enrich pass over a private corpus
-  extract_complex_corpus.py # Distil a private corpus into tests/fixtures/
+  extract_complex_corpus.py # Regenerate tests/fixtures/complex_queries/
+                            # from published Azure-Sentinel analytic rules
   sample_sentinel_corpus.py, extract_sentinel_schemas.py
   verify_dll.py, refresh_dll.py   # DLL provenance and refresh
 

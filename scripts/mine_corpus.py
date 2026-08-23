@@ -4,8 +4,10 @@
 
 """Bulk-process a KQL corpus through the IR builder and report coverage gaps.
 
-For every ``.kql`` file in the corpus, build the IR and walk it — both
-``main_pipeline`` and every ``let`` binding's right-hand side — looking for:
+For every ``.kql`` file in the corpus, build the IR and walk **all** of it
+with ``find_all`` — ``main_pipeline``, ``additional_pipelines``, every
+``let`` binding's right-hand side, and every nested sub-pipeline — looking
+for:
 
 * ``UnknownExpr`` — an expression kind the builder didn't recognize.
 * ``UnknownSource`` — a pipeline whose source wasn't a TableRef / LetRef.
@@ -61,13 +63,15 @@ def _walk(ir, unknown_exprs: Counter, unknown_sources: Counter, unspecialized_op
     ``toscalar(...)`` / ``materialize(...)`` / a bare subquery was ever
     counted, and it probed operator fields by ``hasattr`` from a fixed list
     that missed ``SortOp.expressions``, ``TopOp.by``, ``RangeOp.start``, and
-    others. Over the bundled 33-query corpus the generic walker reaches 3661
-    nodes against the old walk's 3179, with nothing lost.
+    others. Measured when the swap was made, over the 33 fixtures the corpus
+    held then: the generic walker reaches 3661 nodes against the old walk's
+    3179, with nothing lost. (The corpus is 49 fixtures now; the comparison
+    is not re-runnable, since the walk it beat no longer exists.)
 
     ``find_all`` over the whole ``QueryIR`` covers ``let`` right-hand sides
-    for free -- a gap reachable only through one is still a gap, and walking
-    ``main_pipeline`` alone is how an unpopulated tabular ``rhs_pipeline``
-    went unreported here.
+    and ``additional_pipelines`` for free -- a gap reachable only through one
+    is still a gap, and walking ``main_pipeline`` alone is how an unpopulated
+    tabular ``rhs_pipeline`` went unreported here.
     """
     from kustology.ir import Operator, UnknownExpr, UnknownOp, UnknownSource, find_all
 
