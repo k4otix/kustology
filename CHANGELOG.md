@@ -89,9 +89,9 @@ release is in `docs/superpowers/reports/`.
   otherwise touch, which is a change with its own tests rather than a
   footnote to this one. They are named here so the boundary is stated rather
   than implied: everything above is closed, these four are not. The list is
-  what a modifier-pair sweep over the operator surface turned up — every
-  fields-less operator plus every modifier the grammar documents for the
-  operators above — and not a proof that nothing else remains.
+  what a modifier-pair sweep turned up — every fields-less operator, plus a
+  spread of modifiers across the operators named above — and not a proof
+  that nothing else remains.
 
   Separately and **by design**, `hint.*` never splits a digest: `join
   hint.strategy=shuffle`, `partition hint.strategy=native`,
@@ -846,14 +846,14 @@ release is in `docs/superpowers/reports/`.
   of it: every tabular node carries a `TableSymbol` on `ResultType`. The
   builder now captures it into `Operator.result_schema` (new field,
   volatile, and absent from `to_llm_dict` — see the entry below) and
-  `Pipeline.result_schema`
-  as the parse is walked, and the attacher prefers it, falling back to its
-  own rule only where Microsoft declined. Declining is Microsoft's own call,
-  read off `TableSymbol.IsOpen`: an *open* symbol means the binder could not
-  determine the full column set — the state everything downstream of an
-  unknown table is in — so an unbound build keeps the hand-rolled walk and a
-  schema handed to `SchemaAttacher` afterwards is not overridden by a
-  table-less reading. Column *order* now matches the engine's, which the
+  `Pipeline.result_schema` as the parse is walked, and the attacher prefers
+  it, falling back to its own rule only where Microsoft declined. Declining
+  is Microsoft's own call, read off `TableSymbol.IsOpen`: an *open* symbol
+  means the binder could not determine the full column set — the state
+  everything downstream of an unknown table is in — so an unbound build
+  keeps the hand-rolled walk and a schema handed to `SchemaAttacher`
+  afterwards is not overridden by a table-less reading. Column *order* now
+  matches the engine's, which the
   scope merge could not reproduce: `T | join U on K` reports `K, V, K1, V1`
   rather than the two sides' columns grouped by side. `ColumnRef.table` is
   unaffected — provenance is the one thing `ResultType` does not carry, so
@@ -1405,9 +1405,10 @@ by `IR_SCHEMA_VERSION` and called out in this CHANGELOG.
 - `QueryIR.to_llm_dict()` — lossy projection optimized for handing the
   IR to a language model: every node carries a `kind` discriminator,
   spans and defaulted fields are stripped, and `polarity` is collapsed
-  into natural KQL operators (`!=`, `!in`, `!between`). Measured over this
-  repo's fixture corpus with the 0.1.0 code, it was a median 58% smaller
-  than `model_dump_json()` on a schemaless parse and 42% on a bound one.
+  into natural KQL operators (`!=`, `!in`, `!between`). Running today's
+  fixture corpus back through the 0.1.0 code (48 of the 49 build under it),
+  the view was a median 58% smaller than `model_dump_json()` on a schemaless
+  parse and 42% on a bound one.
   (For the 0.2.0 figure see `to_llm_dict` under **Changed** above.)
 - `kustology.ir.UnknownExpr` / `UnknownSource` / `UnknownOp` — explicit
   fallback nodes for shapes the builder doesn't model. The coverage
