@@ -872,6 +872,35 @@ class ForkOp(Operator):
 
 
 class ScanOp(Operator):
+    """``scan`` — kept as its own source text; the step machine is not modeled.
+
+    This is the first of eight operators the IR records on ``raw_text``
+    rather than in typed fields, and the register is the same as
+    :class:`LetFunction`'s: the boundary is stated in the model instead of
+    being left as fields that read as implemented and are not. The other
+    seven are :class:`TopNestedOp`, :class:`MakeGraphOp`,
+    :class:`MacroExpandOp`, :class:`GraphMatchOp`,
+    :class:`GraphMarkComponentsOp`, :class:`GraphShortestPathsOp` and
+    :class:`GraphToTableOp`. (``graph-where-edges`` and
+    ``graph-where-nodes`` are *not* in this set — both carry a real
+    ``predicate``.)
+
+    What ``raw_text`` buys and what it does not. It is
+    ``ToString(IncludeTrivia.Minimal)``, so these operators round-trip
+    through ``model_dump_json`` and they participate in ``semantic_hash``
+    as text rather than as structure. There is nothing typed inside them
+    to walk: ``find_all(ir, ColumnRef)`` will not report a column that
+    appears only in a ``scan`` step, and :class:`SchemaAttacher` has no
+    scope rule for any of them, so downstream column provenance is stale
+    rather than reshaped. Hashing text also means the formatting
+    sensitivity :class:`UnknownSource` documents applies here too —
+    interior comments and interior spacing are part of the digest.
+
+    ``scan``'s own body is a state machine: ``declare`` variables plus
+    ``step`` rules with guards and assignments. Modeling it is a feature,
+    not a fix.
+    """
+
     KIND: ClassVar[str] = "scan"
     kind: Literal["scan"] = "scan"
     raw_text: str
@@ -917,18 +946,49 @@ class SampleDistinctOp(Operator):
 
 
 class TopNestedOp(Operator):
+    """``top-nested`` — source text only; see :class:`ScanOp` for the register.
+
+    A chained ``top-nested … by … with others=…`` clause is a list of
+    levels, each with its own key expression, aggregate and ``others``
+    label. None of that is broken out, so a nested key is invisible to
+    ``find_all``.
+    """
+
     KIND: ClassVar[str] = "top_nested"
     kind: Literal["top_nested"] = "top_nested"
     raw_text: str
 
 
 class MakeGraphOp(Operator):
+    """``make-graph`` — source text only; see :class:`ScanOp` for the register.
+
+    The edge columns, the ``with``-clause node table and its key are all
+    inside ``raw_text``, so ``find_all(ir, TableRef)`` does not report the
+    node table. Tier 1 *does*, but only on a bound parse: over ``Edges |
+    make-graph src --> dst with Nodes on n``,
+    ``parse(q).get_referenced_tables()`` answers ``{"Edges"}`` and
+    ``parse(q, schema=…)`` answers ``{"Edges", "Nodes"}``, because the
+    bound path reads the resolved symbol rather than the syntactic
+    source positions. ``replace_table("Nodes", …)`` follows the same
+    split -- a no-op unbound, a correct rewrite bound.
+    """
+
     KIND: ClassVar[str] = "make_graph"
     kind: Literal["make_graph"] = "make_graph"
     raw_text: str
 
 
 class MacroExpandOp(Operator):
+    """``macro-expand`` — source text, plus the inner pipeline.
+
+    The one member of the :class:`ScanOp` register that is not opaque all
+    the way down: the entity-group name and the ``as`` alias stay in
+    ``raw_text``, but the parenthesized body is built as a real
+    :class:`Pipeline` on ``pipeline``, so its operators and columns are
+    walkable. The scope it runs against is not — the alias resolves to one
+    entity per expansion, which the IR has no way to enumerate.
+    """
+
     KIND: ClassVar[str] = "macro_expand"
     kind: Literal["macro_expand"] = "macro_expand"
     raw_text: str
@@ -936,36 +996,76 @@ class MacroExpandOp(Operator):
 
 
 class GraphMatchOp(Operator):
+    """``graph-match`` — source text only; see :class:`ScanOp` for the register.
+
+    The pattern, its ``where`` constraint and its ``project`` list are all
+    text, so a column named only in a graph pattern does not reach
+    ``find_all(ir, ColumnRef)`` and the columns this operator emits are
+    not in any downstream scope.
+    """
+
     KIND: ClassVar[str] = "graph_match"
     kind: Literal["graph_match"] = "graph_match"
     raw_text: str
 
 
 class GraphMarkComponentsOp(Operator):
+    """``graph-mark-components`` — text only; see :class:`ScanOp`.
+
+    ``with_component_id=`` names a column this operator adds. It is inside
+    ``raw_text``, so the added column is not in the downstream scope.
+    """
+
     KIND: ClassVar[str] = "graph_mark_components"
     kind: Literal["graph_mark_components"] = "graph_mark_components"
     raw_text: str
 
 
 class GraphShortestPathsOp(Operator):
+    """``graph-shortest-paths`` — text only; see :class:`ScanOp`.
+
+    Same shape as :class:`GraphMatchOp`: pattern, constraint and
+    projection are one string.
+    """
+
     KIND: ClassVar[str] = "graph_shortest_paths"
     kind: Literal["graph_shortest_paths"] = "graph_shortest_paths"
     raw_text: str
 
 
 class GraphToTableOp(Operator):
+    """``graph-to-table`` — text only; see :class:`ScanOp`.
+
+    Whether it emits ``nodes``, ``edges`` or both, and under which column
+    names, is in ``raw_text`` — which is exactly the information a
+    downstream scope would need, so the scope stays whatever the graph
+    operators inherited.
+    """
+
     KIND: ClassVar[str] = "graph_to_table"
     kind: Literal["graph_to_table"] = "graph_to_table"
     raw_text: str
 
 
 class GraphWhereEdgesOp(Operator):
+    """``graph-where-edges (…)`` — modeled, with a real predicate.
+
+    Not part of the :class:`ScanOp` register despite the family name: the
+    parenthesized condition is an ordinary expression over edge
+    properties, so it is built as one and its columns are walkable.
+    """
+
     KIND: ClassVar[str] = "graph_where_edges"
     kind: Literal["graph_where_edges"] = "graph_where_edges"
     predicate: AnyExpr
 
 
 class GraphWhereNodesOp(Operator):
+    """``graph-where-nodes (…)`` — modeled, with a real predicate.
+
+    The node-side twin of :class:`GraphWhereEdgesOp`.
+    """
+
     KIND: ClassVar[str] = "graph_where_nodes"
     kind: Literal["graph_where_nodes"] = "graph_where_nodes"
     predicate: AnyExpr

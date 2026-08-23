@@ -472,6 +472,46 @@ def compute_semantic_hash(node: BaseModel) -> str:
     ``| where A | take 5`` and ``| take 5 | where A`` — which return
     different rows — still hash apart.
 
+    The three canonicalization rules, stated once so a consumer can reason
+    about what a stored digest promises:
+
+    * **Sorting** touches exactly three places — ``And.operands``,
+      ``Or.operands`` and ``SetMembership.values`` — keyed on each
+      operand's own dumped JSON (:func:`_sort_commutative`). Nothing else
+      in the IR is reordered; ``Expr.canonical_form`` sorts the same three
+      places by *rendered string*, which is a different key for the same
+      set, and ``normalize_expressions`` sorts nothing at all.
+    * **``let`` renaming** is positional. Each visible binding name is
+      replaced by its declaration index, so the names are labels and the
+      wiring is not (:func:`_canonicalize_let_names`).
+    * **Datetime literals are UTC.** The builder Kind-normalizes every
+      ``datetime`` literal before recording ``value`` and ``ticks``
+      (``_builder_helpers.literal_value_and_ticks``), and numeric and timespan
+      literals render under ``InvariantCulture``, so the same query
+      digests identically in Tokyo and New York and under ``de-DE``.
+
+    **Bind state.** Everything the binder *writes* is stripped before the
+    dump — ``result_type``, ``result_type_inner``, ``table``,
+    ``result_schema`` and ``hints``, plus ``span`` / ``body_span``
+    (:data:`_VOLATILE_FIELDS`) — so passing a schema does not move the
+    digest. One divergence survives that, because it is a difference of
+    *shape* rather than of a field's value: a ``let`` whose right-hand
+    side aliases a table records ``rhs_expr`` unbound and ``rhs_pipeline``
+    once the binder has proved the name is a table, and no field-clearing
+    can make two different nodes into one. Queries with no table-aliasing
+    ``let`` are unaffected. See the note above :data:`_VOLATILE_FIELDS`
+    for why that is preferred to guessing.
+
+    **Equal digests are not a proof of equivalence.** As of 0.2.0 four
+    operators still drop a modifier that changes what a query returns, so
+    two queries that differ only there share one digest: ``mv-apply``'s
+    ``to typeof(…)`` / ``limit`` / ``with_itemindex=``, ``parse-kv``'s
+    ``with (…)`` properties, ``getschema kind=csl``, and ``consume
+    decodeblocks=``. Two literal collapses are deliberate rather than
+    outstanding — typed nulls and obfuscated strings; see
+    :class:`~kustology.ir.expr.LiteralExpr`. A dedup consumer that must
+    not merge across those cases has to compare more than the hash.
+
     The hash operates on a deep copy of ``node`` — does not mutate the
     input, and the result reflects the IR shape at call time. Stale if
     you mutate ``node`` after computing the hash; call again for the

@@ -58,6 +58,26 @@ class Expr(BaseModel):
 
 
 class LiteralExpr(Expr):
+    """A literal value, with the KQL kind that produced it.
+
+    **Two spellings collapse here on purpose, and both collapse the
+    ``semantic_hash`` with them.** They are recorded rather than fixed
+    because in each case the distinction is not a difference in what the
+    query returns:
+
+    * **Typed nulls.** ``real(null)`` and ``datetime(null)`` both build
+      ``value=None, literal_kind="null"``. The type survives on
+      ``result_type`` (``real`` against ``datetime``), which is
+      binder-populated and therefore stripped before hashing -- so the two
+      digest alike. A consumer that needs the declared type must read
+      ``result_type`` off a bound parse.
+    * **Obfuscated strings.** ``h"x"`` and ``"x"`` both build
+      ``value="x", literal_kind="string"``. The ``h`` marker asks the
+      engine to redact the literal from telemetry; it does not change
+      which rows match, so treating it as a predicate difference would
+      split two queries that behave identically.
+    """
+
     KIND: ClassVar[str] = "literal"
     kind: Literal["literal"] = "literal"
     value: str | int | float | bool | None
