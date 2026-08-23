@@ -131,8 +131,8 @@ def test_datetime_literal_is_utc_and_tz_independent():
     text names. Rendering ``.Ticks``/``.ToString()`` straight off that value
     (the pre-fix behaviour) makes ``value``, ``ticks``, and therefore
     ``semantic_hash`` depend on the timezone of whatever machine parsed the
-    query. Re-running the same parse in a subprocess pinned to a different
-    timezone (``Asia/Tokyo``) proves the fixed hash does not move for either
+    query. Re-running the same parse in a subprocess pinned to a timezone
+    the parent is not already in proves the fixed hash does not move for either
     the ``Local``-kind (``Z``-suffixed) literal or the ``Unspecified``-kind
     (bare) one -- covering both branches separately matters because
     ``ToUniversalTime()`` is a no-op on an ``Unspecified`` value when the
@@ -152,6 +152,18 @@ def test_datetime_literal_is_utc_and_tz_independent():
     naive_here = parse(naive_q).to_ir().semantic_hash
     parent_tz = System.TimeZoneInfo.Local.Id
 
+    # Pick a child zone the parent is not already in. A hardcoded
+    # ``Asia/Tokyo`` compares the zone against itself whenever the suite is
+    # *already* running there, which is not hypothetical: the ``test-locale``
+    # matrix in ``.github/workflows/test.yml`` has a cell that sets exactly
+    # ``TZ=Asia/Tokyo``, and the guard below then failed on a suite that was
+    # otherwise green. Two candidates suffice -- they differ from each other,
+    # so at most one can equal the parent. Neither is UTC on purpose:
+    # ``ToUniversalTime()`` is a no-op on an ``Unspecified`` value under a
+    # UTC host, and the naive-literal half of this test would stop proving
+    # anything.
+    child_tz_name = "America/New_York" if parent_tz == "Asia/Tokyo" else "Asia/Tokyo"
+
     child = subprocess.run(
         [sys.executable, "-c", (
             "from kustology import parse\n"
@@ -160,7 +172,7 @@ def test_datetime_literal_is_utc_and_tz_independent():
             f"print(parse({q!r}).to_ir().semantic_hash)\n"
             f"print(parse({naive_q!r}).to_ir().semantic_hash)\n"
         )],
-        env={**os.environ, "TZ": "Asia/Tokyo"}, capture_output=True, text=True, check=False,
+        env={**os.environ, "TZ": child_tz_name}, capture_output=True, text=True, check=False,
     )
     assert child.returncode == 0, f"subprocess failed (exit {child.returncode}):\n{child.stderr}"
     child_tz, other, naive_other = child.stdout.strip().splitlines()
@@ -170,7 +182,7 @@ def test_datetime_literal_is_utc_and_tz_independent():
     # instead), the comparisons below would otherwise silently degrade into
     # a same-config comparison that cannot catch a regression.
     assert child_tz != parent_tz, (
-        f"TZ=Asia/Tokyo did not change System.TimeZoneInfo.Local.Id "
+        f"TZ={child_tz_name} did not change System.TimeZoneInfo.Local.Id "
         f"(stayed {child_tz!r} in both processes) -- this platform's "
         f"CoreCLR does not honor TZ, so this test cannot exercise a "
         f"different timezone and is not meaningful evidence here"
