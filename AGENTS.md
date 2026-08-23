@@ -42,14 +42,46 @@ An adjacent trap: an **empty .NET `IReadOnlyList` is truthy** in Python, so
 `if not code.GetSyntaxDiagnostics():` never fires and every query looks like a
 parse error. Use `.Count`.
 
-`tests/test_reflection_audit.py` now asserts every PascalCase member name passed
-to `getattr`/`hasattr` in `src/` resolves somewhere in `Kusto.Language`. Its
-limit is that the check is per name, not per type, so the `Keys.Count` shape
-still needs a value assertion on a real parse. Before adding a probe, confirm
-the member exists:
+**Direct attribute access is the opposite failure and is also scanned.**
+`n.ValueExpression` on a node without that member *raises* `AttributeError`,
+out of whatever public API the caller invoked — loud rather than silent, but
+just as shippable: two `IRBuilder` branches crashed `to_ir()` on valid KQL
+(`T | top-hitters 5 of a by b`, `T | __partitionby a (take 1)`) while both
+kinds sat in `HANDLED_OPERATOR_KINDS` claiming to be modelled.
+
+`tests/test_reflection_audit.py` covers **both** styles: it asserts every
+PascalCase member name in `src/` that is passed to `getattr`/`hasattr` **or
+read as a direct attribute** resolves somewhere in `Kusto.Language`. Two
+limits. The check is per name, not per type, so the `Keys.Count` shape still
+needs a value assertion on a real parse. And the direct-access scan drops any
+pure attribute chain rooted at a name the file imports — it cannot tell a
+namespace segment from a member read — so `GlobalState.Default.WithDatabase(db)`
+is not checked at all, while `TableSymbol.From(cols).WithName(name)` is,
+because the call breaks the chain. Before adding a probe of either style,
+confirm the member exists:
 
 ```python
 [m for m in dir(node) if m[:1].isupper()]
+```
+
+### Never write an exhaustive claim about a Microsoft data structure
+`IRBuilder.build`'s docstring said `GlobalState.Default` describes "built-in
+functions, aggregates and plug-ins, **and nothing else**". Four rewrites later
+it was still wrong, most recently by omitting `Operators`, of which the
+default state has 55. Every attempt failed the same way: the sentence
+enumerated a set nobody had counted, and each fix added one more member
+instead of dropping the claim.
+
+The default state's *populated* side is not enumerable by reading our source —
+it is whatever Microsoft shipped. Its *empty* side is, and is short, and is
+what a caller needs: no tables, user functions, external tables, materialized
+views, entity groups or stored query results, and no clusters. Write the
+empty side and say "everything built in resolves" for the other. Measure
+before you write a count of anything on the far side of the bridge:
+
+```python
+[(m, getattr(getattr(GlobalState.Default, m), "Count", None))
+ for m in ("Operators", "Functions", "Aggregates", "PlugIns")]
 ```
 
 ### `LiteralValue` is lazy, cached, and culture-sensitive
@@ -73,6 +105,31 @@ read — documented in the docstring; nothing at this layer can prevent it.
 CI runs the suite under `LANG=de-DE` and `LANG=fr-FR` to guard this. If you touch
 the pin, verify the guard still bites: revert the pin and confirm the de-DE job
 goes red. A green suite without the pin means you are only testing integers.
+
+### Datetime literals are UTC-normalized at build — never read a raw `.Ticks`
+The same trap one type over, and this one is the *host's timezone* rather than
+its locale. `DateTime.Parse` (what `LiteralValue` uses) returns two different
+`DateTimeKind`s from KQL's two datetime spellings, and they need **opposite**
+treatment:
+
+- `datetime(2024-01-01)` — no offset in the source — parses as
+  `Unspecified`. KQL datetimes are UTC by definition, so the value is already
+  right; it only needs `DateTime.SpecifyKind(raw, Utc)` to be *labelled*.
+- `datetime(2024-01-01T00:00:00Z)`, and any explicit offset, parses as
+  **`Local`**: .NET has already converted it to the host's wall clock. Its
+  `.Ticks` carries the host's offset baked in. It needs
+  `raw.ToUniversalTime()` — a conversion, not a relabel.
+
+Measured on a UTC-5 host, the raw `.Ticks` for those two literals differ by
+five hours (`…640000000000` against `…460000000000`) though the literals name
+the same instant. `_builder_helpers.literal_value_and_ticks` does both
+branches, so `LiteralExpr.value` and `LiteralExpr.ticks` are UTC and the `Z`
+suffix on `value` is unconditional. **Never read `.Ticks` (or `LiteralValue`)
+off a `DateTimeKind.Local` node yourself** — go through that helper, or the
+`semantic_hash` of a query becomes a function of where the machine is. Swap
+the two branches and every offset-suffixed timestamp shifts silently while
+bare ones stay correct, which is the shape that survives a test suite written
+in one timezone.
 
 ## AST structure and navigation
 
@@ -182,10 +239,10 @@ bespoke walkers recursed over a hardcoded tuple of field names (`"left"`,
 `"right"`, `"operand"`, …): `SchemaAttacher._fill`, `_walk_expr`
 (`tests/ir/test_complex_harness.py`), `walk_expr` (`scripts/mine_corpus.py`) and
 a fourth copy in `scripts/verify_corpus.py`. All omitted `pipeline`, `branches`
-and `default`, so none descended into `ToScalarExpr` / `MaterializeExpr` /
-`SubqueryExpr` or either arm of a `case()`. Each now derives from `model_fields`
-or calls `find_all` outright. **Do not reintroduce one.** If you need a
-traversal, use `walk` / `find_all`.
+and `default`, so none descended into `ToScalarExpr` / `MaterializeExpr`
+(since-removed) / `SubqueryExpr` or either arm of a `case()`. Each now derives
+from `model_fields` or calls `find_all` outright. **Do not reintroduce one.**
+If you need a traversal, use `walk` / `find_all`.
 
 Note the generic walker was not immune either: it descended lists and dicts but
 not tuples, so `CaseExpr.branches` (`list[tuple[Expr, Expr]]`) was invisible to
@@ -218,16 +275,18 @@ alongside spans that still have to line up with the source.
 Two consumers reorder for their own purposes, and they do not use the same
 key:
 
-- `Expr.canonical_form` sorts `And`/`Or` operands and `in (...)` values
-  **alphabetically by rendered string**, so `State == "TEXAS" and EventType ==
-  "Tornado"` renders as `EventType == "Tornado" and State == "TEXAS"`. Worth
-  knowing when diffing IR output against AST text.
-- `compute_semantic_hash` sorts the same three places on its own deep copy, by
-  each operand's **dumped JSON** (`_sort_commutative`). The dump is the
-  stronger key — two operands tie only when every field matches — and it is
-  why the sort has to run *after* `_clear_volatile`, so span offsets cannot
-  order the list, and bottom-up, so a parent is keyed on children that are
-  already canonical.
+- `Expr.canonical_form` sorts **exactly three places**: `And.operands`,
+  `Or.operands` and a `SetMembership`'s value list — nothing else — and it
+  sorts them **alphabetically by rendered string**, so `State == "TEXAS" and
+  EventType == "Tornado"` renders as `EventType == "Tornado" and State ==
+  "TEXAS"`. Worth knowing when diffing IR output against AST text.
+- `compute_semantic_hash` sorts the same three places on its own deep copy,
+  but by each operand's **dumped JSON** (`_sort_commutative`), not by the
+  rendered string. Same set of nodes, different key. The dump is the
+  stronger of the two — two operands tie only when every field matches — and
+  it is why the sort has to run *after* `_clear_volatile`, so span offsets
+  cannot order the list, and bottom-up, so a parent is keyed on children that
+  are already canonical.
 
 Do not "unify" these by sorting in the builder or in `normalize_expressions`.
 The IR's job is to be faithful; canonicalization is the hash's job.
@@ -288,11 +347,18 @@ default value or its declaration's existence — `assert e.result_type_inner is
 None` on a hand-built node passes identically whether the populating code works
 or has never worked once. Assert a **non-default value on a real parse**.
 
-### Version tags bump together, and the hash is bind-state-dependent
+### Version tags bump together, once per release; the hash is bind-state-dependent
 `IR_SCHEMA_VERSION` (`ir/__init__.py`) must be bumped on any breaking
 field-shape change, and `SEMANTIC_HASH_SCHEME` (`ir/transforms.py`) in lockstep
 — the scheme prefix exists so a canonicalization change invalidates stored
 hashes *visibly* instead of silently returning "these queries differ".
+
+**Do not bump either one yourself.** They move **once per release**, not once
+per change: several branches can land between releases and share one
+increment, and the tags exist to mark what a consumer can observe rather than
+the project's internal history. Record the shape change in the CHANGELOG and
+leave the constants alone; the release commit moves them.
+`tests/ir/test_schema_tags.py` pins both, so an accidental bump fails there.
 
 Note `semantic_hash` is not bind-invariant: a `let` aliasing a table resolves to
 `rhs_pipeline` when bound and `rhs_expr` when not, and that is a shape
@@ -303,10 +369,14 @@ an earlier `let` is a `LetRef` decided from the statement text alone.
 That shape divergence is the *only* one. `_VOLATILE_FIELDS` names every field
 the binder writes — `result_type` / `result_type_inner` / `table` /
 `result_schema` — plus the source offsets, `span` and `body_span`, so field
-*values* never make a query hash two ways. When you add a binder-populated
-field, add it there too, and check first whether it is carrying source-derived
-information that must keep hashing: `ColumnRef.table` was, and splitting
-`join_side` out of it is what let the rest be stripped.
+*values* never make a query hash two ways. `hints` is in the set for a
+different reason: nothing binder-ish about it, but a `hint.strategy=shuffle`
+asks the engine to *execute* a query differently without changing the rows it
+returns, so two rules that differ only there are one rule to a deduplicating
+consumer. When you add a binder-populated field, add it there too, and check
+first whether it is carrying source-derived information that must keep
+hashing: `ColumnRef.table` was, and splitting `join_side` out of it is what let
+the rest be stripped.
 
 The set is keyed by **model field name**, cleared by `_clear_volatile` walking
 the hash's deep copy — not by key name in the dumped JSON, which is what it
