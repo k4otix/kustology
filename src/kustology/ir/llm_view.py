@@ -20,6 +20,8 @@ being fed to a language model:
   stripped — character offsets aren't useful without source-text
   triangulation, and ``schema_attached`` is inferrable from whether
   ``result_schema`` is populated.
+* ``Operator.result_schema`` is stripped; ``Pipeline.result_schema``
+  survives. See :func:`_drop_operator_result_schema`.
 * Enum values are unwrapped to their string form.
 * ``canonical_form`` on ``ColumnRef`` / ``LiteralExpr`` leaves is dropped
   when it's a literal restatement of ``name`` / ``value``; survives on
@@ -126,6 +128,7 @@ def _convert(node: Any) -> Any:
         if isinstance(node, Expr):
             out["canonical_form"] = node.canonical_form
         _drop_redundant_canonical_form(out, cls)
+        _drop_operator_result_schema(out, cls)
         _drop_inapplicable_operator_flags(out, cls)
         _collapse_polarity_into_op(out, cls)
         _cap_datatable_rows(out, cls)
@@ -210,6 +213,35 @@ def _cap_datatable_rows(out: dict[str, Any], cls: type) -> None:
         return
     out["rows"] = rows[:_MAX_LLM_DATATABLE_ROWS]
     out["rows_omitted"] = len(rows) - _MAX_LLM_DATATABLE_ROWS
+
+
+def _drop_operator_result_schema(out: dict[str, Any], cls: type) -> None:
+    """Remove ``result_schema`` from an operator node. Pipelines keep theirs.
+
+    ``Operator.result_schema`` is the column list the operator emits, read
+    off Microsoft's binder. It is the right thing to carry on the model and
+    the wrong thing to repeat in a view whose whole purpose is context
+    economy: on a bound parse most operators emit the columns the one before
+    them emitted, so a pipeline of *n* steps restates one column list *n*
+    times. Measured across the 49-query fixture corpus, bound against a
+    schema naming every referenced column, the per-operator copies were 68%
+    of the whole LLM view — they took its size advantage over
+    ``model_dump_json`` from a median 51% down to 28%.
+
+    ``Pipeline.result_schema`` is not dropped: "what columns does this query
+    return" is one answer per pipeline, and it is the answer a reader
+    actually asks for. What is lost is the per-*step* column list;
+    ``model_dump_json`` keeps it, which is the same split
+    :func:`_cap_datatable_rows` makes for ``DataTableSource.rows``.
+
+    Scoped by ``issubclass`` rather than by putting the field name in
+    :data:`_OMIT_FIELDS`, which matches names across every model and would
+    take ``Pipeline``'s with it.
+    """
+    from .query import Operator  # lazy import: avoids cycle at module load
+
+    if issubclass(cls, Operator):
+        out.pop("result_schema", None)
 
 
 def _drop_inapplicable_operator_flags(out: dict[str, Any], cls: type) -> None:

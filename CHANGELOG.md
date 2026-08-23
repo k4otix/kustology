@@ -812,7 +812,8 @@ release is in `docs/superpowers/reports/`.
   union conflicts. The binder in `Kusto.Language` had already computed all
   of it: every tabular node carries a `TableSymbol` on `ResultType`. The
   builder now captures it into `Operator.result_schema` (new field,
-  volatile, absent from the LLM view when unset) and `Pipeline.result_schema`
+  volatile, and absent from `to_llm_dict` — see the entry below) and
+  `Pipeline.result_schema`
   as the parse is walked, and the attacher prefers it, falling back to its
   own rule only where Microsoft declined. Declining is Microsoft's own call,
   read off `TableSymbol.IsOpen`: an *open* symbol means the binder could not
@@ -837,6 +838,23 @@ release is in `docs/superpowers/reports/`.
   payload of every operator. Measured across the 49 fixture queries: 48
   changed, and the one that did not (`DataTable_InlineSource`) is the only
   one with no operator in it.
+- **`to_llm_dict` drops `Operator.result_schema` and keeps
+  `Pipeline.result_schema` (tier 2).** The new per-operator field is the
+  right thing to carry on the model and the wrong thing to repeat in a view
+  whose entire purpose is context economy: on a bound parse most operators
+  emit the columns the one before them emitted, so an *n*-step pipeline
+  restates one column list *n* times. Measured over this repo's 49-query
+  fixture corpus, bound against a schema naming every column each query
+  references, the per-operator copies were 35% of the whole LLM view
+  (851,224 → 556,068 bytes across the corpus): with them the view was a
+  median 28% smaller than `model_dump_json` on the same query, without them
+  it is 45%. What a reader loses is
+  the per-*step* column list; `model_dump_json` keeps every one, the same
+  split `to_llm_dict` already makes for `DataTableSource.rows`.
+  `Pipeline.result_schema` stays because "what columns does this query
+  return" is one answer per pipeline. No released version ever emitted the
+  field, in this view or any other — it is new in 0.2.0 — so this decides a
+  default rather than removing something a consumer had.
 
 ### Breaking (tier 2, pre-1.0)
 

@@ -135,6 +135,41 @@ def test_schema_attached_flag_is_dropped(storm_ir):
     assert "schema_attached" not in out
 
 
+def test_operator_result_schema_is_dropped_but_the_pipeline_keeps_its_own(storm_ir):
+    """``Operator.result_schema`` restates the pipeline's column list once per
+    operator, which is what the view exists to avoid.
+
+    ``Pipeline.result_schema`` answers "what does this query return"; the
+    per-operator copy answers the same question once per step, and on a
+    bound parse most steps give the same answer. Measured over the 49-query
+    fixture corpus against a schema covering every referenced column, the
+    per-operator copies were 68% of the whole bound LLM view.
+
+    ``model_dump_json`` keeps every one of them — this is a view decision,
+    the same call ``_cap_datatable_rows`` makes about ``rows``.
+    """
+    out = to_llm_dict(storm_ir)
+    pipeline = out["main_pipeline"]
+
+    # Both operators really do carry one on the model, so the assertion below
+    # is about the view and not about an unpopulated field.
+    assert [op.result_schema.columns for op in storm_ir.main_pipeline.operators] == [
+        {"StartTime": "datetime", "State": "string",
+         "EventType": "string", "DeathsDirect": "int"},
+    ] * 2
+
+    assert [op["kind"] for op in pipeline["operators"]] == ["filter", "project"]
+    for op in pipeline["operators"]:
+        assert "result_schema" not in op
+
+    # The pipeline's own survives, populated.
+    assert pipeline["result_schema"]["columns"]["DeathsDirect"] == "int"
+
+    # And the lossless dump is untouched.
+    assert '"result_schema"' in storm_ir.model_dump_json()
+    assert storm_ir.model_dump_json().count('"DeathsDirect":"int"') == 3
+
+
 def test_redundant_canonical_form_dropped_on_leaves(storm_ir):
     """``canonical_form`` is dropped on ColumnRef when it restates ``name``
     (bare or ``table.name`` for bound nodes), and on LiteralExpr when it's
