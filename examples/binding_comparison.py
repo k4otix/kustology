@@ -72,8 +72,10 @@ def main() -> None:
     print("Input query:")
     print(f"  {QUERY}")
     print()
-    print("Schema (StormEvents — 22 columns):")
     cols = STORM_EVENTS_SCHEMA["StormEvents"]
+    # Counted, not written down. The literal said "22 columns" and would
+    # have kept saying it after an edit to the dict above.
+    print(f"Schema (StormEvents — {len(cols)} columns):")
     for name, kql_type in cols.items():
         print(f"  {name:<22s} {kql_type}")
 
@@ -81,15 +83,29 @@ def main() -> None:
     syntactic = parse(QUERY)
     print(f"  has_semantics : {syntactic.has_semantics}")
     print("  diagnostics   :")
-    print_diagnostics(validate(QUERY))
+    # `KustoQuery.diagnostics` reads off the parse this object already
+    # holds, in `validate()`'s dict shape. `validate(QUERY)` returns the
+    # same list but parses the text a second time — and for a bound query
+    # re-runs the binder against a schema you have to supply again.
+    print_diagnostics(syntactic.diagnostics)
     print("  → The parser cannot tell `EvenType` is a typo; it's a valid identifier.")
 
     banner("parse(query, schema=...)  — bound against StormEvents")
     bound = parse(QUERY, schema=STORM_EVENTS_SCHEMA)
     print(f"  has_semantics : {bound.has_semantics}")
     print("  diagnostics   :")
-    print_diagnostics(validate(QUERY, schema=STORM_EVENTS_SCHEMA))
+    print_diagnostics(bound.diagnostics)
     print("  → The binder resolves names against the schema and rejects EvenType.")
+    print("    `has_semantics` is all-or-nothing on tier 1: an unbound parse")
+    print("    resolves no symbol at all, built-in functions included.")
+
+    banner("validate() — the same answer without holding a KustoQuery")
+    print(f"  validate(QUERY)                        -> "
+          f"{len(validate(QUERY))} diagnostic(s)")
+    print(f"  validate(QUERY, schema=...)            -> "
+          f"{len(validate(QUERY, schema=STORM_EVENTS_SCHEMA))} diagnostic(s)")
+    print("  → Same shape, same codes; it just parses again. Prefer the")
+    print("    property when you already have the parse.")
 
 
 if __name__ == "__main__":
