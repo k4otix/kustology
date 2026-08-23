@@ -23,4 +23,8 @@ What you expected to happen, and what happened instead.
 - Python version:
 - OS / arch:
 - .NET runtime version (`dotnet --info`):
-- Bundled DLL (`cat src/kustology/bin/VERSION.txt`):
+- Bundled DLL — works on an installed package, not just a source checkout:
+
+  ```bash
+  python -c "import kustology, pathlib; print((pathlib.Path(kustology.__file__).parent / 'bin' / 'VERSION.txt').read_text())"
+  ```
