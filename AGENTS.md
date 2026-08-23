@@ -55,10 +55,13 @@ read as a direct attribute** resolves somewhere in `Kusto.Language`. Two
 limits. The check is per name, not per type, so the `Keys.Count` shape still
 needs a value assertion on a real parse. And the direct-access scan drops any
 pure attribute chain rooted at a name the file imports — it cannot tell a
-namespace segment from a member read — so `GlobalState.Default.WithDatabase(db)`
-is not checked at all, while `TableSymbol.From(cols).WithName(name)` is,
-because the call breaks the chain. Before adding a probe of either style,
-confirm the member exists:
+namespace segment from a member read — so neither `Default` nor
+`WithDatabase` is checked in `GlobalState.Default.WithDatabase(db)`. A call
+breaks the chain, but only downstream of itself: in
+`TableSymbol.From(cols).WithName(name)`, `From` is **dropped** and only
+`WithName` is checked. So a *partly* covered expression is the normal case,
+not the exception — do not read a green audit as "every member on that line
+exists". Before adding a probe of either style, confirm the member exists:
 
 ```python
 [m for m in dir(node) if m[:1].isupper()]
@@ -227,10 +230,17 @@ python scripts/refresh_dll.py             # uses the pinned version
 python scripts/refresh_dll.py --version X.Y.Z --pin
 ```
 
-`--pin` updates `pyproject.toml` and `bin/VERSION.txt` together. After
-refreshing, run `python scripts/verify_dll.py` and the full test suite —
-upstream parser changes can shift diagnostic codes (`KS204` etc.) or rename
-AST kinds.
+`bin/VERSION.txt` is rewritten on **every** run (`refresh_dll.py:229-235`),
+the bare form included — it re-resolves the pinned version and restamps
+`refreshed=`. `--pin` adds the `pyproject.toml` write (`:239-241`), nothing
+else. So `refresh_dll.py --version X.Y.Z` *without* `--pin` leaves the two
+files disagreeing. Only the **online** `verify_dll.py` catches that: it
+reads the version from `pyproject.toml`, prints
+`WARN: bin/VERSION.txt records version …` and then fails on the hash it
+fetches. `--offline` compares the DLL against `VERSION.txt` alone and never
+opens `pyproject.toml`, so it passes happily. After refreshing, run
+`python scripts/verify_dll.py` and the full test suite — upstream parser
+changes can shift diagnostic codes (`KS204` etc.) or rename AST kinds.
 
 ## Tier 2 IR (`kustology.ir`)
 

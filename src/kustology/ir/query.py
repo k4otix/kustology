@@ -874,16 +874,22 @@ class ForkOp(Operator):
 class ScanOp(Operator):
     """``scan`` — kept as its own source text; the step machine is not modeled.
 
-    This is the first of eight operators the IR records on ``raw_text``
-    rather than in typed fields, and the register is the same as
-    :class:`LetFunction`'s: the boundary is stated in the model instead of
-    being left as fields that read as implemented and are not. The other
+    This is the first of eight *modelled* operators the IR records on
+    ``raw_text`` rather than in typed fields, and the register is the same
+    as :class:`LetFunction`'s: the boundary is stated in the model instead
+    of being left as fields that read as implemented and are not. The other
     seven are :class:`TopNestedOp`, :class:`MakeGraphOp`,
     :class:`MacroExpandOp`, :class:`GraphMatchOp`,
     :class:`GraphMarkComponentsOp`, :class:`GraphShortestPathsOp` and
-    :class:`GraphToTableOp`. (``graph-where-edges`` and
-    ``graph-where-nodes`` are *not* in this set — both carry a real
-    ``predicate``.)
+    :class:`GraphToTableOp`.
+
+    Two exclusions, so the count is checkable. ``graph-where-edges`` and
+    ``graph-where-nodes`` have no ``raw_text`` at all — both carry a real
+    ``predicate``. And :class:`UnknownOp` *does* have one, so enumerating
+    ``Operator`` subclasses with a ``raw_text`` field gives **nine**, not
+    eight; it is excluded here because it is the builder's fallback for a
+    shape it could not dispatch rather than an operator anyone chose to
+    model this way. Eight is the register; nine is the field count.
 
     What ``raw_text`` buys and what it does not. It is
     ``ToString(IncludeTrivia.Minimal)``, so these operators round-trip

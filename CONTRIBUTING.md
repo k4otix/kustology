@@ -98,9 +98,13 @@ pytest
 python scripts/audit_syntax_kinds.py --check
 ```
 
-`--pin` updates `pyproject.toml` and `bin/VERSION.txt` together. Always run
-the test suite after a refresh; upstream parser changes can shift diagnostic
-codes or AST kinds. The coverage audit is the one that catches a *new*
+`bin/VERSION.txt` is rewritten on **every** run — including a bare
+`refresh_dll.py`, which re-resolves the already-pinned version and stamps a
+fresh `refreshed=` timestamp. `--pin` adds the second write, to
+`pyproject.toml`'s `[tool.kustology]`. So an unpinned run can still leave the
+two files disagreeing about the version; pass `--pin` whenever `--version`
+changes it. Always run the test suite after a refresh; upstream parser
+changes can shift diagnostic codes or AST kinds. The coverage audit is the one that catches a *new*
 `SyntaxKind` the builder has never seen — regenerate its baseline with
 `--update-baseline` once you have decided whether to model the new kind or
 let it fall through to `UnknownOp` / `UnknownExpr`, and commit
