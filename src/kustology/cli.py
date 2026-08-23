@@ -418,11 +418,26 @@ def main(argv: list[str] | None = None) -> int:
         else:
             parser.error(f"unknown command: {args.command!r}")
             rc = 2  # unreachable; parser.error raises SystemExit
-        # Flush inside the guard. A write to a pipe is buffered, so a reader
-        # that has gone away does not surface until the buffer drains — and
-        # if that only happens at interpreter shutdown it lands outside every
-        # handler below, where it becomes an unclassifiable traceback.
-        sys.stdout.flush()
+        # Backstop flush, for anything written outside a command's own
+        # `_tolerate_broken_pipe` block. A write to a pipe is buffered, so a
+        # departed reader is not discovered until the buffer drains, and if
+        # that only happens at interpreter shutdown it lands outside every
+        # handler here and becomes an unclassifiable traceback.
+        #
+        # It has its own handler rather than falling through to the
+        # `BrokenPipeError` arm below, because by this line `rc` is already
+        # decided and that arm returns 0. A pipe breaking *here* would
+        # therefore turn `kustology validate bad.kql | head` into a pass —
+        # the exact failure `_tolerate_broken_pipe` exists to prevent, one
+        # frame further out. Today every stdout write in this module is
+        # inside a guard that flushes on the way out, so this flush finds an
+        # empty buffer and cannot raise; the handler is what keeps that an
+        # implementation detail instead of a load-bearing invariant, and it
+        # is what makes the arm below's "no code was ever decided" true.
+        try:
+            sys.stdout.flush()
+        except BrokenPipeError:
+            _silence_broken_stdout()
         return rc
     except SystemExit:
         raise

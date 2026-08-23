@@ -243,15 +243,26 @@ class SchemaAttacher:
 
     The remaining 28 pass the scope through unchanged. For the ones that
     genuinely preserve their input schema (``sort``, ``top``, ``take``,
-    ``sample``, ``as``, ``render``, ``consume``, ``assert-schema``, the graph
-    ``where`` predicates) that is exact; for ones that do reshape (``find``,
-    ``scan``, ``facet``, ``fork``, ``mv-apply``, ``partition``,
-    ``top-nested``, ``top-hitters``, ``sample-distinct``, ``invoke``,
-    ``macro-expand``, the graph operators) the scope downstream is stale.
-    Two are in neither camp: ``execute-and-cache`` is a directive with no
-    row-set effect at all, and ``unknown-op`` is the builder's fallback for
-    an operator it did not model, whose effect on the schema is by
-    definition not known here.
+    ``sample``, ``as``, ``render``, ``assert-schema``, the graph ``where``
+    predicates) that is exact; for ones that do reshape (``find``, ``scan``,
+    ``facet``, ``fork``, ``mv-apply``, ``partition``, ``top-nested``,
+    ``top-hitters``, ``sample-distinct``, ``invoke``, ``macro-expand``, the
+    graph operators) the scope downstream is stale.
+
+    ``consume`` is in the second camp, not the first, and is the extreme
+    case: Microsoft's binder gives ``ConsumeOperator`` a ``VoidSymbol``
+    (``IsTabular`` false, ``Tabularity`` ``None``), because the operator
+    swallows the row set and yields nothing. So the scope we leave in place
+    downstream is not merely stale but empty in the engine —
+    ``T | consume | project a`` is a ``KS142`` "name does not refer to any
+    known column" from Microsoft while our walk would resolve ``a`` from
+    ``T``. Filed here rather than fixed: it is a schema-derivation change
+    with its own tests, and ``consume`` is terminal in every real query.
+
+    Two operators are in neither camp: ``execute-and-cache`` is a directive
+    with no row-set effect at all, and ``unknown-op`` is the builder's
+    fallback for an operator it did not model, whose effect on the schema is
+    by definition not known here.
     Stale is worse than exact and better than the previous behavior, which
     was to skip those operators entirely so their own column references never
     resolved at all. ``tests/ir/test_binder_oracle.py`` runs an unbound leg
@@ -1244,15 +1255,17 @@ class SchemaAttacher:
         # other 28, so `| sort by X` left X with no table while a `| project`
         # in the same query resolved fine. Filling without reshaping is the
         # honest position: correct for the operators that pass their schema
-        # through (sort, top, take, sample, as, render, consume,
-        # assert-schema, the graph where-predicates), and for the ones that
-        # do reshape (find, scan, facet, fork, mv-apply, partition,
-        # top-nested, top-hitters, sample-distinct, invoke, macro-expand,
-        # the graph operators) it leaves a stale scope rather than an empty
-        # one — strictly closer than skipping them, and visible here rather
-        # than silent. The class docstring carries the full split, and the
-        # unbound leg of `tests/ir/test_binder_oracle.py` is what keeps it
-        # from drifting.
+        # through (sort, top, take, sample, as, render, assert-schema, the
+        # graph where-predicates), and for the ones that do reshape (find,
+        # scan, facet, fork, mv-apply, partition, top-nested, top-hitters,
+        # sample-distinct, invoke, macro-expand, consume, the graph
+        # operators) it leaves a stale scope rather than an empty one —
+        # strictly closer than skipping them, and visible here rather than
+        # silent. `consume` is the reshaper furthest from pass-through:
+        # Microsoft types it VoidSymbol, so downstream the engine has no
+        # columns at all where we still have T's. The class docstring
+        # carries the full split, and the unbound leg of
+        # `tests/ir/test_binder_oracle.py` is what keeps it from drifting.
         #
         # Sub-pipelines inherit the current scope: an mv-apply / partition /
         # fork / facet body has an implicit source and runs against the

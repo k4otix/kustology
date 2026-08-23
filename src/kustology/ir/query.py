@@ -368,10 +368,36 @@ class SortKey(BaseModel):
     ``direction`` would vanish from the LLM view exactly on the queries where
     the reader has no other way to tell which way the rows come back.
 
-    ``nulls`` is genuinely optional and keeps its ``None``: KQL has no
-    documented default null placement to substitute, and the clause is
-    grammatically independent of ``asc``/``desc`` (``sort by x nulls first``
-    parses to an ``OrderingClause`` with no direction keyword at all).
+    ``nulls`` keeps its ``None`` when the query does not write it, and it is
+    the only D8 field on this model that does not carry KQL's effective
+    default. Not because KQL leaves null placement undefined — it does not.
+    Microsoft documents it, and documents it as *direction-dependent*:
+    "Default for ``asc`` is ``nulls first``. Default for ``desc`` is ``nulls
+    last``" (`sort operator
+    <https://learn.microsoft.com/en-us/kusto/query/sort-operator>`_, revised
+    2025-01-21). Two things follow from that, and together they are the
+    reason:
+
+    * Every other D8 default is a **constant that adds information the IR
+      would otherwise lack** — a bare ``join`` really is ``innerunique``, and
+      nothing else on the node says so. This one is derivable from
+      ``direction``, which is already on the same node, so substituting it
+      would put a computed value in a field whose remaining job is to answer
+      "did the query write this?".
+    * Substituting it would **merge two spellings** in ``semantic_hash``:
+      ``sort by x asc`` currently splits from ``sort by x asc nulls first``,
+      and would stop. That merge is arguably correct, but a dedup consumer
+      survives a failure to merge and cannot survive a wrong one, so the
+      split is the safe side of a call we did not have to make for 0.2.0.
+
+    An earlier version of this docstring justified the asymmetry structurally
+    — the nulls clause being "grammatically independent" of ``asc``/``desc``.
+    That is true of the parse tree and is not a reason: .NET's
+    ``OrderingClause`` carries ``AscOrDescKeyword`` and ``NullsClause`` as
+    independently optional peers, and ``sort by x nulls first`` — where
+    ``AscOrDescKeyword`` *is* ``None`` — already records ``direction="desc"``
+    right beside ``nulls="first"``. The grammar treats them alike; the
+    asymmetry is our choice about what the field means.
     """
 
     model_config = {"extra": "forbid"}
