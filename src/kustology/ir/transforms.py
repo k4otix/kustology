@@ -514,16 +514,25 @@ def compute_semantic_hash(node: BaseModel) -> str:
       ``to typeof(…)``, ``limit`` and ``with_itemindex=``, ``parse-kv``'s
       ``with (…)`` properties, ``getschema kind=csl``, ``consume
       decodeblocks=`` as of 0.2.0.
-    * **Statements that are neither ``let`` nor tabular.** These are
-      discarded wholesale rather than modelled and lossily lowered, so the
-      rule needs no list: if a statement is not a ``let`` and not a
-      pipeline, it hashes as though it were absent. That covers ``set``,
-      ``declare query_parameters``, ``declare pattern``, ``alias database``
-      and ``restrict access`` today, and it will cover whatever is added
-      next until they are modelled. Two *different* values of one such
-      statement therefore collide with each other, not merely with a query
-      that omits it — and all of them parse with zero diagnostics, so
-      nothing signals the loss.
+    * **Statements that are neither ``let`` nor tabular.** The builder
+      collects ``let`` statements and pipelines; a statement of any other
+      kind contributes nothing of its own, so whatever it said is absent
+      from the digest. Two *different* values of one such statement
+      therefore collide with each other, not merely with a query that omits
+      it, and they parse with zero diagnostics so nothing signals the loss.
+      ``set``, ``declare query_parameters``, ``declare pattern``,
+      ``alias database`` and ``restrict access`` all behave this way today.
+
+      **It is "contributes nothing of its own", not "is skipped".** The
+      ``let`` collection walks ``GetDescendants[LetStatement]``, which is
+      recursive, so a ``let`` *nested inside* one of these statements is
+      hoisted into top-level ``let_bindings`` and does reach the digest —
+      ``declare pattern P = (a:string) { ("x") = { let z = 5; T | take z };
+      }; T | take 1`` splits both from the bare query and from the same
+      pattern with ``z = 9``. That is a split where the paragraph above
+      promises a merge, which is the safe direction (a dedup consumer fails
+      to merge rather than merging wrongly), but it means the enclosing
+      statement is not an opaque blank: only its own syntax is.
 
     A dedup consumer that must not merge across any of these has to compare
     more than the hash. Rather than trusting the lists above,

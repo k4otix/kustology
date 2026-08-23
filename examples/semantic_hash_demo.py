@@ -100,9 +100,11 @@ KNOWN_MERGES = [
      "T | where a > real(null)", "T | where a > datetime(null)"),
     ('obfuscated strings: h"x" == "x" — deliberate',
      'T | where a == h"x"', 'T | where a == "x"'),
-    # All six surviving operator-modifier gaps, one row each. Summarizing
-    # them would defeat the point of the group: `parse-kv with (...)` and
-    # `consume decodeblocks=` are exactly the two a reader would not guess.
+    # One row per operator modifier the builder has no IR field for, so the
+    # modifier cannot reach the digest. That is what qualifies a case for
+    # this group; the rows below are the ones that qualify today. Summarizing
+    # them would defeat the point — `parse-kv with (...)` and `consume
+    # decodeblocks=` are exactly the two a reader would not guess.
     ("mv-apply drops `to typeof(...)` — known gap",
      "T | mv-apply d to typeof(long) on (take 1)",
      "T | mv-apply d on (take 1)"),
@@ -123,11 +125,17 @@ KNOWN_MERGES = [
      "T | getschema kind=csl", "T | getschema"),
     ("consume drops `decodeblocks=` — known gap",
      "T | consume decodeblocks=true", "T | consume"),
-    # Every statement kind that is neither `let` nor tabular is discarded
-    # outright and hashes as though it were absent. All five are here, each
-    # with the variant that costs a dedup consumer the most — not "vs a
-    # query without one", which is easy to shrug off, but two *different*
-    # values of the same statement colliding with each other.
+    # A statement that is neither `let` nor tabular contributes nothing of
+    # its own to the digest, so its content hashes as though absent. Every
+    # kind that behaves that way gets a row, and each uses the variant that
+    # costs a dedup consumer most — not "vs a query without one", which is
+    # easy to shrug off, but two *different* values of the same statement
+    # colliding with each other.
+    #
+    # "Nothing of its own" is exact: a `let` nested inside one of these is
+    # still hoisted into top-level let_bindings and does reach the digest,
+    # so the enclosing statement is not an opaque blank. See
+    # compute_semantic_hash's docstring.
     ("`set` vanishes: pinned query_now == no query_now — known gap",
      "set query_now=datetime(2020-01-01); T | take 1", "T | take 1"),
     ("`set` vanishes: two different query_now values — known gap",
@@ -136,8 +144,9 @@ KNOWN_MERGES = [
     ("`declare query_parameters` vanishes: two different defaults — known gap",
      "declare query_parameters(n:long = 5); T | take 1",
      "declare query_parameters(n:long = 9); T | take 1"),
-    ("`alias database` vanishes entirely — known gap",
-     "alias database D = cluster('c').database('d'); T | take 1", "T | take 1"),
+    ("`alias database` vanishes: two different databases — known gap",
+     "alias database D = cluster('c').database('d'); T | take 1",
+     "alias database D = cluster('c').database('e'); T | take 1"),
     ("`declare pattern` vanishes: two different bodies — known gap",
      'declare pattern P = (a:string) { ("x") = { T | take 1 }; }; T | take 1',
      'declare pattern P = (a:string) { ("x") = { U | take 9 }; }; T | take 1'),
