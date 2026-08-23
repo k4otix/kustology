@@ -22,9 +22,11 @@ already summarize their condition/columns — is the same one
 ``utils/analysis.py`` uses internally and is the right way to build
 custom AST-level analyzers.
 
-**Order the two filters correctly, and match on the end of the kind.** Both
-halves of that are load-bearing, and the second demo below shows what the
-sloppy version costs.
+**Match on the end of the kind, not the substring.** That is the half that
+is load-bearing: `kind.endswith("Token")` drops none of the four
+"Token"-containing kinds that are not tokens, where `"Token" in kind` drops
+three or four of them depending on where you put the check. The second demo
+below shows one of them costing real information.
 """
 
 from kustology import parse
@@ -41,21 +43,26 @@ def walk_node(node, depth: int = 0) -> None:
     except AttributeError:
         return
 
-    # Structural wrappers: recurse without indenting. This has to run
-    # *before* the token filter, because `TokenName` is a wrapper whose
-    # name contains "Token" — with the checks the other way round it is
-    # dropped as if it were a token, along with everything under it.
+    # Structural wrappers: recurse without indenting. Deciding "is this a
+    # wrapper" before "is this a token" is just the clearer order — with
+    # the endswith filter below the two are independent, since no member of
+    # _TRANSPARENT ends in "Token".
     if kind in _TRANSPARENT:
         for i in range(node.ChildCount):
             walk_node(node.GetChild(i), depth)
         return
 
     # Tokens are punctuation/keywords; skip both display and recursion.
-    # `kind.endswith("Token")`, not `"Token" in kind`: 58 of the parser's
-    # kinds contain the substring and four of them are not tokens —
+    #
+    # `kind.endswith("Token")`, not `"Token" in kind`. Of the parser's 605
+    # kinds, 58 contain the substring and four of those are not tokens:
     # TokenName, SkippedTokens, CommandAndSkippedTokens, and
-    # TokenLiteralExpression, which is the `inner` in `join kind=inner`.
-    # The substring version silently deletes all four from the walk.
+    # TokenLiteralExpression — the `inner` in `join kind=inner`. None of the
+    # four ends in "Token", so endswith keeps all four and the substring
+    # version drops them: all four if it runs before the wrapper check
+    # (TokenName included, along with everything under it), three if it runs
+    # here, where _TRANSPARENT has already claimed TokenName. Either way the
+    # information is gone, which is what the second demo below shows.
     if kind.endswith("Token"):
         return
 
