@@ -22,10 +22,13 @@ recording which, so ``has_any`` and ``has_all``, which are opposites,
 shared a digest. ``SetMembership.op`` is what separates them now, and
 ``Exists.op`` does the same for ``isnotnull`` / ``isnotempty``.
 
-**Merges you may not want.** Two literal collapses are deliberate, and
-four operator modifiers plus every non-``let`` statement kind are known
-gaps. They are listed here rather than hidden, because a dedup consumer
-needs to know which merges it is buying.
+**Merges you may not want.** Two literal collapses are deliberate. Six
+modifiers across four operators are known gaps, as is every statement kind
+that is neither ``let`` nor tabular. All of them are *listed below and
+hashed*, not summarized — a consumer who reads "here is what you are
+buying" and then dedups on the digest has to be shown every row, so the
+count in this paragraph and the rows in ``KNOWN_MERGES`` are the same set.
+It matches the list in ``compute_semantic_hash``'s docstring.
 
 The digest carries its scheme as a prefix (``kustology-sem-v2:``) so a
 stored hash from an older canonicalization cannot silently compare unequal
@@ -93,19 +96,52 @@ KNOWN_MERGES = [
      "T | where a > real(null)", "T | where a > datetime(null)"),
     ('obfuscated strings: h"x" == "x" — deliberate',
      'T | where a == h"x"', 'T | where a == "x"'),
+    # All six surviving operator-modifier gaps, one row each. Summarizing
+    # them would defeat the point of the group: `parse-kv with (...)` and
+    # `consume decodeblocks=` are exactly the two a reader would not guess.
     ("mv-apply drops `to typeof(...)` — known gap",
      "T | mv-apply d to typeof(long) on (take 1)",
      "T | mv-apply d on (take 1)"),
+    ("mv-apply drops `limit` — known gap",
+     "T | mv-apply d limit 5 on (take 1)",
+     "T | mv-apply d on (take 1)"),
+    # The modifier precedes the column name; `mv-apply d with_itemindex=i`
+    # is a parse error whose error recovery moves the hash for the wrong
+    # reason, which reads as "no collision here" if you do not check
+    # diagnostics.
+    ("mv-apply drops `with_itemindex=` — known gap",
+     "T | mv-apply with_itemindex=i d on (take 1)",
+     "T | mv-apply d on (take 1)"),
+    ("parse-kv drops its `with (...)` properties — known gap",
+     "T | parse-kv a as (b:string) with (pair_delimiter=',')",
+     "T | parse-kv a as (b:string)"),
     ("getschema drops `kind=csl` — known gap",
      "T | getschema kind=csl", "T | getschema"),
+    ("consume drops `decodeblocks=` — known gap",
+     "T | consume decodeblocks=true", "T | consume"),
     ("a `set` statement is discarded entirely — known gap",
      "set query_now=datetime(2020-01-01); T | take 1", "T | take 1"),
 ]
 
 
+def errors(query: str) -> list[str]:
+    """Error-severity diagnostic codes for ``query``, if any."""
+    return [d["code"] for d in parse(query).diagnostics if d["severity"] == "Error"]
+
+
 def report(title: str, pairs, expect_equal: bool) -> None:
     print(f"\n=== {title}")
     for label, left, right in pairs:
+        # A pair that does not parse is the trap here, not a result. KQL's
+        # error recovery happily builds *something* for invalid text, and
+        # that something has its own digest — so a typo in a modifier's
+        # spelling shows up as a clean-looking "split" and reads as "no
+        # collision", which is the opposite of what this file is claiming.
+        # Check the input before believing the verdict.
+        bad = errors(left) + errors(right)
+        if bad:
+            print(f"  BROKEN {label}   <-- does not parse: {bad}")
+            continue
         same = digest(left) == digest(right)
         verdict = "merge " if same else "split "
         flag = "" if same == expect_equal else "   <-- UNEXPECTED"

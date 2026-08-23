@@ -509,8 +509,20 @@ def compute_semantic_hash(node: BaseModel) -> str:
     ``with (…)`` properties, ``getschema kind=csl``, and ``consume
     decodeblocks=``. Two literal collapses are deliberate rather than
     outstanding — typed nulls and obfuscated strings; see
-    :class:`~kustology.ir.expr.LiteralExpr`. A dedup consumer that must
-    not merge across those cases has to compare more than the hash.
+    :class:`~kustology.ir.expr.LiteralExpr`.
+
+    A third category is easy to miss because it is not an operator at all:
+    **a statement that is neither ``let`` nor tabular is discarded, and
+    hashes as though it were absent.** ``set query_now=datetime(2020-01-01);
+    T | take 1`` shares a digest with a bare ``T | take 1`` *and* with the
+    same query pinned to a different ``query_now``; two ``declare
+    query_parameters`` defaults differing only in value collide; so does an
+    ``alias database`` declaration. All parse with zero diagnostics, so
+    nothing signals the loss.
+
+    A dedup consumer that must not merge across any of these has to compare
+    more than the hash. ``examples/semantic_hash_demo.py`` hashes every case
+    named here, so the list can be re-derived rather than trusted.
 
     The hash operates on a deep copy of ``node`` — does not mutate the
     input, and the result reflects the IR shape at call time. Stale if
