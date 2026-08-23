@@ -8,8 +8,10 @@ join-bearing query:
 
   - ``validate()``                 — structured parser diagnostics.
   - ``get_structural_hash()``      — SHA-256 over the AST skeleton;
-                                     stable across literal/whitespace
-                                     changes.
+                                     blind to literals *and* identifiers,
+                                     sensitive to operator sequence. The
+                                     example computes the invariance
+                                     rather than claiming it.
   - ``get_referenced_tables()``    — every table source, including
                                      joined, union'd, and
                                      ``database()``-qualified refs.
@@ -70,17 +72,49 @@ def analyze(query_text: str) -> None:
         print(f"    [{d['severity']} {d['code']}] at char {d['start']}: {d['message']}")
 
     banner("get_structural_hash()")
-    print(f"  {result.get_structural_hash()}")
-    print('  → unchanged if you swap "TEXAS" for "OHIO" or rewhitespace the query.')
+    baseline = result.get_structural_hash()
+    print(f"  {baseline}")
+    # Demonstrated rather than asserted: each variant is hashed here, and
+    # the verdict is computed. The hash is over the AST *skeleton* — node
+    # kinds and shape — so it is blind to literal values and to identifiers,
+    # and sensitive to the sequence of operators.
+    variants = {
+        "literals changed (5 -> 500, 0 -> 3)":
+            query_text.replace("Casualties > 5", "Casualties > 500")
+                      .replace("DeathsDirect > 0", "DeathsDirect > 3"),
+        "reflowed onto one line":
+            " ".join(query_text.split()),
+        "a comment added at the top":
+            "// high-impact states\n" + query_text,
+        "every State renamed to Region":
+            query_text.replace("State", "Region"),
+        "one more operator (| take 10)":
+            query_text + "\n| take 10",
+    }
+    for label, variant in variants.items():
+        same = parse(variant).get_structural_hash() == baseline
+        print(f"  {'same' if same else 'DIFF'}  {label}")
+    print("  → Identifiers do not move it either, which is the part that")
+    print("    surprises people: `where State == 'x'` and `where Region == 'x'`")
+    print("    are one structural hash. For a digest that separates those,")
+    print("    use tier 2's `semantic_hash` (see examples/semantic_hash_demo.py).")
 
     banner("get_referenced_tables()")
     tables = sorted(result.get_referenced_tables())
     print(f"  {tables}")
+    print("  → `high_impact_states` is a `let` alias, not a table, and is")
+    print("    correctly absent. So is the join's right-hand side, because")
+    print("    that side reads the alias too.")
 
     banner("get_referenced_columns()")
     columns = sorted(result.get_referenced_columns())
     for col in columns:
         print(f"  {col}")
+    print("  → Every name in a column position, which includes the ones this")
+    print("    query *creates*: Casualties, TotalLoss, EventCount, TotalDamage")
+    print("    are summarize/extend outputs, not columns of StormEvents. This")
+    print("    is a syntactic answer; bind a schema and use tier 2's")
+    print("    `find_all(ir, ColumnRef)` to get provenance per reference.")
 
     banner("get_referenced_functions()")
     functions = sorted(result.get_referenced_functions())
