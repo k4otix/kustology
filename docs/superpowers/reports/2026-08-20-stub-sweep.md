@@ -22,6 +22,14 @@ cell. **One row is not closed:** B3 (`RegexMatch.case_sensitive`) is still a
 hardcoded `True` with no comment saying why. Suite at the time of checking:
 1785 passed, 4 skipped, 15 xfailed.
 
+One exception to "re-checked by running", recorded because a disposition
+marker is only worth as much as its method: **B2's first marker was written
+from the diff, not from the file**, and claimed a tautology had been deleted
+when it had only been joined by a real assertion. Caught in review and
+corrected in place on 2026-08-22 with the line numbers re-read from the
+source. It was the only cell of the 25 with a false claim in it, and it
+erred by understating what remained.
+
 ---
 
 ## 1. The root cause behind four of the findings
@@ -92,7 +100,7 @@ different queries can produce identical IR. Recorded in AGENTS.md.
 | # | Item | Evidence | Verdict |
 |---|---|---|---|
 | B1 | `SetMembership.case_sensitive` | Hardcoded `False` at `builder.py:1032`. Verified: `in`, `in~`, `!in`, `!in~` **all** yield `False`. KQL `in` is case-*sensitive*; only `in~` is not. So the field is both constant and **semantically wrong for half its inputs**, and `canonical()` consequently renders `X in ("a")` as `X in~ ("a")`. | **fix — correctness bug** → **FIXED** — derived from `op` rather than hardcoded: `in` / `!in` give `True`, `in~` / `has_any` give `False`, and `canonical()` renders `a in ("x")`. |
-| B2 | `KustoType.TABULAR` | `ir/types.py:27`. The only producer is `map_net_type` (`_builder_helpers.py:61`), which needs a .NET symbol whose `Name` is literally `"tabular"`. `TableSymbol.Name` is the table's own name; `ScalarTypes` has no `tabular`. Its only test (`tests/ir/test_ir_builder.py:250-252`) asserts `"TABULAR" in {m.name for m in KustoType}` — a tautology that passes whether or not the member is reachable. | **document** → **FIXED** — the tautology is gone. `tests/ir/test_ir_builder.py:329` now asserts `map_net_type("tabular") is KustoType.TABULAR` and carries a docstring saying the member is declared but unreachable from a real parse. |
+| B2 | `KustoType.TABULAR` | `ir/types.py:27`. The only producer is `map_net_type` (`_builder_helpers.py:61`), which needs a .NET symbol whose `Name` is literally `"tabular"`. `TableSymbol.Name` is the table's own name; `ScalarTypes` has no `tabular`. Its only test (`tests/ir/test_ir_builder.py:250-252`) asserts `"TABULAR" in {m.name for m in KustoType}` — a tautology that passes whether or not the member is reachable. | **document** → **FIXED** — the tautology is **still there**, at `tests/ir/test_ir_builder.py:339`; what closes the row is that it is now joined by a real assertion at `:341` (`map_net_type("tabular") is KustoType.TABULAR`, plus a `"long"` control at `:342`) and by a docstring stating the member is declared but unreachable from a real parse. Corrected 2026-08-22: this cell previously read "the tautology is gone" and cited `:329`, which is inside the docstring. |
 | B3 | `RegexMatch.case_sensitive` | Hardcoded `True` at `builder.py:1009`. Domain-defensible (`matches regex` is always case-sensitive) but the field carries no information. | **document** → **STILL OPEN** — verified 2026-08-22: still `case_sensitive=True` hardcoded at `builder.py:1755`, and neither the field nor the class carries a comment saying why. Harmless (the value is right for every input) but the row's own ask is unmet. |
 
 ### Cleared — checked and not defects
