@@ -137,7 +137,12 @@ def test_datetime_literal_is_utc_and_tz_independent():
     (bare) one -- covering both branches separately matters because
     ``ToUniversalTime()`` is a no-op on an ``Unspecified`` value when the
     host zone already happens to be UTC, so a regression in that branch
-    alone could still pass a same-zone comparison."""
+    alone could still pass a same-zone comparison.
+
+    The absolute-value assertion below runs everywhere. The cross-timezone
+    half needs a platform that honours ``TZ``; where one does not, the test
+    **skips** rather than failing, because a platform that cannot host the
+    experiment says nothing about the library."""
     import System
 
     q = "T | where d > datetime(2024-01-01T00:00:00Z)"
@@ -177,18 +182,37 @@ def test_datetime_literal_is_utc_and_tz_independent():
     assert child.returncode == 0, f"subprocess failed (exit {child.returncode}):\n{child.stderr}"
     child_tz, other, naive_other = child.stdout.strip().splitlines()
 
-    # Prove the child really did run in a different zone -- on a platform
-    # where CoreCLR ignores TZ (e.g. Windows, which reads the OS zone
-    # instead), the comparisons below would otherwise silently degrade into
-    # a same-config comparison that cannot catch a regression.
-    assert child_tz != parent_tz, (
-        f"TZ={child_tz_name} did not change System.TimeZoneInfo.Local.Id "
-        f"(stayed {child_tz!r} in both processes) -- this platform's "
-        f"CoreCLR does not honor TZ, so this test cannot exercise a "
-        f"different timezone and is not meaningful evidence here"
+    # Did the child really run in a different zone? On a platform where
+    # CoreCLR resolves TimeZoneInfo.Local from the OS rather than from TZ
+    # -- Windows does -- it did not, and the comparisons below would
+    # degrade into a same-config comparison that cannot catch a regression.
+    #
+    # That is a **skip**, not a failure. Nothing about the library is wrong
+    # when a platform ignores TZ; this test simply cannot gather evidence
+    # there, and failing would report a defect that does not exist. It also
+    # misdirects: the assertion this replaces blamed CoreCLR by name, so a
+    # maintainer who hit it went looking for a .NET bug instead of noticing
+    # the two processes were in the same zone. Skipping says which zone was
+    # observed and leaves it at that.
+    if child_tz == parent_tz:
+        pytest.skip(
+            f"TZ={child_tz_name} did not move System.TimeZoneInfo.Local.Id: "
+            f"both processes report {child_tz!r}. This platform resolves the "
+            f"local zone from the OS rather than from TZ, so a cross-timezone "
+            f"comparison cannot be set up here -- no evidence either way."
+        )
+
+    # Zones genuinely differ, so this is the comparison the test exists for.
+    assert here == other, (
+        f"Z-suffixed datetime literal hashes differently under {parent_tz} "
+        f"and {child_tz} -- the DateTimeKind.Local branch is not converting "
+        f"to UTC, so semantic_hash depends on the host's timezone"
     )
-    assert here == other
-    assert naive_here == naive_other
+    assert naive_here == naive_other, (
+        f"bare datetime literal hashes differently under {parent_tz} and "
+        f"{child_tz} -- the DateTimeKind.Unspecified branch is converting "
+        f"when it should only be relabelling"
+    )
 
 
 def test_naive_and_zulu_datetime_hash_equal():
