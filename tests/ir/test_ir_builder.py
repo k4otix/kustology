@@ -13,6 +13,7 @@ from kustology.ir import (
     BinOp,
     ColumnRef,
     FilterOp,
+    FuncCall,
     IRBuilder,
     KustoType,
     LiteralExpr,
@@ -25,6 +26,7 @@ from kustology.ir import (
     TopHittersOp,
     ToScalarExpr,
     UnknownSource,
+    find_all,
 )
 
 
@@ -1973,3 +1975,48 @@ def test_table_symbol_columns_declines_a_tuple_symbol():
     assert is_table_symbol(sym) is False
 
     assert table_symbol_columns(sym) is None
+
+
+def test_the_schemaless_docstrings_do_not_claim_built_ins_fail_to_resolve():
+    """Default globals are not empty, and the whole feature depends on that.
+
+    Correcting the KS204 claim overshot into a new false one: that default
+    globals "describe no tables — and no functions, clusters, databases,
+    external tables, materialized views, entity groups or stored query
+    results either — so *every* name the query brings with it fails to
+    resolve there". `GlobalState.Default` carries 428 functions, 61
+    aggregates and 46 plug-ins, `ago` among them, which is precisely why the
+    three sentences above that one can promise `ago(1h)` a `datetime`. A
+    docstring that contradicts itself three lines apart leaves the reader no
+    way to decide what a clean schemaless `to_ir()` actually means.
+
+    What *is* empty is the default **database** — and the cluster list. That
+    is the accurate scope, and it is the scope that explains the filter: the
+    suppressed family is every "this name is not in the database I was
+    handed", never "this built-in does not exist".
+    """
+    from kustology import KustoQuery
+    from kustology.bridge import GlobalState
+
+    # The facts the sentence has to reflect.
+    globals_ = GlobalState.Default
+    assert globals_.Functions.Count > 400, globals_.Functions.Count
+    assert globals_.Aggregates.Count > 0
+    assert globals_.Database.Tables.Count == 0
+    assert globals_.Clusters.Count == 0
+
+    # …and the behaviour they produce: a built-in resolves, with no
+    # diagnostic to suppress.
+    ir = parse("print x = ago(1h)").to_ir()
+    assert ir.diagnostics == []
+    call = next(iter(find_all(ir, FuncCall)))
+    assert call.name == "ago"
+    assert call.result_type == KustoType.DATETIME
+
+    for raw in (KustoQuery.to_ir.__doc__, IRBuilder.build.__doc__):
+        doc = " ".join(raw.split())
+        assert "built-in" in doc, doc
+        assert "database" in doc.lower(), doc
+        # The overshoot, in either module's wording.
+        assert "every name the query brings with it fails to resolve" not in doc
+        assert "Every name the query brings with it is therefore unresolvable" not in raw

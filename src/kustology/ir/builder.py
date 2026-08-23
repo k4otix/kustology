@@ -442,11 +442,15 @@ class IRBuilder:
 
         Binding happens against ``self.global_state``, which defaults to
         ``GlobalState.Default`` — a state that describes Kusto's built-in
-        functions and nothing else: no tables, no databases, no clusters, no
-        user functions. Every name the query brings with it is therefore
-        unresolvable, so the diagnostics those bindings raise describe how
-        the IR was built rather than anything the caller wrote, and the
-        unknown-name family is filtered out (:data:`_UNKNOWN_NAME_CODES`). A
+        functions, aggregates and plug-ins, and nothing else. Those resolve,
+        which is where a schemaless build's literal and built-in types come
+        from; its **database** is empty (no tables, no user functions, no
+        external tables, materialized views, entity groups or stored query
+        results) and so is its cluster list. Every name that has to come
+        from a database is therefore unresolvable, so the diagnostics those
+        failures raise describe how the IR was built rather than anything
+        the caller wrote, and the unknown-name family is filtered out
+        (:data:`_UNKNOWN_NAME_CODES`). A
         caller who supplied a real ``global_state`` and wants those rows
         should call :meth:`build_from_code` directly, which keeps them.
         """

@@ -202,17 +202,27 @@ class KustoQuery:
         ``has_semantics`` stays ``False`` and every Tier 1 accessor keeps
         taking its syntactic path. What it buys is real types for everything
         that does not need a table: ``1h`` is a ``timespan``, ``1.5`` a
-        ``real``, ``ago(1h)`` a ``datetime``. Default globals describe no
-        tables — and no functions, clusters, databases, external tables,
-        materialized views, entity groups or stored query results either —
-        so *every* name the query brings with it fails to resolve there.
-        The whole unknown-name diagnostic family those bindings raise
+        ``real``, ``ago(1h)`` a ``datetime``.
+
+        Those types come from the half of ``GlobalState.Default`` that is
+        *populated*: Kusto's built-in functions, aggregates and plug-ins,
+        several hundred of them. ``ago`` resolves there, and so does every
+        other built-in. What is empty is the default **database** — no
+        tables, no user functions, no external tables, materialized views,
+        entity groups or stored query results — and the cluster list. So
+        every name that has to come from a database fails to resolve, and
+        the whole unknown-name diagnostic family those failures raise
         (:data:`kustology.services._UNKNOWN_NAME_CODES`, twelve codes of
         which ``KS204`` "the name X does not refer to any known table" is
-        one) is therefore an artifact of how the types were obtained, and is
-        filtered out. A parse the caller bound with their own schema keeps
-        every one of them, because there an undescribed name is a real
-        error.
+        one) is an artifact of how the types were obtained rather than
+        anything the caller wrote. It is filtered out. A parse the caller
+        bound with their own schema keeps every one of them, because there
+        an undescribed name is a real error.
+
+        A clean ``diagnostics`` list from a schemaless ``to_ir()`` therefore
+        means "nothing wrong that default globals could see" — it does not
+        mean the query's tables, columns or user functions exist. Bind with
+        a schema to ask that question.
 
         Two passes populate the IR's type / provenance information:
 
