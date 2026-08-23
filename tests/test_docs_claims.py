@@ -66,6 +66,11 @@ def test_contributing_names_every_ci_job_without_a_local_counterpart():
     Adding a job to ``test.yml`` and not to the table is the drift this
     catches -- the table is what a contributor reads to know what CI does
     that their local loop does not.
+
+    Scoped to ``test.yml`` on purpose. ``canary.yml`` is scheduled and
+    manually dispatched, never triggered by a pull request, so it is not
+    part of the loop the paragraph describes and its absence from the table
+    is deliberate rather than drift.
     """
     jobs = _workflow_jobs()
     uncovered = jobs - _LOCALLY_COVERED_JOBS
