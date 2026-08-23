@@ -79,14 +79,27 @@ release is in `docs/superpowers/reports/`.
   `mv-expand kind=array`. `### Breaking` below carries the field-by-field
   detail for each.
 
-  **Two known survivors, both out of scope for this release.** `mv-apply`
-  discards `to typeof(…)` and `limit`, and `parse-kv` discards its
-  `with (…)` properties — `pair_delimiter`, `kv_delimiter` and the rest — so
-  two queries differing only in one of those still share a digest. Both need
-  new fields on operators this release did not otherwise touch, which is a
-  change with its own tests rather than a footnote to this one. They are
-  named here so the boundary is stated rather than implied: everything above
-  is closed, these two are not.
+  **Four known survivors, all out of scope for this release.** `mv-apply`
+  discards `to typeof(…)`, `limit` and `with_itemindex=`; `parse-kv`
+  discards its `with (…)` properties — `pair_delimiter`, `kv_delimiter` and
+  the rest; `getschema` discards `kind=csl`, which is the difference between
+  a table of column metadata and a single-row schema string; and `consume`
+  discards `decodeblocks=`. Two queries differing only in one of those still
+  share a digest. Each needs a new field on an operator this release did not
+  otherwise touch, which is a change with its own tests rather than a
+  footnote to this one. They are named here so the boundary is stated rather
+  than implied: everything above is closed, these four are not. The list is
+  what a modifier-pair sweep over the operator surface turned up — every
+  fields-less operator plus every modifier the grammar documents for the
+  operators above — and not a proof that nothing else remains.
+
+  Separately and **by design**, `hint.*` never splits a digest: `join
+  hint.strategy=shuffle`, `partition hint.strategy=native`,
+  `as hint.materialized=true` and `evaluate hint.pass_filters=true` each
+  hash identically to the same query without the hint, because a hint asks
+  the engine to execute a query differently and does not change the rows it
+  returns. The values are on `Operator.hints` for a reader who wants them —
+  see **Breaking** below.
 - **`BinOp.case_sensitive` is correct across the operator family (tier 2).**
   Eight operators were reported backwards, including every negated string
   operator (`!has`, `!contains`, …) and `hasprefix`/`hassuffix`. `search
@@ -328,10 +341,11 @@ release is in `docs/superpowers/reports/`.
   so they can no longer disagree about what a table is. Both modes return
   one entry per occurrence in source order: the syntactic walk used to
   report a pipe source two or three times, once per branch that saw the
-  node, while the bound path reported it once. Binding all 33
-  fixture rules against a deliberately half-complete schema lost a table in
-  13 of them before this change and none after. `get_tables_semantic()` is
-  unchanged and still strictly the binder's answer.
+  node, while the bound path reported it once. Binding the fixture corpus as
+  it stood then (33 rules) against a deliberately half-complete schema lost
+  a table in 13 of them before this change and none after.
+  `get_tables_semantic()` is unchanged and still strictly the binder's
+  answer.
 - **`get_structural_hash()` no longer collapses `kind=inner` into
   `kind=leftanti` (tier 1).** The walker skipped every syntax kind whose
   name *contains* "Token", which is true of `TokenLiteralExpression` — the
@@ -365,8 +379,8 @@ release is in `docs/superpowers/reports/`.
   now reports the columns an `extend` / `summarize` creates; semantic mode
   reports those only where the query reads the alias back, since the binder
   attaches a `ColumnSymbol` to references and a never-read alias has none.
-  Across the 33 fixture rules this drops 100 dynamic-bag keys and adds 105
-  projected columns.
+  Across the fixture corpus as it stood then (33 rules) this drops 100
+  dynamic-bag keys and adds 105 projected columns.
 - **Reflection reads every overload, sees shadowed statics, and lists
   `evaluate` plug-ins (tier 1).** Three separate defects in
   `kustology.reflection`. It read only *signature zero*'s
@@ -502,6 +516,25 @@ release is in `docs/superpowers/reports/`.
   `{"T": {"['my col']": "string"}}` declares a column literally named
   `['my col']` that no query can reach. The behaviour is correct and
   unchanged; nothing said so.
+- **An empty schema string is a `ValueError`, and every wrong-typed position
+  in a schema names itself (tier 1).** `{"T": ""}` reached
+  `TableSymbol.From` and came back as `System.InvalidOperationException` — a
+  CLR type a caller cannot name without importing from the CLR and cannot
+  catch except with a bare `except Exception`. It raises `ValueError`
+  naming the table and the `'(col:type, …)'` form instead. Only the empty
+  and whitespace-only strings change: Microsoft's schema parser *accepts*
+  `"("`, `"(a:)"`, `"(a:long"` and `"junk"` rather than rejecting them —
+  silently for the first and third, with the untyped-column
+  `RuntimeWarning` above for the other two — and so does this, which a
+  control test pins. A non-`str` table or column **name** is now a
+  `TypeError` naming its position rather than pythonnet's "No method
+  matches given arguments", so all five shape errors this layer can raise —
+  the schema itself, a table name, a table's value, a column name, a
+  column's type — report where they are. `"unknown"` is accepted as a type
+  name: it is Microsoft's own word for "no type" and what
+  `extract_schemas_from_global_state` emits, so that function's output now
+  round-trips back through `build_global_state` instead of being retyped to
+  `string` with a spurious warning.
 - **`TabularSchema.columns` documents its `"unknown"` sentinel (tier 2).**
   The IR carries two sentinels for "type not known" and nothing said which
   lived where: `Expr.result_type` is a `KustoType`, so an unplaced
@@ -848,9 +881,11 @@ release is in `docs/superpowers/reports/`.
   references, the per-operator copies were 35% of the whole LLM view
   (851,224 → 556,068 bytes across the corpus): with them the view was a
   median 28% smaller than `model_dump_json` on the same query, without them
-  it is 45%. What a reader loses is
-  the per-*step* column list; `model_dump_json` keeps every one, the same
-  split `to_llm_dict` already makes for `DataTableSource.rows`.
+  it is 45% — which is where a schemaless parse's view already sat (44%).
+  **Those two figures are the current measured ones**; both sides were
+  serialized as compact JSON. What a reader loses is the per-*step* column
+  list; `model_dump_json` keeps every one, the same split `to_llm_dict`
+  already makes for `DataTableSource.rows`.
   `Pipeline.result_schema` stays because "what columns does this query
   return" is one answer per pipeline. No released version ever emitted the
   field, in this view or any other — it is new in 0.2.0 — so this decides a
@@ -1205,9 +1240,42 @@ release is in `docs/superpowers/reports/`.
   resolves members case-sensitively and says nothing when one is absent.
 - The corpus coverage gates walk the whole `QueryIR` via `find_all` instead
   of hand-maintained attribute lists, and now cover `let` right-hand sides.
-- CI lints `examples/` alongside `src tests scripts`, and installs lint
-  tooling from `uv.lock` so an upstream release cannot redefine the rule set
-  mid-flight.
+- `tests/ir/test_binder_oracle.py` is a new gate that treats Microsoft's
+  binder as the oracle: for an operator matrix and every query in the
+  fixture corpus it compares the columns `SchemaAttacher` reports against
+  the ones `ResultType` carries, on both a bound and an unbound leg. It is
+  what the "result schemas come from the binder" change above is measured
+  by, and the cases the fallback walk still gets wrong are `xfail`ed by name
+  with a reason each, `strict=True`, so fixing one fails the gate rather
+  than passing silently.
+- CI lints `examples/` alongside `src tests scripts`, and every job installs
+  from `uv.lock` so an upstream release cannot redefine the rule set — or
+  the dependency set — mid-flight.
+- **The test matrix stops hiding IR regressions and adds Python 3.13.**
+  `tests/ir/` used to run on exactly one cell, so a version- or OS-specific
+  IR failure had five others to hide behind; every cell now installs the
+  `[ir]` extra and runs the whole suite, except `ubuntu-latest` / 3.10,
+  which stays on the base install so a bare `pip install kustology` is still
+  proven on every push. `fail-fast` is off, so a Windows failure no longer
+  cancels the Linux cells that would have said whether it was
+  platform-specific.
+- **A locale and timezone leg.** The suite runs again under `de_DE.UTF-8`,
+  `fr_FR.UTF-8`, and `en_US.UTF-8` with `TZ=Asia/Tokyo`. The first two guard
+  the culture pin (they fail differently — ten-times-wrong versus zero); the
+  third guards the datetime-`Kind` fix, which a UTC runner cannot exercise
+  at all, because at UTC+0 "converted to UTC" and "not converted" are the
+  same number.
+- **A weekly upstream canary** (`.github/workflows/canary.yml`). The Tests
+  workflow installs from `uv.lock`, which keeps `main` reproducible and
+  therefore blind to a dependency release that breaks the ranges
+  `pyproject.toml` publishes. The canary resolves those ranges fresh the way
+  `pip install kustology` does, across the same matrix, and on a scheduled
+  failure opens — or comments on — one issue rather than one per Monday.
+- **`.github/dependabot.yml`.** Update PRs were already arriving with the
+  cadence, grouping and ignore rules living in repository settings rather
+  than in the tree. Both ecosystems are declared here now: `uv` for the
+  lockfile and `github-actions` for the SHA-pinned `uses:` lines, which
+  nothing else keeps current.
 
 ## [0.1.0] — 2026-06-01
 
@@ -1291,8 +1359,10 @@ by `IR_SCHEMA_VERSION` and called out in this CHANGELOG.
   typed operators (`FilterOp`, `SummarizeOp`, `JoinOp`, `LookupOp`,
   `ProjectOp`, `ExtendOp`, …) and typed expressions (`BinOp`,
   `FuncCall`, `SetMembership`, `Between`, `And`, `Or`, …). 53 operator
-  types and 26 expression types covering the Kusto query surface seen in
-  real-world Sentinel detections (200/200 sample validates clean).
+  types and 23 expression types covering the Kusto query surface seen in
+  real-world Sentinel detections. (0.2.0 keeps the 53 and takes the
+  expressions to 25 — `MaterializeExpr` out, `LetValueRef`, `TypedNameDecl`
+  and `SubqueryExpr` in.)
 - `kustology.ir.IRBuilder.build(query)` parses, binds, and builds the IR
   in one call.
 - `kustology.ir.IRBuilder.build_from_code(code)` builds from a
@@ -1335,8 +1405,10 @@ by `IR_SCHEMA_VERSION` and called out in this CHANGELOG.
 - `QueryIR.to_llm_dict()` — lossy projection optimized for handing the
   IR to a language model: every node carries a `kind` discriminator,
   spans and defaulted fields are stripped, and `polarity` is collapsed
-  into natural KQL operators (`!=`, `!in`, `!between`). Roughly 50%
-  smaller than `model_dump_json()` on typical queries.
+  into natural KQL operators (`!=`, `!in`, `!between`). Measured over this
+  repo's fixture corpus with the 0.1.0 code, it was a median 58% smaller
+  than `model_dump_json()` on a schemaless parse and 42% on a bound one.
+  (For the 0.2.0 figure see `to_llm_dict` under **Changed** above.)
 - `kustology.ir.UnknownExpr` / `UnknownSource` / `UnknownOp` — explicit
   fallback nodes for shapes the builder doesn't model. The coverage
   audit (`scripts/audit_syntax_kinds.py`) fails CI when new shapes
@@ -1361,12 +1433,18 @@ by `IR_SCHEMA_VERSION` and called out in this CHANGELOG.
 
 ### Infrastructure
 
-- CI matrix: macOS × Linux × Windows × Python 3.10+ (tested against
-  3.10, 3.11, 3.12).
+- CI matrix: Linux on Python 3.10, 3.11 and 3.12, plus one Windows and one
+  macOS cell on 3.12. Not a full cross-product — the two non-Linux cells are
+  sanity checks.
 - Coverage audit (`scripts/audit_syntax_kinds.py`) fails CI on new
   uncovered `SyntaxKind` after a DLL refresh.
-- Corpus regression (`scripts/verify_corpus.py`) against a 200-query
-  Sentinel sample.
+- Corpus regression (`scripts/mine_corpus.py`) over the bundled fixture
+  corpus (33 queries at 0.1.0), failing CI when the builder falls through to
+  an `UnknownExpr` / `UnknownSource` / unspecialized `Operator`. A second,
+  soft job mines Microsoft's own KQL corpus for the same signal without
+  gating the build. `scripts/verify_corpus.py` is a **maintainer
+  diagnostic**, not a gate: it runs against a local, gitignored Sentinel
+  sample that is not in the repository and nothing in CI invokes it.
 - DLL provenance verified on every push (`scripts/verify_dll.py`).
 - PyPI publish workflow (`.github/workflows/release.yml`) — triggered
   by `v*` tags, builds via `python -m build`, generates a CycloneDX
@@ -1390,3 +1468,7 @@ by `IR_SCHEMA_VERSION` and called out in this CHANGELOG.
   - `walk_ir.py` — typed IR traversal (mirror of `walk_tree`).
   - `find_all_demo.py` — generic IR traversal via `find_all`.
   - `llm_view.py` — LLM-tailored IR serialization via `to_llm_dict`.
+
+[Unreleased]: https://github.com/k4otix/kustology/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/k4otix/kustology/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/k4otix/kustology/releases/tag/v0.1.0
