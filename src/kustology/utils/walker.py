@@ -36,9 +36,13 @@ from Kusto.Language.Syntax import IncludeTrivia
 # them — where a caller cannot do anything useful with it.
 #
 # 300 is comfortably inside the frame budget (the emitters and JSON
-# serialization stack on top of the walk) and comfortably above real KQL: a
-# large Sentinel rule nests ~17 levels, and even a 100-operator pipe chain,
-# which nests left-associatively one level per operator, reaches 108.
+# serialization stack on top of the walk) and comfortably above real KQL --
+# though real KQL is deeper than it looks, so the margin is 7x and not the
+# 17x an earlier version of this comment implied. Counting the root as level
+# 0 (the convention ``visit`` uses), the 49-fixture Sentinel corpus has a
+# median depth of 18, a deepest of 42, and 22 fixtures past 20; a
+# 100-operator pipe chain, which nests left-associatively one level per
+# operator, reaches 106.
 MAX_AST_DEPTH = 300
 
 _NAME_NODE_KINDS = frozenset(

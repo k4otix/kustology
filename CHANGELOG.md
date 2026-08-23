@@ -384,11 +384,19 @@ release is in `docs/superpowers/reports/`.
   binder left unresolved (`ReferencedSymbol is None`) whose source span no
   semantic reference already covers, and both public methods read from it,
   so they can no longer disagree about what a table is. Both modes return
-  one entry per occurrence in source order: the syntactic walk used to
-  report a pipe source two or three times, once per branch that saw the
-  node, while the bound path reported it once. Binding the fixture corpus as
-  it stood then (33 rules) against a deliberately half-complete schema lost
-  a table in 13 of them before this change and none after.
+  one entry per occurrence in source order: the syntactic walk emitted a
+  pipe source repeatedly where the bound path emitted it once, and
+  deduplicating by source span is what makes the two agree. The
+  multiplicity is **per pipe stage, not per branch kind** —
+  `_unwrap_table_expr` descends the leftmost child of every
+  `PipeExpression` above the source, so it scales with the length of the
+  pipeline. Counting what that walk yields before the dedup, across the
+  49-fixture corpus: 59 of 107 table-source spans are emitted more than
+  three times, and the leading table of
+  `SuspiciousOAuthApp_OfflineAccess.kql` is emitted 24 times. Binding the
+  fixture corpus as it stood then (33 rules) against a deliberately
+  half-complete schema lost a table in 13 of them before this change and
+  none after.
   `get_tables_semantic()` is unchanged and still strictly the binder's
   answer.
 - **`get_structural_hash()` no longer collapses `kind=inner` into
@@ -490,9 +498,31 @@ release is in `docs/superpowers/reports/`.
   where all three paths share it: `node_to_dict` emits `{"kind", "text",
   "children": [], "truncated": true}` at the cap and `visit` stops
   descending, so adversarial input degrades to a marked partial answer.
-  **Not covered:** `to_ir()` / `IRBuilder` walk the AST with their own
-  recursion, which is still uncapped — `parse --ir` on such input exits 1
-  with a one-line `RecursionError` message rather than a truncated IR.
+  **Not covered**, and the boundary is wider than the walker: the cap
+  protects the paths that reach the AST *through the walker*, and three
+  recursions do not.
+
+  `to_ir()` / `IRBuilder` walk the AST with their own recursion — `parse
+  --ir` on such input exits 1 with a one-line `RecursionError` message
+  rather than a truncated IR. Inside `utils/analysis.py`,
+  `_unwrap_table_expr` descends a table-source position one frame per
+  `ParenthesizedExpression` and one per `PipeExpression`, and
+  `get_operator_chain`'s local `walk` descends one frame per
+  `PipeExpression`. Neither goes through `collect_nodes`, so neither sees
+  `MAX_AST_DEPTH`.
+
+  What that costs, measured rather than reasoned: `get_referenced_tables`,
+  `get_referenced_columns`, `find_table_references` and `replace_table` all
+  raise `RecursionError` on a source expression wrapped in enough
+  parentheses *or* on a long enough pipe chain, and `get_operator_chain`
+  raises on the pipe chain. Because each is one Python frame per level, the
+  ceiling is `sys.getrecursionlimit()` rather than a number this library
+  chose: on CPython's default 1000 the first four give out at 988 nested
+  parentheses around a table source and at 989 `| take 1` stages, and
+  `get_operator_chain` at 991 stages. Every input above parses with zero
+  diagnostics. `to_dict`, `get_operator_stats`, `get_structural_hash`,
+  `get_referenced_functions` and `find_time_expressions` are unaffected at
+  any depth — those are the walker-routed paths the cap was built for.
 - **`replace_table` validates its arguments and quotes a name that needs it
   (tier 1).** `replace_table("A", "")` deleted the table name and returned
   ` | count` — a query the parser rejects — with no error, and a non-string
@@ -844,6 +874,15 @@ release is in `docs/superpowers/reports/`.
   and `KustoQuery`; the old name remains as a deprecated alias. It returns
   every time-related expression, not a resolved range, and the old name led a
   consumer to use it as a lookback extractor.
+- **`SchemaLike` is narrowed from `dict | str | None` to `dict | None`
+  (tier 1, typing only).** Nothing that worked stops working: the `str` arm
+  never did. `build_global_state` raises `TypeError` on anything that is not
+  a dict, so `parse(q, schema="(a:string)")` type-checked and then failed at
+  runtime, every time. The single-table string form is a *value* inside the
+  mapping — `{"T": "(a:string)"}` — not a substitute for it. The break is at
+  type-check time and only for call sites that could never have run: mypy
+  now rejects what it used to accept, which is the point. `parse` and
+  `validate` are the annotated entry points.
 - .NET runtime discovery and boundary member probes log at `DEBUG`.
 - `format` refuses input the parser rejected. It used to print whatever
   Microsoft's formatter returned for a broken query — `'T | where '` for the

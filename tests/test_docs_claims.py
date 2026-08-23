@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-"""Counts written into the docs must match what they count.
+"""Claims written into the docs must match what they describe.
 
 Six closed counts in the 0.2.0 documentation pass turned out wrong -- "eight
 operators" (nine), "five jobs" (six), "four operator modifiers" (six across
@@ -9,10 +9,15 @@ four), "four of the eight literal kinds" (four of eleven), and two more. The
 durable fix is to stop writing counts: derive them at runtime where the file
 runs, and describe the mechanism where it does not.
 
-Two survived that treatment, because a Markdown file cannot compute and the
-number is the point. Those two are pinned here, so the suite fails when they
-drift instead of a reader discovering it. Both rebuild the true value by
-introspection -- neither writes the expected number down.
+Two counts survived that treatment, because a Markdown file cannot compute
+and the number is the point. Those two are pinned here, so the suite fails
+when they drift instead of a reader discovering it. Both rebuild the true
+value by introspection -- neither writes the expected number down.
+
+The same discipline extends to hand-maintained *lists*, which go stale the
+same way a count does and for the same reason: something was added on one
+side of the repository and not the other. Each list pinned here is rebuilt
+from the directory or file it claims to enumerate.
 """
 
 from __future__ import annotations
@@ -131,3 +136,34 @@ def test_architecture_states_the_real_corpus_split():
         f"ARCHITECTURE.md does not say the other {total - extracted} fixtures "
         f"are hand-written"
     )
+
+
+def test_readme_points_at_every_runnable_example():
+    """README's example table is a hand-maintained list of `examples/*.py`.
+
+    Adding an example and not the row is the drift this catches. The front
+    door pointed at ``examples/`` not at all until 0.2.0 -- ARCHITECTURE and
+    CONTRIBUTING both did -- so the list exists precisely because a reader
+    starting at the README would otherwise never learn the directory was
+    there. A stale list is the same failure one step later.
+
+    Deliberately not asserting a count: the table counts itself, and this
+    file exists because six written-down counts in this release were wrong.
+    """
+    readme = (REPO_ROOT / "README.md").read_text()
+    on_disk = {
+        path.name
+        for path in (REPO_ROOT / "examples").glob("*.py")
+        if not path.name.startswith("_")
+    }
+    missing = sorted(name for name in on_disk if f"examples/{name}" not in readme)
+    assert not missing, (
+        f"README.md does not link {missing}. Every runnable example belongs "
+        f"in its table -- the README is the only one of the three docs a new "
+        f"user is guaranteed to read."
+    )
+
+    # ...and the reverse: a linked example that no longer exists.
+    linked = set(re.findall(r"examples/([A-Za-z0-9_]+\.py)", readme))
+    stale = sorted(linked - on_disk)
+    assert not stale, f"README.md links {stale}, which are not in examples/"

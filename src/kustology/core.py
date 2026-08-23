@@ -120,8 +120,12 @@ class KustoQuery:
         ``"truncated": True``. Without the cap this raised ``RecursionError``
         on deeply nested input, since the AST's depth is the Python stack's
         depth and a few kilobytes of parentheses outrun CPython's frame
-        limit. Real queries never reach it — nothing in the fixture corpus
-        nests past 20 levels — so the key is absent from ordinary output.
+        limit. Real queries stay well inside it, but not as far inside as
+        they look: counting the root as level 0, the 49-fixture corpus has a
+        median depth of 18 and a deepest of 42
+        (``FileHashEntity_SecurityEvent.kql``), and 22 of the 49 go past 20.
+        The cap is still six times the deepest real query measured here, so
+        the key is absent from ordinary output.
         """
         return node_to_dict(self.syntax)
 

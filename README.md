@@ -346,6 +346,29 @@ for op in ir.main_pipeline.operators:
         print(op.predicate.left.result_type)   # int  (KustoType.INT)
 ```
 
+## Runnable examples
+
+Everything above, as scripts you can run rather than snippets you have to
+assemble. Each one runs standalone (`python examples/walk_tree.py`) and every
+one is executed by `tests/test_examples.py`, so none of them can drift away
+from the library without CI noticing.
+
+| | |
+| --- | --- |
+| [`examples/walk_tree.py`](examples/walk_tree.py) | Direct AST traversal via `KustoQuery.syntax` |
+| [`examples/query_analysis.py`](examples/query_analysis.py) | End-to-end analysis of a non-trivial query |
+| [`examples/binding_comparison.py`](examples/binding_comparison.py) | What a schema adds: `parse(query, schema=…)` side by side with an unbound parse |
+| [`examples/walk_ir.py`](examples/walk_ir.py) | The same walk over the typed IR, on a bound parse |
+| [`examples/find_all_demo.py`](examples/find_all_demo.py) | Generic IR traversal with `find_all` |
+| [`examples/analyzer_demo.py`](examples/analyzer_demo.py) | Composing analyzers and consuming `Finding`s |
+| [`examples/linter.py`](examples/linter.py) | A working KQL linter in ~100 lines, built on the IR |
+| [`examples/llm_view.py`](examples/llm_view.py) | LLM-friendly IR serialization via `to_llm_dict` |
+| [`examples/semantic_hash_demo.py`](examples/semantic_hash_demo.py) | What `semantic_hash` merges, what it splits, and where it lies — every verdict computed at run time, including the known collisions listed under [Versioning and stability](#versioning-and-stability) |
+
+The IR ones (`walk_ir`, `find_all_demo`, `analyzer_demo`, `linter`,
+`llm_view`, `semantic_hash_demo`) need the `[ir]` extra; the rest run on the
+base install.
+
 ## CLI
 
 The `kustology` console script ships with the base install:
