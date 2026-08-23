@@ -36,8 +36,11 @@ scripts/             # Tooling
   audit_syntax_kinds.py     # Coverage gate: HANDLED_*_KINDS vs the DLL's kinds
   mine_corpus.py            # Unknown-node census over the corpus (CI gate)
   verify_corpus.py          # Full build+enrich pass over a private corpus
-  extract_complex_corpus.py # Regenerate tests/fixtures/complex_queries/
-                            # from published Azure-Sentinel analytic rules
+  extract_complex_corpus.py # Rewrite the Sentinel-derived half of
+                            # tests/fixtures/complex_queries/ (25 of 49) from
+                            # published Azure-Sentinel analytic rules. It
+                            # deletes nothing: the other 24 are hand-written
+                            # synthetics and the script does not know they exist
   sample_sentinel_corpus.py, extract_sentinel_schemas.py
   verify_dll.py, refresh_dll.py   # DLL provenance and refresh
 
@@ -45,7 +48,7 @@ tests/               # pytest suite
   ir/                # IR-specific tests
     test_binder_oracle.py   # Our result_schema vs Microsoft's ResultType
     test_complex_harness.py # Parametrized over tests/fixtures/complex_queries
-  fixtures/          # complex_queries/ (49 .kql files),
+  fixtures/          # complex_queries/ (49 .kql: 25 extracted, 24 by hand),
                      # sentinel_sample/ (gitignored),
                      # syntax_kinds_baseline.json
 ```
