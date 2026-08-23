@@ -18,11 +18,20 @@ about the query.
 * Default field values are dropped.
 * ``polarity`` is collapsed into the operator (``!=`` reads as
   ``op: "!="``; ``!in`` likewise on ``SetMembership``).
-* Redundant leaf ``canonical_form`` is dropped when it just restates
-  ``name`` / ``value``.
+* Redundant leaf ``canonical_form`` is dropped where it restates ``name``
+  or ``value`` — but only on four of the eight literal kinds. The check
+  renders ``value`` back to KQL, which double-quotes any Python ``str``, so
+  it fires for ``string`` / ``long`` / ``real`` / ``bool`` and *not* for
+  ``timespan`` / ``datetime`` / ``decimal`` / ``guid``, whose values are
+  stored as strings that are not KQL string literals. Run this file and the
+  ``ago(7d)`` literal still carries ``"canonical_form": "7.00:00:00"``
+  beside an identical ``"value"``.
 * ``result_schema`` is dropped from **operator** nodes and kept on
   ``Pipeline``. "What columns does this query return" is one answer per
-  pipeline; repeating it per step was 35% of the whole view.
+  pipeline; repeating it per step was 35% of the whole view — that figure
+  is measured across the 49-query fixture corpus bound against a schema
+  naming every referenced column (295,156 of 851,224 bytes), not on the
+  one query below. This query's own reduction is printed at run time.
 
 The result is JSON-safe but lossy: pass it to a model when you want to
 ask "what does this query do?", "where is the bug?", or "rewrite this

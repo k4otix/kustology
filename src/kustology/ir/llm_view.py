@@ -26,6 +26,15 @@ being fed to a language model:
 * ``canonical_form`` on ``ColumnRef`` / ``LiteralExpr`` leaves is dropped
   when it's a literal restatement of ``name`` / ``value``; survives on
   subtree expressions (``BinOp``, ``And``, …) where it summarizes the tree.
+  On literals the test is ``cf == _canonical_literal_repr(value)``, which
+  re-renders ``value`` as KQL and so double-quotes any Python ``str``. That
+  is right for ``literal_kind="string"`` and wrong for the four kinds whose
+  ``value`` is a *non-string* stored as a string — ``timespan``,
+  ``datetime``, ``decimal``, ``guid`` — so those four keep a
+  ``canonical_form`` identical to their ``value`` (``7d`` emits ``"value":
+  "7.00:00:00"`` beside ``"canonical_form": "7.00:00:00"``). Harmless
+  duplication rather than lost information, and not worth special-casing
+  the repr for; recorded so nobody reads the bullet as absolute.
 * ``polarity`` on ``BinOp`` / ``SetMembership`` / ``Exists`` / ``Between``
   is collapsed into ``op`` so the LLM reads natural KQL (``!=``,
   ``!contains``, ``!in``, ``isnull``, ``!between``) instead of IR-canonical
