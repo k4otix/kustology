@@ -126,7 +126,10 @@ ANALYZERS: list[AnalyzerFn] = [join_key_type_mismatch, unplaced_columns]
 
 
 def run_all(ir: QueryIR, analyzers: list[AnalyzerFn]) -> list[Finding]:
-    """The composition recipe from ``kustology.ir.analyzers``, verbatim."""
+    """The composition recipe from ``kustology.ir.analyzers``'s docstring.
+
+    Identical but for the loop variable, which is spelled out here.
+    """
     return [f for analyzer in analyzers for f in analyzer(ir)]
 
 
