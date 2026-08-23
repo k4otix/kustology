@@ -109,12 +109,16 @@ and `"kind": "filter"` in the IR's JSON:
 | `take`, `limit` | `TakeOperator` | `TakeOp` / `"take"` |
 | `mv-expand` | `MvExpandOperator` | `MvExpandOp` / `"mv_expand"` |
 
-The pattern holds across the surface: Microsoft's `<Name>Operator`, our
-`<Name>Op`, and a snake_case `kind` string. Two spellings that share a parser
-node share an IR node too — `order by` really is `sort`, `limit` really is
-`take` — so an analyzer written against one spelling sees both. The `kind`
-strings are the discriminators `to_llm_dict` and `model_dump_json` emit, and
-they are part of the IR's versioned shape.
+Two spellings that share a parser node share an IR node too — `order by`
+really is `sort`, `limit` really is `take` — so an analyzer written against
+one spelling sees both.
+
+The mapping is mostly mechanical (Microsoft's `<Name>Operator`, our
+`<Name>Op`, hyphens becoming underscores in `kind`) but not always: `where`
+is a `FilterOperator`, so its `kind` is `filter`, not `where`. Read
+`SomeOp.KIND` rather than deriving the string. These are the discriminators
+`to_llm_dict` and `model_dump_json` emit, so they are part of the IR's
+versioned shape.
 
 ## Working with Microsoft's syntax tree
 
@@ -412,8 +416,8 @@ source rather than comparing across schemes.
 
 ### What `semantic_hash` deliberately ignores
 
-Two queries collide when they mean the same thing. Within
-`kustology-sem-v2`:
+The digest is meant to survive differences that do not change what a query
+returns. Within `kustology-sem-v2` these are ignored:
 
 - **Operand order in commutative positions.** `where A and B` and
   `where B and A` are one digest, as are `in ("x", "y")` and `in ("y", "x")`.
@@ -437,11 +441,20 @@ Your own IR keeps every one of these as written; the canonicalization runs on
 a private copy. `normalize_expressions` is a separate, opt-in transform and
 still leaves your operand order alone.
 
-One caveat: the digest is **not** invariant across bind state for a query
-whose `let` aliases a table. The binder proves it is a table, which changes
-the IR's *shape* rather than a field's value, and no amount of stripping
-hides that. It is documented rather than papered over — the alternative is
-treating every bare name as a table without proof.
+Two caveats, both deliberate rather than accidental:
+
+- The digest is **not** invariant across bind state for a query whose `let`
+  aliases a table. The binder proves it is a table, which changes the IR's
+  *shape* rather than a field's value, and no amount of stripping hides
+  that. The alternative is treating every bare name as a table without
+  proof.
+- Equal digests are **not** a proof of equivalence. As of 0.2.0, four
+  operators still discard a modifier that changes what a query returns, so
+  two such queries share one digest: `mv-apply`'s `to typeof(…)`, `limit`
+  and `with_itemindex=`; `parse-kv`'s `with (…)` properties; `getschema
+  kind=csl`; and `consume decodeblocks=`. If you deduplicate a rule library
+  by hash, know that these merge. See the CHANGELOG's `[0.2.0]` **Fixed**
+  section for the list and the ones that were closed.
 
 ## Development
 
