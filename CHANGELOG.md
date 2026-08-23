@@ -742,6 +742,28 @@ release is in `docs/superpowers/reports/`.
   shared query now contains one — demonstrating `LetBinding.rhs_pipeline` and
   the `TableRef` / `LetRef` split against the AST equivalent.
   `examples/find_all_demo.py` shows the same split via `find_all`.
+- **`examples/semantic_hash_demo.py` and `examples/analyzer_demo.py`, and
+  `examples/linter.py` is now a linter.** Seven examples become nine. The two
+  new ones cover the surface 0.2.0 leans on hardest and prose was the only
+  documentation of: what `semantic_hash` merges and splits — every line of
+  it computed from a hashed pair rather than written down, and including the
+  merges a consumer must know about before deduplicating — and the
+  `Finding` / `Severity` / `AnalyzerFn` vocabulary in `kustology.ir.analyzers`,
+  which is built for third-party analyzers and had no runnable example at
+  all. `linter.py` demonstrated `format_query` and `validate`, which two other
+  examples already cover, and linted nothing; it is three IR rules plus
+  Microsoft's semantic diagnostics lifted into the same `Finding` list.
+  The rest were corrected, not tidied: the IR walk parses with a schema, so
+  columns print a type and a provenance instead of a bare name; the AST
+  walk's token filter was `"Token" in kind`, which discards the `TokenName`
+  wrapper and hides which `kind=` a `join` was given; `find_all_demo` joins
+  on `$left.…` so `ColumnRef.join_side` has a value to show; `llm_view`
+  builds its IR through `parse(..., schema=...).to_ir()` rather than
+  assembling by hand what that one line does; `query_analysis` computes the
+  structural hash's invariance across five variants instead of asserting it
+  in prose (the prose named a literal the query did not contain); and
+  `binding_comparison` counts its schema and reads `KustoQuery.diagnostics`
+  off the parse it is holding. All nine run under `tests/test_examples.py`.
 - `kustology parse --schema PATH` (tier 1) — the same JSON schema file
   `validate --schema` takes, now on `parse`. It binds the parse, and
   `to_ir()` auto-attaches on a bound parse, so `parse --ir --schema` emits an
