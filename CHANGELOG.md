@@ -79,19 +79,64 @@ release is in `docs/superpowers/reports/`.
   `mv-expand kind=array`. `### Breaking` below carries the field-by-field
   detail for each.
 
-  **Four known survivors, all out of scope for this release.** `mv-apply`
-  discards `to typeof(…)`, `limit` and `with_itemindex=`; `parse-kv`
-  discards its `with (…)` properties — `pair_delimiter`, `kv_delimiter` and
-  the rest; `getschema` discards `kind=csl`, which is the difference between
-  a table of column metadata and a single-row schema string; and `consume`
-  discards `decodeblocks=`. Two queries differing only in one of those still
-  share a digest. Each needs a new field on an operator this release did not
-  otherwise touch, which is a change with its own tests rather than a
-  footnote to this one. They are named here so the boundary is stated rather
-  than implied: everything above is closed, these four are not. The list is
-  what a modifier-pair sweep turned up — every fields-less operator, plus a
-  spread of modifiers across the operators named above — and not a proof
-  that nothing else remains.
+  **Known survivors, all out of scope for this release.** One entry per
+  operator that still discards something a query wrote. `mv-apply` discards
+  `to typeof(…)`, `limit` and `with_itemindex=`; `parse-kv` discards its
+  `with (…)` properties — `pair_delimiter`, `kv_delimiter` and the rest;
+  `getschema` discards `kind=csl`, which is the difference between a table of
+  column metadata and a single-row schema string; `consume` discards
+  `decodeblocks=`; and `evaluate` discards its output-schema clause, so
+  `T | evaluate bag_unpack(d) : (x:string)`, `… : (y:long, z:datetime)` and a
+  bare `T | evaluate bag_unpack(d)` are one digest. Two queries differing only
+  in one of those still share a digest. Each needs a new field on an operator
+  this release did not otherwise touch, which is a change with its own tests
+  rather than a footnote to this one. They are named here so the boundary is
+  stated rather than implied: everything above is closed, these are not. The
+  list is what a modifier-pair sweep turned up — every fields-less operator,
+  plus a spread of modifiers across the operators named above — and not a
+  proof that nothing else remains.
+
+  `evaluate` is the one of those that is **result-shape-changing**: the
+  clause declares the columns the plug-in returns, and the binder still
+  derives each spelling's real `result_schema` from it. So the IR knows the
+  three queries above return different column sets while the digest says they
+  are one query — the only survivor here where two parts of the same IR
+  disagree, rather than one part simply not knowing.
+
+  **The largest survivor is not a modifier: a `let` function's body.**
+  `LetFunction` records the parameter *names* and a `body_span`, and
+  `body_span` is volatile (see "Volatile fields are stripped from
+  `semantic_hash` by model field, not by key name" below — stripping it
+  removed a wrong discriminator, a source *offset*, and exposed this older
+  gap rather than creating it), so nothing between the braces reaches the
+  digest. Two
+  functions with the same name and parameter names and entirely different
+  bodies collide:
+
+  ```
+  let S = (w:int) { SecurityEvent | where EventID == 4625 | summarize c=count() by Account  | where c > w }; S(5)
+  let S = (w:int) { SecurityEvent | where EventID == 4624 | summarize c=count() by Computer | where c > w }; S(5)
+  ```
+
+  Both parse with zero diagnostics and share a digest, as do two declarations
+  differing only in a parameter's declared type or default — neither is
+  recorded. Parameter names and their count *do* split. Two of the 49 corpus
+  fixtures already have this shape, and it is visible in how little IR they
+  build: `Brute_Force_Attack_against_GitHub_Account.kql` yields 3.8 IR nodes
+  per 100 source characters against a 17.7 corpus median, the lowest of the
+  49, because most of its text is inside a function body.
+
+  The same gap makes the **two tiers disagree about one query**, which is
+  documented nowhere else and matters for lineage work. On
+  `let f = () { SecurityEvent | where Account=="root" | project Computer };
+  f()` (zero diagnostics), Tier 1's `get_referenced_tables()` returns
+  `{'SecurityEvent'}` and `get_referenced_columns()` returns
+  `{'Account', 'Computer'}`, while Tier 2's `find_all(ir, TableRef)` and
+  `find_all(ir, ColumnRef)` both come back empty. Tier 1 walks Microsoft's
+  tree, which contains the body. Treat a Tier 2 lineage walk as exhaustive
+  over the query's pipelines, not over the query. Modelling the body is
+  post-0.2.0 work; the gap predates this release rather than being introduced
+  by it.
 
   Separately and **by design**, `hint.*` never splits a digest: `join
   hint.strategy=shuffle`, `partition hint.strategy=native`,

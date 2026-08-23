@@ -502,7 +502,7 @@ def compute_semantic_hash(node: BaseModel) -> str:
     ``let`` are unaffected. See the note above :data:`_VOLATILE_FIELDS`
     for why that is preferred to guessing.
 
-    **Equal digests are not a proof of equivalence.** Three kinds of thing
+    **Equal digests are not a proof of equivalence.** Several kinds of thing
     still merge, and they differ in whether that is a decision or a gap:
 
     * **Deliberate**, in literals — typed nulls and obfuscated strings; see
@@ -514,6 +514,40 @@ def compute_semantic_hash(node: BaseModel) -> str:
       ``to typeof(…)``, ``limit`` and ``with_itemindex=``, ``parse-kv``'s
       ``with (…)`` properties, ``getschema kind=csl``, ``consume
       decodeblocks=`` as of 0.2.0.
+    * **``evaluate``'s output-schema clause.** The same shape as the bullet
+      above, listed on its own because of what it costs: the clause *is*
+      the operator's result shape. :class:`~kustology.ir.query.EvaluateOp`
+      carries only ``func``, so the .NET ``EvaluateSchemaClause`` (reached
+      as ``EvaluateOperator.Schema``) is discarded, and
+      ``T | evaluate bag_unpack(d) : (x:string)``,
+      ``… : (y:long, z:datetime)`` and a bare ``T | evaluate bag_unpack(d)``
+      are one digest. The binder still computes each one's real
+      ``result_schema`` from the clause, so the IR *knows* the three differ
+      and the digest does not — a dedup consumer holding three rules that
+      return three different column sets sees one rule.
+    * **A ``let``-declared function's body.** ``let f = (x:int) { … }``
+      records a :class:`~kustology.ir.query.LetFunction` holding the
+      parameter *names* and a ``body_span``; the body is not built and
+      ``body_span`` is volatile, so nothing inside the braces reaches the
+      digest. Two functions with the same name and parameter names but
+      entirely different bodies collide, as do two that differ only in a
+      parameter's declared type or default (neither is recorded). Parameter
+      names and their count *do* split. The gap predates ``body_span``
+      becoming volatile — before that the digest keyed on a source offset,
+      which split two identical bodies over one extra space — so clearing
+      it removed a wrong discriminator rather than creating this one.
+      Modelling the body is post-0.2.0 work.
+
+      This is also the one gap that makes the two tiers disagree about the
+      *same* query rather than merely hashing it coarsely: on
+      ``let f = () { SecurityEvent | where Account=="root" | project
+      Computer }; f()`` (zero diagnostics), Tier 1's
+      ``get_referenced_tables()`` reports ``{'SecurityEvent'}`` and
+      ``get_referenced_columns()`` reports ``{'Account', 'Computer'}``,
+      while Tier 2's ``find_all(ir, TableRef)`` and
+      ``find_all(ir, ColumnRef)`` both return empty. Tier 1 walks
+      Microsoft's tree, which has the body in it. Do not read a Tier 2
+      lineage walk as exhaustive over a query that declares functions.
     * **Statements that are neither ``let`` nor tabular.** The builder
       collects ``let`` statements and pipelines; a statement of any other
       kind contributes nothing of its own, so whatever it said is absent

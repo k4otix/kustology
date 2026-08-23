@@ -719,6 +719,20 @@ class ParseWhereOp(Operator):
 
 
 class EvaluateOp(Operator):
+    """``evaluate`` — run a plug-in. Its output-schema clause is not modeled.
+
+    ``evaluate bag_unpack(d) : (x:string)`` attaches an
+    ``EvaluateSchemaClause`` (the .NET property is ``Schema``) declaring the
+    columns the plug-in returns. There is no field for it here, so the
+    builder drops it and the clause reaches neither the IR nor
+    ``semantic_hash``: two spellings with different declared schemas, and
+    one with none at all, are one digest. The binder still derives the real
+    ``result_schema`` from the clause, so ``result_schema`` and the digest
+    disagree about whether the queries differ. Documented as a known
+    collision in :func:`~kustology.ir.transforms.compute_semantic_hash`;
+    modelling it is post-0.2.0 work.
+    """
+
     KIND: ClassVar[str] = "evaluate"
     kind: Literal["evaluate"] = "evaluate"
     func: FuncCall
@@ -1185,6 +1199,17 @@ class LetFunction(BaseModel):
     Parameter types, defaults, tabular-vs-scalar bodies and call-site expansion
     are out of scope; ``body_span`` locates the body in the source for callers
     that want the text.
+
+    Two consequences a caller has to know about, both documented at length in
+    :func:`~kustology.ir.transforms.compute_semantic_hash`. ``body_span`` is
+    volatile, so nothing here except the parameter names reaches
+    ``semantic_hash``: two functions with matching names whose bodies do
+    entirely different things collide, as do two differing only in a
+    parameter's type or default. And the body's tables and columns are
+    reachable from Tier 1 (``get_referenced_tables`` walks Microsoft's tree,
+    which has the body in it) but not from Tier 2 — ``find_all(ir, TableRef)``
+    over a query whose only source is a ``let`` function call comes back
+    empty.
     """
 
     model_config = {"extra": "forbid"}

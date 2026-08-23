@@ -32,6 +32,17 @@ schema binding, since none of these pairs need one, and binding roughly
 doubles the cost of each case for no discriminating power (see
 ``test_semantic_hash_bind_invariance.py`` for the bind-state axis).
 
+A third list, ``KNOWN_COLLISIONS``, holds pairs that mean different things
+and hash alike *today* -- open gaps in the 0.2.0 model rather than
+regressions. They cannot go in ``MUST_DIFFER``, which they would keep red,
+and they must not go in ``MUST_EQUAL``, whose contract is "same meaning": a
+real collision filed as a desired merge would make the paragraph above
+false, and a documented survivor list that has quietly stopped being true is
+the exact failure this file exists to prevent. Its assertion is equality, so
+closing a gap turns the list red on purpose -- a consumer works around the
+collisions kustology discloses, so one silently disappearing from the
+disclosure is a defect even though the behaviour improved.
+
 One category needs a caveat rather than a claim of coverage. WS2 fix #1
 (datetime literals UTC-normalized in ``literal_value_and_ticks`` so
 ``semantic_hash`` stops depending on the host timezone, commit ``1ae3488``)
@@ -215,6 +226,20 @@ MUST_DIFFER = [
         "tolower-mismatched-case-vs-case-insensitive-eq",
         'T | where tolower(x) == "Y"',
         'T | where x =~ "Y"',
+    ),
+    # The half of `LetFunction` that *is* recorded. Without these, the
+    # `let-function-*` entries in KNOWN_COLLISIONS would read as "let
+    # functions never split", when what is actually missing is the body, the
+    # parameter types and the parameter defaults.
+    (
+        "let-function-parameter-name",
+        "let S = (w:int) { A | where x > 1 }; S(5)",
+        "let S = (z:int) { A | where x > 1 }; S(5)",
+    ),
+    (
+        "let-function-parameter-count",
+        "let S = (w:int) { A | where x > 1 }; S(5)",
+        "let S = (w:int, y:int) { A | where x > 1 }; S(5, 1)",
     ),
     # -----------------------------------------------------------------------
     # WS4 -- one pair per collision the IR-model workstream closed. Each was
@@ -518,6 +543,92 @@ def test_must_equal(case_id, query_a, query_b):
     )
 
 
+# ---------------------------------------------------------------------------
+# KNOWN_COLLISIONS: (case_id, query_a, query_b) -- pairs that mean *different*
+# things and hash alike anyway. These are the failure MUST_DIFFER exists to
+# catch; they are filed here rather than there because they are open gaps in
+# the 0.2.0 model, not regressions, and a permanently red MUST_DIFFER entry
+# would be deleted by the first person to run the suite.
+#
+# They are not in MUST_EQUAL either, and that distinction is the point of the
+# third list. MUST_EQUAL means "same meaning, different spelling" -- putting a
+# real collision there would make this module's own docstring false, which is
+# exactly the drift between what we say and what the code does that the
+# collisions below are being disclosed to prevent.
+#
+# The assertion is the same equality MUST_EQUAL uses, so a gap that later
+# *closes* turns this list red. That is intended: the digest's documented
+# survivor list is the safety mechanism a consumer works around, so a survivor
+# silently ceasing to be one is a documentation defect even though the
+# behaviour improved. The failure message says to move the pair to
+# MUST_DIFFER and update the three places that describe the gap.
+#
+# Every case here is also a row in `examples/semantic_hash_demo.py`'s
+# KNOWN_MERGES, which the suite runs -- that file prints the verdict for a
+# reader, this one fails the build.
+# ---------------------------------------------------------------------------
+
+KNOWN_COLLISIONS = [
+    # `EvaluateOp` carries only `func`; the .NET `EvaluateSchemaClause`
+    # (property `EvaluateOperator.Schema`) is dropped by the builder. What
+    # collides is the operator's result *shape* -- the clause declares the
+    # columns the plug-in returns -- and the binder still derives each
+    # spelling's real `result_schema` from it, so two parts of the same IR
+    # disagree about whether these are the same query.
+    (
+        "evaluate-schema-clause-columns",
+        "T | evaluate bag_unpack(d) : (x:string)",
+        "T | evaluate bag_unpack(d) : (y:long, z:datetime)",
+    ),
+    (
+        "evaluate-schema-clause-vs-absent",
+        "T | evaluate bag_unpack(d) : (x:string)",
+        "T | evaluate bag_unpack(d)",
+    ),
+    # A `let` function's body is not built and `body_span` is volatile, so
+    # nothing between the braces reaches the digest. The largest gap in the
+    # release: what collides is an arbitrary amount of query rather than one
+    # modifier, and two of the 49 corpus fixtures already have this shape.
+    # Clearing `body_span` did not cause this -- before that the digest keyed
+    # on a source offset, so two identical bodies split over one extra space.
+    (
+        "let-function-body",
+        "let S = (w:int) { A | where EventID == 4625 | summarize c=count() by Account | where c > w }; S(5)",
+        "let S = (w:int) { A | where EventID == 4624 | summarize c=count() by Computer | where c > w }; S(5)",
+    ),
+    # `LetFunction.parameters` is a list of names only. Names and their count
+    # do split (pinned in MUST_DIFFER below via the same shape being absent
+    # here); the declared type and the default do not, because neither is
+    # recorded on the model at all.
+    (
+        "let-function-parameter-type",
+        "let S = (w:int) { A | where x > w }; S(5)",
+        "let S = (w:long) { A | where x > w }; S(5)",
+    ),
+    (
+        "let-function-parameter-default",
+        "let S = (w:int) { A | where x > w }; S(5)",
+        "let S = (w:int=3) { A | where x > w }; S(5)",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "case_id,query_a,query_b", KNOWN_COLLISIONS, ids=[c[0] for c in KNOWN_COLLISIONS]
+)
+def test_known_collision(case_id, query_a, query_b):
+    hash_a, hash_b = _hash(query_a), _hash(query_b)
+    assert hash_a == hash_b, (
+        f"{case_id}: {query_a!r} and {query_b!r} are a documented 0.2.0 "
+        f"collision and no longer collide ({hash_a!r} vs {hash_b!r}). If the "
+        f"gap was closed on purpose, move this pair to MUST_DIFFER and update "
+        f"the three places that disclose it: compute_semantic_hash's "
+        f"docstring, README's `semantic_hash` section, and CHANGELOG 0.2.0."
+    )
+
+
+
+
 def test_double_negation_collapses_at_a_bare_expr_root():
     """``double-negation`` above exercises ``not(not(X))`` nested inside a
     ``FilterOp`` -- the replacement ``normalize_in_place`` returns gets
@@ -547,7 +658,7 @@ def test_double_negation_collapses_at_a_bare_expr_root():
 
 @pytest.mark.parametrize(
     "query",
-    sorted({q for _, a, b in MUST_DIFFER + MUST_EQUAL for q in (a, b)}),
+    sorted({q for _, a, b in MUST_DIFFER + MUST_EQUAL + KNOWN_COLLISIONS for q in (a, b)}),
     ids=lambda q: q[:60],
 )
 def test_no_battery_pair_discriminates_on_an_unmodelled_blob(query):

@@ -6,7 +6,15 @@
 import pytest
 
 from kustology import parse
-from kustology.ir import LetBinding, LiteralExpr, Pipeline
+from kustology.ir import (
+    ColumnRef,
+    LetBinding,
+    LetFunction,
+    LiteralExpr,
+    Pipeline,
+    TableRef,
+    find_all,
+)
 
 
 def _binding(query: str, name: str, schema: dict | None = None) -> LetBinding:
@@ -249,6 +257,41 @@ def test_function_binding_populates_rhs_function():
     assert lb.rhs_function.body_span.width > 0
     assert lb.rhs_expr is None
     assert lb.rhs_pipeline is None
+
+
+def test_a_function_body_is_reachable_from_tier_1_and_not_from_tier_2():
+    """The one query shape where the two tiers disagree about the same query.
+
+    `LetFunction` holds the parameter names and a `body_span`; the body is
+    not built. Tier 1 walks Microsoft's tree, which *does* contain the body,
+    so `get_referenced_tables()` and `get_referenced_columns()` see inside
+    it while `find_all(ir, TableRef)` and `find_all(ir, ColumnRef)` see
+    nothing at all. A caller doing lineage on Tier 2 gets an empty answer
+    for a query that plainly reads a table, with no diagnostic to signal it.
+
+    Pinned rather than fixed: modelling the body is post-0.2.0 work, and the
+    divergence is disclosed in README's "Where Tier 2 stops", in
+    `compute_semantic_hash`'s docstring and in CHANGELOG 0.2.0. This test is
+    what stops those three going stale -- if the body ever *is* modelled,
+    this fails and the docs get corrected with it.
+    """
+    query = 'let f = () { SecurityEvent | where Account=="root" | project Computer }; f()'
+    parsed = parse(query)
+    assert not [d for d in parsed.diagnostics if d["severity"] == "Error"], (
+        "the probe query must parse cleanly or it proves nothing"
+    )
+
+    # Tier 1 sees through the body.
+    assert parsed.get_referenced_tables() == {"SecurityEvent"}
+    assert parsed.get_referenced_columns() == {"Account", "Computer"}
+
+    # Tier 2 does not.
+    ir = parsed.to_ir()
+    assert list(find_all(ir, TableRef)) == []
+    assert list(find_all(ir, ColumnRef)) == []
+    # ...and the reason is visible on the node: parameters and a span, no body.
+    (fn,) = find_all(ir, LetFunction)
+    assert set(type(fn).model_fields) == {"kind", "parameters", "body_span"}
 
 
 def test_bare_name_alias_is_not_silently_empty():

@@ -77,6 +77,28 @@ A `let`-declared **function body** is the other boundary: `let f = (x:int)
 locating the body in the source. The body itself is not built, call sites are
 not expanded, and parameter types and defaults are not recorded.
 
+**This is the one place the two tiers disagree about the same query**, and it
+is worth knowing before you use a Tier 2 walk for lineage. Tier 1 walks
+Microsoft's tree, which contains the body; Tier 2 walks the IR, which does
+not. On a query with zero diagnostics:
+
+```python
+q = 'let f = () { SecurityEvent | where Account=="root" | project Computer }; f()'
+parse(q).get_referenced_tables()          # {'SecurityEvent'}
+parse(q).get_referenced_columns()         # {'Account', 'Computer'}
+
+ir = parse(q).to_ir()
+list(find_all(ir, TableRef))              # []
+list(find_all(ir, ColumnRef))             # []
+```
+
+So `find_all(ir, TableRef)` is exhaustive over the query's *pipelines*, not
+over the query. If you need every table a query can touch and the query
+declares functions, use Tier 1's `get_referenced_tables()`, or slice the body
+out with `body_span` and parse it separately. The same gap is why two `let`
+functions with different bodies share a `semantic_hash` — see [What
+`semantic_hash` deliberately ignores](#what-semantic_hash-deliberately-ignores).
+
 ## Choosing a tier
 
 Both tiers share the same parser; pick based on what shape of data your
@@ -449,15 +471,31 @@ Two caveats, both deliberate rather than accidental:
   *shape* rather than a field's value, and no amount of stripping hides
   that. The alternative is treating every bare name as a table without
   proof.
-- Equal digests are **not** a proof of equivalence. Two known gaps remain
-  in 0.2.0, and if you deduplicate a rule library by hash both of them merge
-  queries you may not want merged.
+- Equal digests are **not** a proof of equivalence. The known gaps below all
+  remain in 0.2.0, and if you deduplicate a rule library by hash every one of
+  them merges queries you may not want merged.
 
   **Four operators still discard a modifier** that changes what a query
   returns: `mv-apply`'s `to typeof(…)`, `limit` and `with_itemindex=`;
   `parse-kv`'s `with (…)` properties; `getschema kind=csl`; and `consume
   decodeblocks=`. That list is what a modifier-pair sweep turned up, not a
   proof that nothing else remains.
+
+  **`evaluate` discards its output-schema clause**, which is the same shape
+  of gap but costs more, because the clause *is* the operator's result shape.
+  `T | evaluate bag_unpack(d) : (x:string)`, `… : (y:long, z:datetime)` and a
+  bare `T | evaluate bag_unpack(d)` are one digest. The binder still derives
+  each one's real `result_schema` from the clause, so the IR knows the three
+  differ while the digest does not.
+
+  **A `let` function's body is invisible to the digest.** `LetFunction`
+  records the parameter names and a volatile `body_span`, so two functions
+  with the same name and parameters and completely different bodies collide —
+  and so do two that differ only in a parameter's declared type or default,
+  neither of which is recorded. Parameter names and their count do split. This
+  is the same boundary described under [Where Tier 2
+  stops](#where-tier-2-stops); it is the largest of these gaps, because what
+  collides is an arbitrary amount of query rather than one modifier.
 
   **Statement-level constructs other than `let` are dropped entirely** and
   hash as if they were absent — `set`, `declare query_parameters`,

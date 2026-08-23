@@ -125,6 +125,31 @@ KNOWN_MERGES = [
      "T | getschema kind=csl", "T | getschema"),
     ("consume drops `decodeblocks=` — known gap",
      "T | consume decodeblocks=true", "T | consume"),
+    # `evaluate`'s clause is the same shape of gap and the costliest of them:
+    # it declares the columns the plug-in returns, so what collides is the
+    # operator's result *shape*. The binder still derives each spelling's
+    # real `result_schema` from the clause, so the IR knows these differ
+    # while the digest does not.
+    ("evaluate drops its output-schema clause — known gap",
+     "T | evaluate bag_unpack(d) : (x:string)",
+     "T | evaluate bag_unpack(d) : (y:long, z:datetime)"),
+    ("evaluate: a declared schema == no schema at all — known gap",
+     "T | evaluate bag_unpack(d) : (x:string)",
+     "T | evaluate bag_unpack(d)"),
+    # A `let` function's body is not built, and `body_span` is volatile, so
+    # nothing between the braces reaches the digest. This is the largest gap
+    # in the list: what collides is an arbitrary amount of query rather than
+    # one modifier. Parameter *names* and their count do split; types and
+    # defaults do not, because neither is recorded.
+    ("`let` function bodies are invisible: different bodies — known gap",
+     "let S = (w:int) { A | where EventID == 4625 | summarize c=count() by Account | where c > w }; S(5)",
+     "let S = (w:int) { A | where EventID == 4624 | summarize c=count() by Computer | where c > w }; S(5)"),
+    ("`let` function bodies: a parameter's declared type — known gap",
+     "let S = (w:int) { A | where x > w }; S(5)",
+     "let S = (w:long) { A | where x > w }; S(5)"),
+    ("`let` function bodies: a parameter's default — known gap",
+     "let S = (w:int) { A | where x > w }; S(5)",
+     "let S = (w:int=3) { A | where x > w }; S(5)"),
     # A statement that is neither `let` nor tabular contributes nothing of
     # its own to the digest, so its content hashes as though absent. Every
     # kind that behaves that way gets a row, and each uses the variant that
