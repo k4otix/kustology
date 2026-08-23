@@ -109,9 +109,11 @@ three independent version tags (`__version__`, `IR_SCHEMA_VERSION`,
    its sub-pipelines. Either way, update the coverage list in
    `SchemaAttacher`'s class docstring, which enumerates which operators
    reshape scope, which pass it through, and which leave downstream scope
-   knowingly stale — 25 of the 53 `Operator` subclasses have a branch
-   today. Skipping this step is how `SchemaAttacher` silently ended up
-   covering 17 of them.
+   knowingly stale — and which carries the current split, so this file does
+   not restate a figure that would then have two places to drift from.
+   Skipping this step is how `SchemaAttacher` silently ended up covering
+   17 of 53 operators, which is the defect the docstring exists to prevent
+   recurring.
 5. Add a minimal `.kql` fixture under `tests/fixtures/complex_queries/`. The
    parametrized harness in `tests/ir/test_complex_harness.py` picks it up
    automatically, and so does the unbound leg of

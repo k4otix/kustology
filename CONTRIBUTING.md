@@ -74,15 +74,17 @@ not need a new rule. Microsoft's binder already computes, exactly, the
 columns a query returns, and the oracle asserts that
 `ir.main_pipeline.result_schema.columns` equals `code.ResultType.Columns`
 **as an ordered list** — column order is part of a KQL result, so a dict
-comparison would let a reordering through. It runs a 74-shape operator
-matrix plus all 49 fixtures in `tests/fixtures/complex_queries/`.
+comparison would let a reordering through. It runs an operator-shape matrix
+plus every fixture in `tests/fixtures/complex_queries/`.
 
 It has two legs, and the second is the one that gates hand-written rules.
 The **bound** leg compares Microsoft's answer with itself wherever the
-symbol is closed, so it can only fail where Microsoft left the symbol open;
-four cases are xfailed there. The **unbound** leg reaches the IR with the
-schema going only through `SchemaAttacher`, so every case exercises the
-hand-rolled scope walk; eleven are xfailed.
+symbol is closed, so it can only fail where Microsoft left the symbol open.
+The **unbound** leg reaches the IR with the schema going only through
+`SchemaAttacher`, so every case exercises the hand-rolled scope walk and
+carries the longer xfail list. Read `XFAIL_5_3` and `XFAIL_FALLBACK` in the
+file for the current entries rather than a count quoted here — the whole
+point of `strict=True` below is that those lists shrink.
 
 Both xfail lists are `strict=True`. A case you fix therefore turns the test
 red until you delete its entry — that is deliberate, and it is how a fix
