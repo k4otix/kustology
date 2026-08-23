@@ -131,6 +131,17 @@ the two branches and every offset-suffixed timestamp shifts silently while
 bare ones stay correct, which is the shape that survives a test suite written
 in one timezone.
 
+CI has a cell for exactly this: `test-locale`'s third entry runs the whole
+suite under `en_US.UTF-8` with `TZ=Asia/Tokyo` (`.github/workflows/test.yml`).
+It is separate from the two culture cells because it guards a separate bug —
+a UTC runner cannot tell "converted" from "not converted", so every other
+cell is blind to it. **A local `pytest` is one of those blind runs unless
+your machine is off UTC.** To check a datetime change before pushing:
+
+```bash
+TZ=Asia/Tokyo .venv/bin/python -m pytest -q
+```
+
 ## AST structure and navigation
 
 ### Node *class* is generic; the type lives in `Kind`

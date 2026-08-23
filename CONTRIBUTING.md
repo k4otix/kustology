@@ -41,13 +41,31 @@ runtime is not on a standard path.
    history — several branches can land between releases and still share one
    increment.
 7. Open a PR. CI runs the same checks on Linux across Python 3.10–3.13,
-   with macOS and Windows sanity cells on 3.12, plus five jobs the local
-   loop above does not cover: the suite again under `de-DE` and `fr-FR`
-   (the culture pin), `python scripts/audit_syntax_kinds.py --check`,
-   `python scripts/mine_corpus.py`, DLL-provenance verification, and an
-   SBOM build. Run the two script gates locally if you touched the IR
-   builder — they are fast and they are the two most likely to surprise
-   you.
+   with macOS and Windows sanity cells on 3.12. `.github/workflows/test.yml`
+   defines nine jobs; `test`, `test-ir` and `lint` are the loop above, and
+   the other **six** have no local counterpart:
+
+   | Job | What it adds |
+   | --- | --- |
+   | `dependency-review` | flags vulnerable dependencies on the PR itself |
+   | `test-locale` | the whole suite again in three cells — `de-DE` and `fr-FR` for the culture pin, and `en_US.UTF-8` with `TZ=Asia/Tokyo` for the timezone bug below |
+   | `coverage-audit` | `python scripts/audit_syntax_kinds.py --check` |
+   | `corpus-regression` | `python scripts/mine_corpus.py` |
+   | `verify-dll` | the bundled DLL's SHA-256, offline and against NuGet |
+   | `sbom` | CycloneDX SBOM build |
+
+   Run the two script gates locally if you touched the IR builder — they are
+   fast and they are the two most likely to surprise you.
+
+   **The `Asia/Tokyo` cell is the one worth knowing about.** A UTC runner
+   cannot tell "converted to UTC" from "not converted", so a
+   timezone-dependent defect is invisible in every other cell — and the
+   library has exactly one such surface, the `DateTimeKind` branch in
+   `ir/_builder_helpers.py:613-616` behind `LiteralExpr.value` / `.ticks`
+   (it is the only `ToUniversalTime` / `DateTimeKind` / `TimeZone` read in
+   `src/`). If you touch datetime literals, read
+   *"Datetime literals are UTC-normalized at build"* in `AGENTS.md` first;
+   that cell is what will catch you, and only on a PR.
 
 ## The oracle harness
 
