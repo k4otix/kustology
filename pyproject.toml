@@ -47,9 +47,15 @@ ir = [
 ]
 # Base test extras — NO pydantic. The CI matrix uses these to prove
 # `pip install kustology` still works without the IR extras.
+# pyyaml is here, not only under `dev`, because the sample_sentinel_corpus
+# tests in tests/test_scripts.py `importorskip("yaml")`. Every pytest-running
+# CI cell installs `test`; the only cell that installs `dev` (`lint`) runs
+# ruff and mypy, never pytest. Without pyyaml here those tests skip in every
+# cell, permanently.
 test = [
     "pytest>=8.0.0",
     "pytest-cov>=4.1.0",
+    "pyyaml>=6.0",
 ]
 # Full dev extras — includes pydantic so lint/typecheck can see the IR module.
 dev = [

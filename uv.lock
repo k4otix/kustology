@@ -656,6 +656,7 @@ ir = [
 test = [
     { name = "pytest" },
     { name = "pytest-cov" },
+    { name = "pyyaml" },
 ]
 
 [package.metadata]
@@ -671,6 +672,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=4.1.0" },
     { name = "pythonnet", specifier = ">=3.0.0" },
     { name = "pyyaml", marker = "extra == 'dev'", specifier = ">=6.0" },
+    { name = "pyyaml", marker = "extra == 'test'", specifier = ">=6.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.16.3" },
     { name = "twine", marker = "extra == 'dev'", specifier = ">=5.0.0" },
 ]

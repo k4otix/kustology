@@ -40,10 +40,13 @@ _NUMBER_WORDS = {
 def _workflow_jobs() -> set[str]:
     """Job names from ``test.yml``, without a YAML parser.
 
-    ``pyyaml`` is a ``[dev]`` dependency only -- every CI cell installs
-    ``--extra test`` (plus ``--extra ir``), so importing yaml here would
-    fail collection on every one of them. The grammar needed is tiny: a job
-    is a two-space-indented mapping key under the top-level ``jobs:``.
+    A regex, not ``yaml.safe_load``, so this module imports with no optional
+    dependency at all -- it makes claims about the repository's own files and
+    should keep running in the barest environment that can collect it. (An
+    earlier draft was right that ``pyyaml`` was unreachable from the test
+    extras; it now ships in ``[test]``, but the regex has no reason to change.
+    The grammar it needs is tiny: a job is a two-space-indented mapping key
+    under the top-level ``jobs:``.)
     """
     jobs: set[str] = set()
     in_jobs = False
