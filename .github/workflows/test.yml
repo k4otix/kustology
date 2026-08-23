@@ -111,7 +111,7 @@ jobs:
         run: uv sync --locked ${{ steps.extras.outputs.flags }} --python ${{ matrix.python }}
 
       - name: Run pytest with coverage
-        run: uv run pytest --cov=kustology --cov-report=xml --cov-report=term
+        run: uv run pytest -rs --cov=kustology --cov-report=xml --cov-report=term
 
       - name: Upload coverage to Codecov
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
@@ -145,7 +145,7 @@ jobs:
       - name: Install package with [ir] extras
         run: uv sync --locked --extra test --extra ir
       - name: Run full pytest (including tests/ir/)
-        run: uv run pytest -v
+        run: uv run pytest -v -rs
 
   test-locale:
     name: Locale ${{ matrix.locale }}${{ matrix.tz && format(' / TZ={0}', matrix.tz) || '' }}
@@ -199,7 +199,7 @@ jobs:
           LANG: ${{ matrix.locale }}
           LC_ALL: ${{ matrix.locale }}
           TZ: ${{ matrix.tz }}
-        run: uv run pytest -v
+        run: uv run pytest -v -rs
 
   coverage-audit:
     name: SyntaxKind coverage audit
