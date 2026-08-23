@@ -74,15 +74,22 @@ jobs:
       # running would hide a real regression behind a green check -- exactly
       # the failure mode this job is built to catch.
       #
-      # One skip is expected and is not a regression. The windows-latest cell
-      # skips the datetime TZ-invariance leg
-      # (tests/ir/test_literals.py::test_datetime_literal_is_utc_and_tz_independent):
-      # .NET resolves TimeZoneInfo.Local from the OS there rather than from
-      # TZ, so the test cannot set up a cross-timezone comparison and says so
-      # instead of failing. The ubuntu and macos cells do run it for real --
-      # their default zone is UTC, which differs from the zone the test pins
-      # its subprocess to, and a mutation of either DateTimeKind branch is
-      # caught under UTC.
+      # Skips are expected here and are not by themselves a regression. The
+      # oracle skips its facet/fork cases on every platform, because
+      # Microsoft reports no single tabular ResultType to compare against.
+      # Read the reasons, not the count.
+      #
+      # One further skip is possible and has never been observed, because no
+      # CI has run this branch yet. The datetime TZ-invariance leg
+      # (tests/ir/test_literals.py::test_datetime_literal_is_utc_and_tz_independent)
+      # skips wherever its subprocess cannot be placed in a different zone
+      # from the parent. .NET is expected to resolve TimeZoneInfo.Local from
+      # the OS rather than from TZ on Windows, which would make the
+      # windows-latest cell skip it; that is a prediction, and -rs is how it
+      # gets confirmed or refuted from a real log. The ubuntu and macos cells
+      # do run it for real -- measured, their default zone is UTC, which
+      # differs from the zone the test pins its subprocess to, and a mutation
+      # of either DateTimeKind branch is caught under UTC.
       #
       # No -q here: pyproject's addopts already supplies it, and passing it
       # twice is -qq, which suppresses the "N passed, N skipped" totals line

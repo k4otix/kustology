@@ -142,8 +142,13 @@ cell is blind to it. **A local `pytest` is one of those blind runs unless
 your machine is off UTC.** To check a datetime change before pushing:
 
 ```bash
-TZ=Asia/Tokyo .venv/bin/python -m pytest -q
+TZ=Asia/Tokyo .venv/bin/python -m pytest -rs
 ```
+
+No `-q`: `pyproject.toml`'s `addopts` already passes it, and a second one is
+`-qq`, which suppresses the totals line. `-rs` prints the reason for any
+skip — including this leg skipping, which is what you would see on a
+platform that resolves the local zone from the OS instead of from `TZ`.
 
 ## AST structure and navigation
 

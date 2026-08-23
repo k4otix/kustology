@@ -182,10 +182,12 @@ def test_datetime_literal_is_utc_and_tz_independent():
     assert child.returncode == 0, f"subprocess failed (exit {child.returncode}):\n{child.stderr}"
     child_tz, other, naive_other = child.stdout.strip().splitlines()
 
-    # Did the child really run in a different zone? On a platform where
-    # CoreCLR resolves TimeZoneInfo.Local from the OS rather than from TZ
-    # -- Windows does -- it did not, and the comparisons below would
-    # degrade into a same-config comparison that cannot catch a regression.
+    # Did the child really run in a different zone? Where CoreCLR resolves
+    # TimeZoneInfo.Local from the OS rather than from TZ it did not, and the
+    # comparisons below would degrade into a same-config comparison that
+    # cannot catch a regression. Windows is expected to behave that way;
+    # that is a prediction, not an observation -- the condition is detected
+    # here at run time, so nothing depends on which platforms they are.
     #
     # That is a **skip**, not a failure. Nothing about the library is wrong
     # when a platform ignores TZ; this test simply cannot gather evidence
