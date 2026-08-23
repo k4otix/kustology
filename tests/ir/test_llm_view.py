@@ -143,7 +143,8 @@ def test_operator_result_schema_is_dropped_but_the_pipeline_keeps_its_own(storm_
     per-operator copy answers the same question once per step, and on a
     bound parse most steps give the same answer. Measured over the 49-query
     fixture corpus against a schema covering every referenced column, the
-    per-operator copies were 68% of the whole bound LLM view.
+    per-operator copies were 35% of the whole bound LLM view — 295,156 of
+    851,224 bytes.
 
     ``model_dump_json`` keeps every one of them — this is a view decision,
     the same call ``_cap_datatable_rows`` makes about ``rows``.

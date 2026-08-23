@@ -1073,6 +1073,17 @@ release is in `docs/superpowers/reports/`.
   `let`-declared function body is not a statement in this sense — its
   tabular expression hangs off the `FunctionBody` — so it does not appear
   here.
+  **Still not modelled, and worth knowing before you deduplicate by digest:**
+  every statement kind that is neither `let` nor tabular is discarded
+  silently and hashes as though it were absent — `SetOptionStatement`
+  (`set query_now=…`, `set notruncation`), `QueryParametersStatement`,
+  `PatternStatement`, `AliasStatement` and `RestrictStatement`. `set
+  query_now=datetime(2020-01-01); T | take 1` therefore shares a digest with
+  a bare `T | take 1` and with the same query pinned to a different
+  `query_now`, though the three return different rows. All five kinds are
+  tracked as unhandled in `tests/fixtures/syntax_kinds_baseline.json`, so
+  this is a known gap rather than a surprise; closing it needs a statement
+  surface on `QueryIR`, which is its own change.
 - **The pipeline source position gains two classes and three fields, and
   `ExternalDataExpr.uri` becomes `uris`.** Four different queries used to
   build indistinguishable sources and share one `semantic_hash`. A

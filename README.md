@@ -363,8 +363,9 @@ be checked against the IR shape that produced it:
 }
 ```
 
-All subcommands read from stdin when `file` is `-` or omitted, and input is
-capped at 10 MB (`KUSTOLOGY_MAX_INPUT_BYTES` overrides, counted in bytes).
+`format`, `validate` and `parse` read from stdin when `file` is `-` or
+omitted (`version` takes no file), and input is capped at 10 MB
+(`KUSTOLOGY_MAX_INPUT_BYTES` overrides, counted in bytes).
 
 **Exit codes.** `0` success; `1` the input had Error-severity diagnostics, or
 the command failed at runtime; `2` the *invocation* was wrong — bad flags, a
@@ -448,13 +449,28 @@ Two caveats, both deliberate rather than accidental:
   *shape* rather than a field's value, and no amount of stripping hides
   that. The alternative is treating every bare name as a table without
   proof.
-- Equal digests are **not** a proof of equivalence. As of 0.2.0, four
-  operators still discard a modifier that changes what a query returns, so
-  two such queries share one digest: `mv-apply`'s `to typeof(…)`, `limit`
-  and `with_itemindex=`; `parse-kv`'s `with (…)` properties; `getschema
-  kind=csl`; and `consume decodeblocks=`. If you deduplicate a rule library
-  by hash, know that these merge. See the CHANGELOG's `[0.2.0]` **Fixed**
-  section for the list and the ones that were closed.
+- Equal digests are **not** a proof of equivalence. Two known gaps remain
+  in 0.2.0, and if you deduplicate a rule library by hash both of them merge
+  queries you may not want merged.
+
+  **Four operators still discard a modifier** that changes what a query
+  returns: `mv-apply`'s `to typeof(…)`, `limit` and `with_itemindex=`;
+  `parse-kv`'s `with (…)` properties; `getschema kind=csl`; and `consume
+  decodeblocks=`. That list is what a modifier-pair sweep turned up, not a
+  proof that nothing else remains.
+
+  **Statement-level constructs other than `let` are dropped entirely** and
+  hash as if they were absent — `set`, `declare query_parameters`,
+  `declare pattern`, `alias database` and `restrict access to`. Two of those
+  change results: `set query_now=datetime(2020-01-01); T | take 1` shares a
+  digest with a bare `T | take 1` *and* with the same query pinned to a
+  different `query_now`, and two `declare query_parameters` defaults differing
+  only in their value collide. Nothing in the IR records that a statement was
+  there, so this is invisible rather than merely lossy. All five kinds are
+  tracked as unhandled in `tests/fixtures/syntax_kinds_baseline.json`.
+
+  See the CHANGELOG's `[0.2.0]` **Fixed** section for the collisions that
+  *were* closed.
 
 ## Development
 

@@ -224,9 +224,11 @@ def _drop_operator_result_schema(out: dict[str, Any], cls: type) -> None:
     economy: on a bound parse most operators emit the columns the one before
     them emitted, so a pipeline of *n* steps restates one column list *n*
     times. Measured across the 49-query fixture corpus, bound against a
-    schema naming every referenced column, the per-operator copies were 68%
-    of the whole LLM view — they took its size advantage over
-    ``model_dump_json`` from a median 51% down to 28%.
+    schema naming every referenced column, the per-operator copies were 35%
+    of the whole LLM view (295,156 of 851,224 bytes): with them the view was
+    a median 28% smaller than ``model_dump_json`` on the same query, without
+    them it is 45%. Those are the numbers ``CHANGELOG.md``'s ``to_llm_dict``
+    entry carries; keep the two in step.
 
     ``Pipeline.result_schema`` is not dropped: "what columns does this query
     return" is one answer per pipeline, and it is the answer a reader
