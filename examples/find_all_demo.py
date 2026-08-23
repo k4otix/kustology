@@ -64,14 +64,19 @@ def main() -> None:
     print(f"Let aliases: {aliases}")
 
     # Every column reference, regardless of role (filter, project, join
-    # key), with the three things a bound parse puts on each one.
+    # key), with three fields — and only two of them come from binding.
     #
-    # `result_type` comes from Microsoft's binder. `table` is the scope the
-    # column resolved against, and names the *immediate* source: columns
-    # downstream of the alias resolve to `powershell_procs`, not to the
-    # DeviceProcessEvents behind it. `join_side` is set only where the
-    # query wrote `$left.` / `$right.`, and survives the binder replacing
-    # the sentinel in `table`.
+    # `result_type` is Microsoft's binder's answer; unbound it reads
+    # `unresolved`. `table` is the scope the column resolved against, and
+    # names the *immediate* source: columns downstream of the alias resolve
+    # to `powershell_procs`, not to the DeviceProcessEvents behind it.
+    #
+    # `join_side` is **not** binder-filled — it is read off the `$left.` /
+    # `$right.` the query wrote, so it is already correct on an unbound
+    # parse. What binding changes is `table`, which goes from the sentinel
+    # `'$left'` to the resolved `'powershell_procs'`. That is exactly why
+    # `join_side` has to be its own field: the binder overwrites the only
+    # other place the side was recorded.
     print("Columns:")
     print(f"  {'name':<12} {'result_type':<12} {'table':<20} join_side")
     for col in find_all(ir, ColumnRef):

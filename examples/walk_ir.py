@@ -49,10 +49,11 @@ SCHEMA = {
 
 def _describe_column(c) -> str:
     if isinstance(c, ColumnRef):
-        # The three fields a bound parse fills in. ``result_type`` is a
-        # KustoType StrEnum, so it formats as the wire value ("string"),
-        # and ``table`` is the *scope* the column resolved against —
-        # which for a column read through a `let` alias is the alias.
+        # ``name`` is syntactic and always there; ``result_type`` and
+        # ``table`` are what binding adds. ``result_type`` is a KustoType
+        # StrEnum, so it formats as the wire value ("string"), and ``table``
+        # is the *scope* the column resolved against — which for a column
+        # read through a `let` alias is the alias, not the table behind it.
         return f"{c.name}:{c.result_type} <- {c.table}"
     if isinstance(c, Assignment):
         return f"{c.name} = {c.expr.canonical_form}"

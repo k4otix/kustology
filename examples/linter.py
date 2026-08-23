@@ -55,7 +55,9 @@ SCHEMA = {
 }
 
 QUERIES = [
-    # Every rule fires.
+    # All three IR rules fire. The semantic one does not — the query binds
+    # cleanly, which is the point: our rules and the binder's answer are
+    # independent, and a query can be fine by one and not the other.
     'SigninLogs | where UserPrincipalName contains "admin" | project-keep *',
     # A typo the parser cannot see and only the binder can.
     'SigninLogs | where TimeGenerated > ago(1d) | where ResultTypo == "0"',
