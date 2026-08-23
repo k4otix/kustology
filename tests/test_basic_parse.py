@@ -476,3 +476,124 @@ def test_dict_keys_are_raw_column_names_and_the_docstring_says_so():
 
     doc = build_global_state.__doc__.lower()
     assert "raw name" in doc and "bracket-quoting" in doc, doc
+
+
+def test_an_empty_schema_string_raises_value_error_not_a_clr_exception():
+    """`{"T": ""}` was the last raw CLR escape in this module.
+
+    `TableSymbol.From("")` raises `System.InvalidOperationException: Invalid
+    schema:` with a .NET stack trace. It is neither a `TypeError` nor a
+    `ValueError`, so a caller can only catch it with a bare `except
+    Exception` and cannot name the type without importing from the CLR — the
+    same defect that made `{"T": {"c": None}}` unusable, one function away.
+
+    The blast radius is exactly the empty and whitespace-only strings.
+    Microsoft's schema parser is otherwise permissive to a fault and accepts
+    every malformed string tried below without complaint, so nothing else
+    changes shape here.
+    """
+    from kustology.utils.schema_state import build_global_state
+
+    for empty in ("", "   ", "\t\n"):
+        with pytest.raises(ValueError) as exc_info:
+            build_global_state({"T": empty})
+        message = str(exc_info.value)
+        assert "'T'" in message, message
+        assert "(col:type, ...)" in message, message
+        assert "InvalidOperationException" not in message
+        assert "Kusto.Language" not in message
+
+    # It reaches the public entry point as a `ValueError` too.
+    with pytest.raises(ValueError):
+        parse("T | take 1", schema={"T": ""})
+
+    # The control: everything else Microsoft accepts, it still accepts. The
+    # guard must not become a hand-rolled schema-string validator.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        for permissive in ("(", ")", "(a:)", "(a long)", "(a:long", "a:long", "junk"):
+            build_global_state({"T": permissive})
+
+
+def test_a_non_string_table_or_column_name_raises_type_error():
+    """Names had the defect the *type* position just had fixed.
+
+    `{"T": {5: "long"}}` came back as pythonnet's "No method matches given
+    arguments for ColumnSymbol..ctor" — the same unnameable, schema-silent
+    wording this module's own docstring criticises `GetSymbol(5)` for. Keys
+    become a symbol's `Name` verbatim, so a key that is not a `str` cannot
+    be one.
+    """
+    from kustology.utils.schema_state import build_global_state
+
+    with pytest.raises(TypeError) as table_name:
+        build_global_state({5: {"c": "long"}})
+    with pytest.raises(TypeError) as column_name:
+        build_global_state({"T": {5: "long"}})
+    with pytest.raises(TypeError) as list_column_name:
+        build_global_state({"T": [5]})
+
+    for exc in (table_name, column_name, list_column_name):
+        assert "No method matches" not in str(exc.value), str(exc.value)
+        assert "int" in str(exc.value), str(exc.value)
+    assert "table name" in str(table_name.value)
+    assert "column name" in str(column_name.value)
+    assert "'T'" in str(column_name.value)
+    assert "'T'" in str(list_column_name.value)
+
+
+def test_the_two_forms_agree_on_a_deliberate_unknown_type():
+    """`"unknown"` is Microsoft's own name for "no type", so writing it is
+    not a typo — but `ScalarTypes.GetSymbol("unknown")` returns `None`.
+
+    So the dict form scolded the caller for a real type name and handed back
+    `string`, while `{"T": "(c:unknown)"}` accepted it and kept `unknown`.
+    Two spellings of one schema, disagreeing about both the warning and the
+    resulting type. It is also what `extract_schemas_from_global_state`
+    emits for a column the binder could not type, so round-tripping its
+    output through `build_global_state` silently retyped those columns.
+    """
+    from kustology.utils.schema_state import (
+        build_global_state,
+        extract_schemas_from_global_state,
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        from_dict = build_global_state({"T": {"c": "unknown", "d": "long"}})
+
+    assert extract_schemas_from_global_state(from_dict) == {
+        "T": {"c": "unknown", "d": "long"},
+    }
+
+    # The schema-string form has always kept it; the two now agree, so the
+    # extractor's output round-trips unchanged.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        from_string = build_global_state({"T": "(c:unknown, d:long)"})
+    assert extract_schemas_from_global_state(from_string) == extract_schemas_from_global_state(
+        from_dict
+    )
+
+    # The control: a genuine typo still warns and still falls back.
+    with pytest.warns(RuntimeWarning, match="bogus"):
+        typo = build_global_state({"T": {"c": "bogus"}})
+    assert extract_schemas_from_global_state(typo) == {"T": {"c": "string"}}
+
+
+def test_every_untyped_schema_string_column_is_attributed_to_the_caller():
+    """One warning per column, and the stack is walked once for all of them.
+
+    `_caller_stacklevel()` was called inside the loop, re-walking the whole
+    stack for every column. The depth cannot differ between iterations — it
+    is the same frame — so hoisting it is free, and this pins that hoisting
+    did not cost the attribution the walk exists to provide.
+    """
+    from kustology.utils.schema_state import build_global_state
+
+    with pytest.warns(RuntimeWarning) as record:
+        build_global_state({"T": "(a:bogus, b:alsobogus, c)"})
+
+    assert len(record) == 3, [str(w.message) for w in record]
+    assert {w.filename for w in record} == {__file__}
+    assert {w.lineno for w in record} == {record[0].lineno}

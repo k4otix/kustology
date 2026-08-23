@@ -29,6 +29,13 @@ from ..bridge import (
 # library; the first frame above it is the caller a warning should name.
 _PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + os.sep
 
+# Microsoft's own name for "no type": ``ScalarTypes.Unknown.Name``. Not in the
+# ``GetSymbol`` table, so it has to be answered before the lookup -- see
+# ``_resolve_scalar_type``. The IR spells the same idea the same way in
+# ``TabularSchema.columns``; ``KustoType.UNRESOLVED`` ("unresolved") is the
+# separate, enum-typed sentinel for an expression's type.
+_UNKNOWN_TYPE_NAME = "unknown"
+
 
 def _caller_stacklevel() -> int:
     """Return the ``warnings.warn`` stacklevel of the first frame outside this
@@ -85,14 +92,24 @@ def _resolve_scalar_type(type_name: str, *, column: str | None = None):
     "once per location" filter folds every caller's typo into a single
     report.
 
+    ``"unknown"`` is answered directly. It is Microsoft's own name for "no
+    type" (``ScalarTypes.Unknown.Name``) and what
+    :func:`extract_schemas_from_global_state` emits for a column the binder
+    could not type — but ``GetSymbol`` does not carry it, so the dict form
+    used to scold the caller for a real type name and hand back ``string``
+    while ``{"T": "(c:unknown)"}`` kept it. Round-tripping the extractor's
+    own output through :func:`build_global_state` silently retyped those
+    columns.
+
     A non-``str`` type name is a ``TypeError`` raised here rather than at the
     CLR boundary: ``GetSymbol(None)`` surfaces as a bare
     ``System.ArgumentNullException`` with a .NET stack trace through
     ``System.Collections.Generic.Dictionary``, and ``GetSymbol(5)`` as
     pythonnet's "No method matches given arguments",
     neither of which mentions schemas. ``column`` puts the offending key in
-    the message, so the three schema-shape errors this module raises each
-    name their own position — the schema, a table's value, a column's type.
+    the message, so every schema-shape error this module raises names its own
+    position — the schema, a table name, a table's value, a column name, a
+    column's type.
     """
     if not isinstance(type_name, str):
         where = f" for column {column!r}" if column is not None else ""
@@ -101,7 +118,10 @@ def _resolve_scalar_type(type_name: str, *, column: str | None = None):
             f"str; got {type(type_name).__name__}. The typed-column form is "
             "{table: {column: 'type'}} — e.g. {'T': {'c': 'long'}}."
         )
-    sym = ScalarTypes.GetSymbol(type_name.lower())
+    folded = type_name.lower()
+    if folded == _UNKNOWN_TYPE_NAME:
+        return ScalarTypes.Unknown
+    sym = ScalarTypes.GetSymbol(folded)
     if sym is None:
         warnings.warn(
             f"Unknown KQL scalar type {type_name!r}; falling back to 'string'.",
@@ -126,31 +146,75 @@ def _warn_on_untyped_schema_string_columns(name: str, table) -> None:
     A bare name (``"(a)"``) lands in the same place. The documented way to
     say "untyped" is the list form ``{"T": ["a"]}``, which means ``string``;
     a name with no type inside a schema string means neither.
+
+    The stack is walked once for the whole table: the depth is a property of
+    this frame, not of the column being reported, so it cannot differ
+    between iterations.
     """
-    for col in table.Columns:
-        if col.Type == ScalarTypes.Unknown:
-            warnings.warn(
-                f"Column {str(col.Name)!r} in the schema string for table "
-                f"{name!r} has no resolvable KQL scalar type; Microsoft's "
-                "schema parser typed it 'unknown'.",
-                RuntimeWarning,
-                stacklevel=_caller_stacklevel(),
-            )
+    unresolved = [col for col in table.Columns if col.Type == ScalarTypes.Unknown]
+    if not unresolved:
+        return
+    stacklevel = _caller_stacklevel()
+    for col in unresolved:
+        warnings.warn(
+            f"Column {str(col.Name)!r} in the schema string for table "
+            f"{name!r} has no resolvable KQL scalar type; Microsoft's "
+            "schema parser typed it 'unknown'.",
+            RuntimeWarning,
+            stacklevel=stacklevel,
+        )
+
+
+def _check_column_name(column, table: str):
+    """A column key becomes a ``ColumnSymbol.Name`` verbatim, so it is a str.
+
+    ``ColumnSymbol(5, …)`` came back as pythonnet's "No method matches given
+    arguments for ColumnSymbol..ctor" — the same unnameable, schema-silent
+    wording :func:`_resolve_scalar_type` stopped emitting for the *type*
+    position one argument to the right.
+    """
+    if not isinstance(column, str):
+        raise TypeError(
+            f"Schema column name in table {table!r} must be a str; got "
+            f"{type(column).__name__} ({column!r}). Keys become the "
+            "column symbol's name verbatim."
+        )
+    return column
 
 
 def _build_table_symbol(name: str, cols):
     """Build a TableSymbol from the supported schema-value forms."""
+    if not isinstance(name, str):
+        raise TypeError(
+            f"Schema table name must be a str; got {type(name).__name__} "
+            f"({name!r}). Keys become the table symbol's name verbatim."
+        )
     if isinstance(cols, str):
+        # ``TableSymbol.From`` is permissive to a fault -- ``"("``, ``"junk"``
+        # and ``"(a:long"`` are all accepted -- but it raises
+        # ``System.InvalidOperationException`` on an empty or whitespace-only
+        # string, a CLR type a caller cannot name without importing from the
+        # CLR and cannot catch except by bare ``except Exception``. That one
+        # input is the whole difference this guard makes.
+        if not cols.strip():
+            raise ValueError(
+                f"Empty schema string for table {name!r}. Use "
+                "'(col:type, ...)', or the dict form {col: type}; for a "
+                "table with no columns pass an empty list, []."
+            )
         table = TableSymbol.From(cols).WithName(name)
         _warn_on_untyped_schema_string_columns(name, table)
         return table
     if isinstance(cols, dict):
         col_symbols = [
-            ColumnSymbol(c, _resolve_scalar_type(t, column=c)) for c, t in cols.items()
+            ColumnSymbol(_check_column_name(c, name), _resolve_scalar_type(t, column=c))
+            for c, t in cols.items()
         ]
         return TableSymbol(name, col_symbols)
     if isinstance(cols, (list, tuple)):
-        col_symbols = [ColumnSymbol(c, ScalarTypes.String) for c in cols]
+        col_symbols = [
+            ColumnSymbol(_check_column_name(c, name), ScalarTypes.String) for c in cols
+        ]
         return TableSymbol(name, col_symbols)
     raise TypeError(
         f"Unsupported schema value for table {name!r}: {type(cols).__name__}. "
@@ -204,11 +268,18 @@ def build_global_state(schema):
     reach it. Write ``{"T": {"my col": "string"}}`` and let the query do the
     quoting.
 
-    Type names are case-insensitive (``"LONG"`` is ``long``); an
-    unrecognized one falls back to ``string`` with a ``RuntimeWarning``, and
-    a non-``str`` one is a ``TypeError``. Inside a schema string an
-    unrecognized type is Microsoft's ``unknown`` — also a ``RuntimeWarning``,
-    but without the fallback.
+    Type names are case-insensitive (``"LONG"`` is ``long``) and
+    ``"unknown"`` is accepted as Microsoft's own name for "no type", so the
+    output of :func:`extract_schemas_from_global_state` round-trips. An
+    unrecognized name falls back to ``string`` with a ``RuntimeWarning``;
+    inside a schema string it is Microsoft's ``unknown`` — also a
+    ``RuntimeWarning``, but without the fallback.
+
+    Wrong-typed input raises rather than reaching the CLR: a non-``str``
+    table name, column name or type name is a ``TypeError``, a table value
+    that is none of the three forms is a ``TypeError``, and an empty or
+    whitespace-only schema string is a ``ValueError``. Every message names
+    the position it is complaining about.
     """
     if not isinstance(schema, dict):
         raise TypeError(
