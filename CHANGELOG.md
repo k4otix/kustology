@@ -492,9 +492,10 @@ release is in `docs/superpowers/reports/`.
   traversal layer (tier 1).** `KustoQuery.to_dict()`, `KustoWalker.visit` and
   the `utils/analysis.py` analyzers reached through `collect_nodes` recursed
   once per AST level with no cap, and 1200 nested parentheses nest the tree
-  past 2400 levels — deeper than CPython's own 1000-frame limit. The CLI
-  carried a local cap of 1000 that could never be reached for the same
-  reason. The cap is now `walker.MAX_AST_DEPTH = 300`, enforced in the walker
+  1209 levels deep — about one level per parenthesis plus the query's own
+  framing, and past CPython's own 1000-frame limit. The CLI carried a local
+  cap of 1000 that could never be reached for the same reason: the frame
+  limit bites first. The cap is now `walker.MAX_AST_DEPTH = 300`, in the walker
   where all three paths share it: `node_to_dict` emits `{"kind", "text",
   "children": [], "truncated": true}` at the cap and `visit` stops
   descending, so adversarial input degrades to a marked partial answer.
@@ -515,12 +516,15 @@ release is in `docs/superpowers/reports/`.
   `get_referenced_columns`, `find_table_references` and `replace_table` all
   raise `RecursionError` on a source expression wrapped in enough
   parentheses *or* on a long enough pipe chain, and `get_operator_chain`
-  raises on the pipe chain. Because each is one Python frame per level, the
-  ceiling is `sys.getrecursionlimit()` rather than a number this library
-  chose: on CPython's default 1000 the first four give out at 988 nested
-  parentheses around a table source and at 989 `| take 1` stages, and
-  `get_operator_chain` at 991 stages. Every input above parses with zero
-  diagnostics. `to_dict`, `get_operator_stats`, `get_structural_hash`,
+  raises on the pipe chain. Each is one Python frame per level, so **there
+  is no fixed threshold to quote**: the ceiling is `sys.getrecursionlimit()`
+  minus however deep the caller's own stack already is, which makes it a
+  property of the calling program and not of this library. On CPython's
+  default limit of 1000, all five give out a little under a thousand levels
+  — call from one frame further in and every figure drops by exactly one.
+  The inputs that reach it parse with zero diagnostics, which is what makes
+  this worth disclosing rather than filing as bad input. `to_dict`,
+  `get_operator_stats`, `get_structural_hash`,
   `get_referenced_functions` and `find_time_expressions` are unaffected at
   any depth — those are the walker-routed paths the cap was built for.
 - **`replace_table` validates its arguments and quotes a name that needs it

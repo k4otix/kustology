@@ -561,7 +561,10 @@ def test_must_equal(case_id, query_a, query_b):
 # survivor list is the safety mechanism a consumer works around, so a survivor
 # silently ceasing to be one is a documentation defect even though the
 # behaviour improved. The failure message says to move the pair to
-# MUST_DIFFER and update the three places that describe the gap.
+# MUST_DIFFER and describes what else has to change with it. It names no
+# count, because the disclosure sites differ per row -- the `let`-function
+# rows are also described on `LetFunction` and in README's Tier 2 boundary
+# section, which the `evaluate` rows are not.
 #
 # Every case here is also a row in `examples/semantic_hash_demo.py`'s
 # KNOWN_MERGES, which the suite runs -- that file prints the verdict for a
@@ -622,8 +625,12 @@ def test_known_collision(case_id, query_a, query_b):
         f"{case_id}: {query_a!r} and {query_b!r} are a documented 0.2.0 "
         f"collision and no longer collide ({hash_a!r} vs {hash_b!r}). If the "
         f"gap was closed on purpose, move this pair to MUST_DIFFER and update "
-        f"the three places that disclose it: compute_semantic_hash's "
-        f"docstring, README's `semantic_hash` section, and CHANGELOG 0.2.0."
+        f"everything that still discloses it -- not a fixed list, so find "
+        f"them: compute_semantic_hash's docstring, the docstring of the IR "
+        f"node that drops the construct, README (its `semantic_hash` section, "
+        f"plus the Tier 2 boundary section for the let-function rows), "
+        f"CHANGELOG 0.2.0's survivor list, and the matching KNOWN_MERGES row "
+        f"in examples/semantic_hash_demo.py, which is failing beside this."
     )
 
 
