@@ -12,9 +12,11 @@ Schema-loading priority:
   (A) Synthesized — empty-column schema per table-name scan of the corpus.
       Stops .NET "table not found" diagnostics but provides no column info.
 
-Per query: build → enrich → roundtrip. Classifies six structural failure
-categories. Semantic diagnostics from the .NET binder are recorded as
-informational metadata only; they don't count as failures.
+Per query: build+enrich (via the public ``parse(q).to_ir(attach_schema=
+schemas)`` path, which re-binds through Microsoft's own binder) → roundtrip.
+Classifies six structural failure categories. Semantic diagnostics from the
+.NET binder are recorded as informational metadata only; they don't count as
+failures.
 
 This is a maintainer diagnostic against a local, gitignored corpus sample
 (``tests/fixtures/sentinel_sample``, populated by
@@ -37,8 +39,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from kustology import parse
 from kustology.ir import (
-    IRBuilder,
     Operator,
     QueryIR,
     UnknownExpr,
@@ -46,9 +48,10 @@ from kustology.ir import (
     UnknownSource,
     walk,
 )
-from kustology.ir.binder import SchemaAttacher
-from kustology.utils.analysis import build_global_state
 
+# "binder_exception" is kept for report-shape stability -- see
+# verify_query's docstring for why the public `to_ir(attach_schema=...)`
+# path can no longer populate it separately from "builder_exception".
 CATEGORIES = [
     "builder_exception", "binder_exception",
     "bare_operator", "unknown_expr", "unknown_source",
@@ -181,12 +184,23 @@ def load_schemas(in_repo: Path, corpus: Path,
 # Per-query verification
 # ---------------------------------------------------------------------------
 
-def verify_query(builder: IRBuilder, attacher: SchemaAttacher,
-                 qid: str, body: str) -> dict | None:
+def verify_query(schemas: dict, qid: str, body: str) -> dict | None:
+    """Build+enrich through the public path, then check the result.
+
+    ``parse(body).to_ir(attach_schema=schemas)`` re-binds through Microsoft's
+    binder and runs the provenance pass in one call — the same single seam
+    every caller uses, rather than the ``IRBuilder``/``SchemaAttacher`` pair
+    this script used to construct and drive by hand. That collapses the old
+    two-stage try/except: a failure during the build proper and a failure
+    during enrichment are no longer separably reachable through this
+    entry point, so both land in ``builder_exception`` now.
+    ``binder_exception`` stays in :data:`CATEGORIES` for report-shape
+    stability but is not populated by this path.
+    """
     failure: dict = {"id": qid, "categories": []}
 
     try:
-        ir = builder.build(body)
+        ir = parse(body).to_ir(attach_schema=schemas)
     except Exception as e:
         failure["categories"].append("builder_exception")
         failure["builder_error"] = f"{type(e).__name__}: {e}"
@@ -215,13 +229,6 @@ def verify_query(builder: IRBuilder, attacher: SchemaAttacher,
     if unknown_sources:
         failure["categories"].append("unknown_source")
         failure["unknown_sources"] = unknown_sources
-
-    try:
-        attacher.enrich(ir)
-    except Exception as e:
-        failure["categories"].append("binder_exception")
-        failure["binder_error"] = f"{type(e).__name__}: {e}"
-        return failure
 
     try:
         dumped = ir.model_dump_json()
@@ -286,16 +293,12 @@ def main(argv: list[str] | None = None) -> int:
                                           args.workspace_id)
     print(f"schemas: {len(schemas)} tables loaded from {schema_source}")
 
-    gs = build_global_state(schemas)
-    builder = IRBuilder(global_state=gs)
-    attacher = SchemaAttacher(schemas=schemas)
-
     passed: list[str] = []
     failures_by_cat: dict[str, list[dict]] = {c: [] for c in CATEGORIES}
     all_failures: list[dict] = []
 
     for qid, body in iter_corpus(args.corpus):
-        verdict = verify_query(builder, attacher, qid, body)
+        verdict = verify_query(schemas, qid, body)
         if verdict is None:
             passed.append(qid)
         else:

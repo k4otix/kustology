@@ -77,14 +77,28 @@ columns a query returns, and the oracle asserts that
 comparison would let a reordering through. It runs an operator-shape matrix
 plus every fixture in `tests/fixtures/complex_queries/`.
 
-It has two legs, and the second is the one that gates hand-written rules.
-The **bound** leg compares Microsoft's answer with itself wherever the
-symbol is closed, so it can only fail where Microsoft left the symbol open.
-The **unbound** leg reaches the IR with the schema going only through
-`SchemaAttacher`, so every case exercises the hand-rolled scope walk and
-carries the longer xfail list. Read `XFAIL_5_3` and `XFAIL_FALLBACK` in the
-file for the current entries rather than a count quoted here — the whole
-point of `strict=True` below is that those lists shrink.
+It has two legs, and both compare Microsoft's own capture against Microsoft's
+own direct answer — the dict-schema path re-binds through Microsoft's binder
+now, rather than only decorating the IR by hand, so there is no leg left that
+compares our guess against Microsoft's. The **bound** leg parses with a
+schema up front (`parse(q, schema=...).to_ir()`); most of the matrix then
+compares Microsoft's answer with itself and can only fail where a symbol is
+open, so its operator-shape run samples one representative id per construct
+family rather than the whole matrix. The **dict** leg —
+`parse(q).to_ir(attach_schema=schema)` — is the public `attach_schema=dict`
+entry point itself, re-bound through the same seam and therefore
+byte-identical to the bound leg's IR shape wherever the schema is non-empty;
+it is that public path being proven end-to-end, so it keeps the full matrix.
+
+The two legs part ways on an **empty** schema, though: `parse(q, schema={})`
+still binds — a real, if empty, database — while `to_ir(attach_schema={})`
+is documented to treat `{}` as a no-op, the same as `attach_schema=False`, so
+it never re-binds at all. The dict leg's corpus test skips a fixture whose
+derived schema comes out empty rather than comparing against a re-bind that
+never happened, so the two legs' corpus coverage isn't quite identical.
+Read `XFAIL_5_3` and `XFAIL_FALLBACK` in the file for the current entries
+rather than a count quoted here — the whole point of `strict=True` below is
+that those lists shrink.
 
 Both xfail lists are `strict=True`. A case you fix therefore turns the test
 red until you delete its entry — that is deliberate, and it is how a fix

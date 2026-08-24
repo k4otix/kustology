@@ -4,12 +4,18 @@
 """Oracle: our ``Pipeline.result_schema`` must equal Microsoft's ``ResultType``.
 
 The binder in ``Kusto.Language`` already computes, exactly, the columns and
-types a query returns. ``SchemaAttacher`` re-derived the same answer from
+types a query returns. ``SchemaAttacher`` re-derives the same answer from
 hand-written per-operator rules, and a pre-release audit found a dozen places
-where the two disagree (K07–K14, K28) — join-collision renaming, wildcard
+where the two disagreed (K07–K14, K28) — join-collision renaming, wildcard
 ``project-keep``, ``mv-expand``'s element type, ``arg_max(t, *)``, and so on.
-Every one of those is a rule we wrote guessing at something Microsoft had
-already answered.
+Every one of those was a rule we wrote guessing at something Microsoft had
+already answered. Since the dict-path reroute (``to_ir(attach_schema=dict)``
+now re-binds through ``build_global_state`` + ``KustoCode.Analyze`` rather
+than only decorating the IR through the attacher), Microsoft's own answer
+reaches every closed symbol on *both* entry points, and the hand rules are
+shadowed there — they still answer, but their answer is overlaid by
+Microsoft's own before it reaches ``result_schema``, and they run un-overlaid
+only where Microsoft itself leaves a symbol open.
 
 This module is the disagreement detector. For each query it asks Microsoft
 for ``code.ResultType.Columns`` and asks us for
@@ -17,30 +23,45 @@ for ``code.ResultType.Columns`` and asks us for
 **as ordered lists** — KQL's column order is part of a query's result, and a
 plain dict comparison would let a reordering through.
 
-**Two legs, and the second is the one that gates the rules.** On a bound
-parse the answer is *taken* from ``ResultType`` wherever Microsoft could
-compute one, so for most of this matrix the bound leg compares Microsoft's
-answer with itself and can only fail where the symbol is open. Its MATRIX
-run is therefore a fixed representative sample (``BOUND_LEG_IDS``), not the
-full matrix — enough to keep the ResultType capture/ordering path (column
-identity, join-collision renaming, wildcard selection, multi-output
-aggregates) under a real test, without a hundred near-identical cases that
-can only ever compare Microsoft's answer with itself. The unbound leg —
-``SchemaAttacher(schema).enrich(parse(q).to_ir())``, with the schema
-reaching the IR only through the attacher — has no binder answer anywhere,
-so every case runs the hand-rolled rules and every case is a real
-comparison, and it keeps the full matrix. Both legs run the same 49 corpus
-fixtures.
+**Two legs, and both now compare Microsoft's capture against Microsoft's own
+direct answer.** The bound leg parses with a schema up front
+(``parse(q, schema=...).to_ir()``); ``ResultType`` is *taken* wherever
+Microsoft could compute one, so most of this matrix compares Microsoft's
+answer with itself and can only fail where a symbol is open. Its MATRIX run
+is therefore a fixed representative sample (``BOUND_LEG_IDS``), not the full
+matrix — it shares the parse-time plumbing (column identity, join-collision
+renaming, wildcard selection, multi-output aggregates) that every other test
+in this suite already exercises, so a hundred near-identical cases would add
+nothing here. The **dict leg** — ``parse(q).to_ir(attach_schema=schema)`` —
+is the public ``attach_schema=dict`` entry point itself: a caller with a
+schema and no cluster to bind against. It re-binds through the same
+``build_global_state`` + ``Analyze`` seam and is therefore byte-identical, IR
+shape included, to the bound leg wherever ``schema`` is non-empty — but it is
+that public seam being proven end-to-end, so it keeps the full MATRIX rather
+than sampling. Both legs run the same 49 corpus fixtures, each deriving its
+own per-query schema from the query text (see ``_heuristic_schema``).
 
-Each leg carries its own ``strict=True`` xfail list, because they fail for
-different reasons: ``XFAIL_5_3`` for the bound leg (open symbols only) and
-``XFAIL_FALLBACK`` for the unbound one. ``strict=True`` means a case someone
+One boundary the two legs do *not* share: an **empty** schema dict binds
+differently on each entry point. ``parse(q, schema={})`` still binds — an
+explicit, real, empty database — so the bound leg gets a real answer even
+for a fixture with no syntactically-recognizable table. ``to_ir(attach_schema
+={})`` is documented to treat ``{}`` as a no-op, the same as
+``attach_schema=False``: no re-bind at all. The dict leg's corpus test skips
+those fixtures rather than comparing, since nothing about the reroute is
+being exercised when it never ran.
+
+Each leg carries its own ``strict=True`` xfail list — ``XFAIL_5_3`` for the
+bound leg, ``XFAIL_FALLBACK`` for the dict leg — and the two mostly name the
+same corpus fixtures, since an open symbol is (mostly) a property of the
+query and schema rather than of which entry point reached them. The
+``{}``-boundary case above is the one entry that differs between the lists
+for exactly the reason just given. ``strict=True`` means a case someone
 fixes fails here rather than sitting as a silent xpass, so the entry has to
 be deleted with the fix.
 
-The unbound leg compares ordered column *names* exactly and types only where
-both sides claim one: the walk does not model numeric promotion, so
-``extend n = a + 1`` is honestly ``unknown`` where Microsoft says ``long``.
+Both legs compare full ``(name, type)`` pairs now: there is no more
+names-only/``unknown``-leniency to grant a leg that never reached Microsoft's
+answer, because both of them do.
 """
 
 from __future__ import annotations
@@ -51,7 +72,6 @@ import pytest
 
 from kustology import parse
 from kustology.bridge import KustoCode
-from kustology.ir.binder import SchemaAttacher
 from kustology.utils.analysis import build_global_state
 
 # A deliberately collision-heavy schema: ``L`` and ``R`` share ``k`` and
@@ -228,73 +248,49 @@ XFAIL_5_3: dict[str, str] = {
 }
 
 
-# The same comparison, run against the *unbound* path -- the hand-rolled
-# fallback rules answering alone, with no ``ResultType`` anywhere to defer to.
-# It is a separate list because the two legs fail for different reasons: the
-# bound leg only reaches the fallback where Microsoft's symbol is open, while
-# this one reaches it always.
+# The same comparison, run against the *dict* path -- ``to_ir(attach_schema=
+# schema)``, which since Task 1 re-binds through Microsoft's own binder. The
+# hand-rolled rules only still answer where an operator's own per-node
+# ``result_schema`` is ``None`` -- Microsoft left *that* symbol open, even on
+# a query whose whole-query ``ResultType`` (what ``theirs`` reads) resolves a
+# shape. Every surviving entry below is that: an open per-operator symbol,
+# not a case the reroute failed to fix. Task 3 replaces each of these with an
+# honest ``result_schema is None`` assertion once the hand rules are gone.
 XFAIL_FALLBACK: dict[str, str] = {
-    "project-reorder-desc": (
-        "`project-reorder * desc` orders the columns a wildcard term matched "
-        "by name, descending. The direction is recorded on ReorderKey and the "
-        "rule ignores it, leaving the matched columns in source order."
-    ),
-    "arg-max-star-beside-another-aggregate": (
-        "The hand-rolled auto-name for `buildschema(d)` is `buildschema_d` "
-        "where the engine says `schema_d`. The binder's own name cannot be "
-        "read here: `arg_max(t, *)` reports six columns bound and one "
-        "unbound, so any per-index alignment across it varies with bind "
-        "state, and `Assignment.name` is hashed. Fixing this needs the name "
-        "for `buildschema` (and `binary_all_*`, `tdigest_merge`, "
-        "`series_stats_dynamic`, which are each irregular in a different "
-        "way) in the hand rules, not a wider read of `ResultType`."
-    ),
-    "mv-apply": (
-        "`mv-apply d on (...)` moves the applied column to the end of the "
-        "output. The rule leaves the scope untouched, so the column order "
-        "differs even though the set does not."
-    ),
-    "find": (
-        "`find` synthesizes `source_` and `pack_` and retypes the columns it "
-        "unions as dynamic. FindOp has no scope rule; the shape needs its own "
-        "task rather than a line in this one."
-    ),
-    "scan": (
-        "`scan declare (v:long = 0) with (...)` adds `v` and `match_id`. "
-        "ScanOp is modelled as raw text -- the declared columns are not on the "
-        "node to read."
-    ),
     "ADFSRemoteHTTPNetworkConnection": (
-        "Several divergences at once behind an `evaluate`: column order, and "
-        "join-collision suffixes `TechniqueId1`/`TechniqueName1` the walk does "
-        "not reproduce once the scope has gone through parse and mv-expand."
+        "Microsoft's own per-operator `result_schema` is open from the "
+        "`evaluate` onward (five operators down of twenty-one), even though "
+        "this test's whole-query `ResultType.Columns` still resolves a full "
+        "29-column answer. With the operator open, `_walk_pipeline` falls "
+        "back to the hand-rolled merge, which does not reproduce the "
+        "join-collision suffixes `TechniqueId1`/`TechniqueName1`, keeps "
+        "`Key`/`Value` that `parse`/`mv-expand` consumed, and orders the "
+        "columns differently. Task 3: once the hand rules are "
+        "gone, an open operator honestly reports `result_schema=None`."
     ),
     "AnomalyFoundInNetworkSessionTraffic": (
-        "A *builder* defect, not a scope rule: `extend (a, b, c) = "
-        "series_decompose_anomalies(...)` is a multi-output assignment lowered "
-        "to one Assignment named after the whole `(a, b, c) = ...` text."
-    ),
-    "Brute_Force_Attack_against_GitHub_Account": (
-        "`let f = (t:string){ … }; union f('A'), f('B')` -- a `let`-declared "
-        "function is recorded and not expanded, which is a documented boundary "
-        "of `SchemaAttacher.enrich`, so both union arms contribute nothing."
-    ),
-    "CertifiedPreOwned_TGTs_requested": (
-        "`MvApplyOp` has no scope rule, so the body's output columns never "
-        "reach the enclosing scope: `CIN` is created by a `project` inside "
-        "`mv-apply d=... on (...)` and is missing from ours. The walk "
-        "computes the body's own `result_schema` correctly (`{CIN: string}`) "
-        "and then discards it. The `parse ... MachineName` further down is "
-        "handled correctly and is not the defect here."
-    ),
-    "Find_WithSourceScoped": (
-        "`find withsource=SourceTable in (...)` -- the same missing FindOp "
-        "rule as the `find` matrix case."
+        "Microsoft's own per-operator `result_schema` is open on both "
+        "operators (the `union` and the final `extend`), so the hand-rolled "
+        "merge answers. It also surfaces a *builder* defect: `extend "
+        "(anomalies, score, baseline) = series_decompose_anomalies(...)` "
+        "lowers to one `Assignment` named after the whole `(anomalies, "
+        "score, baseline) = ...` source text, so that bogus column lands in "
+        "the merged scope alongside -- not instead of -- the three real "
+        "ones (a later `mv-expand anomalies, score, baseline, ...` adds "
+        "them back by name). `DvcAction`, which the whole-query `ResultType` "
+        "carries, does not survive the merge. Task 3: the open-operator "
+        "half becomes an honest `result_schema=None` assertion; the "
+        "multi-output-assignment defect is the builder's, not the "
+        "reroute's, and stays out of scope here."
     ),
     "Qualified_ClusterDatabaseTable": (
-        "Column order, plus a join-collision suffix `IndicatorValue1` the "
-        "engine does not emit, over a `cluster(...).database(...).T` source "
-        "the schema does not describe."
+        "Microsoft's own per-operator `result_schema` is open on both "
+        "operators (the `where` and the `join`) -- a `cluster(...)."
+        "database(...).T` source the schema does not describe -- so the "
+        "hand-rolled merge answers and invents the join-collision suffix "
+        "`IndicatorValue1`, which the engine's own (partially-typed) answer "
+        "does not have. Task 3: once open, this flips to an honest "
+        "`result_schema=None` assertion."
     ),
 }
 
@@ -307,7 +303,7 @@ def _case(case_id: str, query: str):
 
 
 def _fallback_case(case_id: str, query: str):
-    """One parametrized case for the unbound leg."""
+    """One parametrized case for the dict-path leg."""
     reason = XFAIL_FALLBACK.get(case_id)
     marks = [pytest.mark.xfail(reason=reason, strict=True)] if reason else []
     return pytest.param(case_id, query, id=case_id, marks=marks)
@@ -417,88 +413,84 @@ def test_corpus_fixture_matches_microsoft(name: str, query: str):
     assert_agrees(query, schema, ir)
 
 
-# --- the same matrix, against the fallback walk ------------------------------
+# --- the same matrix, against the dict-path leg ------------------------------
 
 
-def fallback_columns(query: str, schema: dict) -> list[tuple[str, str]] | None:
-    """Our answer with **no** binder answer available to defer to.
+def dict_path_columns(query: str, schema: dict, ir=None) -> list[tuple[str, str]] | None:
+    """Our answer through the public ``attach_schema=dict`` entry point.
 
-    ``parse(query)`` alone is analyzed against ``GlobalState.Default``, which
-    describes no tables, so every operator's ``result_schema`` is ``None``
-    and the hand-rolled rules answer. The schema then reaches the IR only
-    through ``SchemaAttacher``. This is a supported public entry point --
-    a caller with a schema dict and no cluster to bind against -- and it is
-    the only way to exercise the rules Task 5.3 corrected.
+    ``parse(query)`` alone is syntactic; ``to_ir(attach_schema=schema)``
+    re-binds that same tree through Microsoft's own binder
+    (``build_global_state(schema)`` + ``KustoCode.Analyze``) before building
+    the IR, so this is the caller-facing path a schema dict with no cluster
+    to bind against actually takes -- and, since Task 1, it is byte-identical
+    to ``parse(query, schema=schema).to_ir()``. Pass ``ir`` when the caller
+    already built one.
     """
-    ir = SchemaAttacher(schema).enrich(parse(query).to_ir())
+    if ir is None:
+        ir = parse(query).to_ir(attach_schema=schema)
     result_schema = ir.main_pipeline.result_schema
     return list(result_schema.columns.items()) if result_schema is not None else None
 
 
-def assert_fallback_agrees(query: str, schema: dict, *, types: bool) -> None:
-    """Ordered column *names*, and types only where both sides claim one.
+def assert_dict_path_agrees(query: str, schema: dict, ir=None) -> None:
+    """Ordered ``(name, type)`` pairs, exactly -- both sides are Microsoft now.
 
-    Names and order are the fallback rules' whole job, and they are compared
-    exactly. Types are not comparable in general: the walk does not model
-    numeric promotion, so ``extend n = a + 1`` is honestly ``unknown`` where
-    Microsoft says ``long``, and Microsoft returns ``unknown`` of its own for
-    the columns of an open symbol. A type either side declines to give is
-    skipped; a type both give and disagree on is a failure.
+    The rerouted dict path takes its answer from ``ResultType`` the same as
+    the bound leg does, so there is no more names-only/``unknown``-leniency
+    to grant: a real divergence here is a defect in the reroute plumbing
+    (per-operator capture, ordering, the ``Analyze`` seam), not a hand rule
+    guessing wrong.
     """
     theirs = microsoft_columns(query, schema)
     if theirs is None:
         pytest.skip("Microsoft reports no tabular ResultType for this query")
-    ours = fallback_columns(query, schema)
-    assert ours is not None and [n for n, _ in ours] == [n for n, _ in theirs], (
-        f"the fallback walk disagrees with Microsoft's binder for {query!r}\n"
+    ours = dict_path_columns(query, schema, ir)
+    assert ours == theirs, (
+        f"the dict path disagrees with Microsoft's binder for {query!r}\n"
         f"  ours: {ours}\n"
         f"  ms:   {theirs}"
-    )
-    if not types:
-        return
-    expected = dict(theirs)
-    mistyped = [
-        (name, kind, expected[name])
-        for name, kind in ours
-        if kind != "unknown" and expected[name] not in (kind, "unknown")
-    ]
-    assert mistyped == [], (
-        f"the fallback walk mistyped columns for {query!r}: {mistyped}"
     )
 
 
 @pytest.mark.parametrize(
     "query_id,query", [_fallback_case(cid, q) for cid, q in MATRIX]
 )
-def test_operator_matrix_matches_microsoft_without_the_binder(
+def test_operator_matrix_matches_microsoft_via_dict_path(
     query_id: str, query: str,
 ):
-    assert_fallback_agrees(query, SCHEMA, types=True)
+    assert_dict_path_agrees(query, SCHEMA)
 
 
 @pytest.mark.parametrize(
     "name,query", [_fallback_case(n, q) for n, q in CORPUS]
 )
-def test_corpus_fixture_matches_microsoft_without_the_binder(
+def test_corpus_fixture_matches_microsoft_via_dict_path(
     name: str, query: str,
 ):
-    """Names only here.
-
-    ``_heuristic_schema`` types every column ``string``, including ones the
-    query itself creates -- a ``parse`` capture declared ``long``, an
-    ``mv-expand`` item index. Microsoft's collision rules for a created
-    column that shadows an existing one differ from ours, and no real schema
-    reaches that shape, so comparing types would pin an artefact of the
-    stand-in schema rather than a rule.
-    """
+    """Types included -- both sides are Microsoft's own answer here."""
     schema = _heuristic_schema(query)
-    ir = parse(query, schema=schema).to_ir()
+    if not schema:
+        # No table is referenced syntactically (a `let`-function corpus
+        # fixture, or one whose only source is a call-style ASIM parser), so
+        # the heuristic schema is `{}` -- and `to_ir` treats an *empty*
+        # ``attach_schema`` dict as a no-op, the same as ``attach_schema=
+        # False``: no re-bind at all (see the `to_ir` docstring). There is
+        # nothing here for the dict path specifically to exercise: any
+        # agreement or divergence with `microsoft_columns`, which always
+        # binds against `build_global_state({})` directly, would be an
+        # artifact of that guard rather than of the reroute plumbing.
+        pytest.skip(
+            "empty heuristic schema: attach_schema={} is a documented "
+            "no-op, so the dict path never re-binds for this fixture"
+        )
+    ir = parse(query).to_ir(attach_schema=schema)
     if ir.additional_pipelines:
         pytest.skip(
             "multi-statement query: code.ResultType describes the last "
             "statement, main_pipeline the first"
         )
-    assert_fallback_agrees(query, schema, types=False)
+    assert_dict_path_agrees(query, schema, ir)
 
 
 def test_auto_names_do_not_depend_on_the_bind_state():
