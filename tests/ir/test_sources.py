@@ -23,6 +23,8 @@ from kustology.ir import (
     DataTableSource,
     ExternalDataExpr,
     ExternalDataSource,
+    FuncCall,
+    FuncCallSource,
     IRBuilder,
     LiteralExpr,
     Pipeline,
@@ -486,3 +488,15 @@ def test_read_row_schema_accepts_the_schema_and_its_owner():
     )
     assert read_row_schema(kv.Keys) == [("a", "long")]
     assert read_row_schema(kv) == [("a", "long")]
+
+
+def test_func_call_name_reads_agree_across_positions():
+    """One reader, two positions. The expression path resolves through the
+    binder (safe: both bind states start from GlobalState.Default); the
+    source path stays syntactic. Pinned so the shared reader cannot
+    silently change either."""
+    ir = parse("materialized_view('MV') | where tostring(a) == 'x'").to_ir()
+    (src,) = find_all(ir, FuncCallSource)
+    assert src.name == "materialized_view"
+    names = {f.name for f in find_all(ir, FuncCall)}
+    assert "tostring" in names

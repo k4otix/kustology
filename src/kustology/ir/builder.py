@@ -697,18 +697,10 @@ class IRBuilder:
                 # User-defined table-valued function at source position
                 # (e.g. `findAnomalies(field) | summarize ...`).
                 if isinstance(source, UnknownSource):
-                    name = "unknown"
-                    name_node = getattr(n, "Name", None)
-                    if name_node is not None:
-                        if hasattr(name_node, "SimpleName"):
-                            name = str(name_node.SimpleName)
-                        else:
-                            name = visit_name(name_node)
-                    args: list[AnyExpr] = []
-                    arg_list = getattr(n, "ArgumentList", None)
-                    if arg_list is not None and hasattr(arg_list, "Expressions"):
-                        for el in _iter_elements(arg_list.Expressions):
-                            args.append(self._visit_expr(el))
+                    # Syntactic only: a table-valued source name is not
+                    # looked up through the binder here, so this matches the
+                    # reading this position has always used.
+                    name, args = self._read_func_call(n, prefer_symbol=False)
                     source = FuncCallSource(name=name, args=args, span=to_span(n))
                 return
 
@@ -842,6 +834,54 @@ class IRBuilder:
         """
         columns, rows = self._read_datatable(node)
         return DataTableSource(columns=columns, rows=rows, span=to_span(node))
+
+    def _read_func_call(
+        self, node: Any, *, prefer_symbol: bool,
+    ) -> tuple[str, list[AnyExpr]]:
+        """Read a ``FunctionCallExpression``'s name and arguments.
+
+        Shared by the source-position branch of :meth:`_visit_pipeline`
+        (builds :class:`~kustology.ir.query.FuncCallSource`) and the
+        expression-position ``FunctionCallExpression`` branch of
+        :meth:`_visit_expr` (builds :class:`~kustology.ir.expr.FuncCall`) --
+        the ``read_external_data`` pattern: the same construct read two ways
+        is how two readings drift, and here they already had: the expr path
+        preferred ``node.ReferencedSymbol.Name`` and the source path read
+        only the syntactic ``node.Name``. That divergence is *preserved*,
+        not resolved here -- unifying it would move ``semantic_hash`` for
+        one of the two positions days before a release -- so it is now one
+        parameter instead of two copies free to drift further apart
+        unnoticed. Each call site's docstring/comment records why its own
+        ``prefer_symbol`` value is correct for its position.
+
+        ``prefer_symbol=True`` tries ``node.ReferencedSymbol.Name`` (the
+        binder's resolved name) first and falls back to the syntactic name
+        when there is no symbol; ``prefer_symbol=False`` skips straight to
+        the syntactic name.
+        """
+        name = "unknown"
+        ref_sym = getattr(node, "ReferencedSymbol", None) if prefer_symbol else None
+        if ref_sym is not None:
+            try:
+                name = ref_sym.Name
+            except AttributeError:
+                ref_sym = None
+        if not ref_sym:
+            try:
+                name_node = node.Name
+                if hasattr(name_node, "SimpleName"):
+                    name = str(name_node.SimpleName)
+                else:
+                    name = visit_name(name_node)
+            except AttributeError as e:  # pragma: no cover
+                logger.debug("FunctionCall name resolution fell through: %s", e)
+
+        args: list[AnyExpr] = []
+        arg_list = getattr(node, "ArgumentList", None)
+        if arg_list is not None and hasattr(arg_list, "Expressions"):
+            for el in _iter_elements(arg_list.Expressions):
+                args.append(self._visit_expr(el))
+        return name, args
 
     def _visit_operator(self, node: Any) -> Operator | None:
         """Dispatch one operator and stamp the ``hint.*`` parameters on it.
@@ -1836,28 +1876,13 @@ class IRBuilder:
             )
 
         elif kind == "FunctionCallExpression":
-            # Prefer binder-resolved name; fall back to syntactic.
-            name = "unknown"
-            ref_sym = getattr(node, "ReferencedSymbol", None)
-            if ref_sym is not None:
-                try:
-                    name = ref_sym.Name
-                except AttributeError:
-                    ref_sym = None
-            if not ref_sym:
-                try:
-                    name_node = node.Name
-                    if hasattr(name_node, "SimpleName"):
-                        name = str(name_node.SimpleName)
-                    else:
-                        name = visit_name(name_node)
-                except AttributeError as e:  # pragma: no cover
-                    logger.debug("FunctionCall name resolution fell through: %s", e)
-
-            args: list[AnyExpr] = []
-            if hasattr(node, "ArgumentList") and node.ArgumentList and hasattr(node.ArgumentList, "Expressions"):
-                for el in _iter_elements(node.ArgumentList.Expressions):
-                    args.append(self._visit_expr(el))
+            # Prefer the binder-resolved name over the syntactic one: safe
+            # because both bind states this builder ever sees start from
+            # ``GlobalState.Default`` (schemaless build or caller-bound
+            # parse alike), so built-in name resolution is identical either
+            # way -- only which *database* names resolve can differ, and a
+            # scalar function name is never one of those.
+            name, args = self._read_func_call(node, prefer_symbol=True)
 
             res = FuncCall(
                 name=name, args=args,
