@@ -22,7 +22,7 @@ AnyExpr = Union[
     "LiteralExpr",
     "FuncCall", "PathExpr", "ElementExpr", "StarExpr", "NamedExpr",
     "CompoundNamedExpr", "BracketedExpr", "ToScalarExpr",
-    "SubqueryExpr", "ExternalDataExpr", "UnknownExpr", "Expr",
+    "SubqueryExpr", "ExternalDataExpr", "DataTableExpr", "UnknownExpr", "Expr",
 ]
 
 
@@ -458,6 +458,23 @@ class ExternalDataExpr(Expr):
     properties: dict[str, str] = {}
 
 
+class DataTableExpr(Expr):
+    """``datatable(...)[...]`` in expression position — a membership set.
+
+    The source-position form is
+    :class:`~kustology.ir.query.DataTableSource`; both are filled by the
+    builder's ``_read_datatable`` so they cannot drift apart. The values
+    are the query — see ``DataTableSource`` for why dropping them was a
+    collision; in expression position the un-modeled shape was worse, an
+    ``UnknownExpr`` hashing its own source text.
+    """
+
+    KIND: ClassVar[str] = "datatable"
+    kind: Literal["datatable"] = "datatable"
+    columns: list[tuple[str, str]]
+    rows: list[list[AnyExpr]]
+
+
 class UnknownExpr(Expr):
     KIND: ClassVar[str] = "unknown_expr"
     kind: Literal["unknown_expr"] = "unknown_expr"
@@ -479,5 +496,5 @@ REBUILT_BY_QUERY_MODULE: tuple[type[BaseModel], ...] = (
     Between, And, Or, Not,
     FuncCall, CaseExpr, RegexMatch, Exists, PathExpr, ElementExpr, StarExpr,
     NamedExpr, CompoundNamedExpr, UnaryOp, BracketedExpr,
-    ToScalarExpr, SubqueryExpr, ExternalDataExpr,
+    ToScalarExpr, SubqueryExpr, ExternalDataExpr, DataTableExpr,
 )

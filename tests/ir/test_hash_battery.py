@@ -416,6 +416,15 @@ MUST_DIFFER = [
     ("project-reorder-star", "T | project-reorder *, a", "T | project-reorder b, a"),
     ("isnull-vs-isempty", "T | where isnull(x)", "T | where isempty(x)"),
     ("isnull-vs-isnotnull", "T | where isnull(x)", "T | where isnotnull(x)"),
+    # `datatable(...)` in expression position used to fall through to
+    # UnknownExpr, hashing the raw source text -- which happened to
+    # discriminate on value too, so this pair passed for the wrong reason
+    # before DataTableExpr existed. See test_no_battery_pair_discriminates_on_an_unmodelled_blob.
+    (
+        "expr-datatable-values",
+        'T | where a in ((datatable(x:string)["v"]))',
+        'T | where a in ((datatable(x:string)["w"]))',
+    ),
 ]
 
 
@@ -530,6 +539,15 @@ MUST_EQUAL = [
     # Adjacent string literals are one literal in KQL, and the parser has
     # already concatenated them by the time LiteralValue is read.
     ("compound-string-is-concatenation", "T | where x == 'a' 'b'", "T | where x == 'ab'"),
+    # Same shape as `toscalar-nested-whitespace` above, for the sibling
+    # expression-position construct: DataTableExpr's cells are visited
+    # expressions, not raw text, so formatting within the row does not
+    # reach the digest.
+    (
+        "expr-datatable-whitespace",
+        'T | where a in ((datatable(x:string)["v"]))',
+        'T | where a in ((datatable(x:string) [ "v" ]))',
+    ),
 ]
 
 

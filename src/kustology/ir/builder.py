@@ -59,6 +59,7 @@ from .expr import (
     CaseExpr,
     ColumnRef,
     CompoundNamedExpr,
+    DataTableExpr,
     ElementExpr,
     Exists,
     ExternalDataExpr,
@@ -413,11 +414,16 @@ class IRBuilder:
         # shape as unhandled.
         "ToScalarExpression", "PipeExpression", "ExternalDataExpression",
         "DataTableExpression",
-        # DataTableExpression is handled by ``_visit_pipeline`` rather than
-        # ``_visit_expr``: ``datatable`` is a tabular literal, so it only
-        # ever occupies source position (its own or a ``let`` right-hand
-        # side's). It joins MaterializeExpression and ForkExpression above
-        # in being modelled somewhere other than the expression visitor.
+        # DataTableExpression is handled in *both* positions: source
+        # position via ``_visit_pipeline`` (its own or a ``let``
+        # right-hand side's) and expression position via ``_visit_expr``,
+        # the value set of a membership test --
+        # `in ((datatable(x:string)["v", "w"]))`. It used to be listed here
+        # as source-only, which was wrong: the expression-position shape
+        # parsed clean and fell through to ``UnknownExpr`` while this list
+        # claimed the kind was fully covered, so the coverage audit was
+        # blind to the miss. Both branches share ``_read_datatable`` so the
+        # two readings cannot drift.
         "MakeSeriesExpression",
         "ForkExpression",
         # ForkExpression joins the same two: handled, but by the
@@ -803,8 +809,13 @@ class IRBuilder:
             name=name, is_wildcard=is_wildcarded_name(name_node), span=span,
         )
 
-    def _visit_datatable(self, node: Any) -> DataTableSource:
-        """Build a :class:`DataTableSource` from a ``DataTableExpression``.
+    def _read_datatable(self, node: Any) -> tuple[list[tuple[str, str]], list[list[AnyExpr]]]:
+        """Read a ``DataTableExpression`` into ``(columns, rows)``.
+
+        Shared by the source-position (:class:`DataTableSource`) and
+        expression-position (:class:`~kustology.ir.expr.DataTableExpr`)
+        branches of the builder -- the ``read_external_data`` pattern: the
+        same construct read two ways is how the two readings drift.
 
         ``node.Values`` is a *flat* ``SyntaxList`` — the parser imposes no
         row structure on it, so the rows come from chunking it by the
@@ -820,6 +831,16 @@ class IRBuilder:
         cells = [self._visit_expr(el) for el in _iter_elements(node.Values)]
         width = len(columns) or len(cells) or 1
         rows = [cells[i:i + width] for i in range(0, len(cells), width)]
+        return columns, rows
+
+    def _visit_datatable(self, node: Any) -> DataTableSource:
+        """Build a :class:`DataTableSource` from a ``DataTableExpression``.
+
+        The columns/rows read is :meth:`_read_datatable`, shared with the
+        expression-position branch of ``_visit_expr`` so the two cannot
+        drift apart.
+        """
+        columns, rows = self._read_datatable(node)
         return DataTableSource(columns=columns, rows=rows, span=to_span(node))
 
     def _visit_operator(self, node: Any) -> Operator | None:
@@ -1885,6 +1906,14 @@ class IRBuilder:
             res = ExternalDataExpr(
                 columns=cols, uris=uris, format=fmt, properties=props, span=span,
             )
+
+        elif kind == "DataTableExpression":
+            # `datatable(...)[...]` in expression position -- the value set
+            # of a membership test, `in ((datatable(x:string)["v", "w"]))`.
+            # Shared with the source-position branch of ``_visit_pipeline``
+            # via ``_read_datatable`` so the two readings cannot drift.
+            columns, rows = self._read_datatable(node)
+            res = DataTableExpr(columns=columns, rows=rows, span=span)
 
         elif kind == "MakeSeriesExpression":
             res = self._visit_expr(node.Expression)

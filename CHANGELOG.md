@@ -181,6 +181,10 @@ release is in `docs/superpowers/reports/`.
   Microsoft Sentinel rules.
 - **`ExternalDataExpr` carries real data (tier 2).** `uris`, `columns` and
   `format` were placeholders — the URI was literally the string `"url"`.
+- **`DataTableExpr` models `datatable(...)` at expression position (tier 2).**
+  `datatable(...)` in expression position (`in ((datatable(...)))`) is now
+  modeled as `DataTableExpr` instead of falling through to `UnknownExpr`;
+  its values reach the digest as structure rather than as raw source text.
 - **Comments no longer reach `semantic_hash` through a column type or a
   non-literal URI (tier 2).** `AssertSchemaOp.columns`, `ParseKvOp.columns`
   and `ExternalDataExpr.columns` read each declared type with `ToString()`,

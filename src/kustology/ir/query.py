@@ -17,6 +17,7 @@ from .expr import (  # noqa: F401 — names referenced via forward refs
     CaseExpr,
     ColumnRef,
     CompoundNamedExpr,
+    DataTableExpr,
     ElementExpr,
     Exists,
     Expr,

@@ -21,6 +21,7 @@ from .expr import (
     CaseExpr,
     ColumnRef,
     CompoundNamedExpr,
+    DataTableExpr,
     ElementExpr,
     Exists,
     ExternalDataExpr,
@@ -328,6 +329,14 @@ def canonical(expr: Any) -> str:
             # a two-URI feed onto a one-URI feed -- the same loss the
             # singular ``uri`` field used to bake into the model.
             return f"externaldata({cols})[{', '.join(e.uris)}]"
+        if isinstance(e, DataTableExpr):
+            cols = ", ".join(f"{n}:{ty}" for n, ty in e.columns)
+            # Every cell, row-major, through the same renderer as any other
+            # child -- a literal cell renders as its KQL literal, so two
+            # datatables that differ only in a value render (and hash)
+            # apart, the same fidelity the source-position twin has.
+            cells = ", ".join(_render(cell) for row in e.rows for cell in row)
+            return f"datatable({cols})[{cells}]"
         # Pipeline-bearing expressions. The inner pipeline is elided rather
         # than rendered: canonical() is a pure Expr function and Pipeline is
         # modeled in ir.query, so recursing would invert the dependency. The

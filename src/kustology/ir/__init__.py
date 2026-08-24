@@ -27,7 +27,8 @@ from .types import KustoType
 from .spans import Span
 from .expr import (
     And, AnyExpr, Between, BinOp, BracketedExpr, CaseExpr, ColumnRef,
-    CompoundNamedExpr, ElementExpr, Exists, Expr, ExternalDataExpr, FuncCall,
+    CompoundNamedExpr, DataTableExpr, ElementExpr, Exists, Expr,
+    ExternalDataExpr, FuncCall,
     LetValueRef, LiteralExpr, NamedExpr, Not, Or, PathExpr, RegexMatch,
     SetMembership, StarExpr, SubqueryExpr, ToScalarExpr, TypedNameDecl,
     UnaryOp, UnknownExpr,
@@ -82,7 +83,7 @@ __all__ = [
     "LiteralExpr", "FuncCall", "PathExpr", "ElementExpr", "StarExpr",
     "NamedExpr", "UnaryOp", "BracketedExpr", "CompoundNamedExpr",
     "TypedNameDecl", "LetValueRef",
-    "ToScalarExpr", "SubqueryExpr", "ExternalDataExpr",
+    "ToScalarExpr", "SubqueryExpr", "ExternalDataExpr", "DataTableExpr",
     # Operators
     "Operator", "FilterOp", "ExtendOp", "SummarizeOp", "ProjectOp",
     "ProjectAwayOp", "ProjectKeepOp", "ProjectReorderOp", "ProjectRenameOp",

@@ -18,6 +18,7 @@ import json
 
 import pytest
 
+from kustology import parse
 from kustology.ir import (
     DataTableSource,
     ExternalDataExpr,
@@ -74,6 +75,37 @@ def test_datatable_columns_seed_the_binder_scope(builder):
     SchemaAttacher({}).enrich(ir)
     assert ir.main_pipeline.result_schema is not None
     assert ir.main_pipeline.result_schema.columns == {"a": "long"}
+
+
+def test_datatable_in_expression_position_is_modeled():
+    """`in ((datatable(...)))` parses clean and must not fall to UnknownExpr.
+
+    Verified live during the 2026-08-23 audit: this shape lowered to
+    UnknownExpr(ast_kind="DataTableExpression") while HANDLED_EXPR_KINDS
+    claimed the kind "only ever occupies source position" — so the coverage
+    audit was blind to the miss and the digest hashed the raw text.
+    """
+    from kustology.ir import DataTableExpr, UnknownExpr, find_all
+    q = 'T | where a in ((datatable(x:string)["v", "w"]))'
+    kq = parse(q)
+    assert kq.diagnostics == []
+    ir = kq.to_ir()
+    assert not list(find_all(ir, UnknownExpr))
+    (dt,) = find_all(ir, DataTableExpr)
+    assert dt.columns == [("x", "string")]
+    assert [cell.value for row in dt.rows for cell in row] == ["v", "w"]
+
+
+def test_expression_datatable_values_reach_the_hash():
+    a = parse('T | where a in ((datatable(x:string)["v"]))').to_ir().semantic_hash
+    b = parse('T | where a in ((datatable(x:string)["w"]))').to_ir().semantic_hash
+    assert a != b
+
+
+def test_expression_datatable_whitespace_does_not_split():
+    a = parse('T | where a in ((datatable(x:string)["v"]))').to_ir().semantic_hash
+    b = parse('T | where a in ((datatable(x:string) [ "v" ]))').to_ir().semantic_hash
+    assert a == b
 
 
 # --- externaldata -----------------------------------------------------------
