@@ -293,15 +293,36 @@ def test_lookup_kind_field_is_renamed():
 
 # KIND coverage ----------------------------------------------------------
 
-def test_every_ir_model_class_has_kind_constant():
+
+def test_llm_view_kind_comes_from_the_model_field():
+    """KIND ClassVars are gone; the view reads the pydantic discriminator
+    default, so the two can never disagree (the drift IR-5 warned about)."""
+    from kustology.ir import FilterOp
+
+    assert not hasattr(FilterOp, "KIND")
+    assert FilterOp.model_fields["kind"].default == "filter"
+
+
+def test_every_ir_model_class_has_kind_field():
     """Every BaseModel subclass exported from ``kustology.ir`` must
-    declare a ``KIND`` class constant. Catches drift when a new operator
-    is added without updating the LLM discriminator vocabulary."""
+    declare a ``kind`` field with a ``Literal`` default. Catches drift
+    when a new operator is added without updating the LLM discriminator
+    vocabulary.
+
+    This test used to check for a ``KIND`` ClassVar. Task 4 converted the
+    four big operator/source/tables unions to ``Field(discriminator="kind")``,
+    which now enforces (at model-build time) that every member of those
+    unions carries a working ``kind`` discriminator. But ``Expr`` subclasses
+    are gathered into the smart-mode ``AnyExpr`` union, which is a plain
+    ``Union`` rather than a discriminated one, so nothing else guarantees
+    every ``Expr`` class still carries a ``kind`` field. This test is what
+    is left to catch that after the ``KIND`` ClassVar's removal.
+    """
     from pydantic import BaseModel
 
     import kustology.ir as ir_pkg
 
-    # ``Span`` is stripped from LLM output entirely, so it needs no KIND.
+    # ``Span`` is stripped from LLM output entirely, so it needs no ``kind``.
     # ``Finding`` is an analyzer-output shape, not a parsed-query node,
     # and never reaches ``to_llm_dict``.
     EXEMPT = {"Span", "Finding"}
@@ -313,13 +334,21 @@ def test_every_ir_model_class_has_kind_constant():
         obj = getattr(ir_pkg, name, None)
         if not isinstance(obj, type) or not issubclass(obj, BaseModel):
             continue
-        if not hasattr(obj, "KIND") or not isinstance(obj.KIND, str):
+        default = obj.model_fields["kind"].default if "kind" in obj.model_fields else None
+        if not isinstance(default, str):
             missing.append(name)
-    assert not missing, f"classes without KIND: {missing}"
+    assert not missing, f"classes without a kind field default: {missing}"
 
 
 def test_kind_values_are_unique_per_class():
-    """Two different IR classes must not share a KIND string."""
+    """Two different IR classes must not share a ``kind`` default.
+
+    Discriminated unions (Task 4) already reject a duplicate discriminator
+    value for the classes they cover, but ``Expr`` subclasses sit outside
+    any discriminated union (see ``test_every_ir_model_class_has_kind_field``),
+    so this test is the only thing still checking uniqueness across the
+    full exported vocabulary, ``Expr`` included.
+    """
     from pydantic import BaseModel
 
     import kustology.ir as ir_pkg
@@ -329,11 +358,13 @@ def test_kind_values_are_unique_per_class():
         obj = getattr(ir_pkg, name, None)
         if not isinstance(obj, type) or not issubclass(obj, BaseModel):
             continue
-        kind = getattr(obj, "KIND", None)
+        if "kind" not in obj.model_fields:
+            continue
+        kind = obj.model_fields["kind"].default
         if not isinstance(kind, str):
             continue
         if kind in seen and seen[kind] != name:
-            pytest.fail(f"KIND collision: {seen[kind]} and {name} both = {kind!r}")
+            pytest.fail(f"kind collision: {seen[kind]} and {name} both = {kind!r}")
         seen[kind] = name
 
 

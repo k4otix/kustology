@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-from typing import TYPE_CHECKING, ClassVar, Literal, Union
+from typing import TYPE_CHECKING, Literal, Union
 
 from pydantic import BaseModel
 
@@ -35,7 +35,6 @@ class Expr(BaseModel):
     # ``query.Operator`` for the matching policy on operator nodes.
     model_config = {"extra": "forbid"}
 
-    KIND: ClassVar[str] = "expr"
     kind: Literal["expr"] = "expr"
     span: Span
     result_type: KustoType = KustoType.UNRESOLVED
@@ -78,7 +77,6 @@ class LiteralExpr(Expr):
       split two queries that behave identically.
     """
 
-    KIND: ClassVar[str] = "literal"
     kind: Literal["literal"] = "literal"
     value: str | int | float | bool | None
     literal_kind: Literal[
@@ -97,7 +95,6 @@ class LiteralExpr(Expr):
 
 
 class ColumnRef(Expr):
-    KIND: ClassVar[str] = "column_ref"
     kind: Literal["column_ref"] = "column_ref"
     name: str
     # "$left"/"$right" in join on-clauses, concrete table name when resolved,
@@ -183,7 +180,6 @@ class LetValueRef(Expr):
     decision rather than drifting.
     """
 
-    KIND: ClassVar[str] = "let_value_ref"
     kind: Literal["let_value_ref"] = "let_value_ref"
     name: str
 
@@ -210,14 +206,12 @@ class TypedNameDecl(Expr):
     value.
     """
 
-    KIND: ClassVar[str] = "typed_name"
     kind: Literal["typed_name"] = "typed_name"
     name: str
     declared_type: str
 
 
 class FuncCall(Expr):
-    KIND: ClassVar[str] = "func_call"
     kind: Literal["func_call"] = "func_call"
     name: str
     args: list[AnyExpr]
@@ -225,7 +219,6 @@ class FuncCall(Expr):
 
 
 class BinOp(Expr):
-    KIND: ClassVar[str] = "bin_op"
     kind: Literal["bin_op"] = "bin_op"
     op: str
     # ``None`` on the arithmetic operators (``+ - * / %``), where neither
@@ -245,7 +238,6 @@ class BinOp(Expr):
 
 
 class SetMembership(Expr):
-    KIND: ClassVar[str] = "set_membership"
     kind: Literal["set_membership"] = "set_membership"
     # The literal KQL operator: in, !in, in~, !in~, has_any, has_all.
     # Source of truth, as on ``BinOp`` -- ``polarity`` and ``case_sensitive``
@@ -264,7 +256,6 @@ class SetMembership(Expr):
 
 
 class Between(Expr):
-    KIND: ClassVar[str] = "between"
     kind: Literal["between"] = "between"
     target: AnyExpr
     low: AnyExpr
@@ -273,25 +264,21 @@ class Between(Expr):
 
 
 class And(Expr):
-    KIND: ClassVar[str] = "and"
     kind: Literal["and"] = "and"
     operands: list[AnyExpr]
 
 
 class Or(Expr):
-    KIND: ClassVar[str] = "or"
     kind: Literal["or"] = "or"
     operands: list[AnyExpr]
 
 
 class Not(Expr):
-    KIND: ClassVar[str] = "not"
     kind: Literal["not"] = "not"
     operand: AnyExpr
 
 
 class RegexMatch(Expr):
-    KIND: ClassVar[str] = "regex_match"
     kind: Literal["regex_match"] = "regex_match"
     target: AnyExpr
     pattern: str
@@ -309,7 +296,6 @@ class Exists(Expr):
     string -- is the shape this class exists to replace.
     """
 
-    KIND: ClassVar[str] = "exists"
     kind: Literal["exists"] = "exists"
     # Which function produced this. The four are four different predicates:
     # ``isnotempty`` also rejects ``""`` where ``isnotnull`` does not, and
@@ -328,54 +314,46 @@ class Exists(Expr):
 
 
 class CaseExpr(Expr):
-    KIND: ClassVar[str] = "case"
     kind: Literal["case"] = "case"
     branches: list[tuple[AnyExpr, AnyExpr]]
     default: AnyExpr | None = None
 
 
 class PathExpr(Expr):
-    KIND: ClassVar[str] = "path"
     kind: Literal["path"] = "path"
     expression: AnyExpr
     selector: AnyExpr
 
 
 class ElementExpr(Expr):
-    KIND: ClassVar[str] = "element"
     kind: Literal["element"] = "element"
     expression: AnyExpr
     selector: AnyExpr
 
 
 class StarExpr(Expr):
-    KIND: ClassVar[str] = "star"
     kind: Literal["star"] = "star"
 
 
 class NamedExpr(Expr):
-    KIND: ClassVar[str] = "named"
     kind: Literal["named"] = "named"
     name: str
     expression: AnyExpr
 
 
 class CompoundNamedExpr(Expr):
-    KIND: ClassVar[str] = "compound_named"
     kind: Literal["compound_named"] = "compound_named"
     names: list[str]
     expression: AnyExpr
 
 
 class UnaryOp(Expr):
-    KIND: ClassVar[str] = "unary_op"
     kind: Literal["unary_op"] = "unary_op"
     op: str
     operand: AnyExpr
 
 
 class BracketedExpr(Expr):
-    KIND: ClassVar[str] = "bracketed"
     kind: Literal["bracketed"] = "bracketed"
     expression: AnyExpr
 
@@ -404,7 +382,6 @@ class ToScalarExpr(Expr):
     would be a larger break than typing it. The builder always populates it.
     """
 
-    KIND: ClassVar[str] = "to_scalar"
     kind: Literal["to_scalar"] = "to_scalar"
     pipeline: "Pipeline | None"
 
@@ -423,7 +400,6 @@ class SubqueryExpr(Expr):
     what declaring it ``Any`` used to cost.
     """
 
-    KIND: ClassVar[str] = "subquery"
     kind: Literal["subquery"] = "subquery"
     pipeline: "Pipeline | None"
 
@@ -450,7 +426,6 @@ class ExternalDataExpr(Expr):
     dropping the other properties was a collision.
     """
 
-    KIND: ClassVar[str] = "external_data"
     kind: Literal["external_data"] = "external_data"
     columns: list[tuple[str, str]]
     uris: list[str]
@@ -469,14 +444,12 @@ class DataTableExpr(Expr):
     ``UnknownExpr`` hashing its own source text.
     """
 
-    KIND: ClassVar[str] = "datatable"
     kind: Literal["datatable"] = "datatable"
     columns: list[tuple[str, str]]
     rows: list[list[AnyExpr]]
 
 
 class UnknownExpr(Expr):
-    KIND: ClassVar[str] = "unknown_expr"
     kind: Literal["unknown_expr"] = "unknown_expr"
     raw_text: str
     ast_kind: str

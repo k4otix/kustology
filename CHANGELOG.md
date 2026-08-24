@@ -1366,6 +1366,8 @@ release is in `docs/superpowers/reports/`.
   `FindOp.tables`) are discriminated on `kind`. Hand-assembled JSON omitting
   `kind` no longer validates by shape — `model_dump` output always carried
   it, so only hand-built payloads are affected.
+- IR model classes no longer carry the `KIND` ClassVar; read
+  `model_fields["kind"].default` (or the `kind` field on instances) instead.
 
 ### Internal
 

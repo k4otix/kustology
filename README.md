@@ -139,9 +139,9 @@ one spelling sees both.
 The mapping is mostly mechanical (Microsoft's `<Name>Operator`, our
 `<Name>Op`, hyphens becoming underscores in `kind`) but not always: `where`
 is a `FilterOperator`, so its `kind` is `filter`, not `where`. Read
-`SomeOp.KIND` rather than deriving the string. These are the discriminators
-`to_llm_dict` and `model_dump_json` emit, so they are part of the IR's
-versioned shape.
+`SomeOp.model_fields["kind"].default` rather than deriving the string.
+These are the discriminators `to_llm_dict` and `model_dump_json` emit, so
+they are part of the IR's versioned shape.
 
 ## Working with Microsoft's syntax tree
 

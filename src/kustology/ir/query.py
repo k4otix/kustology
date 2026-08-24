@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-from typing import Annotated, Any, ClassVar, Literal, Optional, Union
+from typing import Annotated, Any, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -47,7 +47,6 @@ from .spans import Span
 
 class Diagnostic(BaseModel):
     model_config = {"extra": "forbid"}
-    KIND: ClassVar[str] = "diagnostic"
     kind: Literal["diagnostic"] = "diagnostic"
     message: str
     severity: str
@@ -82,14 +81,12 @@ class TabularSchema(BaseModel):
     means *no schema was determined at all*, and from ``columns == {}``,
     which claims the step emits no columns."""
     model_config = {"extra": "forbid"}
-    KIND: ClassVar[str] = "tabular_schema"
     kind: Literal["tabular_schema"] = "tabular_schema"
     columns: dict[str, str] = {}
 
 
 class Assignment(BaseModel):
     model_config = {"extra": "forbid"}
-    KIND: ClassVar[str] = "assignment"
     kind: Literal["assignment"] = "assignment"
     name: str
     expr: AnyExpr
@@ -104,7 +101,6 @@ class Operator(BaseModel):
     # ``Span`` for the rest.
     model_config = {"extra": "forbid"}
 
-    KIND: ClassVar[str] = "operator"
     kind: Literal["operator"] = "operator"
     span: Span
     # ``hint.*`` named parameters, verbatim keys included: ``hint.strategy``,
@@ -145,26 +141,22 @@ class Operator(BaseModel):
 
 
 class FilterOp(Operator):
-    KIND: ClassVar[str] = "filter"
     kind: Literal["filter"] = "filter"
     predicate: AnyExpr
 
 
 class ExtendOp(Operator):
-    KIND: ClassVar[str] = "extend"
     kind: Literal["extend"] = "extend"
     assignments: list[Assignment]
 
 
 class SummarizeOp(Operator):
-    KIND: ClassVar[str] = "summarize"
     kind: Literal["summarize"] = "summarize"
     aggregations: list[Assignment]
     by: list[ColumnRef | AnyExpr | Assignment]
 
 
 class ProjectOp(Operator):
-    KIND: ClassVar[str] = "project"
     kind: Literal["project"] = "project"
     columns: list[ColumnRef | Assignment | AnyExpr]
 
@@ -189,7 +181,6 @@ class TableRef(BaseModel):
     """
 
     model_config = {"extra": "forbid"}
-    KIND: ClassVar[str] = "table_ref"
     kind: Literal["table_ref"] = "table_ref"
     name: str
     database: str | None = None
@@ -212,7 +203,6 @@ class LetRef(BaseModel):
     """
 
     model_config = {"extra": "forbid"}
-    KIND: ClassVar[str] = "let_ref"
     kind: Literal["let_ref"] = "let_ref"
     name: str
     span: Span
@@ -241,7 +231,6 @@ class UnknownSource(BaseModel):
     """
 
     model_config = {"extra": "forbid"}
-    KIND: ClassVar[str] = "unknown_source"
     kind: Literal["unknown_source"] = "unknown_source"
     raw_text: str
     span: Span
@@ -254,7 +243,6 @@ class ImplicitSource(BaseModel):
     the source couldn't be determined.
     """
     model_config = {"extra": "forbid"}
-    KIND: ClassVar[str] = "implicit_source"
     kind: Literal["implicit_source"] = "implicit_source"
     span: Span
 
@@ -263,7 +251,6 @@ class FuncCallSource(BaseModel):
     """Function-call-as-pipeline-source — a user-defined function that returns
     a table, e.g. ``findAnomalies('foo') | summarize ...``."""
     model_config = {"extra": "forbid"}
-    KIND: ClassVar[str] = "func_call_source"
     kind: Literal["func_call_source"] = "func_call_source"
     name: str
     args: list[AnyExpr] = []
@@ -289,7 +276,6 @@ class DataTableSource(BaseModel):
     """
 
     model_config = {"extra": "forbid"}
-    KIND: ClassVar[str] = "datatable_source"
     kind: Literal["datatable_source"] = "datatable_source"
     columns: list[tuple[str, str]]
     rows: list[list[AnyExpr]]
@@ -325,7 +311,6 @@ class ExternalDataSource(BaseModel):
     """
 
     model_config = {"extra": "forbid"}
-    KIND: ClassVar[str] = "external_data_source"
     kind: Literal["external_data_source"] = "external_data_source"
     columns: list[tuple[str, str]]
     uris: list[str]
@@ -335,13 +320,11 @@ class ExternalDataSource(BaseModel):
 
 
 class DistinctOp(Operator):
-    KIND: ClassVar[str] = "distinct"
     kind: Literal["distinct"] = "distinct"
     columns: list[ColumnRef | Assignment | AnyExpr]
 
 
 class TakeOp(Operator):
-    KIND: ClassVar[str] = "take"
     kind: Literal["take"] = "take"
     # KQL allows any scalar expression here (`let n = 10; T | take n`,
     # `take toscalar(U | count)`), not just an integer literal, so the field
@@ -402,7 +385,6 @@ class SortKey(BaseModel):
     """
 
     model_config = {"extra": "forbid"}
-    KIND: ClassVar[str] = "sort_key"
     kind: Literal["sort_key"] = "sort_key"
     expression: AnyExpr
     direction: Literal["asc", "desc"]
@@ -411,20 +393,17 @@ class SortKey(BaseModel):
 
 
 class SortOp(Operator):
-    KIND: ClassVar[str] = "sort"
     kind: Literal["sort"] = "sort"
     expressions: list[SortKey]
 
 
 class TopOp(Operator):
-    KIND: ClassVar[str] = "top"
     kind: Literal["top"] = "top"
     count: int | AnyExpr
     by: SortKey
 
 
 class TopHittersOp(Operator):
-    KIND: ClassVar[str] = "top_hitters"
     kind: Literal["top_hitters"] = "top_hitters"
     count: int | AnyExpr
     # ``top-hitters N of C [by V]`` has two column operands, not one: ``of``
@@ -447,7 +426,6 @@ class TopHittersOp(Operator):
 
 
 class SampleOp(Operator):
-    KIND: ClassVar[str] = "sample"
     kind: Literal["sample"] = "sample"
     count: int | AnyExpr
 
@@ -478,7 +456,6 @@ class SearchOp(Operator):
     from substituting an unwritten default and is not made here.
     """
 
-    KIND: ClassVar[str] = "search"
     kind: Literal["search"] = "search"
     predicate: AnyExpr | None = None
     search_kind: str
@@ -504,7 +481,6 @@ class UnionOp(Operator):
     no fuzziness are not values either parameter can state).
     """
 
-    KIND: ClassVar[str] = "union"
     kind: Literal["union"] = "union"
     pipelines: list["Pipeline"]
     union_kind: str
@@ -527,7 +503,6 @@ class MakeSeriesAggregate(BaseModel):
     """
 
     model_config = {"extra": "forbid"}
-    KIND: ClassVar[str] = "make_series_aggregate"
     kind: Literal["make_series_aggregate"] = "make_series_aggregate"
     name: str
     expr: AnyExpr
@@ -536,7 +511,6 @@ class MakeSeriesAggregate(BaseModel):
 
 
 class MakeSeriesOp(Operator):
-    KIND: ClassVar[str] = "make_series"
     kind: Literal["make_series"] = "make_series"
     aggregations: list[MakeSeriesAggregate]
     by: list[Assignment]
@@ -570,7 +544,6 @@ class MvExpandColumn(BaseModel):
     """
 
     model_config = {"extra": "forbid"}
-    KIND: ClassVar[str] = "mv_expand_column"
     kind: Literal["mv_expand_column"] = "mv_expand_column"
     expression: AnyExpr
     to_typeof: str | None = None
@@ -605,7 +578,6 @@ class MvExpandOp(Operator):
     a *named mode*, not a magic number.
     """
 
-    KIND: ClassVar[str] = "mv_expand"
     kind: Literal["mv_expand"] = "mv_expand"
     columns: list[MvExpandColumn]
     # ``limit N``. ``int`` first for the same reason as ``TakeOp.count``.
@@ -627,20 +599,17 @@ class RenderOp(Operator):
     it was configured.
     """
 
-    KIND: ClassVar[str] = "render"
     kind: Literal["render"] = "render"
     render_kind: str
     properties: dict[str, str] = {}
 
 
 class ProjectAwayOp(Operator):
-    KIND: ClassVar[str] = "project_away"
     kind: Literal["project_away"] = "project_away"
     columns: list[ColumnRef | AnyExpr]
 
 
 class ProjectKeepOp(Operator):
-    KIND: ClassVar[str] = "project_keep"
     kind: Literal["project_keep"] = "project_keep"
     columns: list[ColumnRef | AnyExpr]
 
@@ -668,7 +637,6 @@ class ReorderKey(BaseModel):
     """
 
     model_config = {"extra": "forbid"}
-    KIND: ClassVar[str] = "reorder_key"
     kind: Literal["reorder_key"] = "reorder_key"
     expression: AnyExpr
     direction: Literal["asc", "desc"] | None = None
@@ -676,25 +644,21 @@ class ReorderKey(BaseModel):
 
 
 class ProjectReorderOp(Operator):
-    KIND: ClassVar[str] = "project_reorder"
     kind: Literal["project_reorder"] = "project_reorder"
     columns: list[ReorderKey]
 
 
 class ProjectRenameOp(Operator):
-    KIND: ClassVar[str] = "project_rename"
     kind: Literal["project_rename"] = "project_rename"
     columns: list[Assignment]
 
 
 class ProjectByNamesOp(Operator):
-    KIND: ClassVar[str] = "project_by_names"
     kind: Literal["project_by_names"] = "project_by_names"
     names: list[AnyExpr]
 
 
 class MvApplyOp(Operator):
-    KIND: ClassVar[str] = "mv_apply"
     kind: Literal["mv_apply"] = "mv_apply"
     assignments: list[Assignment]
     right: "Pipeline"
@@ -720,7 +684,6 @@ class ParseOp(Operator):
     no flags is not a flag string.
     """
 
-    KIND: ClassVar[str] = "parse"
     kind: Literal["parse"] = "parse"
     target: AnyExpr
     patterns: list[AnyExpr]
@@ -735,7 +698,6 @@ class ParseWhereOp(Operator):
     ``parse_kind`` with its effective default of ``"simple"``.
     """
 
-    KIND: ClassVar[str] = "parse_where"
     kind: Literal["parse_where"] = "parse_where"
     target: AnyExpr
     patterns: list[AnyExpr]
@@ -758,31 +720,26 @@ class EvaluateOp(Operator):
     modelling it is post-0.2.0 work.
     """
 
-    KIND: ClassVar[str] = "evaluate"
     kind: Literal["evaluate"] = "evaluate"
     func: FuncCall
 
 
 class CountOp(Operator):
-    KIND: ClassVar[str] = "count"
     kind: Literal["count"] = "count"
     as_name: str | None = None
 
 
 class PrintOp(Operator):
-    KIND: ClassVar[str] = "print"
     kind: Literal["print"] = "print"
     columns: list[Assignment | AnyExpr]
 
 
 class AsOp(Operator):
-    KIND: ClassVar[str] = "as"
     kind: Literal["as"] = "as"
     name: str
 
 
 class RangeOp(Operator):
-    KIND: ClassVar[str] = "range"
     kind: Literal["range"] = "range"
     column: str
     start: AnyExpr
@@ -800,7 +757,6 @@ class LookupOp(Operator):
     ``lookup`` was recorded as the one thing it is not.
     """
 
-    KIND: ClassVar[str] = "lookup"
     kind: Literal["lookup"] = "lookup"
     lookup_kind: str
     right: "Pipeline"
@@ -810,26 +766,22 @@ class LookupOp(Operator):
 
 
 class PartitionOp(Operator):
-    KIND: ClassVar[str] = "partition"
     kind: Literal["partition"] = "partition"
     by: AnyExpr
     right: "Pipeline"
 
 
 class FacetOp(Operator):
-    KIND: ClassVar[str] = "facet"
     kind: Literal["facet"] = "facet"
     columns: list[AnyExpr] = []
     with_pipeline: Optional["Pipeline"] = None
 
 
 class GetSchemaOp(Operator):
-    KIND: ClassVar[str] = "getschema"
     kind: Literal["getschema"] = "getschema"
 
 
 class InvokeOp(Operator):
-    KIND: ClassVar[str] = "invoke"
     kind: Literal["invoke"] = "invoke"
     func: FuncCall
 
@@ -860,7 +812,6 @@ class FindOp(Operator):
     until a DLL refresh makes the clause reachable.
     """
 
-    KIND: ClassVar[str] = "find"
     kind: Literal["find"] = "find"
     predicate: AnyExpr | None = None
     # Discriminated on the kind literal; member order is not load-bearing.
@@ -886,7 +837,6 @@ class ForkBranch(BaseModel):
     """
 
     model_config = {"extra": "forbid"}
-    KIND: ClassVar[str] = "fork_branch"
     kind: Literal["fork_branch"] = "fork_branch"
     name: str | None = None
     pipeline: "Pipeline"
@@ -906,7 +856,6 @@ class ForkOp(Operator):
     the empty branches it recorded.
     """
 
-    KIND: ClassVar[str] = "fork"
     kind: Literal["fork"] = "fork"
     branches: list[ForkBranch]
 
@@ -951,35 +900,29 @@ class ScanOp(Operator):
     not a fix.
     """
 
-    KIND: ClassVar[str] = "scan"
     kind: Literal["scan"] = "scan"
     raw_text: str
 
 
 class SerializeOp(Operator):
-    KIND: ClassVar[str] = "serialize"
     kind: Literal["serialize"] = "serialize"
     assignments: list[Assignment] = []
 
 
 class ConsumeOp(Operator):
-    KIND: ClassVar[str] = "consume"
     kind: Literal["consume"] = "consume"
 
 
 class AssertSchemaOp(Operator):
-    KIND: ClassVar[str] = "assert_schema"
     kind: Literal["assert_schema"] = "assert_schema"
     columns: dict[str, str] = {}
 
 
 class ExecuteAndCacheOp(Operator):
-    KIND: ClassVar[str] = "execute_and_cache"
     kind: Literal["execute_and_cache"] = "execute_and_cache"
 
 
 class ParseKvOp(Operator):
-    KIND: ClassVar[str] = "parse_kv"
     kind: Literal["parse_kv"] = "parse_kv"
     target: AnyExpr
     # ``as (b:string, c:long)`` -- a name:type schema, modeled the same way
@@ -989,7 +932,6 @@ class ParseKvOp(Operator):
 
 
 class SampleDistinctOp(Operator):
-    KIND: ClassVar[str] = "sample_distinct"
     kind: Literal["sample_distinct"] = "sample_distinct"
     count: int | AnyExpr
     of: AnyExpr
@@ -1004,7 +946,6 @@ class TopNestedOp(Operator):
     ``find_all``.
     """
 
-    KIND: ClassVar[str] = "top_nested"
     kind: Literal["top_nested"] = "top_nested"
     raw_text: str
 
@@ -1023,7 +964,6 @@ class MakeGraphOp(Operator):
     split -- a no-op unbound, a correct rewrite bound.
     """
 
-    KIND: ClassVar[str] = "make_graph"
     kind: Literal["make_graph"] = "make_graph"
     raw_text: str
 
@@ -1039,7 +979,6 @@ class MacroExpandOp(Operator):
     entity per expansion, which the IR has no way to enumerate.
     """
 
-    KIND: ClassVar[str] = "macro_expand"
     kind: Literal["macro_expand"] = "macro_expand"
     raw_text: str
     pipeline: Optional["Pipeline"] = None
@@ -1057,7 +996,6 @@ class GraphMatchOp(Operator):
     a bound parse.
     """
 
-    KIND: ClassVar[str] = "graph_match"
     kind: Literal["graph_match"] = "graph_match"
     raw_text: str
 
@@ -1070,7 +1008,6 @@ class GraphMarkComponentsOp(Operator):
     as with :class:`GraphMatchOp`, nor is it in Microsoft's.
     """
 
-    KIND: ClassVar[str] = "graph_mark_components"
     kind: Literal["graph_mark_components"] = "graph_mark_components"
     raw_text: str
 
@@ -1082,7 +1019,6 @@ class GraphShortestPathsOp(Operator):
     projection are one string.
     """
 
-    KIND: ClassVar[str] = "graph_shortest_paths"
     kind: Literal["graph_shortest_paths"] = "graph_shortest_paths"
     raw_text: str
 
@@ -1096,7 +1032,6 @@ class GraphToTableOp(Operator):
     operators inherited.
     """
 
-    KIND: ClassVar[str] = "graph_to_table"
     kind: Literal["graph_to_table"] = "graph_to_table"
     raw_text: str
 
@@ -1109,7 +1044,6 @@ class GraphWhereEdgesOp(Operator):
     properties, so it is built as one and its columns are walkable.
     """
 
-    KIND: ClassVar[str] = "graph_where_edges"
     kind: Literal["graph_where_edges"] = "graph_where_edges"
     predicate: AnyExpr
 
@@ -1120,7 +1054,6 @@ class GraphWhereNodesOp(Operator):
     The node-side twin of :class:`GraphWhereEdgesOp`.
     """
 
-    KIND: ClassVar[str] = "graph_where_nodes"
     kind: Literal["graph_where_nodes"] = "graph_where_nodes"
     predicate: AnyExpr
 
@@ -1134,7 +1067,6 @@ class UnknownOp(Operator):
     instead of a bare ``Operator(span=...)`` so analyzers can detect
     coverage gaps and the coverage audit has something to grow against.
     """
-    KIND: ClassVar[str] = "unknown_op"
     kind: Literal["unknown_op"] = "unknown_op"
     raw_text: str
     ast_kind: str
@@ -1143,7 +1075,6 @@ class UnknownOp(Operator):
 
 class Pipeline(BaseModel):
     model_config = {"extra": "forbid"}
-    KIND: ClassVar[str] = "pipeline"
     kind: Literal["pipeline"] = "pipeline"
     # Discriminated on the kind literal; member order is not load-bearing.
     source: Annotated[Union[
@@ -1190,7 +1121,6 @@ class JoinOp(Operator):
     :class:`ParseOp.parse_kind`.
     """
 
-    KIND: ClassVar[str] = "join"
     kind: Literal["join"] = "join"
     join_kind: str
     right: Pipeline
@@ -1224,7 +1154,6 @@ class LetFunction(BaseModel):
     """
 
     model_config = {"extra": "forbid"}
-    KIND: ClassVar[str] = "let_function"
     kind: Literal["let_function"] = "let_function"
     # Parameter names in declaration order. The function's own name is on the
     # owning LetBinding.
@@ -1245,7 +1174,6 @@ class LetBinding(BaseModel):
     """
 
     model_config = {"extra": "forbid"}
-    KIND: ClassVar[str] = "let_binding"
     kind: Literal["let_binding"] = "let_binding"
     name: str
     span: Span
@@ -1274,7 +1202,6 @@ class LetBinding(BaseModel):
 
 class QueryIR(BaseModel):
     model_config = {"extra": "forbid"}
-    KIND: ClassVar[str] = "query"
     kind: Literal["query"] = "query"
     raw_text: str
     # SHA-256 over the canonical IR shape (post merge_consecutive_filters +

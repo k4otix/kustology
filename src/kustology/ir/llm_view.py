@@ -123,7 +123,12 @@ def _convert(node: Any) -> Any:
         cls = type(node)
         # ``kind`` is the Pydantic discriminator field on every IR class;
         # emit it first so it leads the dict (LLM scanning convention).
-        out: dict[str, Any] = {"kind": getattr(cls, "KIND", cls.__name__)}
+        # ``Span`` has no ``kind`` field, so it falls back to the class name.
+        out: dict[str, Any] = {
+            "kind": cls.model_fields["kind"].default
+            if "kind" in cls.model_fields
+            else cls.__name__
+        }
         for name, field_info in cls.model_fields.items():
             if name in _OMIT_FIELDS or name == "kind":
                 continue
