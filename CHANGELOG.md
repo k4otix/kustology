@@ -6,7 +6,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.2.0] — 2026-08-23
+## [0.2.0] — 2026-08-24
 
 First release since 0.1.0. Two themes: values the library reported wrongly (culture-corrupted literals, mis-assigned column provenance, conflated operators), and public surface that never worked (`LetBinding`'s fields, `LetRef`, `ExternalDataExpr`'s contents). Tier 2 breaks in several places, as its pre-1.0 policy permits — see **Upgrading from 0.1.0** and **Breaking** below. Root-cause detail for the audits behind this release is in `docs/superpowers/reports/`.
 
@@ -131,6 +131,7 @@ See README's "What `semantic_hash` deliberately ignores" section for the worked 
 - CI lints `examples/` and every job installs from `uv.lock`. The IR test matrix now runs the full suite on every cell (previously one) and adds Python 3.13, with `fail-fast: false`; a locale/timezone leg (`de_DE`, `fr_FR`, `en_US` + `TZ=Asia/Tokyo`) guards the culture pin and the datetime-`Kind` fix.
 - A weekly upstream canary (`.github/workflows/canary.yml`) resolves `pyproject.toml`'s dependency ranges fresh, catching what the pinned `uv.lock` hides. `.github/dependabot.yml` declares the update cadence and grouping that previously lived only in repository settings. `release.yml` now hard-gates on the offline DLL pin.
 - The test suite was deduplicated against the hash battery as the single pair registry, and mechanically-parametrized guards were collapsed to looped equivalents; behavioral coverage is unchanged.
+- Dependency refresh ahead of the tag: pythonnet 3.1.0, pytest 9.1.1, ruff 0.16.4, mypy 2.3.1, cyclonedx-bom 7.3.1, twine 7.0.0, and the pinned GitHub-action group — verified by the full CI matrix and a local gate run (suite, corpus, examples, locale/TZ leg, build + `twine check`).
 
 ## [0.1.0] — 2026-06-01
 
