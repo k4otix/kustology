@@ -179,6 +179,14 @@ BOUND_LEG_IDS: set[str] = {
     "getschema",
 }
 
+# Guard against BOUND_LEG_IDS drifting from MATRIX -- e.g. a rename inside
+# the generated join-kind family -- which would otherwise silently shrink
+# the bound leg's coverage below its ten categories with no test failure.
+_unknown_bound_ids = BOUND_LEG_IDS - {case_id for case_id, _ in MATRIX}
+assert not _unknown_bound_ids, (
+    f"BOUND_LEG_IDS names ids not in MATRIX: {sorted(_unknown_bound_ids)}"
+)
+
 CORPUS_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "complex_queries"
 
 # Cases the fallback walk still gets wrong, and what each one reveals. Every
