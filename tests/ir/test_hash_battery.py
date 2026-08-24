@@ -389,6 +389,8 @@ MUST_DIFFER = [
         "find in (A) where x == 1 project a",
         "find in (A) where x == 1 project b",
     ),
+    # Presence/absence of the project clause (the sibling row covers value-vs-value).
+    ("find-project-presence", "find in (T) where a == 1 project a", "find in (T) where a == 1"),
     # TypedNameDecl: the declaration's Type child was never read, so a typed
     # capture and an untyped one were one node.
     ("typed-capture-vs-untyped", "T | parse x with 'a' b:long", "T | parse x with 'a' b"),
