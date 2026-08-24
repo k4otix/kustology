@@ -138,174 +138,67 @@ First public release.
 
 ### Stability
 
-This is a `0.y` release — per SemVer §4, the public API is not yet
-considered stable.
+This is a `0.y` release — per SemVer §4, the public API is not yet considered stable.
 
 Two version numbers describe the surface:
 
-- **Package version** (`__version__`, displayed by `kustology version`):
-  the overall library version. Pre-1.0, both Tier 1 and Tier 2 may
-  break at minor versions.
-- **`kustology.ir.IR_SCHEMA_VERSION`**: the IR shape's own version,
-  used to tag serialized IR JSON so consumers can refuse to load an
-  incompatible payload. Currently bumps in lockstep with the package
-  version.
+- **Package version** (`__version__`, displayed by `kustology version`): the overall library version. Pre-1.0, both Tier 1 and Tier 2 may break at minor versions.
+- **`kustology.ir.IR_SCHEMA_VERSION`**: the IR shape's own version, used to tag serialized IR JSON so consumers can refuse to load an incompatible payload. Currently bumps in lockstep with the package version.
 
-Tier 1 (`kustology` top-level surface) is on a stabilization track:
-the package goes to 1.0 once Tier 1 survives external use without
-correctness breaks. Tier 2 (`kustology.ir.*`) is expected to keep
-evolving at package-minor cadence after 1.0 — its breaks are tracked
-by `IR_SCHEMA_VERSION` and called out in this CHANGELOG.
+Tier 1 (`kustology` top-level surface) is on a stabilization track: the package goes to 1.0 once Tier 1 survives external use without correctness breaks. Tier 2 (`kustology.ir.*`) is expected to keep evolving at package-minor cadence after 1.0 — its breaks are tracked by `IR_SCHEMA_VERSION` and called out in this CHANGELOG.
 
 ### Tier 1 — thin .NET wrapper
 
-- `parse(query, schema=None)` and `KustoQuery` for syntactic plus optional
-  semantic analysis.
-- `format_query(query)` for canonical reformatting via Microsoft's public
-  `KustoCodeService.GetFormattedText`.
-- `validate(query, schema=None, ignore_unknown_tables=False)` for structured
-  parser diagnostics (severity, code, source offset).
+- `parse(query, schema=None)` and `KustoQuery` for syntactic plus optional semantic analysis.
+- `format_query(query)` for canonical reformatting via Microsoft's public `KustoCodeService.GetFormattedText`.
+- `validate(query, schema=None, ignore_unknown_tables=False)` for structured parser diagnostics (severity, code, source offset).
 - AST analyzers on `KustoQuery`:
-  - `get_referenced_tables(force_syntactic=False)` — every table source,
-    including joined, union'd, lookup'd, and `database()` / `cluster()`
-    cross-cluster references.
-  - `get_referenced_columns(force_syntactic=False)` — every column
-    reference, with function callees and `$`-prefixed join sides filtered
-    out.
-  - `get_referenced_functions(force_syntactic=False)` — every function
-    callee. Semantic mode resolves through `FunctionSymbol`; syntactic
-    mode falls back to `NameReference` nodes in callee position.
-  - `get_operator_chain()` / `get_operator_stats()` — ordered pipeline
-    of operators and a `{OperatorKind: count}` map.
-  - `get_structural_hash()` — SHA-256 over the AST node-kind sequence;
-    stable across literal and whitespace changes.
+  - `get_referenced_tables(force_syntactic=False)` — every table source, including joined, union'd, lookup'd, and `database()` / `cluster()` cross-cluster references.
+  - `get_referenced_columns(force_syntactic=False)` — every column reference, with function callees and `$`-prefixed join sides filtered out.
+  - `get_referenced_functions(force_syntactic=False)` — every function callee. Semantic mode resolves through `FunctionSymbol`; syntactic mode falls back to `NameReference` nodes in callee position.
+  - `get_operator_chain()` / `get_operator_stats()` — ordered pipeline of operators and a `{OperatorKind: count}` map.
+  - `get_structural_hash()` — SHA-256 over the AST node-kind sequence; stable across literal and whitespace changes.
   - `get_time_range()` — temporal expressions with source offsets.
-  - `replace_table(old, new)` — AST-aware rename across every reference
-    position (sub-pipelines, lookups, let-bound bodies).
-- `kustology.utils.analysis.collect_nodes(syntax, predicate)` — reusable
-  single-pass walker that returns every node satisfying a predicate.
-  Hides `KustoWalker` boilerplate so a new analyzer is one lambda
-  instead of a five-line subclass.
-- `kustology` CLI with subcommands `version`, `format`, `validate`,
-  `parse`. `parse` supports `--ast` (default) and `--ir` (requires the
-  `[ir]` extra). Exit codes: `0` success, `1` Error-severity diagnostics
-  or runtime failure, `2` usage error (bad flags, missing file, missing
-  extra).
-- CLI input capped at 10 MB by default; override with the
-  `KUSTOLOGY_MAX_INPUT_BYTES` environment variable. Inputs exceeding the
-  cap exit with code 2.
-- CLI `parse --ast` and `parse --ast --json` cap recursion depth at 1000
-  levels — past that, the node emits a `truncated` marker rather than
-  blowing the Python stack. AST emitters use `str(node.Kind)` (the
-  `SyntaxKind` enum value) for kind labels, matching the audit script's
-  convention.
-- `kustology.reflection` — runtime reflection on `Kusto.Language.Functions`
-  drives categorized listings: `time_functions()`,
-  `aggregate_functions()`, `scalar_functions()`, `string_functions()`,
-  `all_function_names()`, plus `syntax_kinds()` for the `SyntaxKind` enum.
-  No hard-coded fallback — a reflection failure is loud, not silent.
+  - `replace_table(old, new)` — AST-aware rename across every reference position (sub-pipelines, lookups, let-bound bodies).
+- `kustology.utils.analysis.collect_nodes(syntax, predicate)` — reusable single-pass walker that returns every node satisfying a predicate. Hides `KustoWalker` boilerplate so a new analyzer is one lambda instead of a five-line subclass.
+- `kustology` CLI with subcommands `version`, `format`, `validate`, `parse`. `parse` supports `--ast` (default) and `--ir` (requires the `[ir]` extra). Exit codes: `0` success, `1` Error-severity diagnostics or runtime failure, `2` usage error (bad flags, missing file, missing extra).
+- CLI input capped at 10 MB by default; override with the `KUSTOLOGY_MAX_INPUT_BYTES` environment variable. Inputs exceeding the cap exit with code 2.
+- CLI `parse --ast` and `parse --ast --json` cap recursion depth at 1000 levels — past that, the node emits a `truncated` marker rather than blowing the Python stack. AST emitters use `str(node.Kind)` (the `SyntaxKind` enum value) for kind labels, matching the audit script's convention.
+- `kustology.reflection` — runtime reflection on `Kusto.Language.Functions` drives categorized listings: `time_functions()`, `aggregate_functions()`, `scalar_functions()`, `string_functions()`, `all_function_names()`, plus `syntax_kinds()` for the `SyntaxKind` enum. No hard-coded fallback — a reflection failure is loud, not silent.
 - `__version__` exposed at runtime via `importlib.metadata`.
-- Bundled `Kusto.Language.dll` (12.3.2) pinned by SHA-256; refresh and
-  verify scripts in `scripts/`.
+- Bundled `Kusto.Language.dll` (12.3.2) pinned by SHA-256; refresh and verify scripts in `scripts/`.
 
 ### Tier 2 — semantic IR (opt-in via `[ir]` extras)
 
-- `kustology.ir.QueryIR` — Pydantic root model holding a `Pipeline` of
-  typed operators (`FilterOp`, `SummarizeOp`, `JoinOp`, `LookupOp`,
-  `ProjectOp`, `ExtendOp`, …) and typed expressions (`BinOp`,
-  `FuncCall`, `SetMembership`, `Between`, `And`, `Or`, …). 53 operator
-  types and 23 expression types covering the Kusto query surface seen in
-  real-world Sentinel detections. (0.2.0 keeps the 53 and takes the
-  expressions to 25 — `MaterializeExpr` out, `LetValueRef`, `TypedNameDecl`
-  and `SubqueryExpr` in.)
-- `kustology.ir.IRBuilder.build(query)` parses, binds, and builds the IR
-  in one call.
-- `kustology.ir.IRBuilder.build_from_code(code)` builds from a
-  pre-parsed `KustoCode`. `KustoQuery.to_ir()` uses this so callers
-  don't pay for two parses.
-- `KustoQuery.to_ir(attach_schema=...)` — controls the `SchemaAttacher`
-  pass that materializes column provenance and `Pipeline.result_schema`.
-  Default `None` auto-attaches when the parse was bound with a schema,
-  so `parse(query, schema=...).to_ir()` returns a fully enriched IR
-  without restating the schema. `True` forces attach with the parse-time
-  schema; `False` skips even on a bound parse; a `dict` overrides for
-  the attach step only.
-- `kustology.ir.SchemaAttacher(schemas)` — propagates Microsoft's
-  binding results into Pydantic fields (`Expr.result_type`,
-  `ColumnRef.table`) and computes `Pipeline.result_schema`. Takes a
-  flat `{table: {col: type}}` dict.
-- `kustology.ir.walk(node)` — depth-first, pre-order traversal yielding
-  every Pydantic `BaseModel` descendant.
-- `kustology.ir.walk(node, predicate=...)` — predicate-filtered
-  traversal for cross-cutting filters that don't reduce to a type
-  (e.g. "every case-insensitive `BinOp`").
-- `kustology.ir.find_all(node, type_)` — type-filtered traversal. The
-  one-liner most custom analyzers reduce to:
-  `find_all(ir, FilterOp)` returns every filter regardless of where it
-  lives (main pipeline, join RHS, let-bound sub-pipeline).
-- `kustology.ir.compute_semantic_hash(node)` — SHA-256 over the
-  canonical IR shape (post-transforms, with spans and bind-time
-  annotations stripped), prefixed with the scheme tag `kustology-sem-v1:`
-  so the canonicalization rules are versionable. Accepts any IR
-  subtree, not just `QueryIR`. Computed once at build and stored on
-  `QueryIR.semantic_hash`; call directly to refresh after mutating the IR.
+- `kustology.ir.QueryIR` — Pydantic root model holding a `Pipeline` of typed operators (`FilterOp`, `SummarizeOp`, `JoinOp`, `LookupOp`, `ProjectOp`, `ExtendOp`, …) and typed expressions (`BinOp`, `FuncCall`, `SetMembership`, `Between`, `And`, `Or`, …). 53 operator types and 23 expression types covering the Kusto query surface seen in real-world Sentinel detections. (0.2.0 keeps the 53 and takes the expressions to 25 — `MaterializeExpr` out, `LetValueRef`, `TypedNameDecl` and `SubqueryExpr` in.)
+- `kustology.ir.IRBuilder.build(query)` parses, binds, and builds the IR in one call.
+- `kustology.ir.IRBuilder.build_from_code(code)` builds from a pre-parsed `KustoCode`. `KustoQuery.to_ir()` uses this so callers don't pay for two parses.
+- `KustoQuery.to_ir(attach_schema=...)` — controls the `SchemaAttacher` pass that materializes column provenance and `Pipeline.result_schema`. Default `None` auto-attaches when the parse was bound with a schema, so `parse(query, schema=...).to_ir()` returns a fully enriched IR without restating the schema. `True` forces attach with the parse-time schema; `False` skips even on a bound parse; a `dict` overrides for the attach step only.
+- `kustology.ir.SchemaAttacher(schemas)` — propagates Microsoft's binding results into Pydantic fields (`Expr.result_type`, `ColumnRef.table`) and computes `Pipeline.result_schema`. Takes a flat `{table: {col: type}}` dict.
+- `kustology.ir.walk(node)` — depth-first, pre-order traversal yielding every Pydantic `BaseModel` descendant.
+- `kustology.ir.walk(node, predicate=...)` — predicate-filtered traversal for cross-cutting filters that don't reduce to a type (e.g. "every case-insensitive `BinOp`").
+- `kustology.ir.find_all(node, type_)` — type-filtered traversal. The one-liner most custom analyzers reduce to: `find_all(ir, FilterOp)` returns every filter regardless of where it lives (main pipeline, join RHS, let-bound sub-pipeline).
+- `kustology.ir.compute_semantic_hash(node)` — SHA-256 over the canonical IR shape (post-transforms, with spans and bind-time annotations stripped), prefixed with the scheme tag `kustology-sem-v1:` so the canonicalization rules are versionable. Accepts any IR subtree, not just `QueryIR`. Computed once at build and stored on `QueryIR.semantic_hash`; call directly to refresh after mutating the IR.
 - Opt-in canonicalization transforms (`kustology.ir.transforms`):
-  - `merge_consecutive_filters(root)` — fold consecutive `FilterOp`s
-    into one whose predicate is an `And` of the originals. Recurses
-    into sub-pipelines.
-  - `normalize_expressions(root)` — apply semantic-preserving rewrites
-    (`tolower(X) == "y"` → `X =~ "y"`, nested `And` / `Or` flattening,
-    `not(not(X))` collapse). Post-order so deep nesting collapses
-    cleanly.
-- `QueryIR.to_llm_dict()` — lossy projection optimized for handing the
-  IR to a language model: every node carries a `kind` discriminator,
-  spans and defaulted fields are stripped, and `polarity` is collapsed
-  into natural KQL operators (`!=`, `!in`, `!between`). Running today's
-  fixture corpus back through the 0.1.0 code (48 of the 49 build under it),
-  the view was a median 58% smaller than `model_dump_json()` on a schemaless
-  parse and 42% on a bound one.
-  (For the 0.2.0 figure see `to_llm_dict` under **Changed** above.)
-- `kustology.ir.UnknownExpr` / `UnknownSource` / `UnknownOp` — explicit
-  fallback nodes for shapes the builder doesn't model. The coverage
-  audit (`scripts/audit_syntax_kinds.py`) fails CI when new shapes
-  appear after a `Kusto.Language` DLL upgrade.
-- `kustology.ir.Finding` / `AnalyzerFn` / `Severity` — minimal
-  analyzer-output protocol so independently-developed analyzers share
-  a `Finding` vocabulary.
-- `kustology.ir.IR_SCHEMA_VERSION` — IR shape version, decoupled from
-  the package version.
-- `kustology.ir.KustoType` — `StrEnum` for column and expression types
-  (`STRING`, `LONG`, `INT`, `DATETIME`, `TIMESPAN`, …). `UNRESOLVED`
-  for types the binder hasn't placed.
-- `ImplicitSource` source variant for sub-pipelines whose row context
-  comes from parent operators (union-at-root, mv-apply / partition
-  subqueries, join / lookup RHS).
+  - `merge_consecutive_filters(root)` — fold consecutive `FilterOp`s into one whose predicate is an `And` of the originals. Recurses into sub-pipelines.
+  - `normalize_expressions(root)` — apply semantic-preserving rewrites (`tolower(X) == "y"` → `X =~ "y"`, nested `And` / `Or` flattening, `not(not(X))` collapse). Post-order so deep nesting collapses cleanly.
+- `QueryIR.to_llm_dict()` — lossy projection optimized for handing the IR to a language model: every node carries a `kind` discriminator, spans and defaulted fields are stripped, and `polarity` is collapsed into natural KQL operators (`!=`, `!in`, `!between`). Running today's fixture corpus back through the 0.1.0 code (48 of the 49 build under it), the view was a median 58% smaller than `model_dump_json()` on a schemaless parse and 42% on a bound one. (For the 0.2.0 figure see `to_llm_dict` under **Changed** above.)
+- `kustology.ir.UnknownExpr` / `UnknownSource` / `UnknownOp` — explicit fallback nodes for shapes the builder doesn't model. The coverage audit (`scripts/audit_syntax_kinds.py`) fails CI when new shapes appear after a `Kusto.Language` DLL upgrade.
+- `kustology.ir.Finding` / `AnalyzerFn` / `Severity` — minimal analyzer-output protocol so independently-developed analyzers share a `Finding` vocabulary.
+- `kustology.ir.IR_SCHEMA_VERSION` — IR shape version, decoupled from the package version.
+- `kustology.ir.KustoType` — `StrEnum` for column and expression types (`STRING`, `LONG`, `INT`, `DATETIME`, `TIMESPAN`, …). `UNRESOLVED` for types the binder hasn't placed.
+- `ImplicitSource` source variant for sub-pipelines whose row context comes from parent operators (union-at-root, mv-apply / partition subqueries, join / lookup RHS).
 - Every IR `BaseModel` declares `extra="forbid"` for strict validation.
-- `kustology.utils.schema_state.extract_schemas_from_global_state` —
-  inverse of `build_global_state`; recovers `{table: {col: type}}`
-  from a bound Microsoft `GlobalState`.
-- `IRBuilder.HANDLED_OPERATOR_KINDS` / `HANDLED_EXPR_KINDS` — public
-  attributes that the coverage audit reads as contract.
+- `kustology.utils.schema_state.extract_schemas_from_global_state` — inverse of `build_global_state`; recovers `{table: {col: type}}` from a bound Microsoft `GlobalState`.
+- `IRBuilder.HANDLED_OPERATOR_KINDS` / `HANDLED_EXPR_KINDS` — public attributes that the coverage audit reads as contract.
 
 ### Infrastructure
 
-- CI matrix: Linux on Python 3.10, 3.11 and 3.12, plus one Windows and one
-  macOS cell on 3.12. Not a full cross-product — the two non-Linux cells are
-  sanity checks.
-- Coverage audit (`scripts/audit_syntax_kinds.py`) fails CI on new
-  uncovered `SyntaxKind` after a DLL refresh.
-- Corpus regression (`scripts/mine_corpus.py`) over the bundled fixture
-  corpus (33 queries at 0.1.0), failing CI when the builder falls through to
-  an `UnknownExpr` / `UnknownSource` / unspecialized `Operator`. A second,
-  soft job mines Microsoft's own KQL corpus for the same signal without
-  gating the build. `scripts/verify_corpus.py` is a **maintainer
-  diagnostic**, not a gate: it runs against a local, gitignored Sentinel
-  sample that is not in the repository and nothing in CI invokes it.
+- CI matrix: Linux on Python 3.10, 3.11 and 3.12, plus one Windows and one macOS cell on 3.12. Not a full cross-product — the two non-Linux cells are sanity checks.
+- Coverage audit (`scripts/audit_syntax_kinds.py`) fails CI on new uncovered `SyntaxKind` after a DLL refresh.
+- Corpus regression (`scripts/mine_corpus.py`) over the bundled fixture corpus (33 queries at 0.1.0), failing CI when the builder falls through to an `UnknownExpr` / `UnknownSource` / unspecialized `Operator`. A second, soft job mines Microsoft's own KQL corpus for the same signal without gating the build. `scripts/verify_corpus.py` is a **maintainer diagnostic**, not a gate: it runs against a local, gitignored Sentinel sample that is not in the repository and nothing in CI invokes it.
 - DLL provenance verified on every push (`scripts/verify_dll.py`).
-- PyPI publish workflow (`.github/workflows/release.yml`) — triggered
-  by `v*` tags, builds via `python -m build`, generates a CycloneDX
-  SBOM, publishes via PyPI trusted publishing, attests the artifacts,
-  and creates a GitHub release with the dist and SBOM attached.
+- PyPI publish workflow (`.github/workflows/release.yml`) — triggered by `v*` tags, builds via `python -m build`, generates a CycloneDX SBOM, publishes via PyPI trusted publishing, attests the artifacts, and creates a GitHub release with the dist and SBOM attached.
 - `.pre-commit-config.yaml` mirroring CI for local fail-fast.
 
 ### Documentation
@@ -313,13 +206,10 @@ by `IR_SCHEMA_VERSION` and called out in this CHANGELOG.
 - `README.md` — install, two-tier overview, Quick Start, CLI reference.
 - `ARCHITECTURE.md` — tier layout and contribution pointers.
 - `CONTRIBUTING.md` — workflow and coding conventions.
-- `SECURITY.md` — private vulnerability reporting and bundled-DLL
-  verification (offline hash, NuGet re-fetch, DLL refresh).
-- `AGENTS.md` — non-obvious technical context for agents modifying the
-  code (CLR interop, AST navigation, IR gotchas, DLL provenance).
+- `SECURITY.md` — private vulnerability reporting and bundled-DLL verification (offline hash, NuGet re-fetch, DLL refresh).
+- `AGENTS.md` — non-obvious technical context for agents modifying the code (CLR interop, AST navigation, IR gotchas, DLL provenance).
 - 7 runnable examples in `examples/`:
-  - `linter.py`, `binding_comparison.py`, `query_analysis.py` — Tier 1
-    analysis demos.
+  - `linter.py`, `binding_comparison.py`, `query_analysis.py` — Tier 1 analysis demos.
   - `walk_tree.py` — AST traversal via `KustoQuery.syntax`.
   - `walk_ir.py` — typed IR traversal (mirror of `walk_tree`).
   - `find_all_demo.py` — generic IR traversal via `find_all`.
