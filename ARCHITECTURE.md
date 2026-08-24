@@ -15,7 +15,7 @@ src/kustology/
     builder.py       # Walks .NET syntax tree → QueryIR; dispatch tables for operators/expressions
     query.py         # Operator and pipeline node models
     expr.py          # Expression node models
-    binder.py        # SchemaAttacher: schema attachment + type enrichment
+    binder.py        # SchemaAttacher: provenance (ColumnRef.table, origins)
     walk.py          # Generic IR traversal: walk() and find_all()
     transforms.py    # semantic_hash, canonicalization, SEMANTIC_HASH_SCHEME
     llm_view.py      # to_llm_dict — compact JSON-safe rendering for LLMs
@@ -88,40 +88,36 @@ three independent version tags (`__version__`, `IR_SCHEMA_VERSION`,
    # inspect type(node).__name__ and dir(node)
    ```
 
-4. Decide how the operator affects **column scope**, in
-   `src/kustology/ir/binder.py`.
+4. Your operator gets its **output schema** from Microsoft with no rule to
+   write. `_visit_operator()` in `src/kustology/ir/builder.py` wraps every
+   operator's dispatch and stamps `<node>.ResultType` onto `result_schema`
+   in one place, so a new operator gets the binder's answer for free
+   instead of a hand-written per-operator rule — every `Operator` also
+   inherits `hints` (the `hint.*` named parameters) from the same wrapper.
+   Both fields are volatile: they are in `transforms._VOLATILE_FIELDS` and
+   so never reach `semantic_hash`.
 
-   Read the base class first: every `Operator` inherits `hints` (the
-   `hint.*` named parameters, stamped from one place so a new operator
-   cannot be added without them) and `result_schema` — Microsoft's own
-   `<node>.ResultType`, captured at build time whenever the parse was
-   bound and the symbol is closed. `SchemaAttacher` *prefers*
-   `result_schema` over its own rules, so on a bound parse your operator
-   may already be correct with no rule at all. Both fields are volatile:
-   they are in `transforms._VOLATILE_FIELDS` and so never reach
-   `semantic_hash`.
-
-   Your rule answers the cases where `result_schema` is `None` — an
-   unbound parse, or an operator downstream of a symbol Microsoft left
-   open. If your operator reshapes its output schema, add a branch in
-   `SchemaAttacher._walk_operator()`; if it passes its input schema
-   through, the generic fallback already fills its expressions and walks
-   its sub-pipelines. Either way, update the coverage list in
-   `SchemaAttacher`'s class docstring, which enumerates which operators
-   reshape scope, which pass it through, and which leave downstream scope
-   knowingly stale — and which carries the current split, so this file does
-   not restate a figure that would then have two places to drift from.
-   Skipping this step is how `SchemaAttacher` silently ended up covering
-   17 of 53 operators, which is the defect the docstring exists to prevent
-   recurring.
+   What you owe, in `src/kustology/ir/binder.py`, is **provenance**: does
+   your operator reshape *which table* a column comes from? `join` /
+   `lookup`, `union` and `search` do — they bring new sources into scope —
+   and each needs a structural branch in
+   `SchemaAttacher._walk_operator_provenance()`.
+   If your operator just passes its input scope through unreshaped, the
+   generic fallback already fills its expressions and walks its
+   sub-pipelines, and there is nothing to add. Either way, add a row to
+   `MATRIX` in `tests/ir/test_binder_oracle.py` naming the construct your
+   operator exercises — the dict-path leg runs the full `MATRIX`
+   automatically, checking your operator's `result_schema` against
+   Microsoft's `ResultType` column-by-column and in order. Add the id to
+   `BOUND_LEG_IDS` too if you want the bound leg's sampled run to cover it
+   as well.
 5. Add a minimal `.kql` fixture under `tests/fixtures/complex_queries/`. The
    parametrized harness in `tests/ir/test_complex_harness.py` picks it up
-   automatically, and so does the unbound leg of
-   `tests/ir/test_binder_oracle.py`, which compares your rule's answer
-   against Microsoft's `ResultType` column-by-column and in order. A shape
-   that is knowingly wrong goes in that file's `XFAIL_FALLBACK` with a
-   reason; the marker is `strict=True`, so fixing it later fails the test
-   until the entry is deleted.
+   automatically, and so does the oracle's corpus run in
+   `tests/ir/test_binder_oracle.py`, on both legs. There is no xfail list to
+   file a wrong shape under: Microsoft's `ResultType.IsOpen` tells the
+   oracle when to expect `result_schema=None` instead of an exact match,
+   and that is the only leniency either leg grants.
 6. Regenerate the baseline:
    `python scripts/audit_syntax_kinds.py --update-baseline`.
 
@@ -192,7 +188,7 @@ protecting.
 | Every parser `SyntaxKind` is handled or explicitly skipped | `tests/test_coverage_audit.py` + `scripts/audit_syntax_kinds.py --check` |
 | Every kind in `HANDLED_OPERATOR_KINDS` actually builds from real KQL | `tests/ir/test_handled_kinds_smoke.py` |
 | `canonical()`, `AnyExpr` and `ir.__all__` list every `Expr` subclass | `tests/ir/test_canonical_coverage.py` |
-| Our `result_schema` equals Microsoft's `ResultType`, in order | `tests/ir/test_binder_oracle.py` (bound and unbound legs) |
+| Our `result_schema` equals Microsoft's `ResultType`, in order | `tests/ir/test_binder_oracle.py` (bound leg and dict-path leg) |
 | `semantic_hash` splits queries that differ and merges those that don't | `tests/ir/test_hash_battery.py` |
 | `semantic_hash` does not move when a schema is supplied | `tests/ir/test_semantic_hash_bind_invariance.py` |
 | No IR model holds a live `System.Object` | `tests/ir/test_ast_isolation.py` |

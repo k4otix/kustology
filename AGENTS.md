@@ -297,10 +297,14 @@ Default is `attach_schema=None`, which auto-attaches iff the parse was
 bound. So `parse(q, schema=...).to_ir()` returns a fully enriched IR —
 column types, table provenance, `Pipeline.result_schema` — without
 restating the schema. Explicit `True` forces attach using the parse-time
-schema, `False` skips even on a bound parse, and a `dict` overrides the
-schema for the attach step only. Tests that assert the no-reparse
-invariant or that exercise enrichment-free IR should pass
-`attach_schema=False`.
+schema, `False` skips even on a bound parse. A non-empty `dict` **re-binds
+the same tree** through Microsoft's binder
+(`self._code.Analyze(build_global_state(dict))`) before building the IR,
+then runs the attach pass against that schema — a real re-bind, not an
+overlay, so the IR that comes back (shape included) is identical to
+`parse(q, schema=dict).to_ir()`. `{}` is falsy and treated the same as
+`False`: no re-bind, no attach. Tests that assert the no-reparse invariant
+or that exercise enrichment-free IR should pass `attach_schema=False`.
 
 ### `KustoType` is a `StrEnum`
 `str(KustoType.LONG)` returns `'long'` (the wire value), not

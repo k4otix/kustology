@@ -112,7 +112,7 @@ code wants to work with.
 | **Returns** | `KustoQuery` wrapping Microsoft's syntax tree | `QueryIR` — Pydantic models |
 | **Traversal** | Microsoft AST (`node.Kind` dispatch via `pythonnet`) | Typed pipeline (`isinstance` dispatch) |
 | **Serialization** | `KustoQuery.to_dict()` / `to_json()` | `model_dump_json` (round-trips through `QueryIR.model_validate_json`) + `to_llm_dict` (LLM-tailored, lossy) |
-| **Schema binding** | `parse(query, schema=...)` runs Microsoft's binder — semantic diagnostics plus symbol resolution accessible via AST methods | `to_ir()`'s attach pass materializes those binding results into Pydantic fields and computes `Pipeline.result_schema`. Without a schema, `to_ir()` still types literals and built-in calls — see below |
+| **Schema binding** | `parse(query, schema=...)` runs Microsoft's binder — semantic diagnostics plus symbol resolution accessible via AST methods | `to_ir()` on a bound parse already carries Microsoft's per-operator `result_schema` and column `result_type` — the builder stamps both at construction, independent of `attach_schema`. The attach pass adds table provenance (`ColumnRef.table`) and sets `schema_attached`. Without a schema, `to_ir()` still types literals and built-in calls — see below |
 | **Best for** | Formatting / linting, IDE integrations, extracting referenced tables/columns/functions/operators, surgical table renames | Lineage and anti-pattern analyzers, JSON-serializable query representations for APIs and UIs, schema-aware column flow, LLM-fed query graphs |
 
 ### Three names for the same operator
@@ -336,9 +336,12 @@ from kustology.ir import FilterOp
 
 schema = {"StormEvents": {"DeathsDirect": "int", "State": "string", "EventType": "string"}}
 ir = parse("StormEvents | where DeathsDirect > 0", schema=schema).to_ir()
-# A bound parse auto-runs the schema attach pass: column types and provenance
-# are populated. Pass attach_schema=False to skip, or attach_schema={...} to
-# override the schema used for the attach pass.
+# A bound parse already carries Microsoft's result_schema and column
+# result_type -- the builder stamps both at construction, independent of
+# attach_schema. attach_schema instead controls table provenance
+# (ColumnRef.table, schema_attached): False skips it, {...} rebinds
+# against a schema after the fact -- identical to having parsed with
+# schema=.
 
 for op in ir.main_pipeline.operators:
     if isinstance(op, FilterOp):
