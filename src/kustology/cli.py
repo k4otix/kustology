@@ -404,6 +404,30 @@ def _silence_broken_stdout() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # KQL is arbitrary Unicode, and this CLI's contract is to emit UTF-8 on
+    # every platform. Left alone, a Windows console attaches `sys.stdout`
+    # with the OS charmap codepage, which cannot encode most of Unicode —
+    # `kustology format`/`parse` on a query containing e.g. Japanese then
+    # dies with a `UnicodeEncodeError` instead of printing. `reconfigure` is
+    # only on `io.TextIOWrapper`; a real terminal or pipe has it, but a test
+    # double standing in for stdout/stderr (an `io.StringIO`, a bespoke stub)
+    # may not, so the `getattr` guard skips those rather than crashing on a
+    # missing method. `ValueError`/`OSError` cover a stream that is closed or
+    # otherwise cannot be reconfigured (e.g. a detached buffer); either way we
+    # fall back to whatever encoding it already had rather than fail startup
+    # over an encoding upgrade. This runs before any command writes a byte
+    # and before `_tolerate_broken_pipe`/`_silence_broken_stdout` ever touch
+    # these streams, so it cannot interfere with the broken-pipe handling —
+    # it only changes how bytes are encoded, never which file descriptor is
+    # open or which object `sys.stdout`/`sys.stderr` name.
+    for _stream in (sys.stdout, sys.stderr):
+        _reconfigure = getattr(_stream, "reconfigure", None)
+        if _reconfigure is not None:
+            try:
+                _reconfigure(encoding="utf-8")
+            except (ValueError, OSError):  # closed or exotic stream
+                pass
+
     parser = _build_parser()
     args = parser.parse_args(argv)
     try:

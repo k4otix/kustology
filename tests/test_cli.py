@@ -91,3 +91,14 @@ def test_validate_broken_query_exits_1():
     assert result.returncode == 1
     # Human-readable output: at least one line with "Error" severity.
     assert "Error" in result.stdout or "Error" in result.stderr
+
+
+def test_non_ascii_output_survives_a_charmap_stdout():
+    """Windows consoles default to a charmap codec that cannot encode most
+    of Unicode; KQL is arbitrary Unicode, so the CLI reconfigures its
+    streams to UTF-8. PYTHONIOENCODING=cp1252 reproduces the Windows
+    failure mode on any platform (PR #17's windows-latest cell)."""
+    query = 'T | where s == "日本語"'
+    result = _run("format", stdin=query, env={"PYTHONIOENCODING": "cp1252"})
+    assert result.returncode == 0, result.stderr
+    assert "日本語" in result.stdout

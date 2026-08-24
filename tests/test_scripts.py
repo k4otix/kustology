@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import os
 import re
 import stat
 import subprocess
@@ -207,7 +208,8 @@ def test_refresh_dll_atomic_write_preserves_existing_file_mode(tmp_path):
     target.chmod(0o644)
     mod._atomic_write_bytes(target, b"new bytes")
     assert target.read_bytes() == b"new bytes"
-    assert stat.S_IMODE(target.stat().st_mode) == 0o644
+    if os.name == "posix":  # Windows has no POSIX mode bits; S_IMODE reports 0o666 there.
+        assert stat.S_IMODE(target.stat().st_mode) == 0o644
 
 
 def test_refresh_dll_atomic_write_new_file_is_group_world_readable(tmp_path):

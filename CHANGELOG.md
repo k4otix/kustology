@@ -773,6 +773,12 @@ release is in `docs/superpowers/reports/`.
   `help(KustoQuery)` showed a bare signature for methods whose module-level
   functions document at length what they are blind to and where their two
   modes disagree. A test now fails if a public member ships undocumented.
+- **The CLI now emits UTF-8 on every platform (tier 1).** Windows attaches
+  `sys.stdout`/`sys.stderr` with the console's charmap codepage by default,
+  which cannot encode most of Unicode; since KQL is arbitrary Unicode,
+  `kustology format`/`parse` on a query containing non-ASCII text (e.g.
+  Japanese) raised `UnicodeEncodeError` instead of printing. `main()` now
+  reconfigures both streams to UTF-8 where the stream supports it.
 
 ### Added
 
