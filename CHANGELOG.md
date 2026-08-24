@@ -1410,6 +1410,7 @@ release is in `docs/superpowers/reports/`.
   than in the tree. Both ecosystems are declared here now: `uv` for the
   lockfile and `github-actions` for the SHA-pinned `uses:` lines, which
   nothing else keeps current.
+- `release.yml` now hard-gates on the offline DLL pin and treats an unreachable NuGet as a warning, matching `test.yml`'s split.
 
 ## [0.1.0] — 2026-06-01
 

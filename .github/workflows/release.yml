@@ -36,8 +36,15 @@ jobs:
         uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: "8.0.x"
-      - name: Verify bundled DLL matches NuGet before building
-        run: python scripts/verify_dll.py
+      - name: Verify bundled DLL against the pin (offline, hard gate)
+        run: python scripts/verify_dll.py --offline
+      - name: Verify bundled DLL against NuGet (online, warning only)
+        run: |
+          python scripts/verify_dll.py || {
+            rc=$?
+            if [ "$rc" -eq 2 ]; then echo "::warning::verify_dll online leg unavailable (network/config, exit 2) — offline pin already verified"; exit 0; fi
+            exit "$rc"
+          }
 
       # workflow_dispatch runs may target a branch, not a version tag, so this
       # step (and the release-notes extraction below) only make sense — and
