@@ -96,14 +96,19 @@ is documented to treat `{}` as a no-op, the same as `attach_schema=False`, so
 it never re-binds at all. The dict leg's corpus test skips a fixture whose
 derived schema comes out empty rather than comparing against a re-bind that
 never happened, so the two legs' corpus coverage isn't quite identical.
-Read `XFAIL_5_3` and `XFAIL_FALLBACK` in the file for the current entries
-rather than a count quoted here — the whole point of `strict=True` below is
-that those lists shrink.
+There are no xfail lists any more. Where Microsoft's `ResultType.IsOpen` is
+true — it named the columns it could work out and declined to say the list is
+complete — `microsoft_columns` returns the `OPEN` sentinel and the assertion
+becomes `ours is None`. That is the same requirement as an exact match,
+stated for the case where there is no exact answer to match: we decline where
+the binder declined. Every case that used to sit in an xfail list was an open
+symbol whose hand-rolled guess happened to line up with the partial list, or
+happened not to.
 
-Both xfail lists are `strict=True`. A case you fix therefore turns the test
-red until you delete its entry — that is deliberate, and it is how a fix
-stays recorded rather than sitting as a silent xpass. Add an entry only with
-a reason, and prefer fixing the rule.
+So a divergence here is a real defect in the plumbing — the per-operator
+capture, the column ordering, or the `Analyze` seam — and not a rule to be
+tuned. Fix it rather than annotating it; if you genuinely need to park one,
+say why in the marker and expect the next reader to delete it.
 
 ## Refreshing the bundled DLL
 

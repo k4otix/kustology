@@ -1,12 +1,22 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-"""Scope-propagation tests for ``SchemaAttacher``.
+"""Provenance and honesty tests for ``SchemaAttacher``.
 
-Each test parses a query, enriches with a schema, then asks the binder
-for the resulting scope. The contract is that scope-mutating operators
-(project, project-away, parse, mv-expand, …) *actually mutate* the scope
-list — without it, downstream column refs see the wrong view.
+Two contracts are under test and they are deliberately separate.
+
+**Provenance** is this walk's own: every ``ColumnRef`` gets the table it came
+from, across ``project`` / ``summarize`` / joins / unions / ``search`` /
+``let`` threading, and nothing else in the library can supply it. Most of the
+file is that.
+
+**Honesty** is the other half: ``Pipeline.result_schema`` is Microsoft's
+``ResultType`` or it is ``None``. The hand-rolled per-operator schema rules
+that used to answer here are gone, so the *schemas* are pinned in
+``tests/ir/test_binder_oracle.py`` against the binder rather than against a
+hand-written expectation. What is pinned here is the shape of the contract —
+where an answer appears, where ``None`` appears, and that ``None`` and an
+empty ``TabularSchema`` stay distinguishable.
 """
 
 import pytest
@@ -44,318 +54,142 @@ def attacher(schema):
     return SchemaAttacher(schema)
 
 
-def _final_columns(attacher, pipeline) -> set[str]:
-    scope = attacher._walk_pipeline(pipeline)
-    return {c for entry in scope for c in entry.columns}
+# Honesty: where Microsoft declines, so do we ----------------------------
 
 
-# Scope-narrowing operators: project / project-rename / summarize / extend / distinct ---
-
-def test_project_narrows_scope(builder, attacher):
-    ir = builder.build(
-        "DeviceProcessEvents "
-        "| project FileName, AccountName "
-        "| where FileName == 'cmd.exe'"
-    )
-    attacher.enrich(ir)
-    cols = _final_columns(attacher, ir.main_pipeline)
-    assert "FileName" in cols
-    assert "AccountName" in cols
-    assert "DeviceName" not in cols
-    assert "TimeGenerated" not in cols
+def test_an_open_symbol_gets_no_invented_schema():
+    """Partial schemas are the norm; where Microsoft declines to type an
+    operator (open symbol -- the table is not in the dict), the IR now says
+    result_schema=None instead of a hand-computed guess."""
+    ir = parse("Unknown | project a, b").to_ir(attach_schema={"T": {"a": "long"}})
+    (op,) = ir.main_pipeline.operators
+    assert op.result_schema is None
+    assert ir.main_pipeline.result_schema is None
 
 
-def test_project_rename_renames_in_scope(builder, attacher):
-    ir = builder.build("DeviceProcessEvents | project-rename Proc = FileName")
-    attacher.enrich(ir)
-    cols = _final_columns(attacher, ir.main_pipeline)
-    assert "Proc" in cols
-    assert "FileName" not in cols
+def test_provenance_still_fills_under_an_open_symbol():
+    """Deleting the schema rules must not delete provenance: a column read
+    from a table the dict does describe keeps its table even when a later
+    operator is open."""
+    q = "T | where a > 1 | lookup Unknown on a | project a"
+    ir = parse(q).to_ir(attach_schema={"T": {"a": "long"}})
+    from kustology.ir import FilterOp
+
+    (where_op,) = [
+        op for op in ir.main_pipeline.operators if isinstance(op, FilterOp)
+    ]
+    assert {c.table for c in find_all(where_op, ColumnRef)} == {"T"}
 
 
-def test_extend_adds_columns(builder, attacher):
-    ir = builder.build(
-        "DeviceProcessEvents | extend Lower = tolower(FileName)"
-    )
-    attacher.enrich(ir)
-    cols = _final_columns(attacher, ir.main_pipeline)
-    assert "Lower" in cols
-    assert "FileName" in cols  # original still visible
+def test_a_datatable_root_closes_with_no_schema_dict_at_all():
+    """Closure does not need a schema: a ``datatable`` declares its own.
+
+    ``to_ir()`` with no ``attach_schema`` still lands a real schema here,
+    because the symbol was never open -- there is nothing for a dict to add.
+    """
+    ir = parse("datatable(a:long)[1] | project a").to_ir()
+    assert ir.main_pipeline.result_schema.columns == {"a": "long"}
 
 
-def test_summarize_replaces_scope_with_aggregations_and_grouping(builder, attacher):
-    ir = builder.build(
-        "DeviceProcessEvents | summarize Count = count() by FileName"
-    )
-    attacher.enrich(ir)
-    cols = _final_columns(attacher, ir.main_pipeline)
-    assert "Count" in cols
-    assert "FileName" in cols
-    # Other columns from the source table are gone after summarize
-    assert "DeviceName" not in cols
-    assert "TimeGenerated" not in cols
+def test_a_symbol_can_close_mid_pipeline_over_an_undescribed_table():
+    """``IsOpen`` is per node, not per query.
+
+    ``T | count`` returns ``Count:long`` whatever ``T`` is, so the binder
+    closes the symbol there even though the source is unknown, and the
+    answer survives with no schema dict at all. ``getschema`` was probed the
+    same way and answers the same: its four columns *describe* the input's
+    shape rather than passing it through, so they can be named without
+    knowing it.
+    """
+    assert parse("T | count").to_ir().main_pipeline.result_schema.columns == {
+        "Count": "long",
+    }
+    assert parse("T | getschema").to_ir().main_pipeline.result_schema.columns == {
+        "ColumnName": "string",
+        "ColumnOrdinal": "long",
+        "DataType": "string",
+        "ColumnType": "string",
+    }
 
 
-def test_distinct_narrows_scope_to_listed_columns(builder, attacher):
-    ir = builder.build("DeviceProcessEvents | distinct FileName")
-    attacher.enrich(ir)
-    cols = _final_columns(attacher, ir.main_pipeline)
-    # `distinct C1, C2` is semantically equivalent to `summarize by C1, C2`;
-    # the output schema is exactly the listed columns.
-    assert cols == {"FileName"}
+def test_really_emitting_nothing_and_not_knowing_are_different_answers():
+    """``columns={}`` is a claim: "this emits no columns". ``None`` is not.
+
+    ``project-away *`` genuinely produces an empty schema, and only
+    Microsoft says so -- the bound symbol closes empty and the stamp carries
+    it. Without a schema the same query is open, and stamping ``{}`` there
+    would make a query over an undescribed table indistinguishable from one
+    that really returns nothing.
+    """
+    closed = _dict_path("T | project-away *")
+    assert closed.main_pipeline.result_schema is not None
+    assert closed.main_pipeline.result_schema.columns == {}
+    assert parse("T | project-away *").to_ir().main_pipeline.result_schema is None
 
 
-def test_distinct_star_preserves_full_scope(builder, attacher):
-    ir = builder.build("DeviceProcessEvents | distinct *")
-    attacher.enrich(ir)
-    cols = _final_columns(attacher, ir.main_pipeline)
-    # `distinct *` keeps every source column.
-    assert "FileName" in cols
-    assert "DeviceName" in cols
-    assert "TimeGenerated" in cols
-
-
-# project-away / project-keep / project-reorder -------------------------
-
-def test_project_away_subtracts_from_scope(builder, attacher):
-    ir = builder.build(
-        "DeviceProcessEvents | project-away DeviceName, TimeGenerated"
-    )
-    attacher.enrich(ir)
-    cols = _final_columns(attacher, ir.main_pipeline)
-    assert "FileName" in cols
-    assert "AccountName" in cols
-    assert "DeviceName" not in cols
-    assert "TimeGenerated" not in cols
-
-
-def test_project_keep_retains_only_named(builder, attacher):
-    ir = builder.build(
-        "DeviceProcessEvents | project-keep FileName, AccountName"
-    )
-    attacher.enrich(ir)
-    cols = _final_columns(attacher, ir.main_pipeline)
-    assert cols == {"FileName", "AccountName"}
-
-
-def test_project_reorder_preserves_all(builder, attacher):
-    ir = builder.build(
-        "DeviceProcessEvents | project-reorder TimeGenerated, FileName"
-    )
-    attacher.enrich(ir)
-    cols = _final_columns(attacher, ir.main_pipeline)
-    assert "FileName" in cols
-    assert "AccountName" in cols
-    assert "DeviceName" in cols
-    assert "TimeGenerated" in cols
-
-
-# parse / parse-where capture groups -------------------------------------
-
-def test_parse_adds_capture_columns(builder, attacher):
-    ir = builder.build(
-        "DeviceProcessEvents "
-        "| parse FileName with 'prefix_' UserName '_suffix' "
-        "| where UserName == 'admin'"
-    )
-    attacher.enrich(ir)
-    cols = _final_columns(attacher, ir.main_pipeline)
-    assert "UserName" in cols
-
-
-def test_parse_where_also_adds_capture_columns(builder, attacher):
-    ir = builder.build(
-        "DeviceProcessEvents | parse-where FileName with 'prefix_' Tag '_suffix'"
-    )
-    attacher.enrich(ir)
-    cols = _final_columns(attacher, ir.main_pipeline)
-    assert "Tag" in cols
-
-
-# mv-expand element-type swap --------------------------------------------
-
-def test_mvexpand_preserves_column_visibility(builder, attacher):
-    ir = builder.build(
-        "DeviceProcessEvents "
-        "| extend Items = pack_array(FileName, AccountName) "
-        "| mv-expand Items "
-        "| where Items == 'cmd.exe'"
-    )
-    attacher.enrich(ir)
-    cols = _final_columns(attacher, ir.main_pipeline)
-    assert "Items" in cols
-
-
-# make-series synthesis --------------------------------------------------
-
-def test_makeseries_synthesizes_aggregate_and_group_columns(builder, attacher):
-    ir = builder.build(
-        "DeviceProcessEvents "
-        "| make-series Count = count() default = 0 on TimeGenerated "
-        "from datetime(2026-01-01) to datetime(2026-01-02) step 1h "
-        "by FileName"
-    )
-    attacher.enrich(ir)
-    cols = _final_columns(attacher, ir.main_pipeline)
-    assert "Count" in cols
-    assert "FileName" in cols
-
-
-# Pipeline.result_schema population --------------------------------------
-
-def test_pipeline_result_schema_populated_after_enrich(builder, attacher):
+def test_pipeline_result_schema_populated_after_enrich(schema):
+    """The ``TabularSchema`` plumbing itself: an answer arrives, and it is
+    Microsoft's."""
     from kustology.ir import TabularSchema
-    ir = builder.build(
-        "DeviceProcessEvents | project FileName, AccountName"
+
+    ir = parse("DeviceProcessEvents | project FileName, AccountName").to_ir(
+        attach_schema=schema,
     )
-    attacher.enrich(ir)
-    schema = ir.main_pipeline.result_schema
-    assert isinstance(schema, TabularSchema)
-    assert set(schema.columns.keys()) == {"FileName", "AccountName"}
+    result = ir.main_pipeline.result_schema
+    assert isinstance(result, TabularSchema)
+    assert set(result.columns.keys()) == {"FileName", "AccountName"}
 
 
-def test_summarize_result_schema_grouping_keys_before_aggregations(builder, attacher):
-    """KQL summarize emits ``by`` columns before aggregations — match that ordering."""
-    ir = builder.build(
-        "DeviceProcessEvents | summarize attempts = count() by DeviceName"
-    )
-    attacher.enrich(ir)
-    cols = list(ir.main_pipeline.result_schema.columns.keys())
-    assert cols == ["DeviceName", "attempts"]
+# The three schema value shapes the public dict path has to accept ----------
 
 
-def test_summarize_result_schema_multiple_keys_and_aggs(builder, attacher):
-    ir = builder.build(
-        "DeviceProcessEvents | summarize c = count(), p = dcount(ProcessId) by DeviceName, FileName"
-    )
-    attacher.enrich(ir)
-    cols = list(ir.main_pipeline.result_schema.columns.keys())
-    assert cols == ["DeviceName", "FileName", "c", "p"]
+@pytest.mark.parametrize("value,expect_type", [
+    ({"a": "long"}, "long"),          # typed columns
+    ("(a:long, b:string)", "long"),   # a Kusto schema string
+    (["a"], "string"),                # untyped columns, treated as string
+])
+def test_every_documented_schema_value_shape_reaches_the_walk(value, expect_type):
+    """``parse(schema=…)`` documents three value shapes and so does
+    ``build_global_state``, so ``to_ir(attach_schema=…)`` has to take all
+    three -- it is the same schema argument on a different entry point.
+
+    ``SchemaAttacher`` reads ``schemas[table][column]`` and takes only the
+    first shape, so the other two are normalized before they reach it. Both
+    halves are asserted: Microsoft's schema (the binder saw the columns) and
+    the walk's provenance (the attacher did too).
+    """
+    ir = parse("T | project a | where a > 1").to_ir(attach_schema={"T": value})
+    assert ir.main_pipeline.result_schema.columns == {"a": expect_type}
+    assert {c.table for c in find_all(ir, ColumnRef)} == {"T"}
 
 
-def test_make_series_result_schema_keys_aggs_then_on_axis(builder, attacher):
-    """make-series emits: by-keys, aggregation series, on-axis (dynamic)."""
-    ir = builder.build(
-        "DeviceProcessEvents "
-        "| make-series c = count(), s = sum(ProcessId) default=0 "
-        "on TimeGenerated step 1h by DeviceName, FileName"
-    )
-    attacher.enrich(ir)
-    cols = list(ir.main_pipeline.result_schema.columns.keys())
-    assert cols == ["DeviceName", "FileName", "c", "s", "TimeGenerated"]
-    types = ir.main_pipeline.result_schema.columns
-    assert types["c"] == "dynamic"
-    assert types["s"] == "dynamic"
-    assert types["TimeGenerated"] == "dynamic"
+def test_a_schema_string_does_not_crash_the_walks_type_fallback():
+    """Regression: ``_fill``'s type fallback did ``schemas[table].get(name)``.
+
+    With a string value that is ``str.get`` -- ``AttributeError`` -- and a
+    bogus type name is not needed to reach it, only a resolved
+    ``ColumnRef.table`` and an unresolved ``result_type``.
+    """
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        ir = parse("T | project n").to_ir(attach_schema={"T": "(n:bogus)"})
+    assert ir.main_pipeline.result_schema.columns == {"n": "unknown"}
+    assert {c.table for c in find_all(ir, ColumnRef)} == {"T"}
 
 
-def test_project_keep_result_schema_uses_source_order(builder, attacher):
-    """project-keep preserves the source-table column order, not the user-list order."""
-    ir = builder.build(
-        "DeviceProcessEvents | project-keep AccountName, FileName"
-    )
-    attacher.enrich(ir)
-    cols = list(ir.main_pipeline.result_schema.columns.keys())
-    # FileName precedes AccountName in the schema fixture, so source-order wins.
-    assert cols == ["FileName", "AccountName"]
+def test_a_schema_string_does_not_crash_the_search_seeding():
+    """Regression: ``search`` seeds ``ScopeEntry(columns=dict(...))`` from the
+    dict, and ``dict("(a:long)")`` is a ``ValueError``.
 
-
-def test_project_reorder_result_schema_listed_first_then_rest(builder, attacher):
-    """project-reorder puts listed columns first (in listed order), rest follow in source order."""
-    ir = builder.build(
-        "DeviceProcessEvents | project-reorder DeviceName, FileName"
-    )
-    attacher.enrich(ir)
-    cols = list(ir.main_pipeline.result_schema.columns.keys())
-    assert cols[:2] == ["DeviceName", "FileName"]
-    # remaining source columns follow in their original order
-    assert cols[2:] == ["AccountName", "TimeGenerated", "ProcessId"]
-
-
-def test_project_rename_result_schema_preserves_position(builder, attacher):
-    """project-rename keeps the renamed column in its original position."""
-    ir = builder.build(
-        "DeviceProcessEvents | project-rename Proc = FileName"
-    )
-    attacher.enrich(ir)
-    cols = list(ir.main_pipeline.result_schema.columns.keys())
-    # FileName was at index 0 in the schema fixture; Proc should now be at index 0.
-    assert cols[0] == "Proc"
-    assert "FileName" not in cols
-
-
-# Auto-naming parity -----------------------------------------------------
-
-def test_summarize_unnamed_aggregation_canonical_name(builder, attacher):
-    """KQL names unnamed aggregations like ``count()`` -> ``count_``, ``avg(X)`` -> ``avg_X``."""
-    ir = builder.build(
-        "DeviceProcessEvents | summarize count(), avg(ProcessId), dcount(AccountName)"
-    )
-    attacher.enrich(ir)
-    cols = list(ir.main_pipeline.result_schema.columns.keys())
-    assert cols == ["count_", "avg_ProcessId", "dcount_AccountName"]
-
-
-def test_summarize_bin_in_by_clause_extracts_inner_column(builder, attacher):
-    """``summarize by bin(C, ...)`` projects ``C`` as the output column name."""
-    ir = builder.build(
-        "DeviceProcessEvents | summarize count() by bin(TimeGenerated, 1h), DeviceName"
-    )
-    attacher.enrich(ir)
-    cols = list(ir.main_pipeline.result_schema.columns.keys())
-    assert cols == ["TimeGenerated", "DeviceName", "count_"]
-
-
-def test_summarize_function_wrapped_grouping_extracts_inner_column(builder, attacher):
-    """In a by-clause, any function call over a single column ref auto-names to the inner column."""
-    ir = builder.build(
-        "DeviceProcessEvents | summarize count() by tostring(DeviceName)"
-    )
-    attacher.enrich(ir)
-    cols = list(ir.main_pipeline.result_schema.columns.keys())
-    assert cols == ["DeviceName", "count_"]
-
-
-# Join column suffixing --------------------------------------------------
-
-def test_join_inner_suffixes_colliding_right_columns(builder, attacher):
-    """KQL suffixes right-side columns that collide with left-side names (Foo -> Foo1)."""
-    schemas = {
-        "T": {"K": "string", "V": "long"},
-        "U": {"K": "string", "V": "long", "Other": "string"},
+    A different crash site from the one above and reachable with a perfectly
+    ordinary type, which is why both are pinned.
+    """
+    ir = parse("search in (T) 'x'").to_ir(attach_schema={"T": "(a:long)"})
+    assert ir.main_pipeline.result_schema.columns == {
+        "$table": "string", "a": "long",
     }
-    attacher2 = SchemaAttacher(schemas)
-    ir = builder.build("T | join kind=inner U on K")
-    attacher2.enrich(ir)
-    cols = list(ir.main_pipeline.result_schema.columns.keys())
-    assert cols == ["K", "V", "K1", "V1", "Other"]
-
-
-def test_lookup_drops_right_join_key_but_suffixes_other_collisions(builder, attacher):
-    """Lookup drops the right's join key (merged into left's) but suffixes other collisions."""
-    schemas = {
-        "T": {"K": "string", "Shared": "string"},
-        "L": {"K": "string", "Shared": "string", "Extra": "long"},
-    }
-    attacher2 = SchemaAttacher(schemas)
-    ir = builder.build("T | lookup L on K")
-    attacher2.enrich(ir)
-    cols = list(ir.main_pipeline.result_schema.columns.keys())
-    assert cols == ["K", "Shared", "Shared1", "Extra"]
-
-
-def test_multi_join_increments_suffix_per_collision(builder, attacher):
-    """Repeated joins on a colliding key produce Foo, Foo1, Foo2 in order."""
-    schemas = {
-        "T": {"K": "string"},
-        "A": {"K": "string"},
-        "B": {"K": "string"},
-    }
-    attacher2 = SchemaAttacher(schemas)
-    ir = builder.build("T | join A on K | join B on K")
-    attacher2.enrich(ir)
-    cols = list(ir.main_pipeline.result_schema.columns.keys())
-    assert cols == ["K", "K1", "K2"]
 
 
 # Make-series range fields ----------------------------------------------
@@ -401,56 +235,53 @@ def _refs(ir):
     return out
 
 
-def test_columns_resolve_inside_toscalar(builder, attacher):
+def test_columns_resolve_inside_toscalar(schema):
     """A pipeline nested in an expression resolves against its own source.
 
     ``_fill`` recursed a hardcoded attribute tuple that had no ``pipeline``
     entry, so ToScalarExpr / MaterializeExpr / SubqueryExpr subtrees were
     never entered.
     """
-    ir = builder.build(
+    ir = parse(
         "DeviceProcessEvents "
         "| where ProcessId > toscalar(DeviceProcessEvents | summarize max(ProcessId)) "
         "| project AccountName"
-    )
-    attacher.enrich(ir)
+    ).to_ir(attach_schema=schema)
     # The same column inside and outside the toscalar must agree.
     assert _refs(ir)["ProcessId"] == {"DeviceProcessEvents"}
 
 
-def test_columns_resolve_inside_case_arms(builder, attacher):
+def test_columns_resolve_inside_case_arms(schema):
     """``CaseExpr.branches`` is tuple-nested and ``default`` was unlisted."""
-    ir = builder.build(
+    ir = parse(
         "DeviceProcessEvents "
         "| extend Risk = iif(ProcessId > 100, AccountName, DeviceName)"
-    )
-    attacher.enrich(ir)
+    ).to_ir(attach_schema=schema)
     refs = _refs(ir)
     assert refs["ProcessId"] == {"DeviceProcessEvents"}
     assert refs["AccountName"] == {"DeviceProcessEvents"}
     assert refs["DeviceName"] == {"DeviceProcessEvents"}
 
 
-def test_columns_resolve_under_operators_without_a_scope_rule(builder, attacher):
+def test_columns_resolve_under_operators_without_a_scope_rule(schema):
     """`sort` and `top` carry expressions but reshape nothing.
 
     ``_walk_operator`` was an isinstance chain over 17 of 53 operator types
     with no fallback -- it fell off the end, so the other 36 filled nothing.
     """
-    ir = builder.build(
+    ir = parse(
         "DeviceProcessEvents "
         "| sort by ProcessId desc "
         "| top 5 by TimeGenerated "
         "| project AccountName"
-    )
-    attacher.enrich(ir)
+    ).to_ir(attach_schema=schema)
     refs = _refs(ir)
     assert refs["ProcessId"] == {"DeviceProcessEvents"}
     assert refs["TimeGenerated"] == {"DeviceProcessEvents"}
     assert refs["AccountName"] == {"DeviceProcessEvents"}
 
 
-def test_columns_resolve_through_a_nested_pipeline_source(builder, attacher):
+def test_columns_resolve_through_a_nested_pipeline_source(schema):
     """``Pipeline.source`` may itself be a ``Pipeline``.
 
     ``let M = materialize(T | where X)`` is the shape that produces one --
@@ -461,74 +292,84 @@ def test_columns_resolve_through_a_nested_pipeline_source(builder, attacher):
     """
     from kustology.ir.query import Pipeline
 
-    ir = builder.build(
+    ir = parse(
         "let M = materialize(DeviceProcessEvents | where ProcessId > 1); "
         "M | count"
-    )
+    ).to_ir(attach_schema=schema)
     inner = ir.let_bindings[0].rhs_pipeline
     assert isinstance(inner.source, Pipeline), "expected a nested pipeline source"
 
-    attacher._walk_pipeline(inner)
     # The nested source's table reached the outer pipeline's scope, and the
     # ColumnRef inside it was visited.
     assert set(inner.result_schema.columns) >= {"ProcessId", "AccountName"}
     assert _refs(ir)["ProcessId"] == {"DeviceProcessEvents"}
 
 
-def test_count_reshapes_scope_to_a_single_column(builder, attacher):
-    """``count`` replaces the schema entirely; ``count as N`` names it."""
-    ir = builder.build("DeviceProcessEvents | where ProcessId > 1 | count")
-    attacher.enrich(ir)
-    assert set(ir.main_pipeline.result_schema.columns) == {"Count"}
-
-    ir2 = builder.build("DeviceProcessEvents | count as Hits")
-    attacher.enrich(ir2)
-    assert set(ir2.main_pipeline.result_schema.columns) == {"Hits"}
-
-
 # --- let threading ---------------------------------------------------------
 
 
-def test_let_pipeline_is_enriched(builder, attacher):
+def test_let_pipeline_is_enriched(schema):
     """``enrich`` walked ``main_pipeline`` only, so a tabular binding's
     ``result_schema`` stayed None and the ColumnRefs inside it kept
     ``table=None`` even on a fully bound parse."""
-    ir = builder.build(
+    ir = parse(
         "let Base = DeviceProcessEvents | where ProcessId > 1; Base | count"
-    )
-    attacher.enrich(ir)
+    ).to_ir(attach_schema=schema)
     binding = ir.let_bindings[0]
     assert binding.rhs_pipeline.result_schema is not None
     assert "AccountName" in binding.rhs_pipeline.result_schema.columns
     assert _refs(ir)["ProcessId"] == {"DeviceProcessEvents"}
 
 
-def test_main_pipeline_resolves_columns_through_a_let_name(builder, attacher):
+def test_main_pipeline_resolves_columns_through_a_let_name(schema):
     """The whole point: `Base | project AccountName` knows what Base holds."""
-    ir = builder.build(
+    ir = parse(
         "let Base = DeviceProcessEvents | where ProcessId > 1; "
         "Base | project AccountName"
-    )
-    attacher.enrich(ir)
+    ).to_ir(attach_schema=schema)
     refs = _refs(ir)
     assert refs["AccountName"] == {"Base"}
     assert ir.main_pipeline.result_schema.columns["AccountName"] == "string"
 
 
-def test_let_threading_follows_a_chain(builder, attacher):
-    ir = builder.build(
+def test_let_threading_follows_a_chain(schema):
+    ir = parse(
         "let A = DeviceProcessEvents | project AccountName, ProcessId; "
         "let B = A | where ProcessId > 2; "
         "B | project AccountName"
-    )
-    attacher.enrich(ir)
+    ).to_ir(attach_schema=schema)
     a, b = ir.let_bindings
     assert set(a.rhs_pipeline.result_schema.columns) == {"AccountName", "ProcessId"}
     assert set(b.rhs_pipeline.result_schema.columns) == {"AccountName", "ProcessId"}
     assert ir.main_pipeline.result_schema.columns["AccountName"] == "string"
 
 
-def test_let_threading_does_not_resolve_a_forward_reference(builder, attacher):
+def test_let_threading_is_gated_on_microsoft_closing_the_binding():
+    """A binding only threads once something says what it emits.
+
+    ``_let_schemas`` is filled from each binding pipeline's own
+    ``result_schema``, which is Microsoft's answer or nothing. On the dict
+    path the binding closes and the alias carries its columns. On a raw
+    unbound IR handed to an attacher, the binding is open, so the alias
+    registers nothing and a column read through it is honestly unresolved --
+    rather than resolved from a shape nobody vouched for.
+    """
+    schemas = {"T": {"a": "long", "s": "string"}}
+    query = "let Base = T | where a > 1; Base | project s"
+
+    threaded = parse(query).to_ir(attach_schema=schemas)
+    assert threaded.let_bindings[0].rhs_pipeline.result_schema.columns == schemas["T"]
+    assert _refs(threaded)["s"] == {"Base"}
+
+    ungated = IRBuilder().build(query)
+    SchemaAttacher(schemas).enrich(ungated)
+    assert ungated.let_bindings[0].rhs_pipeline.result_schema is None
+    assert _refs(ungated)["s"] == {None}
+    # The binding *body* still reads a real table, so its own columns place.
+    assert _refs(ungated)["a"] == {"T"}
+
+
+def test_let_threading_does_not_resolve_a_forward_reference(schema):
     """A binding naming one declared later is not a LetRef at all, so there
     is nothing to thread -- it stays an opaque table.
 
@@ -536,12 +377,11 @@ def test_let_threading_does_not_resolve_a_forward_reference(builder, attacher):
     emits. An empty ``TabularSchema`` would state that it emits no columns,
     which is a different and false claim.
     """
-    ir = builder.build(
+    ir = parse(
         "let Early = Later | take 1; "
         "let Later = DeviceProcessEvents | take 1; "
         "Early | project AccountName"
-    )
-    attacher.enrich(ir)
+    ).to_ir(attach_schema=schema)
     assert ir.let_bindings[0].rhs_pipeline.result_schema is None
 
 
@@ -552,17 +392,47 @@ def test_scalar_binding_is_untouched_by_threading(builder, attacher):
     assert ir.let_bindings[0].rhs_expr is not None
 
 
-def test_let_names_do_not_leak_between_enrich_calls(attacher, builder):
+def test_let_names_do_not_leak_between_enrich_calls(schema):
     """The let scope is per-call state; a reused attacher must not carry
-    one query's binding names into the next."""
-    first = builder.build(
-        "let Base = DeviceProcessEvents | project AccountName; Base | count"
-    )
+    one query's binding names into the next.
+
+    Asserted on ``_let_schemas`` itself rather than on a downstream column,
+    because a downstream column cannot see the leak: a second query's
+    ``Base`` is a plain ``TableRef``, and ``_source_entry`` only consults
+    ``_let_schemas`` for a ``LetRef``, which the builder emits only for a
+    name an earlier ``let`` *in that query* bound. Reading the registry is
+    what makes this falsifiable -- drop the reset at the top of ``enrich``
+    and the second call's registry holds both names.
+
+    The IRs are bound and enriched by hand (``attach_schema=False``, then
+    one shared attacher) because that is the only way to reuse an attacher
+    across two queries -- and because a binding registers a name only once
+    Microsoft closes it, so an unbound pair would leave the registry empty
+    either way and prove nothing.
+    """
+    attacher = SchemaAttacher(schema)
+
+    first = parse(
+        "let Base = DeviceProcessEvents | project AccountName; Base | count",
+        schema=schema,
+    ).to_ir(attach_schema=False)
     attacher.enrich(first)
-    # `Base` here is an unrelated, unknown table -- not the previous binding.
-    second = builder.build("Base | project AccountName")
+    assert set(attacher._let_schemas) == {"Base"}, "premise: the name registered"
+
+    second = parse(
+        "let Other = DeviceProcessEvents | project DeviceName; "
+        "Other | project DeviceName",
+        schema=schema,
+    ).to_ir(attach_schema=False)
     attacher.enrich(second)
-    assert second.main_pipeline.result_schema.columns.get("AccountName") == "unknown"
+    assert set(attacher._let_schemas) == {"Other"}
+
+    # And a query with no bindings at all leaves nothing behind either.
+    third = parse(
+        "DeviceProcessEvents | project AccountName", schema=schema,
+    ).to_ir(attach_schema=False)
+    attacher.enrich(third)
+    assert attacher._let_schemas == {}
 
 
 # Microsoft's per-operator schema (K-ARCH-1, Task 5.2) --------------------
@@ -601,10 +471,11 @@ def test_join_provenance_survives_an_authoritative_result_schema():
     """The per-side scope entries a join builds are still built.
 
     ``$left`` / ``$right`` resolve against a scope that has both sides in it,
-    and a right-hand column has a table only because the join rule appended
-    an entry for it. Both are things the overlay cannot reconstruct, so the
-    hand-rolled rule keeps running for ``join`` / ``lookup`` / ``union`` even
-    when Microsoft answered.
+    and a right-hand column has a table only because the join walk appended
+    an entry for it. Both are things the overlay cannot reconstruct, so
+    ``join`` / ``lookup`` / ``union`` / ``search`` keep a structural branch
+    even where Microsoft answered — one that brings the sources into scope
+    and derives no columns of its own.
     """
     from kustology import parse
     from kustology.ir import ColumnRef, ProjectOp, find_all
@@ -629,13 +500,14 @@ def test_join_provenance_survives_an_authoritative_result_schema():
     }
 
 
-def test_the_hand_rolled_rule_still_runs_when_microsoft_declines(builder, attacher):
+def test_microsoft_declining_is_not_an_invitation_to_answer(builder, attacher):
     """``IRBuilder().build`` binds against globals with no tables at all.
 
-    Every symbol it produces is open, so nothing is recorded and the scope
-    rules answer alone — which is what keeps a caller's own schema, handed
-    to the attacher afterwards, from being overridden by the binder's
-    table-less reading.
+    Every symbol it produces is open, so nothing is recorded — and nothing
+    fills in for it. The schema is Microsoft's to state and it declined, so
+    the pipeline says ``None``. What the caller's dict still buys is the
+    other contract: every column reference is placed, from the dict the
+    binder never saw.
     """
     ir = builder.build(
         "DeviceProcessEvents | project FileName, AccountName "
@@ -643,11 +515,8 @@ def test_the_hand_rolled_rule_still_runs_when_microsoft_declines(builder, attach
     )
     assert all(op.result_schema is None for op in ir.main_pipeline.operators)
     attacher.enrich(ir)
-    # Narrowed by the hand-rolled ``project`` rule, and typed from the
-    # schema the *attacher* was given -- which the binder never saw.
-    assert ir.main_pipeline.result_schema.columns == {
-        "FileName": "string", "AccountName": "string",
-    }
+    assert ir.main_pipeline.result_schema is None
+    assert {c.table for c in find_all(ir, ColumnRef)} == {"DeviceProcessEvents"}
 
 
 def test_count_closes_a_symbol_even_from_an_unknown_table(builder):
@@ -689,17 +558,15 @@ def test_microsoft_decides_the_column_order_not_the_scope_grouping():
     ]
 
 
-# --- Task 5.3: the fallback scope walk ------------------------------------
+# --- the dict entry point -------------------------------------------------
 #
-# Everything below exercises ``SchemaAttacher({...}).enrich(parse(q).to_ir())``
-# -- the *unbound* path. ``parse(q)`` alone binds against ``GlobalState.Default``,
-# which describes no tables, so every operator's ``result_schema`` is ``None``
-# and the hand-rolled rules answer alone. That is a supported public entry
-# point (a caller who has a schema dict but no cluster to bind against), and
-# it is also the only way to reach these rules now that a bound parse takes
-# Microsoft's answer.
+# ``parse(q).to_ir(attach_schema=dict)`` is the public path for a caller who
+# has a schema and no cluster to bind against. Since the reroute it re-binds
+# through ``build_global_state`` + ``Analyze``, so Microsoft answers for every
+# symbol it can close and this walk supplies provenance over the top. That is
+# what the rest of this file exercises.
 
-FALLBACK_SCHEMA = {
+DICT_SCHEMA = {
     "L": {"k": "string", "a": "long", "shared": "string"},
     "R": {"k": "string", "b": "real", "shared": "string"},
     "T": {
@@ -710,25 +577,16 @@ FALLBACK_SCHEMA = {
 }
 
 
-def _fallback(query: str, schemas: dict | None = None):
-    """``SchemaAttacher(schemas).enrich(parse(query).to_ir())``.
+def _dict_path(query: str, schemas: dict | None = None):
+    """``parse(query).to_ir(attach_schema=…)`` with the collision-heavy dict.
 
-    Asserts the premise as it goes: if any operator carried Microsoft's own
-    ``result_schema`` the hand-rolled rule under test never ran and the
-    assertions downstream would be proving the wrong thing.
+    ``L`` and ``R`` share ``k`` and ``shared``, which is what makes join
+    collisions observable, and ``U`` types ``a`` differently from ``T`` so a
+    union conflict has to split.
     """
-    from kustology import parse
-
-    ir = parse(query).to_ir()
-    assert all(
-        op.result_schema is None for op in ir.main_pipeline.operators
-    ), "premise: the unbound path must leave the fallback rules to answer"
-    return SchemaAttacher(schemas if schemas is not None else FALLBACK_SCHEMA).enrich(ir)
-
-
-def _columns(ir) -> list[tuple[str, str]]:
-    schema = ir.main_pipeline.result_schema
-    return list(schema.columns.items()) if schema is not None else None
+    return parse(query).to_ir(
+        attach_schema=DICT_SCHEMA if schemas is None else schemas,
+    )
 
 
 def _tables(ir) -> dict[str, set]:
@@ -748,38 +606,75 @@ def test_project_carries_provenance_into_a_later_operator():
     """``project`` replaced the scope with a table-less entry, so every
     column reference *after* it lost its table -- the same column resolved
     to ``T`` before the project and to ``None`` after it, in one query."""
-    ir = _fallback("T | project a, k | where a > 1")
+    ir = _dict_path("T | project a, k | where a > 1")
     assert _tables(ir)["a"] == {"T"}
 
 
 def test_project_away_and_project_keep_carry_provenance():
-    away = _fallback("T | project-away s | where a > 1")
+    away = _dict_path("T | project-away s | where a > 1")
     assert _tables(away)["a"] == {"T"}
-    keep = _fallback("T | project-keep a | where a > 1")
+    keep = _dict_path("T | project-keep a | where a > 1")
     assert _tables(keep)["a"] == {"T"}
 
 
 def test_distinct_carries_provenance():
-    ir = _fallback("T | distinct k | where k == 'x'")
+    ir = _dict_path("T | distinct k | where k == 'x'")
     assert _tables(ir)["k"] == {"T"}
 
 
 def test_project_rename_carries_provenance_under_the_new_name():
-    """The renamed column is still the source table's column."""
-    ir = _fallback("T | project-rename kk = k | where kk == 'x'")
-    assert _tables(ir)["kk"] == {"T"}
+    """The renamed column is still the source table's column.
+
+    ``kk`` is a name no scope entry holds, which is the shape that files
+    anonymously for a join collision or a union split variant. It does not
+    here, and the difference is that the query *says so*:
+    ``project-rename kk = k`` names the input column outright, so
+    :func:`~kustology.ir.binder._renamed_columns` threads ``kk -> k`` into
+    the overlay and ``T`` survives the rename.
+    """
+    ir = _dict_path("T | project-rename kk = k | where kk == 'x'")
+    tables = _tables(ir)
+    assert tables["kk"] == {"T"}
+    assert tables["k"] == {"T"}
+
+
+def test_project_rename_provenance_needs_a_real_column_on_the_right():
+    """The thread is only followed where there is an input name to follow.
+
+    Every ``project-rename`` term the parser accepts has a ``ColumnRef`` on
+    the right, so this guards a hand-built or unmodelled IR rather than a
+    query: with no column to carry from, the target files anonymously
+    instead of borrowing a neighbour's table.
+    """
+    from kustology.ir.binder import _renamed_columns
+    from kustology.ir.expr import LiteralExpr
+    from kustology.ir.query import Assignment, ProjectRenameOp
+    from kustology.ir.spans import Span
+
+    span = Span(text_start=0, width=1)
+    op = ProjectRenameOp(
+        span=span,
+        columns=[
+            Assignment(
+                name="kk",
+                expr=LiteralExpr(value=1, literal_kind="long", span=span),
+                span=span,
+            ),
+        ],
+    )
+    assert _renamed_columns(op) == {}
 
 
 def test_a_computed_column_has_no_table_and_does_not_borrow_one():
     """``origins`` must record "invented here", not inherit the neighbours'."""
-    ir = _fallback("T | project n = a + 1, k | where n > 1")
+    ir = _dict_path("T | project n = a + 1, k | where n > 1")
     tables = _tables(ir)
     assert tables["k"] == {"T"}
     assert tables["n"] == {None}
 
 
 def test_summarize_keys_keep_provenance_and_aggregates_do_not():
-    ir = _fallback("T | summarize c = count() by k | where c > 1 and k == 'x'")
+    ir = _dict_path("T | summarize c = count() by k | where c > 1 and k == 'x'")
     tables = _tables(ir)
     assert tables["k"] == {"T"}
     assert tables["c"] == {None}
@@ -792,156 +687,55 @@ def test_an_ambiguous_unqualified_column_resolves_to_no_table():
     that the unqualified name is ambiguous, so the honest provenance is
     "unknown", not "U".
     """
-    ir = _fallback("T | union U | where k == 'x'")
+    ir = _dict_path("T | union U | where k == 'x'")
     assert _tables(ir)["k"] == {None}
 
 
-# K07: join kinds ------------------------------------------------------------
+# Joins: what the overlay cannot reconstruct ----------------------------------
 
 
-def test_left_semi_and_anti_joins_emit_the_left_side_only():
-    """A semi/anti join is a *filter*, not a widening.
+def test_a_right_side_only_column_reports_the_right_table():
+    """The entry the join walk appends is what gives a right-hand column a
+    table at all.
 
-    The rule appended the right side's columns for every kind, so
-    ``L | join kind=leftanti (R) on k`` claimed six output columns where the
-    engine emits three — and invented ``k1``/``shared1`` that no downstream
-    operator can reference.
+    ``kind=rightsemi`` emits the right side's columns only, and ``b`` is
+    ``R``'s alone, so it places there even though the operator that produced
+    it is on the left of the pipeline.
     """
-    for kind in ("leftanti", "leftsemi", "anti", "leftantisemi"):
-        ir = _fallback(f"L | join kind={kind} (R) on k")
-        assert _columns(ir) == [
-            ("k", "string"), ("a", "long"), ("shared", "string"),
-        ], kind
+    from kustology.ir import FilterOp
 
-
-def test_right_semi_and_anti_joins_emit_the_right_side_only():
-    for kind in ("rightanti", "rightsemi", "rightantisemi"):
-        ir = _fallback(f"L | join kind={kind} (R) on k")
-        assert _columns(ir) == [
-            ("k", "string"), ("b", "real"), ("shared", "string"),
-        ], kind
-
-
-def test_a_right_semi_join_reports_the_right_table_as_provenance():
-    """The surviving rows are the right side's, so its ``k`` is too.
-
-    Both tables have a ``k``; before the fix the scope still held the left
-    entry, so the filter's ``k`` resolved to ``L`` — a column the operator
-    above it had just discarded.
-    """
-    from kustology.ir import ColumnRef, FilterOp, find_all
-
-    ir = _fallback("L | join kind=rightsemi (R) on k | where k == 'x'")
+    ir = _dict_path("L | join kind=rightsemi (R) on k | where b > 1")
     where = next(op for op in ir.main_pipeline.operators if isinstance(op, FilterOp))
     assert {c.table for c in find_all(where, ColumnRef)} == {"R"}
 
 
-def test_a_bare_join_is_innerunique_and_still_widens():
-    ir = _fallback("L | join (R) on k")
-    assert _columns(ir) == [
-        ("k", "string"), ("a", "long"), ("shared", "string"),
-        ("k1", "string"), ("b", "real"), ("shared1", "string"),
-    ]
+def test_a_post_join_collision_is_ambiguous_and_says_so():
+    """The accepted narrowing that came with retiring the renaming rule.
 
+    Microsoft emits ``shared`` and ``shared1`` for ``L | join (R) on k``, and
+    both sides are in scope with a ``shared`` of their own, so the walk
+    cannot say which is which: the honest provenance for an unqualified name
+    is ``None``. The old hand rule renamed the right side itself and so knew
+    the answer by construction — it also had to invent the name, which is
+    the part that kept disagreeing with the engine.
 
-def test_join_kind_matching_is_case_insensitive():
-    """``JoinOp.join_kind`` is the text the query wrote.
-
-    Microsoft's *parser* rejects ``kind=LeftAnti`` outright (KS005, "Expected
-    one of: inner, fullouter, …"), so this is not a shape a valid query
-    reaches. It is reachable by a caller who builds or edits the IR directly,
-    and answering a mixed-case anti join as a widening join is the worst of
-    the available answers.
+    A qualified reference is unaffected: ``$left`` / ``$right`` name a side
+    outright, and that is what the sides are kept for.
     """
-    ir = _fallback("L | join kind=LeftAnti (R) on k")
-    assert _columns(ir) == [
-        ("k", "string"), ("a", "long"), ("shared", "string"),
-    ]
+    from kustology.ir import JoinOp
 
+    ir = _dict_path("L | join (R) on k | project shared, shared1")
+    assert list(ir.main_pipeline.result_schema.columns) == ["shared", "shared1"]
+    tables = _tables(ir)
+    assert tables["shared"] == {None}
+    assert tables["shared1"] == {None}
 
-def test_lookup_is_never_semi_or_anti():
-    """``lookup`` takes only ``leftouter`` / ``inner``; both keep both sides."""
-    ir = _fallback("L | lookup (R) on k")
-    assert _columns(ir) == [
-        ("k", "string"), ("a", "long"), ("shared", "string"),
-        ("b", "real"), ("shared1", "string"),
-    ]
-
-
-# K08: wildcard project-keep / project-away ----------------------------------
-
-
-def test_project_keep_matches_a_wildcard_term():
-    """``a*`` contributed no name, so the term matched nothing and was
-    silently dropped from the kept set."""
-    ir = _fallback("T | project-keep k, a*")
-    assert _columns(ir) == [("k", "string"), ("a", "long")]
-
-
-def test_project_away_matches_a_wildcard_term():
-    ir = _fallback("T | project-away a*")
-    assert _columns(ir) == [
-        ("k", "string"), ("t", "datetime"), ("d", "dynamic"),
-        ("s", "string"), ("g", "guid"),
-    ]
-
-
-def test_a_bare_star_keeps_or_drops_everything():
-    """A bare ``*`` lowers to ``StarExpr``, not a column named ``*``."""
-    assert _columns(_fallback("T | project-keep *")) == [
-        ("k", "string"), ("a", "long"), ("t", "datetime"),
-        ("d", "dynamic"), ("s", "string"), ("g", "guid"),
-    ]
-    assert _columns(_fallback("T | project-away *")) == []
-
-
-def test_wildcard_matching_is_case_sensitive():
-    """KQL column names are case-sensitive and so is the pattern: Microsoft
-    answers ``[]`` for ``project-keep A*`` over a table whose column is
-    ``a``. ``fnmatch.fnmatch`` folds case on macOS and Windows, which would
-    have made this pass by accident on two of the three CI platforms."""
-    assert _columns(_fallback("T | project-keep A*")) == []
-
-
-def test_wildcard_and_plain_terms_combine_in_source_order():
-    ir = _fallback("T | project-keep s*, k")
-    assert _columns(ir) == [("k", "string"), ("s", "string")]
-
-
-# K09: mv-expand -------------------------------------------------------------
-
-
-def test_mv_expand_with_itemindex_adds_the_index_column():
-    """``with_itemindex=i`` emits a trailing ``long``; the rule ignored it."""
-    ir = _fallback("T | mv-expand with_itemindex=i d")
-    assert _columns(ir)[-1] == ("i", "long")
-
-
-def test_mv_expand_with_itemindex_and_to_typeof_together():
-    ir = _fallback("T | mv-expand with_itemindex=idx d to typeof(long)")
-    cols = dict(_columns(ir))
-    assert cols["d"] == "long"
-    assert cols["idx"] == "long"
-
-
-def test_mv_expand_does_not_read_the_element_type_off_result_type_inner():
-    """``result_type_inner`` is the *element* type of the array expression,
-    and the expanded column is not typed as its element.
-
-    ``extend arr = pack_array(1, 2) | mv-expand arr`` records
-    ``result_type_inner == long``, and the branch that read it typed ``arr``
-    as ``long``. Microsoft leaves it ``dynamic``: without ``to typeof(...)``
-    each expanded row still holds a dynamic value.
-    """
-    ir = _fallback("T | extend arr = pack_array(1, 2) | mv-expand arr")
-    assert dict(_columns(ir))["arr"] == "dynamic"
-
-
-def test_mv_expand_keeps_the_column_type_it_already_had():
-    """Expanding a typed column does not retype it -- ``s`` stays ``string``
-    -- and a column the scope does not know defaults to ``dynamic``."""
-    assert dict(_columns(_fallback("T | mv-expand s")))["s"] == "string"
-    assert dict(_columns(_fallback("Unknown | mv-expand q")))["q"] == "dynamic"
+    qualified = _dict_path("L | join (R) on $left.shared == $right.shared")
+    join = next(
+        op for op in qualified.main_pipeline.operators if isinstance(op, JoinOp)
+    )
+    left, right = [c for e in join.on for c in find_all(e, ColumnRef)]
+    assert (left.table, right.table) == ("L", "R")
 
 
 # K10 / K11: resolving inside a join's on-clause ------------------------------
@@ -963,7 +757,7 @@ def test_dollar_left_resolves_by_name_across_the_whole_left_side():
     reported ``R`` — a table that does not have an ``a`` at all — while the
     column plainly comes from ``L``.
     """
-    ir = _fallback("L | join (R) on k | join (T) on $left.a == $right.a")
+    ir = _dict_path("L | join (R) on k | join (T) on $left.a == $right.a")
     left, right = _on_refs(ir)
     assert left.name == "a" and left.join_side == "left"
     assert left.table == "L"
@@ -971,23 +765,36 @@ def test_dollar_left_resolves_by_name_across_the_whole_left_side():
 
 
 def test_dollar_right_resolves_against_the_appended_right_entry():
-    ir = _fallback("L | join (R) on $left.k == $right.b")
+    ir = _dict_path("L | join (R) on $left.k == $right.b")
     left, right = _on_refs(ir)
     assert (left.table, right.table) == ("L", "R")
 
 
 def test_dollar_right_resolves_through_the_right_pipelines_own_operators():
     """The right side is a pipeline, so its scope may be anonymous with the
-    provenance carried in ``origins`` -- ``$right.b`` is still ``R``'s."""
-    ir = _fallback("L | join (R | project b) on $left.k == $right.b")
+    provenance carried in ``origins`` -- ``$right.b`` is still ``R``'s.
+
+    A union on the right is the same question with several entries to
+    reconcile: it is one row set and a join has one right side, so
+    ``_flatten_side`` merges them and ``b``, which only one arm carries,
+    keeps that arm's table.
+    """
+    ir = _dict_path("L | join (R | project b) on $left.k == $right.b")
     _left, right = _on_refs(ir)
+    assert right.table == "R"
+
+    unioned = _dict_path(
+        "L | join (union (L | where a > 1), (R | where b > 1)) "
+        "on $left.k == $right.b"
+    )
+    _left, right = _on_refs(unioned)
     assert right.table == "R"
 
 
 def test_an_unresolvable_dollar_side_keeps_its_marker():
     """A right side that is not a table leaves ``$right`` in place rather
     than inventing a name -- the marker is the honest answer."""
-    ir = _fallback("L | join (datatable(z:long)[1]) on $left.k == $right.z")
+    ir = _dict_path("L | join (datatable(z:long)[1]) on $left.k == $right.z")
     _left, right = _on_refs(ir)
     assert right.table == "$right"
 
@@ -997,7 +804,7 @@ def test_a_bare_on_key_resolves_against_the_left_side():
     a ``k``. The scope holds the right side too at that point, so the general
     ambiguity rule would answer ``None``; the left is the side the engine
     keeps the column from."""
-    ir = _fallback("L | join (R) on k")
+    ir = _dict_path("L | join (R) on k")
     (key,) = _on_refs(ir)
     assert key.table == "L"
 
@@ -1008,7 +815,7 @@ def test_lookups_bare_on_key_resolves_to_the_left_side_too():
     reason."""
     from kustology.ir import ColumnRef, LookupOp, find_all
 
-    ir = _fallback("L | lookup (R) on k")
+    ir = _dict_path("L | lookup (R) on k")
     lookup = next(
         op for op in ir.main_pipeline.operators if isinstance(op, LookupOp)
     )
@@ -1016,178 +823,84 @@ def test_lookups_bare_on_key_resolves_to_the_left_side_too():
     assert key.table == "L"
 
 
-# Re-enriching one IR: the builder's schema is the only carry-over ------------
+# Re-enriching one IR: the schema is fixed at bind time -----------------------
 
 
-def test_enriching_twice_with_different_schemas_takes_the_second():
-    """An operator-less pipeline read its *own* ``result_schema`` back.
+def test_enriching_twice_does_not_change_result_schema():
+    """The invariant inverted when the walk stopped deriving schemas.
 
-    ``_walk_pipeline`` prefers the last operator's schema and, with no
-    operators, the pipeline's own — which the builder sets from Microsoft's
-    reading of the source. But a previous ``enrich`` writes that same field,
-    so the second call read the first call's answer and the new schema was
-    ignored. With an operator present the same sequence is correct, which is
-    what makes the bug invisible to almost every test.
+    ``enrich`` used to compute the shape, so handing a second attacher a
+    different dict changed the answer. It now only ever writes back a copy
+    of what Microsoft stamped, so a second call is a no-op on
+    ``result_schema`` no matter what dict it carries — and *re-binding* is
+    how a caller changes a schema. The operator-less branch is the one that
+    reads the pipeline's own field back, so it is the one that has to be
+    pinned.
     """
-    first = {"T": {"a": "long", "s": "string"}}
-    second = {"T": {"a": "real", "s": "guid"}}
-
-    ir = IRBuilder().build("T")
+    ir = parse("T").to_ir(attach_schema={"T": {"a": "long", "s": "string"}})
     assert not ir.main_pipeline.operators, "premise: the operator-less branch"
-    SchemaAttacher(first).enrich(ir)
     assert ir.main_pipeline.result_schema.columns == {"a": "long", "s": "string"}
-    SchemaAttacher(second).enrich(ir)
-    assert ir.main_pipeline.result_schema.columns == {"a": "real", "s": "guid"}
+
+    SchemaAttacher({"T": {"a": "real", "s": "guid"}}).enrich(ir)
+    assert ir.main_pipeline.result_schema.columns == {"a": "long", "s": "string"}
+
+    rebound = parse("T").to_ir(attach_schema={"T": {"a": "real", "s": "guid"}})
+    assert rebound.main_pipeline.result_schema.columns == {"a": "real", "s": "guid"}
 
 
-def test_enriching_twice_refreshes_an_operator_less_let_binding():
-    """Same shape one level down, where it also decides the *name*'s schema.
+def test_enriching_twice_does_not_wipe_an_operator_less_let_binding():
+    """The regression the unconditional snapshot exists to prevent.
 
     ``enrich`` reads each binding's ``result_schema`` to register what the
-    alias holds, so a stale one is not confined to the binding — every
-    column the main pipeline resolves through ``M`` gets the previous
-    schema's type.
+    alias holds. With no operators there is nothing else to read the shape
+    off, so if the snapshot of the builder's value were skipped on a second
+    call — as it used to be once ``schema_attached`` was set — the binding
+    and everything resolving through it would go to ``None``.
     """
-    first = {"T": {"a": "long"}}
-    second = {"T": {"a": "real"}}
-
-    ir = IRBuilder().build("let M = materialize(T); M | project a")
+    ir = parse("let M = materialize(T); M | project a").to_ir(
+        attach_schema={"T": {"a": "long"}},
+    )
     binding = ir.let_bindings[0]
     assert not binding.rhs_pipeline.operators, "premise: the operator-less branch"
-    SchemaAttacher(first).enrich(ir)
+    assert binding.rhs_pipeline.result_schema.columns == {"a": "long"}
+
+    SchemaAttacher({"T": {"a": "real"}}).enrich(ir)
     assert binding.rhs_pipeline.result_schema.columns == {"a": "long"}
     assert ir.main_pipeline.result_schema.columns == {"a": "long"}
-    SchemaAttacher(second).enrich(ir)
-    assert binding.rhs_pipeline.result_schema.columns == {"a": "real"}
-    assert ir.main_pipeline.result_schema.columns == {"a": "real"}
 
 
-def test_enriching_twice_already_worked_with_an_operator_present():
-    """The must-not-change direction: the operator branch was never stale."""
-    ir = IRBuilder().build("T | where a > 1")
-    SchemaAttacher({"T": {"a": "long"}}).enrich(ir)
+def test_enriching_twice_with_an_operator_present_is_also_a_no_op():
+    """The other branch, for the same reason: the last operator's stamp is
+    the answer and a second ``enrich`` copies it again."""
+    ir = parse("T | where a > 1").to_ir(attach_schema={"T": {"a": "long"}})
     SchemaAttacher({"T": {"a": "real"}}).enrich(ir)
-    assert ir.main_pipeline.result_schema.columns == {"a": "real"}
+    assert ir.main_pipeline.result_schema.columns == {"a": "long"}
 
 
 # K12: union ------------------------------------------------------------------
 
 
-def test_union_splits_a_name_the_two_sides_type_differently():
-    """``T.a`` is a long and ``U.a`` a string, so the engine emits both under
-    suffixed names and no unsuffixed ``a`` at all.
+def test_union_split_columns_are_names_no_arm_ever_had():
+    """The second accepted narrowing.
 
-    The rule merged the entries and let the later side's type win, so the
-    output claimed one ``a`` typed ``string`` — a column that does not exist
-    and a lost one that does.
+    ``T.a`` is a long and ``U.a`` a string, so the engine emits ``a_long``
+    and ``a_string`` and no unsuffixed ``a`` at all. Those names exist only
+    in Microsoft's answer -- neither arm's scope entry carries one -- so the
+    overlay files them anonymously and they report ``None``. The old rule
+    synthesised the split itself and could therefore keep a side per
+    variant; it also had to guess when *not* to split, which is where it
+    kept diverging.
     """
-    ir = _fallback("T | union U")
-    assert _columns(ir) == [
-        ("k", "string"), ("a_long", "long"), ("a_string", "string"),
-        ("t", "datetime"), ("d", "dynamic"), ("s", "string"),
-        ("g", "guid"), ("z", "long"),
+    ir = _dict_path("T | union U | where a_string == 'x' and a_long > 1")
+    assert list(ir.main_pipeline.result_schema.columns)[:3] == [
+        "k", "a_long", "a_string",
     ]
-
-
-def test_union_leaves_an_agreeing_name_alone():
-    """Only a *type* disagreement splits: ``L.k`` and ``R.k`` are both
-    strings, so ``k`` stays one column."""
-    ir = _fallback("L | union R")
-    assert _columns(ir) == [
-        ("k", "string"), ("a", "long"), ("shared", "string"), ("b", "real"),
-    ]
-
-
-def test_union_withsource_prepends_the_source_column():
-    ir = _fallback("T | union withsource=src U")
-    assert _columns(ir)[0] == ("src", "string")
-
-
-def test_union_split_columns_keep_the_side_they_came_from():
-    ir = _fallback("T | union U | where a_string == 'x' and a_long > 1")
     tables = _tables(ir)
-    assert tables["a_long"] == {"T"}
-    assert tables["a_string"] == {"U"}
+    assert tables["a_long"] == {None}
+    assert tables["a_string"] == {None}
 
 
-# K13 / K14: aggregate output columns and their names -------------------------
-
-
-def _names(ir) -> list[str]:
-    return [n for n, _ in _columns(ir)]
-
-
-def test_arg_max_star_emits_the_ordering_column_then_the_rest():
-    """``arg_max(t, *)`` returns a whole row, not one value.
-
-    The rule emitted a single column named after the function, so five of
-    the six columns the engine returns were missing from the scope.
-    """
-    assert _columns(_fallback("T | summarize arg_max(t, *)")) == [
-        ("t", "datetime"), ("k", "string"), ("a", "long"),
-        ("d", "dynamic"), ("s", "string"), ("g", "guid"),
-    ]
-    assert _names(_fallback("T | summarize arg_min(t, *)")) == [
-        "t", "k", "a", "d", "s", "g",
-    ]
-
-
-def test_arg_max_with_listed_columns_emits_exactly_those():
-    assert _columns(_fallback("T | summarize arg_max(t, a, s)")) == [
-        ("t", "datetime"), ("a", "long"), ("s", "string"),
-    ]
-
-
-def test_arg_max_star_excludes_the_grouping_keys():
-    """A ``by`` key is already emitted, so ``*`` does not repeat it."""
-    assert _names(_fallback("T | summarize arg_max(t, *) by k")) == [
-        "k", "t", "a", "d", "s", "g",
-    ]
-
-
-def test_a_named_arg_max_names_only_its_first_column():
-    assert _names(_fallback("T | summarize m = arg_max(t, *)")) == [
-        "m", "k", "a", "d", "s", "g",
-    ]
-
-
-def test_take_any_emits_its_columns_under_their_own_names():
-    assert _columns(_fallback("T | summarize take_any(a)")) == [("a", "long")]
-    assert _names(_fallback("T | summarize take_any(a, s)")) == ["a", "s"]
-    assert _names(_fallback("T | summarize take_any(*)")) == [
-        "k", "a", "t", "d", "s", "g",
-    ]
-
-
-def test_take_anyif_ignores_its_predicate_argument():
-    """The second argument is a filter, not a column to emit."""
-    assert _names(_fallback("T | summarize take_anyif(a, a > 1)")) == ["a"]
-
-
-def test_percentiles_emits_one_column_per_percentile():
-    assert _names(_fallback("T | summarize percentiles(a, 5, 50, 95)")) == [
-        "percentile_a_5", "percentile_a_50", "percentile_a_95",
-    ]
-
-
-def test_make_set_list_and_bag_use_kqls_own_prefixes():
-    """KQL drops the ``make_`` and any ``_if``: ``make_set_if(s, …)`` is
-    ``set_s``, not ``make_set_if_s``."""
-    assert _names(_fallback("T | summarize make_set(s)")) == ["set_s"]
-    assert _names(_fallback("T | summarize make_list(s)")) == ["list_s"]
-    assert _names(_fallback("T | summarize make_bag(d)")) == ["bag_d"]
-    assert _names(_fallback("T | summarize make_set_if(s, a > 1)")) == ["set_s"]
-    assert _names(_fallback("T | summarize make_list_if(s, a > 1)")) == ["list_s"]
-
-
-def test_percentile_names_carry_the_percentile_value():
-    assert _names(_fallback("T | summarize percentile(a, 95)")) == [
-        "percentile_a_95",
-    ]
-    # A fractional percentile spells the point as an underscore.
-    assert _names(_fallback("T | summarize percentile(a, 95.5)")) == [
-        "percentile_a_95_5",
-    ]
+# K13 / K14: aggregate output column names ------------------------------------
 
 
 def test_the_auto_name_lands_on_the_assignment_not_only_the_schema():
@@ -1202,106 +915,52 @@ def test_the_auto_name_lands_on_the_assignment_not_only_the_schema():
     assert [a.name for a in op.aggregations] == ["set_s", "percentile_a_95"]
 
 
-def test_unaffected_aggregate_names_stay_as_they_were():
-    """The must-not-change direction: the generic ``fname_column`` rule is
-    already what the engine does for most aggregates."""
-    assert _names(_fallback("T | summarize countif(a > 1)")) == ["countif_"]
-    assert _names(_fallback("T | summarize dcountif(a, a > 1)")) == ["dcountif_a"]
-    assert _names(_fallback("T | summarize any(a)")) == ["any_a"]
-    assert _names(_fallback("T | summarize hll(a)")) == ["hll_a"]
-    assert _names(_fallback("T | summarize c = count() by k")) == ["k", "c"]
-
-
-# K28: schema-replacing operators the fallback had no rule for ----------------
-
-
-def _syntactic(query: str, schemas: dict | None = None):
-    """Enrich an IR built from a *syntactic-only* parse.
-
-    ``getschema`` / ``print`` / ``range`` / ``count`` return the same columns
-    whatever their input, so Microsoft closes their symbols even against
-    globals that know no tables and the builder records the answer. That is
-    the right outcome and it means the unbound-``to_ir`` path cannot reach
-    the hand-rolled rule for them. ``KustoCode.Parse`` produces a tree with
-    no semantics at all, which can.
-    """
-    from kustology.bridge import KustoCode
-
-    ir = IRBuilder().build_from_code(KustoCode.Parse(query))
-    assert all(
-        op.result_schema is None for op in ir.main_pipeline.operators
-    ), "premise: a syntactic-only parse leaves the fallback rules to answer"
-    return SchemaAttacher(schemas if schemas is not None else FALLBACK_SCHEMA).enrich(ir)
-
-
-def test_search_scopes_to_its_tables_and_adds_the_table_column():
-    """``search in (T) 'x'`` had no scope rule, so it produced nothing.
-
-    The operator replaces the scope with the searched tables' columns and
-    prepends ``$table``, which names the table each row came from.
-    """
-    ir = _fallback("search in (T) 'x'")
-    assert _columns(ir) == [
-        ("$table", "string"), ("k", "string"), ("a", "long"),
-        ("t", "datetime"), ("d", "dynamic"), ("s", "string"), ("g", "guid"),
-    ]
-
-
-def test_search_over_several_tables_splits_a_type_conflict():
-    """The same rule ``union`` uses: ``T.a`` is a long and ``U.a`` a string."""
-    ir = _fallback("search in (T, U) 'x'")
-    assert _names(ir) == [
-        "$table", "k", "a_long", "a_string", "t", "d", "s", "g", "z",
-    ]
-
-
-def test_an_unqualified_search_covers_every_table_it_was_given():
-    """``search 'x'`` names no table, so the schema dict is the database.
-
-    Microsoft closes this one against table-less globals -- with no tables to
-    search, ``$table`` is the whole answer -- so the syntactic path is the
-    one that reaches the rule.
-    """
-    ir = _syntactic("search 'x'", {"L": {"k": "string"}, "R": {"b": "real"}})
-    assert _names(ir) == ["$table", "k", "b"]
+# search: an implicit source, so the seeding is provenance's job ---------------
 
 
 def test_search_columns_keep_their_table():
-    ir = _fallback("search in (T) 'x' | where a > 1")
+    ir = _dict_path("search in (T) 'x' | where a > 1")
     assert _tables(ir)["a"] == {"T"}
 
 
-def test_parse_kv_adds_its_declared_columns():
-    """``ParseKvOp.columns`` is populated and was being ignored."""
-    ir = _fallback("T | parse-kv s as (n:long, m:string)")
-    assert _columns(ir)[-2:] == [("n", "long"), ("m", "string")]
+def test_a_search_predicate_resolves_against_the_tables_being_searched():
+    """``search`` has an implicit source, so the scope *before* it is empty.
+
+    Its own predicate was filled against that empty scope, so
+    ``search in (T) a > 1`` left ``a`` with no table while the same column one
+    operator later (``search in (T) 'x' | where a > 1``) resolved to ``T``.
+    The walk has the searched entries in hand; filling the predicate after it
+    seeds them is what makes the two agree.
+    """
+    from kustology.ir import ColumnRef, SearchOp, find_all
+
+    ir = _dict_path("search in (T) a > 1")
+    search_op = next(
+        op for op in ir.main_pipeline.operators if isinstance(op, SearchOp)
+    )
+    assert {c.table for c in find_all(search_op, ColumnRef)} == {"T"}
 
 
-def test_getschema_replaces_the_scope_with_its_fixed_four_columns():
-    ir = _syntactic("T | getschema")
-    assert _columns(ir) == [
-        ("ColumnName", "string"), ("ColumnOrdinal", "long"),
-        ("DataType", "string"), ("ColumnType", "string"),
-    ]
+def test_search_provenance_survives_an_authoritative_result_schema():
+    """``search`` keeps its structural branch on a bound parse, as ``join``
+    does.
 
+    It has an implicit source, so the pre-operator scope is empty and the
+    overlay would file every column it emits as anonymous -- a following
+    ``where a > 1`` would report no table for a column that plainly comes
+    from ``T``.
+    """
+    from kustology import parse
+    from kustology.ir import ColumnRef, FilterOp, find_all
 
-def test_print_derives_its_columns_from_the_printed_expressions():
-    ir = _syntactic("print x = 1, y = 'a', z = 1.5")
-    assert _columns(ir) == [("x", "long"), ("y", "string"), ("z", "real")]
-
-
-def test_an_unnamed_print_column_is_named_by_its_position():
-    ir = _syntactic("print x = 1, 2")
-    assert _names(ir) == ["x", "print_1"]
-
-
-def test_range_names_one_column_typed_by_its_start():
-    assert _columns(_syntactic("range n from 1 to 10 step 1")) == [("n", "long")]
-    assert _columns(
-        _syntactic(
-            "range n from datetime(2020-01-01) to datetime(2020-01-05) step 1d"
-        )
-    ) == [("n", "datetime")]
+    schemas = {"T": {"k": "string", "a": "long"}}
+    ir = parse("search in (T) 'x' | where a > 1", schema=schemas).to_ir()
+    search_op = ir.main_pipeline.operators[0]
+    assert search_op.result_schema is not None, "premise: Microsoft answered"
+    where = next(
+        op for op in ir.main_pipeline.operators if isinstance(op, FilterOp)
+    )
+    assert {c.table for c in find_all(where, ColumnRef)} == {"T"}
 
 
 # K28: "nothing is known" is None, not an empty schema ------------------------
@@ -1314,16 +973,8 @@ def test_a_pipeline_the_walk_learned_nothing_about_has_no_result_schema():
     which is a different statement, and stamping ``{}`` made the two
     indistinguishable to a consumer.
     """
-    ir = _fallback("Unknown | take 1", {})
+    ir = _dict_path("Unknown | take 1", {"T": {"a": "long"}})
     assert ir.main_pipeline.result_schema is None
-
-
-def test_an_operator_that_really_emits_nothing_still_says_so():
-    """The must-not-change direction. ``project-away *`` genuinely produces
-    an empty schema, and that is a determination, not an absence."""
-    ir = _fallback("T | project-away *")
-    assert ir.main_pipeline.result_schema is not None
-    assert ir.main_pipeline.result_schema.columns == {}
 
 
 def test_an_unmodelled_sub_pipeline_does_not_inherit_the_enclosing_scope():
@@ -1341,20 +992,21 @@ def test_an_unmodelled_sub_pipeline_does_not_inherit_the_enclosing_scope():
 
     span = Span(text_start=0, width=1)
     branch = Pipeline(source=UnknownSource(raw_text="?", span=span), operators=[])
-    attacher = SchemaAttacher(FALLBACK_SCHEMA)
+    attacher = SchemaAttacher(DICT_SCHEMA)
     inherited = [ScopeEntry(table="T", columns={"a": "long"})]
 
     assert attacher._walk_pipeline(branch, inherited) == []
     assert branch.result_schema is None
 
 
-def test_project_falls_back_to_the_type_the_binder_already_resolved():
+def test_enrich_does_not_clobber_a_type_the_binder_already_resolved():
     """The walk is not the only thing that knows a column's type.
 
     ``evaluate`` opens the symbol, so ``project`` gets no authoritative
-    schema and the fallback answers -- but the binder still typed the
-    ``ColumnRef`` from the parse-time schema. Reporting ``unknown`` for a
-    column whose type is right there on the node discards it.
+    schema and the pipeline honestly reports ``None`` -- but the binder
+    still typed the ``ColumnRef`` from the parse-time schema, and that is on
+    the node whatever the pipeline says. An ``enrich`` that knows nothing
+    about ``T`` must leave it alone rather than reset it.
     """
     from kustology import parse
     from kustology.ir import ColumnRef, KustoType, ProjectOp, find_all
@@ -1373,7 +1025,8 @@ def test_project_falls_back_to_the_type_the_binder_already_resolved():
     # An attacher that knows nothing about ``T`` -- the schema is on the IR,
     # not in this dict.
     SchemaAttacher({}).enrich(ir)
-    assert ir.main_pipeline.result_schema.columns == {"a": "long"}
+    assert ref.result_type == KustoType.LONG
+    assert ir.main_pipeline.result_schema is None
 
 
 # K28: schema_attached means a schema was actually available ------------------
@@ -1403,7 +1056,27 @@ def test_schema_attached_is_true_when_the_binder_answered():
     assert ir.schema_attached is True
 
 
-# Arithmetic is not a predicate, and serialize can add a column ---------------
+# Arithmetic is not a predicate ------------------------------------------------
+
+
+def _syntactic(query: str, schemas: dict | None = None):
+    """Enrich an IR built from a *syntactic-only* parse.
+
+    ``KustoCode.Parse`` produces a tree with no semantics at all, so every
+    ``Expr.result_type`` starts ``UNRESOLVED`` and ``_fill``'s own type
+    fallback is the only thing that can set one. That is what makes it the
+    harness for the fallback: on any bound path the binder has already
+    answered and the fallback never runs.
+    """
+    from kustology.bridge import KustoCode
+
+    ir = IRBuilder().build_from_code(KustoCode.Parse(query))
+    assert all(
+        op.result_schema is None for op in ir.main_pipeline.operators
+    ), "premise: a syntactic-only parse leaves the type fallback to answer"
+    return SchemaAttacher(
+        schemas if schemas is not None else DICT_SCHEMA,
+    ).enrich(ir)
 
 
 def test_arithmetic_is_not_typed_as_a_boolean():
@@ -1411,118 +1084,22 @@ def test_arithmetic_is_not_typed_as_a_boolean():
 
     ``extend n = a + 1`` recorded ``n:bool`` -- the same answer the node
     gives for ``a > 1``, which is a predicate and this is not. ``bool`` is a
-    wrong answer where ``unknown`` is merely an incomplete one; the fallback
-    does not do numeric promotion, and saying so is the honest position.
+    wrong answer where "unresolved" is merely an incomplete one; the
+    fallback does not do numeric promotion, and saying so is the honest
+    position.
     """
-    cols = dict(_columns(_fallback("T | extend n = a + 1, flag = a > 1")))
-    assert cols["flag"] == "bool"
-    assert cols["n"] == "unknown"
+    from kustology.ir import ExtendOp, KustoType
 
-
-def test_serialize_with_an_assignment_adds_its_column():
-    """``serialize rn = row_number()`` is ``serialize`` plus an ``extend``.
-
-    ``SerializeOp.assignments`` is populated and the rule ignored it, so the
-    column existed in the engine's output and not in the scope.
-    """
-    ir = _fallback("T | serialize rn = row_number()")
-    assert _columns(ir)[-1] == ("rn", "long")
-
-
-# Union split and join right-hand side, corrected against the corpus ----------
-
-
-def test_union_does_not_split_on_a_type_it_simply_does_not_know():
-    """``unknown`` is the absence of a type, not a type that disagrees.
-
-    The fallback cannot type ``a + 1``, so one arm reports ``s:unknown`` and
-    the other ``s:string``. Treating that as a conflict produced
-    ``s_string`` and ``s_unknown`` -- two columns the engine never emits --
-    where the honest answer is one ``s`` whose type we do not know.
-    """
-    ir = _fallback("T | union (T | project s = a + 1)")
-    columns = dict(_columns(ir))
-    assert "s" in columns
-    assert columns["s"] == "unknown"
-    assert not [n for n in columns if n.startswith("s_")]
-
-
-def test_a_join_whose_right_side_is_a_union_appends_it_once():
-    """A union is one row set, and a join has one right side.
-
-    Taking ``rhs_scope[0]`` picked the empty entry a union's implicit source
-    leaves and appended nothing; keeping every entry suffixed each arm
-    separately and invented an ``a2`` for a union that emits ``a1`` once.
-    """
-    ir = _fallback(
-        "L | join (union (L | where a > 1), (R | where b > 1)) on k"
+    ir = _syntactic("T | extend n = a + 1, flag = a > 1")
+    extend = next(
+        op for op in ir.main_pipeline.operators if isinstance(op, ExtendOp)
     )
-    assert _columns(ir) == [
-        ("k", "string"), ("a", "long"), ("shared", "string"),
-        ("k1", "string"), ("a1", "long"), ("shared1", "string"),
-        ("b", "real"),
-    ]
+    typed = {a.name: a.expr.result_type for a in extend.assignments}
+    assert typed["flag"] == KustoType.BOOL
+    assert typed["n"] == KustoType.UNRESOLVED
 
 
-# evaluate bag_unpack: the packed column is consumed --------------------------
-
-
-def test_evaluate_bag_unpack_drops_the_packed_column():
-    """``EvaluateOp`` had no scope rule, so the scope passed through whole.
-
-    A plug-in can add columns the binder cannot enumerate, which is why
-    Microsoft leaves the symbol *open* here -- but it still knows
-    ``bag_unpack(d)`` consumes ``d``, and reports the other five columns. The
-    keys the bag adds stay unknown to both of us; keeping ``d`` was a
-    divergence on the part Microsoft did answer.
-    """
-    ir = _fallback("T | evaluate bag_unpack(d)")
-    assert _names(ir) == ["k", "a", "t", "s", "g"]
-
-
-def test_another_evaluate_plugin_leaves_the_scope_alone():
-    """The must-not-change direction: only ``bag_unpack`` has a known rule."""
-    ir = _fallback("T | evaluate autocluster()")
-    assert _names(ir) == ["k", "a", "t", "d", "s", "g"]
-
-
-def test_search_provenance_survives_an_authoritative_result_schema():
-    """``search`` keeps its rule on a bound parse, as ``join`` does.
-
-    It has an implicit source, so the pre-operator scope is empty and the
-    overlay would file every column it emits as anonymous -- a following
-    ``where a > 1`` would report no table for a column that plainly comes
-    from ``T``.
-    """
-    from kustology import parse
-    from kustology.ir import ColumnRef, FilterOp, find_all
-
-    schemas = {"T": {"k": "string", "a": "long"}}
-    ir = parse("search in (T) 'x' | where a > 1", schema=schemas).to_ir()
-    search_op = ir.main_pipeline.operators[0]
-    assert search_op.result_schema is not None, "premise: Microsoft answered"
-    where = next(
-        op for op in ir.main_pipeline.operators if isinstance(op, FilterOp)
-    )
-    assert {c.table for c in find_all(where, ColumnRef)} == {"T"}
-
-
-def test_a_search_predicate_resolves_against_the_tables_being_searched():
-    """``search`` has an implicit source, so the scope *before* it is empty.
-
-    Its own predicate was filled against that empty scope, so
-    ``search in (T) a > 1`` left ``a`` with no table while the same column one
-    operator later (``search in (T) 'x' | where a > 1``) resolved to ``T``.
-    The rule has the searched entries in hand; filling the predicate after it
-    installs them is what makes the two agree.
-    """
-    from kustology.ir import ColumnRef, SearchOp, find_all
-
-    ir = _fallback("search in (T) a > 1")
-    search_op = next(
-        op for op in ir.main_pipeline.operators if isinstance(op, SearchOp)
-    )
-    assert {c.table for c in find_all(search_op, ColumnRef)} == {"T"}
+# Pipelines the builder could not model ---------------------------------------
 
 
 def test_an_unparseable_query_gets_no_result_schema():
@@ -1537,17 +1114,36 @@ def test_an_unparseable_query_gets_no_result_schema():
 
     assert isinstance(ir.main_pipeline.source, UnknownSource)
     assert not ir.main_pipeline.operators
-    SchemaAttacher(FALLBACK_SCHEMA).enrich(ir)
+    SchemaAttacher(DICT_SCHEMA).enrich(ir)
     assert ir.main_pipeline.result_schema is None
 
 
 @pytest.mark.parametrize("schema,query,expect", [
+    # Two separate effects, and only the first is pre-existing.
+    #
+    # (1) An *unqualified* `search` seeds every table the dict describes --
+    #     the dict standing in for "every table in the database". That is
+    #     older than this walk and unchanged by it; cases 2 and 3 are it.
+    #
+    # (2) The seeded entries are now *appended* to whatever scope the
+    #     operator inherited, where the old rule replaced the scope
+    #     wholesale (`scope[:] = [...]`). This is new here, and it applies
+    #     to a qualified `search in (U)` just as much as an unqualified one
+    #     -- case 1 is qualified. Replacing the scope would be a statement
+    #     about the operator's *output*, which is Microsoft's to make and
+    #     which it does make; appending keeps the walk to what it is for.
+    #
+    # Both cost provenance only, and cost it as ambiguity rather than as a
+    # wrong table: a name two entries disagree about answers `None`. Case 1
+    # is (2) alone -- `T` (inherited) and `U` (searched) both have an `a`.
+    # Case 3 is (1) and (2) together. Case 2 is the one where neither bites,
+    # because only the inherited `T` has an `a` at all.
     ({"T": {"a": "long", "k": "string"}, "U": {"a": "long"}},
-     "T | partition by k (search in (U) a > 1)", {"k": "T", "a": "U"}),
+     "T | partition by k (search in (U) a > 1)", {"k": "T", "a": None}),
     ({"T": {"a": "long", "k": "string"}, "U": {"z": "long"}},
      "T | partition by k (search a > 1)", {"k": "T", "a": "T"}),
     ({"T": {"a": "long", "k": "string"}, "U": {"a": "long"}},
-     "T | partition by k (search a > 1)", {"k": "T", "a": None}),  # ambiguous: correct answer is None
+     "T | partition by k (search a > 1)", {"k": "T", "a": None}),
 ])
 def test_search_inside_partition_resolves_scope(schema, query, expect):
     ir = parse(query).to_ir()
@@ -1556,7 +1152,7 @@ def test_search_inside_partition_resolves_scope(schema, query, expect):
     assert got == expect
 
 
-def test_both_schema_producers_agree_the_unknown_column_sentinel_is_unknown():
+def test_the_unknown_column_sentinel_is_microsofts_word_and_only_microsofts():
     """``TabularSchema.columns`` maps a column to a type *string*, and the
     string for "no type known" is ``"unknown"`` — not
     ``KustoType.UNRESOLVED.value``, which is ``"unresolved"``.
@@ -1564,15 +1160,16 @@ def test_both_schema_producers_agree_the_unknown_column_sentinel_is_unknown():
     Two sentinels for one idea, and nothing said which lived where: a
     consumer reading ``Expr.result_type`` learns to test against
     ``KustoType.UNRESOLVED`` and then finds the *other* spelling one field
-    away, in a plain ``dict[str, str]`` a `KustoType` never validates. The
+    away, in a plain ``dict[str, str]`` a ``KustoType`` never validates. The
     reason for the split is that ``columns`` values are Microsoft's type
-    *names*: ``ScalarTypes.Unknown.Name`` is literally ``"unknown"``, so a
-    bound parse propagating the binder's answer and ``SchemaAttacher``
-    falling back on an expression it could not type must agree, and they
-    agree on Microsoft's word rather than on the IR enum's.
+    *names*: ``ScalarTypes.Unknown.Name`` is literally ``"unknown"``.
 
-    Both producers are exercised directly; the sentinel is pinned to
-    behaviour, not to a docstring's wording.
+    Since the schema rules were retired there is only one producer of that
+    dict — the builder, copying the binder's stamp — so the two spellings
+    can no longer meet in one field by accident. Both halves are pinned:
+    Microsoft's word arrives, and ``enrich`` cannot introduce a second
+    spelling over the top of it because it no longer writes type strings at
+    all.
     """
     import warnings
 
@@ -1581,15 +1178,13 @@ def test_both_schema_producers_agree_the_unknown_column_sentinel_is_unknown():
 
     assert KustoType.UNRESOLVED.value == "unresolved"
 
-    # Producer 1 — the bound path. Microsoft's schema parser types `n`
-    # `ScalarTypes.Unknown` and the builder publishes its `Name`.
+    # Microsoft's schema parser types `n` `ScalarTypes.Unknown` and the
+    # builder publishes its `Name`.
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
         bound = parse("T | project n | extend m = n", schema={"T": "(n:bogus)"}).to_ir()
     assert bound.main_pipeline.result_schema.columns == {"n": "unknown", "m": "unknown"}
 
-    # Producer 2 — `SchemaAttacher`'s own fallback for an expression whose
-    # `result_type` stayed `KustoType.UNRESOLVED`. Same string.
-    ir = IRBuilder().build("T | extend n = some_fn(x) | project n")
-    SchemaAttacher({"T": {"x": "long"}}).enrich(ir)
-    assert ir.main_pipeline.result_schema.columns == {"n": "unknown"}
+    # A second pass over the same IR leaves it exactly as Microsoft left it.
+    SchemaAttacher({}).enrich(bound)
+    assert bound.main_pipeline.result_schema.columns == {"n": "unknown", "m": "unknown"}

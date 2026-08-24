@@ -12,14 +12,8 @@ dict directly — callers handle JSON/YAML/IO themselves.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from fnmatch import fnmatchcase
 
-from ._builder_helpers import (
-    ARITHMETIC_OPS,
-    MULTI_OUTPUT_AGGREGATES,
-    aggregate_function_name,
-    percentile_token,
-)
+from ._builder_helpers import ARITHMETIC_OPS
 from .expr import (
     And,
     Between,
@@ -30,41 +24,18 @@ from .expr import (
     Not,
     Or,
     SetMembership,
-    StarExpr,
-    TypedNameDecl,
 )
 from .query import (
-    Assignment,
-    CountOp,
     DataTableSource,
-    DistinctOp,
-    EvaluateOp,
-    ExtendOp,
     ExternalDataSource,
-    FilterOp,
-    GetSchemaOp,
     JoinOp,
     LetRef,
     LookupOp,
-    MakeSeriesOp,
-    MvExpandOp,
     Operator,
-    ParseKvOp,
-    ParseOp,
-    ParseWhereOp,
     Pipeline,
-    PrintOp,
-    ProjectAwayOp,
-    ProjectByNamesOp,
-    ProjectKeepOp,
-    ProjectOp,
     ProjectRenameOp,
-    ProjectReorderOp,
     QueryIR,
-    RangeOp,
     SearchOp,
-    SerializeOp,
-    SummarizeOp,
     TableRef,
     TabularSchema,
     UnionOp,
@@ -72,17 +43,6 @@ from .query import (
 )
 from .types import KustoType
 from .walk import _models_in, find_all
-
-# Join kinds that emit one side's columns only. ``anti``/``leftantisemi`` and
-# ``rightantisemi`` are Microsoft's own aliases -- the parser lists all twelve
-# spellings in its KS005 message -- and each pair returns the same schema, so
-# they are grouped by the side that survives rather than by name.
-_LEFT_ONLY_JOIN_KINDS = frozenset({
-    "anti", "leftanti", "leftantisemi", "leftsemi",
-})
-_RIGHT_ONLY_JOIN_KINDS = frozenset({
-    "rightanti", "rightantisemi", "rightsemi",
-})
 
 
 def _side_marker(table: str | None) -> str | None:
@@ -99,38 +59,39 @@ def _side_marker(table: str | None) -> str | None:
     return None
 
 
-def _matches_any(patterns: list[str], name: str) -> bool:
-    """Does ``name`` match any ``project-keep`` / ``project-away`` term?
+def _renamed_columns(op: Operator) -> dict[str, str]:
+    """``{new name: old name}`` for a ``project-rename``, empty otherwise.
 
-    KQL's only wildcard here is ``*``, and matching is **case-sensitive** --
-    ``project-keep A*`` over a table whose column is ``a`` returns nothing.
-    ``fnmatch.fnmatch`` folds case on macOS and Windows, so the case-sensitive
-    ``fnmatchcase`` is the one that is right on every platform.
+    ``project-rename kk = k`` is the one operator that says, in the query
+    itself, that an output column *is* an input column under another name.
+    The overlay files a column under the table the pre-operator scope had it
+    under, and no scope entry holds ``kk``, so without this the rename would
+    lose ``T`` -- a narrowing the query text plainly contradicts.
 
-    A term with no ``*`` compares by equality rather than as a glob, so a
-    bracket-quoted name containing ``?`` or ``[`` -- both meaningful to
-    ``fnmatch`` and neither meaningful to KQL -- cannot match the wrong
-    column.
+    A term whose right-hand side is not a plain column is skipped rather than
+    guessed at: only a ``ColumnRef`` names an existing column, and anything
+    else (a hand-built IR, a shape the builder did not model) has no input
+    name to carry provenance from.
     """
-    for pattern in patterns:
-        if "*" in pattern:
-            if fnmatchcase(name, pattern):
-                return True
-        elif pattern == name:
-            return True
-    return False
+    if not isinstance(op, ProjectRenameOp):
+        return {}
+    return {
+        c.name: c.expr.name
+        for c in op.columns
+        if isinstance(c.expr, ColumnRef)
+    }
 
 
 def _flatten_side(entries: list[ScopeEntry]) -> ScopeEntry:
     """Collapse a join's right-hand scope into the one row set it is.
 
-    The rule used to take ``rhs_scope[:1]``, which is right only when the
-    right-hand pipeline is a bare table. A union leaves one entry per arm
-    *behind* the empty entry its implicit source produced, so
-    ``L | join (union A, B) on k`` appended nothing at all; keeping every
-    entry instead over-corrected, suffixing each arm separately and inventing
-    an ``EventID2`` for a union that emits ``EventID`` once. A union is one
-    row set and a join has one right side, so the entries are merged.
+    A join has exactly one right side, whatever the pipeline that produced
+    it: ``(R)`` leaves one entry, ``(union A, B)`` leaves one per arm behind
+    the empty entry its implicit source produced. Taking ``rhs_scope[:1]``
+    picked that empty entry and appended nothing at all, so ``$right.k`` had
+    no side to resolve against; appending every entry instead made one row
+    set look like several to ``_resolve_side``, which reads the side's entry
+    count. Merging is what makes the side one thing again.
 
     The merged entry keeps a table when every contributing entry named the
     same one, and otherwise records provenance per column in ``origins`` --
@@ -154,30 +115,16 @@ def _flatten_side(entries: list[ScopeEntry]) -> ScopeEntry:
     )
 
 
-def _join_kind(text: str | None) -> str:
-    """Normalize ``JoinOp.join_kind`` for matching.
-
-    ``join_kind`` records the text the query wrote, and a bare ``join`` is
-    recorded as ``innerunique`` -- KQL's effective default, and the one this
-    falls back to for an empty value so a hand-built ``JoinOp`` cannot land
-    on "no rule matched, therefore widen".
-
-    Case is folded, which is *wider* than Microsoft's parser: it rejects
-    ``kind=LeftAnti`` with KS005 rather than accepting it. Folding cannot
-    change the answer for a valid query, and for an IR built or edited
-    directly it avoids reading an anti join as a widening one.
-    """
-    return (text or "innerunique").strip().lower()
-
-
 @dataclass
 class ScopeEntry:
     """One source visible at a point in the pipeline.
 
-    Joins, lookups, and unions append entries; project / summarize replace
-    them with a synthesized anonymous entry (``table=None``).
+    Joins, lookups, unions and searches append entries; the overlay of
+    Microsoft's ``ResultType`` re-files them, and anything it cannot place
+    under a table it saw lands in a synthesized anonymous entry
+    (``table=None``).
 
-    ``origins`` is what keeps provenance alive across that replacement. The
+    ``origins`` is what keeps provenance alive across that re-filing. The
     anonymous entry has no ``table``, so before it existed every column
     reference *after* a ``project`` reported ``table=None`` while the same
     column before it reported the real table — one query, two answers for one
@@ -204,70 +151,95 @@ class ScopeEntry:
 
 
 class SchemaAttacher:
-    """Walks an IR pipeline and fills column provenance + result types.
+    """The provenance pass. Schemas are Microsoft's answer, not this class's.
 
     ``schemas`` is a flat ``{table_name: {column_name: kusto_type_string}}``.
-    Tables not present here are treated as opaque (no enrichment).
+    It seeds the walk's *starting* scope — which columns a source table
+    brings in, so a reference can be placed — and types a reference the
+    binder left unresolved. Tables not present are opaque.
 
-    **On a bound parse most of this is not used.** ``Operator.result_schema``
-    carries Microsoft's own ``ResultType`` wherever the binder could compute
-    one, and :meth:`_walk_operator` prefers it for names and types, overlaying
-    it onto the scope so provenance — which ``ResultType`` does not carry —
-    still comes from the walk. The rules below answer where it is ``None``:
-    an unbound parse, a syntactic-only one, and any operator downstream of
-    something the binder could not determine (an unknown table, an
-    ``evaluate``).
+    **What the output schema is.** ``Operator.result_schema`` carries
+    Microsoft's own ``ResultType``, stamped by the builder wherever the
+    binder closed the symbol, and that is the only thing this class will
+    publish as a schema. It does not re-derive operator outputs: no
+    ``project`` narrowing, no join-collision suffixes, no ``arg_max(t, *)``
+    expansion, no union type-conflict splitting. Those rules lived here once
+    and were, one by one, found to disagree with the engine; the answer is
+    to ask rather than to guess. So:
 
-    **Two levels of coverage, deliberately distinguished.** Every operator
-    gets its expressions filled and its sub-pipelines walked — that part is
-    derived from ``model_fields`` and cannot drift as the model grows. Only
-    some operators additionally *reshape* the scope, because only some have
-    an output schema we can derive without guessing. Twenty-five of the 53
-    ``Operator`` subclasses have a branch here:
+    * ``result_schema`` present → Microsoft's names, types and column order,
+      overlaid onto the walked scope so provenance survives (see
+      :meth:`_overlay_result_schema`).
+    * ``result_schema`` absent → the symbol is open. The scope passes through
+      un-reshaped, downstream references still resolve against the last known
+      shape (stale wherever the operator really reshaped, and visibly so),
+      and the pipeline reports ``result_schema=None`` rather than a guess.
 
-    ``project`` / ``project-away`` / ``project-keep`` / ``project-rename`` /
-    ``project-reorder`` / ``summarize`` / ``extend`` / ``distinct`` /
-    ``count`` / ``parse`` / ``parse-where`` / ``parse-kv`` / ``mv-expand`` /
-    ``make-series`` / ``join`` / ``lookup`` / ``union`` / ``search`` /
-    ``getschema`` / ``print`` / ``range`` / ``serialize`` / ``evaluate``,
-    plus ``where`` and ``project-by-names``, which fill their expressions
-    and deliberately leave the scope alone (``project-by-names`` takes its
-    names from a dynamic expression, so there is nothing static to reshape).
+    ``None`` and ``TabularSchema(columns={})`` are different claims and both
+    are reachable: ``None`` is "not determined", ``{}`` is "determined, and
+    it really emits nothing" (a bound ``T | project-away *``). Only Microsoft
+    says the second. Closure is per node, not per query — ``T | count`` and
+    ``T | getschema`` close mid-pipeline over a table nobody described,
+    because their output does not depend on their input, and a ``datatable``
+    root is closed with no schema dict at all.
 
-    Some of those are partial by nature. ``search`` reads the searched
-    tables out of the schema dict, which stands in for "every table in the
-    database" when the query names none. ``evaluate`` only knows
-    ``bag_unpack``, and only that it *consumes* its argument — the keys a
-    plug-in adds are not enumerable, which is why Microsoft leaves the symbol
-    open there too.
+    **What this class supplies**, and nothing else does:
 
-    The remaining 28 pass the scope through unchanged. For the ones that
-    genuinely preserve their input schema (``sort``, ``top``, ``take``,
-    ``sample``, ``as``, ``render``, ``assert-schema``, the graph ``where``
-    predicates) that is exact; for ones that do reshape (``find``, ``scan``,
-    ``facet``, ``fork``, ``mv-apply``, ``partition``, ``top-nested``,
-    ``top-hitters``, ``sample-distinct``, ``invoke``, ``macro-expand``, the
-    graph operators) the scope downstream is stale.
+    * ``ColumnRef.table`` — which table each reference came from.
+      ``ResultType`` does not carry it.
+    * ``ScopeEntry.origins`` — the same, per column, across the operators
+      that re-file the scope.
+    * ``$left`` / ``$right`` resolution inside a join's ``on`` clause, and
+      the bare-key left-first rule.
+    * ``let`` threading: a tabular binding's output columns registered under
+      its name, so ``Base | project Account`` resolves.
+    * ``Expr.result_type`` backfill for the exactly-knowable cases only — a
+      literal's own kind, a comparison's ``bool``. Arithmetic is left
+      unresolved rather than guessed at.
 
-    ``consume`` is in the second camp, not the first, and is the extreme
-    case: Microsoft's binder gives ``ConsumeOperator`` a ``VoidSymbol``
-    (``IsTabular`` false, ``Tabularity`` ``None``), because the operator
-    swallows the row set and yields nothing. So the scope we leave in place
-    downstream is not merely stale but empty in the engine —
-    ``T | consume | project a`` is a ``KS142`` "name does not refer to any
-    known column" from Microsoft while our walk would resolve ``a`` from
-    ``T``. Filed here rather than fixed: it is a schema-derivation change
-    with its own tests, and ``consume`` is terminal in every real query.
+    **Per operator: provenance first, then the overlay.** Three families need
+    a structural branch, because they bring *sources* into scope and the
+    overlay cannot recover where a column came from once the sources are
+    forgotten: ``join``/``lookup`` (the right-hand pipeline, and the sides
+    ``on`` resolves against), ``union`` (one entry per arm), ``search`` (an
+    implicit source — without seeding, its own predicate resolves against
+    nothing). Everything else fills its expressions and walks its nested
+    pipelines with the scope untouched.
 
-    Two operators are in neither camp: ``execute-and-cache`` is a directive
-    with no row-set effect at all, and ``unknown-op`` is the builder's
-    fallback for an operator it did not model, whose effect on the schema is
-    by definition not known here.
-    Stale is worse than exact and better than the previous behavior, which
-    was to skip those operators entirely so their own column references never
-    resolved at all. ``tests/ir/test_binder_oracle.py`` runs an unbound leg
-    over an operator matrix and 49 corpus fixtures precisely to keep that
-    list honest: the ones still wrong are xfailed there by name.
+    **Accepted narrowings**, each a loss of provenance rather than of a
+    column, and each a case where the walk cannot say which source a name
+    belongs to, so it answers ``None``.
+
+    * A post-join collision pair — ``shared`` and Microsoft's ``shared1``.
+      Both sides are in scope with a ``shared`` of their own, and neither of
+      Microsoft's two output names is one an entry holds, so the unqualified
+      names are genuinely ambiguous. A qualified ``$left.shared`` /
+      ``$right.shared`` in the ``on`` clause still keeps its side, which is
+      what the sides are kept for.
+    * A union type-conflict's split variants — ``a_long`` / ``a_string``.
+      Neither arm carries a column under either name.
+    * A ``search``'s seeded tables, where the search is not the first thing
+      in its pipeline. The entries are *appended* to whatever scope the
+      operator inherited, so a column both the inherited scope and a
+      searched table carry reads as ambiguous — ``T | partition by k
+      (search in (U) a > 1)`` answers ``None`` for ``a`` where the search
+      alone would answer ``U``. Replacing the scope instead would be a claim
+      about the operator's output, which is Microsoft's to make.
+
+    ``project-rename`` is deliberately *not* in this list: its target is a
+    name no scope entry holds, but the query states outright which input
+    column it renames, so :func:`_renamed_columns` threads that through and
+    the provenance survives. The distinction is whether the fact is written
+    down anywhere — where it is, the walk carries it; where it is only
+    inferable from a rule about what the engine does, it does not.
+
+    The old rules knew the first two answers by construction, because they
+    invented the names themselves — which is the same reason they kept
+    disagreeing with the engine about what the names were.
+
+    ``tests/ir/test_binder_oracle.py`` compares ``result_schema`` against
+    ``ResultType`` over an operator matrix and the corpus, on both entry
+    points, and is what keeps the overlay honest.
     """
 
     def __init__(self, schemas: dict[str, dict[str, str]] | None = None):
@@ -284,10 +256,6 @@ class SchemaAttacher:
         # {id(pipeline): the schema the *builder* left on it}, snapshotted
         # at ``enrich`` entry. Empty outside a call.
         self._builder_schemas: dict[int, TabularSchema | None] = {}
-        # Did an operator in the pipeline being walked *determine* the output
-        # columns? Set by the two places that replace the scope wholesale.
-        # An empty scope nobody determined is "unknown", not "no columns".
-        self._scope_determined = False
 
     def enrich(self, ir: QueryIR) -> QueryIR:
         """Enrich the whole IR in place and mark it attached.
@@ -336,22 +304,21 @@ class SchemaAttacher:
         self._let_schemas = {}
         # A pipeline with no operators has nothing to read its output shape
         # off, so ``_walk_pipeline`` falls back to ``Pipeline.result_schema``
-        # -- the builder's record of what Microsoft made of the source. But
-        # ``_walk_pipeline`` also *writes* that field, so on a second
-        # ``enrich`` of the same IR it was reading the previous call's answer
-        # and the new schema was ignored entirely: ``SchemaAttacher(A)`` then
-        # ``SchemaAttacher(B)`` on ``IRBuilder().build("T")`` kept A's types.
-        # Snapshotting before anything is walked is not enough on its own,
-        # because by the second call the field *is* the first call's output.
-        # ``schema_attached`` is the record of whether that has happened: on
-        # an IR fresh from the builder it is False and the field is the
-        # builder's, and once an ``enrich`` has run it is True and there is
-        # no builder value left to read, so the walk derives the shape from
-        # the source itself.
-        self._builder_schemas = (
-            {} if ir.schema_attached
-            else {id(p): p.result_schema for p in find_all(ir, Pipeline)}
-        )
+        # -- the builder's record of what Microsoft made of the source. It
+        # also *writes* that field, so the value is snapshotted before
+        # anything is walked rather than read live mid-walk.
+        #
+        # Reading the live field is now safe in a way it was not while the
+        # walk wrote derived guesses into it: what goes back is a copy of an
+        # authoritative value or ``None``, so a second ``enrich`` re-reads
+        # Microsoft's own answer, which is the same answer. The snapshot is
+        # unconditional for that reason. Skipping it once ``schema_attached``
+        # was set -- the old guard -- would now be the bug: with nothing left
+        # to re-derive a shape from, a second ``enrich`` would wipe every
+        # operator-less pipeline's schema to ``None``.
+        self._builder_schemas = {
+            id(p): p.result_schema for p in find_all(ir, Pipeline)
+        }
         try:
             for binding in ir.let_bindings:
                 if binding.rhs_pipeline is None:
@@ -473,65 +440,43 @@ class SchemaAttacher:
         # not reach into it, and neither does the "left side first" rule for
         # a bare key name.
         outer_sides = self._join_sides
-        outer_determined = self._scope_determined
         self._join_sides = None
-        self._scope_determined = False
         try:
             for op in pipeline.operators:
                 self._walk_operator(op, scope)
-            determined = self._scope_determined
         finally:
             self._join_sides = outer_sides
-            self._scope_determined = outer_determined
-        # Snapshot final scope so downstream consumers don't re-walk operators.
+        # The pipeline's schema is Microsoft's answer or nobody's. It is
+        # never a merge of the walked scope: that scope is provenance
+        # structure -- which source each visible column came from -- and not
+        # a column inventory. Merging it would re-order a join's output by
+        # side rather than by the order the engine emits, and would restate
+        # whatever stale shape an open operator left behind as though it
+        # were this pipeline's output.
         #
-        # The last operator's own ``result_schema`` is preferred when it has
-        # one, and not merely as an optimization: it is Microsoft's answer
-        # *in Microsoft's column order*, and the merge below cannot
-        # reproduce that order. ``ScopeEntry`` groups columns by originating
-        # table so provenance survives, which means merging them re-orders a
-        # join's output by side rather than by the order the engine emits.
+        # The last operator answers when it has an answer; with no operators
+        # there is nothing to read it off and the value the *builder* left on
+        # the pipeline -- Microsoft's reading of the source -- stands in,
+        # taken from the snapshot rather than the live field this method
+        # overwrites. Outside an ``enrich`` the snapshot is empty.
         #
-        # With no operators there is nothing to read it off, and the value
-        # the *builder* left on the pipeline -- Microsoft's reading of the
-        # source -- stands in. That comes from the snapshot taken at
-        # ``enrich`` entry rather than from the live field, which this method
-        # overwrites: reading the field made a second ``enrich`` of the same
-        # IR hand back the first one's answer and ignore the new schema.
-        # Outside an ``enrich`` the snapshot is empty and the merge answers.
+        # ``None`` and ``TabularSchema(columns={})`` are different claims:
+        # "not determined" against "determined, and it emits nothing". Only
+        # Microsoft says the second -- a bound ``T | project-away *`` closes
+        # to an empty symbol and ``table_symbol_columns`` returns ``{}``, so
+        # the stamp carries it through here unchanged.
         authoritative = (
             pipeline.operators[-1].result_schema if pipeline.operators
             else self._builder_schemas.get(id(pipeline))
         )
-        if authoritative is not None:
-            pipeline.result_schema = TabularSchema(
-                columns=dict(authoritative.columns)
-            )
-        elif not determined and not any(e.columns for e in scope):
-            # Nothing in this pipeline said what it emits and no source
-            # described any columns, so the honest answer is "unknown", which
-            # is ``None``. Stamping ``TabularSchema(columns={})`` says
-            # something different and false -- "this emits no columns" -- and
-            # ``T | project-away *``, which really does emit none, then reads
-            # identically to a query over a table nobody described. That case
-            # is what ``determined`` separates: an operator replaced the
-            # scope, so the emptiness is a result rather than an absence.
-            pipeline.result_schema = None
-        else:
-            merged: dict[str, str] = {}
-            for entry in scope:
-                merged.update(entry.columns)
-            pipeline.result_schema = TabularSchema(columns=merged)
+        pipeline.result_schema = (
+            TabularSchema(columns=dict(authoritative.columns))
+            if authoritative is not None
+            else None
+        )
         return scope
 
-    # --- scope-mutation helpers ---------------------------------------------
-
-    def _scope_columns(self, scope: list[ScopeEntry]) -> dict[str, str]:
-        """Flatten scope into a single {column: type} map (most recent wins)."""
-        merged: dict[str, str] = {}
-        for entry in scope:
-            merged.update(entry.columns)
-        return merged
+    # --- scope helpers ------------------------------------------------------
 
     def _column_origins(self, scope: list[ScopeEntry]) -> dict[str, str | None]:
         """``{column: originating table}`` over the whole scope.
@@ -540,9 +485,13 @@ class SchemaAttacher:
         is **ambiguous**, and maps to ``None``. That is KQL's own answer:
         after ``T | union U`` an unqualified ``k`` is neither table's ``k``,
         and the previous rule -- "the most recently appended side wins" --
-        was a guess dressed as provenance. Join collisions do not reach this
-        branch, because the join rule renames the right side's ``k`` to
-        ``k1`` before the scope ever holds both.
+        was a guess dressed as provenance. Join collisions *do* reach this
+        branch now that the renaming rule is Microsoft's rather than ours:
+        after ``L | join (R) on k`` the scope holds both sides' ``shared``,
+        so the unqualified name answers ``None`` and the engine's ``shared``
+        and ``shared1`` both land in the anonymous bucket. A qualified
+        ``$left.shared`` / ``$right.shared`` resolves by side and is
+        unaffected.
         """
         seen: dict[str, str | None] = {}
         ambiguous: set[str] = set()
@@ -556,68 +505,11 @@ class SchemaAttacher:
             seen[name] = None
         return seen
 
-    def _set_scope(
-        self,
-        scope: list[ScopeEntry],
-        columns: dict[str, str],
-        origins: dict[str, str | None] | None = None,
-    ) -> None:
-        """Replace scope with a single anonymous entry containing `columns`.
-
-        Provenance is carried over by default: a column the replaced scope
-        knew survives ``project`` / ``distinct`` / ``project-keep`` under the
-        same name, so it keeps the table it had. Pass ``origins`` explicitly
-        where the operator renames (``project-rename``).
-        """
-        if origins is None:
-            carried = self._column_origins(scope)
-            origins = {n: carried[n] for n in columns if n in carried}
-        self._scope_determined = True
-        scope.clear()
-        scope.append(ScopeEntry(table=None, columns=columns, origins=origins))
-
-    def _project_patterns(self, columns, scope: list[ScopeEntry]) -> list[str]:
-        """Fill each ``project-keep`` / ``project-away`` term and name it.
-
-        A bare ``*`` lowers to :class:`~kustology.ir.expr.StarExpr` -- it is
-        not a column called ``*`` -- so it is turned back into the pattern
-        that matches everything. A prefix wildcard (``a*``) stays a
-        ``ColumnRef`` whose *name* is the pattern, which is why the term list
-        and the match set are the same list of strings.
-        """
-        patterns: list[str] = []
-        for c in columns:
-            inner = c if isinstance(c, Expr) else getattr(c, "expr", c)
-            self._fill(inner, scope)
-            if isinstance(inner, StarExpr):
-                patterns.append("*")
-                continue
-            name = self._extract_target_name(c)
-            if name:
-                patterns.append(name)
-        return patterns
-
-    def _expr_type(self, expr: Expr | None) -> str:
-        """The type ``expr`` resolved to, or ``"unknown"``.
-
-        ``_fill`` must have run first -- it is what types a literal from its
-        ``literal_kind``, which is the only thing a syntactic-only parse
-        knows about ``print x = 1``.
-        """
-        kt = getattr(expr, "result_type", KustoType.UNRESOLVED)
-        return kt.value if kt != KustoType.UNRESOLVED else "unknown"
-
-    def _extract_target_name(self, expr) -> str | None:
-        """Pull a bare column name from a ColumnRef / Assignment / similar."""
-        if isinstance(expr, ColumnRef):
-            return expr.name
-        name = getattr(expr, "name", None)
-        if isinstance(name, str):
-            return name
-        return None
-
     def _overlay_result_schema(
-        self, columns: dict[str, str], scope: list[ScopeEntry],
+        self,
+        columns: dict[str, str],
+        scope: list[ScopeEntry],
+        renames: dict[str, str] | None = None,
     ) -> None:
         """Rewrite ``scope`` to carry exactly ``columns``, keeping provenance.
 
@@ -629,16 +521,24 @@ class SchemaAttacher:
         *pre-operator* scope had it under, and anything new (a summarize
         aggregate, a join's suffixed ``Foo1``) lands in the anonymous entry.
 
-        The table order of the incoming scope is preserved, because
-        :meth:`_resolve_column_table` reads it as precedence -- most recently
-        joined side wins a name collision, which is KQL's own rule.
+        ``renames`` maps an output name back to the input name it is the same
+        column as, and exists for ``project-rename``. Without it ``kk`` in
+        ``project-rename kk = k`` is a name the pre-operator scope never held
+        and would file anonymously -- which is right for a genuinely new
+        column and wrong here, because the query itself states that ``kk``
+        *is* ``T``'s ``k``. The operator is the only place that fact is
+        written down, so it has to be threaded rather than recovered.
 
-        Dropping to ``_set_scope`` here instead (one anonymous entry with
+        The table order of the incoming scope is preserved, because
+        :meth:`_resolve_column_table` reads it as precedence.
+
+        Replacing the scope outright instead (one anonymous entry with
         Microsoft's columns) would be simpler and would silently delete
         provenance for every operator the binder can type: ``T | where a > 1
         | project a`` would stop reporting ``a.table == "T"``.
         """
         origin = self._column_origins(scope)
+        renames = renames or {}
         tables: list[str | None] = []
         for entry in scope:
             if entry.table not in tables:
@@ -649,12 +549,11 @@ class SchemaAttacher:
         # A column whose origin is a table no *entry* is keyed on -- one that
         # a ``project`` already moved into the anonymous entry -- goes to the
         # anonymous bucket and keeps its provenance in ``origins``. Adding a
-        # fresh table entry for it instead would reorder the merged scope,
-        # which ``project-keep`` / ``project-away`` read as column order.
-        self._scope_determined = True
+        # fresh table entry for it instead would reorder the scope, which
+        # ``_resolve_column_table`` reads as precedence.
         anon_origins: dict[str, str | None] = {}
         for name, type_name in columns.items():
-            table = origin.get(name)
+            table = origin.get(renames.get(name, name))
             if table in buckets:
                 buckets[table][name] = type_name
             else:
@@ -668,176 +567,67 @@ class SchemaAttacher:
                 origins=anon_origins if table is None else {},
             ))
 
-    def _aggregate_columns(
-        self,
-        agg: Assignment,
-        scope: list[ScopeEntry],
-        emitted: dict[str, str],
-    ) -> dict[str, str] | None:
-        """Columns one aggregate emits, or None if it emits just ``agg.name``.
-
-        Most aggregates return a single value and the ``Assignment`` says
-        everything about it. Three families do not, and the rule that gave
-        each of them one column named after the function was inventing a
-        column and losing several real ones:
-
-        * ``arg_max(t, *)`` returns the whole row that maximises ``t`` --
-          ``t`` first, then every other column in scope. ``arg_max(t, a, s)``
-          returns exactly the listed ones. A ``by`` key is already emitted,
-          so ``*`` does not repeat it.
-        * ``take_any(a, s)`` returns both columns under their own names, and
-          ``take_any(*)`` the whole row. ``take_anyif``'s second argument is
-          a predicate, not a column.
-        * ``percentiles(a, 5, 50)`` returns one column per percentile.
-
-        Where the query named the aggregate, the name applies to the *first*
-        column only: ``m = arg_max(t, *)`` is ``m`` followed by the rest of
-        the row, which is what the engine does.
-        """
-        fname = aggregate_function_name(agg.expr)
-        if fname not in MULTI_OUTPUT_AGGREGATES:
-            return None
-        args = list(getattr(agg.expr, "args", []))
-        current = self._scope_columns(scope)
-        agg_type = getattr(agg.expr, "result_type", KustoType.UNRESOLVED)
-        agg_type_name = (
-            agg_type.value if agg_type != KustoType.UNRESOLVED else "unknown"
-        )
-        out: dict[str, str] = {}
-
-        if fname in ("percentiles", "percentilesw"):
-            column = next(
-                (a.name for a in args if isinstance(a, ColumnRef)), None,
-            )
-            values = [a.value for a in args if isinstance(a, LiteralExpr)]
-            for index, value in enumerate(values):
-                name = (
-                    agg.name if index == 0
-                    else f"percentile_{column}_{percentile_token(value)}"
-                )
-                out[name] = agg_type_name
-            return out or None
-
-        if fname in ("arg_max", "arg_min"):
-            # The first argument is the ordering column and is emitted too.
-            terms = args
-        elif fname == "take_anyif":
-            terms = args[:1]
-        else:  # take_any
-            terms = args
-        listed = {t.name for t in terms if isinstance(t, ColumnRef)}
-        first = True
-        for term in terms:
-            if isinstance(term, StarExpr):
-                for name, kt in current.items():
-                    if name in listed or name in emitted or name in out:
-                        continue
-                    out[name] = kt
-                first = False
-                continue
-            if not isinstance(term, ColumnRef):
-                continue
-            out[agg.name if first else term.name] = current.get(
-                term.name, "unknown",
-            )
-            first = False
-        return out or None
-
-    def _split_union_type_conflicts(self, scope: list[ScopeEntry]) -> None:
-        """Rename a column the union's sides type differently.
-
-        KQL does not pick a winner when two unioned tables disagree about a
-        column's type: it emits one column per type, named ``Name_type``, and
-        no unsuffixed ``Name`` at all. ``T`` typing ``a`` ``long`` and ``U``
-        typing it ``string`` gives ``a_long`` and ``a_string``. The rule here
-        used to merge the entries and let the later side's type win, which
-        both invented a column (``a:string``) and lost one (``a:long``).
-
-        All of a name's variants are filed under the *first* entry that had
-        it, so the merged column order puts them adjacent where the name
-        used to be -- which is where Microsoft puts them. Provenance is kept
-        per variant through ``origins``, since ``a_long`` is ``T``'s column
-        and ``a_string`` is ``U``'s.
-        """
-        types: dict[str, list[tuple[str, str | None]]] = {}
-        for entry in scope:
-            for name, kt in entry.columns.items():
-                # ``unknown`` is not a type, it is the absence of one, and a
-                # side that does not know its own column's type does not
-                # disagree with the side that does. Splitting on it produced
-                # ``Fqdn_string`` and ``Fqdn_unknown`` for a column the
-                # engine emits once.
-                if kt == "unknown":
-                    continue
-                variants = types.setdefault(name, [])
-                if kt not in [t for t, _ in variants]:
-                    variants.append((kt, entry.origin_of(name)))
-        conflicting = {n for n, v in types.items() if len(v) > 1}
-        if not conflicting:
-            return
-        placed: set[str] = set()
-        rebuilt: list[ScopeEntry] = []
-        for entry in scope:
-            columns: dict[str, str] = {}
-            origins: dict[str, str | None] = {}
-            for name, kt in entry.columns.items():
-                if name not in conflicting:
-                    columns[name] = kt
-                    origins[name] = entry.origin_of(name)
-                    continue
-                if name in placed:
-                    continue
-                placed.add(name)
-                for variant_type, variant_table in types[name]:
-                    columns[f"{name}_{variant_type}"] = variant_type
-                    origins[f"{name}_{variant_type}"] = variant_table
-            rebuilt.append(ScopeEntry(
-                table=entry.table, columns=columns, origins=origins,
-            ))
-        scope[:] = rebuilt
-
     def _walk_operator(self, op: Operator, scope: list[ScopeEntry]) -> None:
-        if op.result_schema is not None:
-            # Microsoft already computed this operator's output. Its answer
-            # is authoritative for *names and types*; provenance is still
-            # ours, so the expressions are filled first and the scope is
-            # then overlaid rather than replaced.
-            #
-            # ``join`` / ``lookup`` / ``union`` / ``search`` keep their
-            # hand-rolled rule even here, for things the overlay cannot
-            # recover: ``on`` clauses resolve against a scope that includes
-            # the right side (``$left`` / ``$right`` depend on it), the
-            # per-side ``ScopeEntry`` a join appends is what gives a
-            # right-hand column a table at all, and ``search`` has an
-            # implicit source, so without its rule the pre-operator scope is
-            # empty and every column it emits would be filed as anonymous.
-            # The overlay then corrects the names and types those rules guess
-            # at -- which is the whole point of the task.
-            if isinstance(op, (JoinOp, LookupOp, UnionOp, SearchOp)):
-                self._walk_operator_rules(op, scope)
-            else:
-                self._fill_children(op, scope, inherited=scope)
-            self._overlay_result_schema(dict(op.result_schema.columns), scope)
-            return
-        self._walk_operator_rules(op, scope)
+        """Provenance first, then Microsoft's schema where there is one.
 
-    def _walk_operator_rules(self, op: Operator, scope: list[ScopeEntry]) -> None:
-        """The hand-rolled per-operator scope rules.
-
-        Runs when Microsoft did not answer for this operator — an unbound
-        parse, or a schema the binder could not fully determine — and, for
-        the multi-source operators, alongside the answer when it did. See
-        :meth:`_walk_operator`.
+        The provenance step fills every expression the operator carries and
+        adds the scope *structure* the multi-source operators need (a join's
+        right side, a union's arms, a search's tables). It never derives the
+        operator's output columns. Where the builder stamped
+        ``op.result_schema`` -- Microsoft's ``ResultType``, present exactly
+        where the symbol is closed -- it is overlaid onto that structure, so
+        names and types are the binder's and each column keeps the table the
+        walk knows it came from. Where it is ``None`` the scope passes
+        through untouched: downstream references still resolve against the
+        last known shape (stale where the operator really reshaped, and
+        visibly so), and the pipeline's own ``result_schema`` will say
+        ``None`` rather than guess.
         """
-        if isinstance(op, FilterOp):
-            self._fill(op.predicate, scope)
-            return
+        self._walk_operator_provenance(op, scope)
+        if op.result_schema is not None:
+            self._overlay_result_schema(
+                dict(op.result_schema.columns), scope, _renamed_columns(op),
+            )
+
+    def _walk_operator_provenance(
+        self, op: Operator, scope: list[ScopeEntry],
+    ) -> None:
+        """The scope structure provenance needs; never the output columns.
+
+        Three operator families get a branch, because they bring *sources*
+        into scope and the overlay cannot recover where a column came from
+        once the sources are forgotten:
+
+        * ``join`` / ``lookup``: the right-hand pipeline is walked and
+          appended as one flattened entry, and ``_join_sides`` is set around
+          the ``on`` clause so ``$left`` / ``$right`` and the bare-key
+          left-first rule resolve. Join-kind column selection, the ``Foo1``
+          collision suffixes and ``lookup``'s right-key drop are *not*
+          reproduced -- ``result_schema`` states the surviving columns and
+          the overlay applies them.
+        * ``union``: each arm's entries are appended so a column only one
+          arm carries keeps that arm's table. Type-conflict splitting
+          (``a_long`` / ``a_string``) and ``withsource`` are Microsoft's to
+          state.
+        * ``search``: an implicit source, so without seeding here the
+          predicate and every emitted column would resolve against nothing.
+          One entry per named table is appended -- or per table in
+          ``self.schemas`` for an unqualified search, the dict standing in
+          for "every table in the database" -- and the predicate is filled
+          *after*, against the seeded scope. ``$table`` is Microsoft's to
+          state.
+
+        Everything else fills its expressions and walks its nested
+        pipelines, scope untouched. Implicit-source sub-pipelines (the
+        ``mv-apply`` / ``partition`` / ``fork`` / ``facet`` bodies) inherit
+        the current scope; ones with their own source ignore it.
+        """
         if isinstance(op, (JoinOp, LookupOp)):
             rhs_scope = self._walk_pipeline(op.right)
             # Snapshot the left before the right entry is appended: ``$left``
             # is the accumulated left row set, which after a previous join is
-            # several entries, and resolving it positionally (``scope[-2]``)
-            # named whichever table that join happened to add.
+            # several entries, and resolving it positionally named whichever
+            # table that join happened to add.
             left_side = list(scope)
             right_side = [_flatten_side(rhs_scope)]
             on_scope = left_side + right_side
@@ -848,428 +638,24 @@ class SchemaAttacher:
                     self._fill(e, on_scope)
             finally:
                 self._join_sides = previous_sides
-            if isinstance(op, JoinOp):
-                # A semi or anti join is a *filter*, not a widening: it emits
-                # rows of one side and columns of one side. ``lookup`` has no
-                # such kind (only ``leftouter`` / ``inner``), which is why the
-                # check is on ``JoinOp`` rather than shared.
-                kind = _join_kind(op.join_kind)
-                if kind in _LEFT_ONLY_JOIN_KINDS:
-                    return
-                if kind in _RIGHT_ONLY_JOIN_KINDS:
-                    kept = [
-                        ScopeEntry(
-                            table=e.table,
-                            columns=dict(e.columns),
-                            origins=dict(e.origins),
-                        )
-                        for e in right_side
-                    ]
-                    self._scope_determined = True
-                    scope.clear()
-                    scope.extend(kept)
-                    return
-            # KQL renames colliding right-side columns with numeric suffixes
-            # (Foo, Foo1, Foo2, ...). Lookup additionally drops the right-side
-            # join-key columns since they merge into the left's.
-            left_names: set[str] = {
-                c for entry in scope for c in entry.columns
-            }
-            drop_keys: set[str] = set()
-            if isinstance(op, LookupOp):
-                drop_keys = {
-                    e.name for e in op.on if isinstance(e, ColumnRef)
-                }
-            for entry in right_side:
-                renamed: dict[str, str] = {}
-                renamed_origins: dict[str, str | None] = {}
-                for name, kt in entry.columns.items():
-                    if name in drop_keys:
-                        continue
-                    if name not in left_names:
-                        renamed[name] = kt
-                        renamed_origins[name] = entry.origin_of(name)
-                        left_names.add(name)
-                        continue
-                    n = 1
-                    candidate = f"{name}{n}"
-                    while candidate in left_names:
-                        n += 1
-                        candidate = f"{name}{n}"
-                    renamed[candidate] = kt
-                    # ``shared1`` is the right side's ``shared``, so it keeps
-                    # the right side's provenance under the new name.
-                    renamed_origins[candidate] = entry.origin_of(name)
-                    left_names.add(candidate)
-                scope.append(ScopeEntry(
-                    table=entry.table, columns=renamed, origins=renamed_origins,
-                ))
+            scope.append(right_side[0])
             return
         if isinstance(op, UnionOp):
             for sub in op.pipelines:
-                sub_scope = self._walk_pipeline(sub)
-                for entry in sub_scope:
+                for entry in self._walk_pipeline(sub):
                     if entry not in scope:
                         scope.append(entry)
-            self._split_union_type_conflicts(scope)
-            if op.withsource:
-                # ``withsource=src`` prepends the originating table's name as
-                # a leading string column.
-                scope.insert(0, ScopeEntry(
-                    table=None,
-                    columns={op.withsource: KustoType.STRING.value},
-                    origins={op.withsource: None},
-                ))
-            return
-        if isinstance(op, ExtendOp):
-            new_cols: dict[str, str] = {}
-            for a in op.assignments:
-                self._fill(a.expr, scope)
-                kt = getattr(a.expr, "result_type", KustoType.UNRESOLVED)
-                new_cols[a.name] = kt.value if kt != KustoType.UNRESOLVED else "unknown"
-            scope.append(ScopeEntry(table=None, columns=new_cols))
-            return
-        if isinstance(op, SummarizeOp):
-            out_cols: dict[str, str] = {}
-            # KQL summarize emits grouping keys before aggregations in the output schema.
-            for b in op.by:
-                inner = getattr(b, "expr", b)
-                self._fill(inner, scope)
-                name = self._extract_target_name(b) or self._extract_target_name(inner)
-                if name:
-                    kt = getattr(inner, "result_type", KustoType.UNRESOLVED)
-                    out_cols[name] = kt.value if kt != KustoType.UNRESOLVED else "unknown"
-            for a in op.aggregations:
-                self._fill(a.expr, scope)
-                expanded = self._aggregate_columns(a, scope, out_cols)
-                if expanded is not None:
-                    out_cols.update(expanded)
-                    continue
-                kt = getattr(a.expr, "result_type", KustoType.UNRESOLVED)
-                out_cols[a.name] = kt.value if kt != KustoType.UNRESOLVED else "unknown"
-            self._set_scope(scope, out_cols)
-            return
-        if isinstance(op, ProjectOp):
-            current = self._scope_columns(scope)
-            kept: dict[str, str] = {}
-            for c in op.columns:
-                self._fill(getattr(c, "expr", c), scope)
-                if isinstance(c, Assignment):
-                    kt = getattr(c.expr, "result_type", KustoType.UNRESOLVED)
-                    kept[c.name] = kt.value if kt != KustoType.UNRESOLVED else "unknown"
-                elif isinstance(c, ColumnRef):
-                    # The walk is not the only thing that can know the type:
-                    # after an operator that opened the symbol the scope goes
-                    # stale, but the binder still typed the node from the
-                    # parse-time schema. Reporting ``unknown`` for a type
-                    # sitting on the reference throws it away.
-                    known = current.get(c.name)
-                    kept[c.name] = (
-                        known if known and known != "unknown"
-                        else self._expr_type(c)
-                    )
-                else:
-                    name = self._extract_target_name(c)
-                    if name:
-                        kept[name] = current.get(name, "unknown")
-            self._set_scope(scope, kept)
-            return
-        if isinstance(op, ProjectRenameOp):
-            current = self._scope_columns(scope)
-            # Build {old: new} so we can rebuild the dict preserving original positions.
-            rename_map: dict[str, str] = {}
-            for c in op.columns:
-                self._fill(c.expr, scope)
-                old = self._extract_target_name(c.expr)
-                if old and old in current:
-                    rename_map[old] = c.name
-            # A renamed column is still the source table's column, so its
-            # provenance is carried under the *new* name -- ``_set_scope``'s
-            # default carry works by name and would drop it.
-            carried = self._column_origins(scope)
-            origins = {rename_map.get(k, k): v for k, v in carried.items()}
-            if rename_map:
-                rebuilt: dict[str, str] = {}
-                for k, v in current.items():
-                    rebuilt[rename_map.get(k, k)] = v
-                current = rebuilt
-            self._set_scope(scope, current, origins)
-            return
-        if isinstance(op, DistinctOp):
-            # KQL: `distinct *` keeps the full scope; `distinct C1, C2` narrows
-            # the output schema to the listed columns in listed order
-            # (semantically equivalent to ``summarize by C1, C2``).
-            has_star = any(
-                isinstance(c, StarExpr) or isinstance(getattr(c, "expr", None), StarExpr)
-                for c in op.columns
-            )
-            for c in op.columns:
-                self._fill(getattr(c, "expr", c), scope)
-            if has_star:
-                return
-            current = self._scope_columns(scope)
-            kept: dict[str, str] = {}
-            for c in op.columns:
-                name = self._extract_target_name(c)
-                if name and name in current:
-                    kept[name] = current[name]
-            self._set_scope(scope, kept)
-            return
-        if isinstance(op, ProjectAwayOp):
-            current = self._scope_columns(scope)
-            patterns = self._project_patterns(op.columns, scope)
-            current = {
-                k: v for k, v in current.items()
-                if not _matches_any(patterns, k)
-            }
-            self._set_scope(scope, current)
-            return
-        if isinstance(op, ProjectKeepOp):
-            current = self._scope_columns(scope)
-            patterns = self._project_patterns(op.columns, scope)
-            # KQL preserves source-table column order.
-            kept = {k: v for k, v in current.items() if _matches_any(patterns, k)}
-            self._set_scope(scope, kept)
-            return
-        if isinstance(op, ProjectReorderOp):
-            # KQL emits listed columns first (in listed order), then remaining
-            # columns in source order. A wildcard term contributes no name to
-            # ``listed`` (``*`` and ``a*`` are not columns in ``current``), so
-            # the columns it matches keep their source order — which is also
-            # why the term's ``asc``/``desc``, being a rule for ordering those
-            # matches, is not modelled in the scope here.
-            #
-            # ``columns`` is uniformly ``list[ReorderKey]``, so the expression
-            # is reached through ``.expression`` rather than the old
-            # ``getattr(c, "expr", c)`` guess. That guess is what would break
-            # here: ``ReorderKey`` has no ``expr``, so it would have handed
-            # the wrapper itself to ``_fill``, which reads ``result_type`` off
-            # an ``Expr``.
-            current = self._scope_columns(scope)
-            listed: list[str] = []
-            for c in op.columns:
-                self._fill(c.expression, scope)
-                name = self._extract_target_name(c.expression)
-                if name and name in current and name not in listed:
-                    listed.append(name)
-            if listed:
-                reordered: dict[str, str] = {n: current[n] for n in listed}
-                for k, v in current.items():
-                    if k not in reordered:
-                        reordered[k] = v
-                self._set_scope(scope, reordered)
-            return
-        if isinstance(op, ProjectByNamesOp):
-            # Dynamic names — can't statically reshape scope.
-            for n_expr in op.names:
-                self._fill(n_expr, scope)
-            return
-        if isinstance(op, (ParseOp, ParseWhereOp)):
-            self._fill(op.target, scope)
-            new_cap: dict[str, str] = {}
-            for p in op.patterns:
-                self._fill(p, scope)
-                if isinstance(p, TypedNameDecl):
-                    # ``parse a with 'x' b:long`` states the capture's type,
-                    # so there is nothing to infer. Before typed captures had
-                    # their own node they arrived as a bare ``ColumnRef`` and
-                    # fell into the ``"string"`` default below -- the type the
-                    # query wrote was not merely unused, it was unreadable.
-                    new_cap[p.name] = p.declared_type
-                    continue
-                if isinstance(p, ColumnRef):
-                    kt = getattr(p, "result_type", KustoType.UNRESOLVED)
-                    new_cap[p.name] = kt.value if kt != KustoType.UNRESOLVED else "string"
-            if new_cap:
-                scope.append(ScopeEntry(table=None, columns=new_cap))
-            return
-        if isinstance(op, MvExpandOp):
-            current = self._scope_columns(scope)
-            for col in op.columns:
-                # ``col`` is an ``MvExpandColumn`` wrapper, not the
-                # expression: it carries the ``to typeof(...)`` the query
-                # wrote. Handing the wrapper to ``_fill`` would reach for
-                # ``result_type`` on a node that has none.
-                c = col.expression
-                self._fill(c, scope)
-                name = self._extract_target_name(c)
-                if not name:
-                    continue
-                if col.to_typeof:
-                    # The query states the expanded element's type, so there
-                    # is nothing to infer.
-                    current[name] = col.to_typeof
-                    continue
-                # Without ``to typeof(...)`` the column keeps the type it had
-                # -- ``mv-expand s`` leaves ``s`` a string -- and defaults to
-                # ``dynamic`` when the scope does not know it.
-                #
-                # Reading ``result_type_inner`` here was the mistake: it is
-                # the *element* type of the array expression, and the engine
-                # does not retype the column to it. ``extend arr =
-                # pack_array(1, 2) | mv-expand arr`` records ``inner == long``
-                # and Microsoft still reports ``arr`` as ``dynamic``, because
-                # each expanded row holds a dynamic value until the query
-                # says otherwise.
-                current[name] = current.get(name, "dynamic")
-            if op.with_item_index:
-                # ``with_itemindex=i`` appends the zero-based position of the
-                # expanded element as a trailing long column.
-                current[op.with_item_index] = KustoType.LONG.value
-            self._set_scope(scope, current)
-            return
-        if isinstance(op, MakeSeriesOp):
-            # KQL make-series emits: by-keys, then aggregation series, then the
-            # on-axis as a trailing dynamic column.
-            out_cols2: dict[str, str] = {}
-            for b in op.by:
-                self._fill(b.expr, scope)
-                kt = getattr(b.expr, "result_type", KustoType.UNRESOLVED)
-                out_cols2[b.name] = kt.value if kt != KustoType.UNRESOLVED else "unknown"
-            for a in op.aggregations:
-                # make-series aggregates produce dynamic arrays.
-                self._fill(a.expr, scope)
-                out_cols2[a.name] = "dynamic"
-            if op.on_column is not None:
-                self._fill(op.on_column, scope)
-                on_name = self._extract_target_name(op.on_column)
-                if on_name:
-                    out_cols2[on_name] = "dynamic"
-            for attr in ("range_from", "range_to", "step"):
-                e = getattr(op, attr, None)
-                if e is not None:
-                    self._fill(e, scope)
-            self._set_scope(scope, out_cols2)
-            return
-        if isinstance(op, CountOp):
-            # ``count`` discards the input schema for a single long column;
-            # ``count as N`` names it.
-            self._set_scope(scope, {op.as_name or "Count": KustoType.LONG.value})
-            return
-        if isinstance(op, EvaluateOp):
-            # A plug-in can add columns nobody can enumerate, which is why
-            # Microsoft leaves the symbol open for every ``evaluate``. It
-            # still knows what the call *consumes*, though: ``bag_unpack(d)``
-            # replaces ``d`` with the bag's keys, so ``d`` is gone from the
-            # output. Keeping it was a divergence on the half of the answer
-            # the binder did give. Every other plug-in passes the scope
-            # through, which is what the fallthrough already does.
-            self._fill_children(op, scope, inherited=scope)
-            if aggregate_function_name(op.func) == "bag_unpack":
-                packed = next(
-                    (a.name for a in op.func.args if isinstance(a, ColumnRef)),
-                    None,
-                )
-                if packed:
-                    current = self._scope_columns(scope)
-                    current.pop(packed, None)
-                    self._set_scope(scope, current)
-            return
-        if isinstance(op, SerializeOp):
-            # ``serialize`` alone preserves the schema; ``serialize rn =
-            # row_number()`` is ``serialize`` plus an ``extend``, and
-            # ``SerializeOp.assignments`` records the added columns.
-            added: dict[str, str] = {}
-            for a in op.assignments:
-                self._fill(a.expr, scope)
-                added[a.name] = self._expr_type(a.expr)
-            if added:
-                scope.append(ScopeEntry(table=None, columns=added))
-            return
-        if isinstance(op, ParseKvOp):
-            # ``parse-kv s as (n:long, m:string)`` states its own output
-            # columns, and ``ParseKvOp.columns`` already records them -- the
-            # rule simply never read the field.
-            self._fill(op.target, scope)
-            if op.columns:
-                scope.append(ScopeEntry(table=None, columns=dict(op.columns)))
-            return
-        if isinstance(op, GetSchemaOp):
-            # ``getschema`` describes its input rather than passing it
-            # through, so its output is the same four columns for every
-            # query. ``ColumnOrdinal`` is a **long**, not an int -- read off
-            # the binder rather than off the documentation.
-            self._set_scope(scope, {
-                "ColumnName": KustoType.STRING.value,
-                "ColumnOrdinal": KustoType.LONG.value,
-                "DataType": KustoType.STRING.value,
-                "ColumnType": KustoType.STRING.value,
-            })
-            return
-        if isinstance(op, PrintOp):
-            printed: dict[str, str] = {}
-            for index, c in enumerate(op.columns):
-                inner = c if isinstance(c, Expr) else getattr(c, "expr", c)
-                self._fill(inner, scope)
-                # An unnamed term is named by its *position* in the list, not
-                # by how many unnamed terms preceded it: ``print x = 1, 2``
-                # is ``x`` and ``print_1``.
-                name = c.name if isinstance(c, Assignment) else f"print_{index}"
-                printed[name] = self._expr_type(inner)
-            self._set_scope(scope, printed)
-            return
-        if isinstance(op, RangeOp):
-            # ``range n from 1 to 10 step 1`` emits one column, typed by the
-            # range's own bounds -- a datetime range gives a datetime column.
-            for e in (op.start, op.end, op.step):
-                self._fill(e, scope)
-            self._set_scope(scope, {op.column: self._expr_type(op.start)})
             return
         if isinstance(op, SearchOp):
-            # ``search`` replaces the scope with the searched tables' columns
-            # and prepends ``$table``, naming the table each row came from.
-            # Named tables scope it; an unqualified ``search`` covers every
-            # table the caller described, which is the schema-dict analogue
-            # of "every table in the database".
             names = [t.name for t in op.tables if isinstance(t, TableRef)]
             if not names:
                 names = list(self.schemas)
-            searched = [
+            scope.extend(
                 ScopeEntry(table=n, columns=dict(self._table_schema(n)))
                 for n in names
-            ]
-            self._split_union_type_conflicts(searched)
-            self._scope_determined = True
-            scope[:] = [
-                ScopeEntry(
-                    table=None,
-                    columns={"$table": KustoType.STRING.value},
-                    origins={"$table": None},
-                ),
-                *searched,
-            ]
-            # After, not before: ``search`` has an implicit source, so the
-            # pre-operator scope is empty and its own predicate would resolve
-            # against nothing -- ``search in (T) a > 1`` left ``a`` unplaced
-            # while ``search in (T) 'x' | where a > 1`` placed it in ``T``.
+            )
             self._fill(op.predicate, scope)
             return
-
-        # No bespoke scope rule for this operator kind. Fill provenance on
-        # every expression it carries and walk every pipeline it nests,
-        # leaving the scope unchanged.
-        #
-        # The branches above are the operators whose *output schema* we can
-        # derive; there are 25 of them against 53 operator subclasses. Before
-        # this fallback existed the function simply fell off the end for the
-        # other 28, so `| sort by X` left X with no table while a `| project`
-        # in the same query resolved fine. Filling without reshaping is the
-        # honest position: correct for the operators that pass their schema
-        # through (sort, top, take, sample, as, render, assert-schema, the
-        # graph where-predicates), and for the ones that do reshape (find,
-        # scan, facet, fork, mv-apply, partition, top-nested, top-hitters,
-        # sample-distinct, invoke, macro-expand, consume, the graph
-        # operators) it leaves a stale scope rather than an empty one —
-        # strictly closer than skipping them, and visible here rather than
-        # silent. `consume` is the reshaper furthest from pass-through:
-        # Microsoft types it VoidSymbol, so downstream the engine has no
-        # columns at all where we still have T's. The class docstring
-        # carries the full split, and the unbound leg of
-        # `tests/ir/test_binder_oracle.py` is what keeps it from drifting.
-        #
-        # Sub-pipelines inherit the current scope: an mv-apply / partition /
-        # fork / facet body has an implicit source and runs against the
-        # enclosing row set.
         self._fill_children(op, scope, inherited=scope)
 
     def _resolve_side(self, name: str, entries: list[ScopeEntry]) -> str | None:

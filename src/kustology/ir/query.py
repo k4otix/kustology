@@ -128,11 +128,14 @@ class Operator(BaseModel):
     # :func:`kustology.ir._builder_helpers.table_symbol_columns` for what
     # "closed" buys and why an open one is dropped instead of read.
     #
-    # ``SchemaAttacher`` prefers this over its own per-operator rule, which
-    # is the point: the rules were re-deriving an answer the binder already
-    # had, and a dozen of them disagreed with it. ``None`` means Microsoft
-    # did not answer for this operator (no schema, or a schema it could not
-    # fully determine) and the hand-rolled rule is what runs.
+    # This is the *only* source of an operator's output schema. ``Schema-
+    # Attacher`` used to re-derive one per operator by hand and a dozen of
+    # those rules disagreed with the binder, so they are gone; it now
+    # overlays this onto its scope for provenance and derives nothing.
+    # ``None`` means Microsoft did not answer for this operator (no schema,
+    # or a schema it could not fully determine), and nothing else answers in
+    # its place -- the enclosing ``Pipeline.result_schema`` reports ``None``
+    # rather than a guess.
     #
     # **Volatile: excluded from ``semantic_hash``.** The field name is
     # already in ``transforms._VOLATILE_FIELDS`` for ``Pipeline``, and that
@@ -890,9 +893,9 @@ class ScanOp(Operator):
     appears only in a ``scan`` step. Downstream *scope* is the better
     case, and it splits by bind state — ``Operator.result_schema`` carries
     Microsoft's ``ResultType``, which knows the columns a ``scan``'s
-    ``declare`` adds, and :class:`SchemaAttacher` prefers it; on an
-    unbound parse there is no such answer and none of these operators has
-    a scope rule, so the scope downstream is the one they inherited.
+    ``declare`` adds, and :class:`SchemaAttacher` overlays it; on an
+    unbound parse there is no such answer, and since nothing re-derives one
+    the scope downstream is the one they inherited.
     Hashing text also means the formatting sensitivity
     :class:`UnknownSource` documents applies here too — interior comments
     and interior spacing are part of the digest.

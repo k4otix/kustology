@@ -2055,7 +2055,9 @@ class IRBuilder:
             # ``take_any(a)`` is ``a`` and ``arg_max(t, *)`` starts with ``t``
             # -- the column keeps its own name. With no named column
             # (``take_any(*)``) there is nothing to borrow and the generic
-            # form stands; the scope rule expands the star itself.
+            # form stands. What the star actually expands to is Microsoft's
+            # answer, carried on ``Operator.result_schema``; this names only
+            # the ``Assignment``.
             return first_col or f"{lowered}_"
         prefix = AGGREGATE_NAME_PREFIXES.get(lowered)
         if prefix and first_col:
@@ -2100,9 +2102,9 @@ class IRBuilder:
 
         So the decision is made from the function names alone, before the
         count is looked at: if any aggregate in this ``summarize`` is
-        multi-output, none of them takes a binder name and every one falls to
-        the hand rules, in both bind states. That is what the code did before
-        this read existed. Aligning the aggregates *before* the first
+        multi-output, none of them takes a binder name and every one is
+        named from the call text instead, in both bind states. That is what
+        the code did before this read existed. Aligning the aggregates *before* the first
         multi-output one -- whose indices genuinely do not move -- would
         recover a little of it, and is deliberately not done: it reintroduces
         a length-sensitive read (``len(by) + i`` must exist in both states)

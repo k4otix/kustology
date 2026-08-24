@@ -402,10 +402,11 @@ def test_project_reorder_directions_hash_apart(case_id, a, b):
     assert _hash(a) != _hash(b), f"{case_id}: {a!r} and {b!r} order columns differently"
 
 
-def test_project_reorder_binder_reaches_the_column_and_reorders_the_scope():
-    """The column has to be a real expression for either half of this to
-    work: ``_fill`` types it, and ``_extract_target_name`` reads the name
-    that decides the emitted column order."""
+def test_project_reorder_binder_reaches_the_column_and_microsoft_orders_it():
+    """The column has to be a real expression for the binder to reach it:
+    ``_fill`` places and types it. The emitted column order is Microsoft's
+    -- ``project-reorder`` closes the symbol, so the answer is stamped
+    rather than derived."""
     schema = {"T": {"x": "string", "n": "long"}}
     ir = parse("T | project-reorder n asc", schema=schema).to_ir()
     assert ir.schema_attached

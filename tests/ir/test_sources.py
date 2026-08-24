@@ -20,6 +20,7 @@ import pytest
 
 from kustology import parse
 from kustology.ir import (
+    ColumnRef,
     DataTableSource,
     ExternalDataExpr,
     ExternalDataSource,
@@ -301,18 +302,22 @@ def test_all_three_table_ref_fields_land_on_one_composite(builder):
     )
 
 
-def test_wildcard_source_resolves_to_an_empty_binder_scope(builder):
-    """A wildcard names a set, so no single table's columns are in scope.
+def test_a_wildcard_source_is_expanded_by_the_binder_not_by_the_walk():
+    """A wildcard names a *set* of tables, and matching them is not the
+    walk's job.
 
-    The result is ``None`` rather than an empty schema: nothing determined
-    what this arm emits, and ``columns == {}`` would say it emits none. A
-    schema entry literally called ``T*`` is a coincidence, not a match, so
-    the wildcard resolving against it would be the wrong kind of answer.
+    ``_source_entry`` still refuses to put any columns in scope for one --
+    picking a member of the set would be a guess, and the walk has no
+    pattern matcher. What answers instead is Microsoft: give the dict the
+    real tables and ``union T*`` expands against them and closes, so the
+    schema is right while the *provenance* of a column read through the
+    wildcard is honestly ``None`` -- it came from a set, not from a table.
     """
-    ir = builder.build("union T*")
-    SchemaAttacher({"T*": {"a": "long"}}).enrich(ir)
-    inner = ir.main_pipeline.operators[0].pipelines[0]
-    assert inner.result_schema is None
+    ir = parse("union T* | where a > 1").to_ir(
+        attach_schema={"T1": {"a": "long"}, "T2": {"a": "long"}},
+    )
+    assert ir.main_pipeline.result_schema.columns == {"a": "long"}
+    assert {c.table for c in find_all(ir, ColumnRef)} == {None}
 
 
 def test_qualified_table_still_looks_up_on_the_bare_name(builder):
@@ -320,11 +325,15 @@ def test_qualified_table_still_looks_up_on_the_bare_name(builder):
 
     ``database('d').T`` resolves against ``schemas["T"]`` -- there is no
     ``"d.T"`` key convention, and inventing one would silently stop
-    resolving every qualified query.
+    resolving every qualified query. What that buys is provenance and the
+    type on the node: the *schema* is Microsoft's to state and it leaves a
+    qualified source it does not know open, on either entry point.
     """
     ir = builder.build("database('d').T | project a")
     SchemaAttacher({"T": {"a": "long"}}).enrich(ir)
-    assert ir.main_pipeline.result_schema.columns == {"a": "long"}
+    assert ir.main_pipeline.result_schema is None
+    (ref,) = find_all(ir, ColumnRef)
+    assert (ref.table, ref.result_type.value) == ("T", "long")
 
 
 # --- UnknownSource ----------------------------------------------------------

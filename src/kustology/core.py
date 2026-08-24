@@ -295,6 +295,22 @@ class KustoQuery:
             # mutate ``self._code``, so the receiver stays syntactic (or
             # keeps its parse-time binding) regardless.
             code = self._code.Analyze(build_global_state(schemas))
+            # ``build_global_state`` accepts three value shapes -- a
+            # ``{col: type}`` dict, a Kusto schema string ``"(col:type)"``,
+            # and a bare ``[col]`` list -- and ``parse(schema=...)``
+            # documents all three, so this entry point has to take them too.
+            # ``SchemaAttacher`` takes only the first: it reads
+            # ``schemas[table][column]``, so a string value crashed on
+            # ``ValueError``/``AttributeError`` and a list value resolved by
+            # coincidence.
+            #
+            # Reading the shapes back off the ``GlobalState`` normalizes all
+            # three at once, and reuses the parsing Microsoft already did
+            # rather than re-implementing it. It is read from ``code.Globals``
+            # rather than from the state object so the attacher is guaranteed
+            # to see exactly what the *builder* bound against, which is the
+            # same source ``attach_schema=True`` already normalizes from.
+            schemas = _extract_schemas_from_global_state(code.Globals)
         elif bound_by_caller:
             code = self._code
         else:

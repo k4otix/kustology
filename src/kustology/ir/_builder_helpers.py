@@ -665,9 +665,10 @@ COLUMN_NAMED_AGGREGATES = frozenset({
 })
 
 # Aggregates that can emit more than one column, so no single
-# ``Assignment.name`` describes their output and the scope rule has to
-# expand them. Their names are also the ones a ``ResultType``-per-aggregate
-# alignment cannot be read for -- the counts do not line up.
+# ``Assignment.name`` describes their output. That is why their names are
+# the ones a ``ResultType``-per-aggregate alignment cannot be read for --
+# the counts do not line up, so the builder falls back to deriving the name
+# from the call rather than taking Microsoft's.
 MULTI_OUTPUT_AGGREGATES = COLUMN_NAMED_AGGREGATES | {
     "percentiles", "percentilesw",
 }
