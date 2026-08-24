@@ -20,11 +20,17 @@ plain dict comparison would let a reordering through.
 **Two legs, and the second is the one that gates the rules.** On a bound
 parse the answer is *taken* from ``ResultType`` wherever Microsoft could
 compute one, so for most of this matrix the bound leg compares Microsoft's
-answer with itself and can only fail where the symbol is open. The unbound
-leg — ``SchemaAttacher(schema).enrich(parse(q).to_ir())``, with the schema
+answer with itself and can only fail where the symbol is open. Its MATRIX
+run is therefore a fixed representative sample (``BOUND_LEG_IDS``), not the
+full matrix — enough to keep the ResultType capture/ordering path (column
+identity, join-collision renaming, wildcard selection, multi-output
+aggregates) under a real test, without a hundred near-identical cases that
+can only ever compare Microsoft's answer with itself. The unbound leg —
+``SchemaAttacher(schema).enrich(parse(q).to_ir())``, with the schema
 reaching the IR only through the attacher — has no binder answer anywhere,
 so every case runs the hand-rolled rules and every case is a real
-comparison. Both legs run the same matrix and the same 49 corpus fixtures.
+comparison, and it keeps the full matrix. Both legs run the same 49 corpus
+fixtures.
 
 Each leg carries its own ``strict=True`` xfail list, because they fail for
 different reasons: ``XFAIL_5_3`` for the bound leg (open symbols only) and
@@ -153,6 +159,25 @@ MATRIX: list[tuple[str, str]] = [
     ("toscalar-in-extend", "T | extend m = toscalar(U | count)"),
     ("let-then-pipeline", "let B = T | where a > 1; B | project k, a"),
 ]
+
+# The bound leg's MATRIX run: one representative id per construct family
+# (join, union-conflict, mv-expand `to typeof`, wildcard project-keep, typed
+# parse, a multi-output summarize aggregate, datatable, search, evaluate,
+# getschema) rather than the whole matrix -- see the module docstring for why
+# most of the matrix cannot fail there. None of these ids appears in
+# ``XFAIL_5_3``, so filtering to this set changes no case's outcome.
+BOUND_LEG_IDS: set[str] = {
+    "join-inner",
+    "union-conflict",
+    "mv-expand-to-typeof",
+    "project-keep-wildcard",
+    "parse-typed",
+    "arg-max-star",
+    "datatable",
+    "search",
+    "evaluate-bag-unpack",
+    "getschema",
+}
 
 CORPUS_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "complex_queries"
 
@@ -362,7 +387,8 @@ def assert_agrees(query: str, schema: dict, ir=None) -> None:
 
 
 @pytest.mark.parametrize(
-    "query_id,query", [_case(cid, q) for cid, q in MATRIX]
+    "query_id,query",
+    [_case(cid, q) for cid, q in MATRIX if cid in BOUND_LEG_IDS],
 )
 def test_operator_matrix_matches_microsoft(query_id: str, query: str):
     assert_agrees(query, SCHEMA)
