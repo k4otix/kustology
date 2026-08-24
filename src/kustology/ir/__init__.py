@@ -22,7 +22,7 @@ from ._guard import _require_pydantic
 
 _require_pydantic()
 
-# Order matters: types/spans → expr → query → builder/binder.
+# Order matters: types/spans → expr → query → builder.
 from .types import KustoType
 from .spans import Span
 from .expr import (
@@ -53,7 +53,6 @@ from .query import (
     UnknownOp, UnknownSource,
 )
 from .builder import IRBuilder
-from .binder import SchemaAttacher
 from .llm_view import to_llm_dict
 from .transforms import (
     SEMANTIC_HASH_SCHEME,
@@ -65,8 +64,8 @@ from .analyzers import AnalyzerFn, Finding, Severity
 __all__ = [
     # Schema-version
     "IR_SCHEMA_VERSION", "SEMANTIC_HASH_SCHEME",
-    # Builder / binder / serialization views
-    "IRBuilder", "SchemaAttacher", "to_llm_dict",
+    # Builder / serialization views
+    "IRBuilder", "to_llm_dict",
     # Traversal & transforms
     "walk", "find_all",
     "merge_consecutive_filters", "normalize_expressions", "compute_semantic_hash",

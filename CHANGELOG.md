@@ -1020,8 +1020,17 @@ release is in `docs/superpowers/reports/`.
 - **Removed the undocumented `BinderEnricher` alias.** `kustology.ir`
   exported both `SchemaAttacher` and a bare `BinderEnricher =
   SchemaAttacher` assignment, with nothing in the README, the docs, the
-  examples or the tests to say which was the real name. Import
-  `SchemaAttacher`; the class and its behaviour are unchanged.
+  examples or the tests to say which was the real name. The class and its
+  behaviour are unchanged; its surviving export was then removed too — next
+  entry.
+- **Removed `SchemaAttacher` from the public surface.** 0.1.0 exported it,
+  but the export was never needed: the only production caller is
+  `KustoQuery.to_ir()`, which always holds the parse it enriches, so
+  nothing ever needed to construct the class on a detached IR — and no
+  README passage or example ever showed doing so. A search of public code
+  found no external use of the name (or of the library). Use
+  `parse(query, schema=...)` or `to_ir(attach_schema=...)`; the class stays
+  in `kustology.ir.binder` as an internal.
 - **Stored IR JSON from 0.1.0 no longer loads** under `extra="forbid"`, in
   both directions: it lacks the new required fields and may carry removed
   ones. Rebuild from source rather than migrating.

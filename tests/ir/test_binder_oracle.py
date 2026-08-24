@@ -45,7 +45,7 @@ import pytest
 
 from kustology import parse
 from kustology.bridge import KustoCode
-from kustology.ir import SchemaAttacher
+from kustology.ir.binder import SchemaAttacher
 from kustology.utils.analysis import build_global_state
 
 # A deliberately collision-heavy schema: ``L`` and ``R`` share ``k`` and

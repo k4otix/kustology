@@ -11,7 +11,8 @@ list — without it, downstream column refs see the wrong view.
 
 import pytest
 
-from kustology.ir import IRBuilder, SchemaAttacher
+from kustology.ir import IRBuilder
+from kustology.ir.binder import SchemaAttacher
 
 
 @pytest.fixture(scope="module")

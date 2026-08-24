@@ -15,7 +15,8 @@ from __future__ import annotations
 
 import pytest
 
-from kustology.ir import IRBuilder, QueryIR, SchemaAttacher
+from kustology.ir import IRBuilder, QueryIR
+from kustology.ir.binder import SchemaAttacher
 from kustology.utils.analysis import build_global_state
 
 QUERIES = [

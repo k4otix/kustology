@@ -41,12 +41,12 @@ from kustology.ir import (
     IRBuilder,
     Operator,
     QueryIR,
-    SchemaAttacher,
     UnknownExpr,
     UnknownOp,
     UnknownSource,
     walk,
 )
+from kustology.ir.binder import SchemaAttacher
 from kustology.utils.analysis import build_global_state
 
 CATEGORIES = [

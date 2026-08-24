@@ -25,12 +25,12 @@ from kustology.ir import (
     IRBuilder,
     LiteralExpr,
     Pipeline,
-    SchemaAttacher,
     TableRef,
     UnknownSource,
     find_all,
     to_llm_dict,
 )
+from kustology.ir.binder import SchemaAttacher
 
 
 @pytest.fixture

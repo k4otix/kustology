@@ -213,7 +213,30 @@ def test_the_binder_enricher_alias_is_gone():
     assert "BinderEnricher" not in ir_pkg.__all__
     assert not hasattr(binder, "BinderEnricher")
 
-    # The control: the name that survives still resolves to the same class,
-    # so this is a deletion of a duplicate and not of the functionality.
-    assert ir_pkg.SchemaAttacher is binder.SchemaAttacher
-    assert "SchemaAttacher" in ir_pkg.__all__
+    # The control: the class that did the work survives, so this was the
+    # deletion of a duplicate name and not of the functionality. It lives in
+    # `kustology.ir.binder` as an internal — its own export was removed
+    # separately (see test_schema_attacher_is_not_exported).
+    assert inspect.isclass(binder.SchemaAttacher)
+
+
+def test_schema_attacher_is_not_exported():
+    """``SchemaAttacher`` left the public surface in 0.2.0: exported by
+    0.1.0, but the export was never needed.
+
+    The only production caller is ``KustoQuery.to_ir`` (``core.py``), which
+    always holds the ``KustoCode`` it parsed — so nothing in the library
+    ever enriches a detached IR through the public name. No README snippet,
+    example or document ever showed constructing the class directly, and a
+    search of public code found no external use. The supported paths are
+    ``parse(query, schema=...)`` and ``KustoQuery.to_ir(attach_schema=...)``;
+    the class stays in ``kustology.ir.binder`` as an internal, where
+    ``to_ir`` and the binder tests reach it.
+    """
+    from kustology.ir import binder
+
+    assert not hasattr(ir_pkg, "SchemaAttacher")
+    assert "SchemaAttacher" not in ir_pkg.__all__
+
+    # The mechanism survives internally: `KustoQuery.to_ir` still runs it.
+    assert inspect.isclass(binder.SchemaAttacher)

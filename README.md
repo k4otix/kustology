@@ -51,8 +51,9 @@ A bound parse resolves columns *through* a tabular alias: in
 type from `SecurityEvent` and the provenance `Base`. An alias can shadow a
 real table name (`let SecurityEvent = SecurityEvent | …` is a common Sentinel
 idiom), so `ColumnRef.table` is a scope name rather than a guaranteed table
-name — read `result_type` rather than re-deriving types from it, and see
-`SchemaAttacher.enrich`'s docstring for telling the two apart when you must.
+name — read `result_type` rather than re-deriving types from it, and see the
+`enrich` docstring in `kustology/ir/binder.py` for telling the two apart when
+you must.
 
 **Known limitation.** Which of `LetRef` / `LetValueRef` / `ColumnRef` a name
 becomes is decided from the `let` statements alone, without the binder, so
@@ -111,7 +112,7 @@ code wants to work with.
 | **Returns** | `KustoQuery` wrapping Microsoft's syntax tree | `QueryIR` — Pydantic models |
 | **Traversal** | Microsoft AST (`node.Kind` dispatch via `pythonnet`) | Typed pipeline (`isinstance` dispatch) |
 | **Serialization** | `KustoQuery.to_dict()` / `to_json()` | `model_dump_json` (round-trips through `QueryIR.model_validate_json`) + `to_llm_dict` (LLM-tailored, lossy) |
-| **Schema binding** | `parse(query, schema=...)` runs Microsoft's binder — semantic diagnostics plus symbol resolution accessible via AST methods | `SchemaAttacher` materializes those binding results into Pydantic fields and computes `Pipeline.result_schema`. Without a schema, `to_ir()` still types literals and built-in calls — see below |
+| **Schema binding** | `parse(query, schema=...)` runs Microsoft's binder — semantic diagnostics plus symbol resolution accessible via AST methods | `to_ir()`'s attach pass materializes those binding results into Pydantic fields and computes `Pipeline.result_schema`. Without a schema, `to_ir()` still types literals and built-in calls — see below |
 | **Best for** | Formatting / linting, IDE integrations, extracting referenced tables/columns/functions/operators, surgical table renames | Lineage and anti-pattern analyzers, JSON-serializable query representations for APIs and UIs, schema-aware column flow, LLM-fed query graphs |
 
 ### Three names for the same operator
@@ -335,7 +336,7 @@ from kustology.ir import FilterOp
 
 schema = {"StormEvents": {"DeathsDirect": "int", "State": "string", "EventType": "string"}}
 ir = parse("StormEvents | where DeathsDirect > 0", schema=schema).to_ir()
-# A bound parse auto-runs SchemaAttacher: column types and table provenance
+# A bound parse auto-runs the schema attach pass: column types and provenance
 # are populated. Pass attach_schema=False to skip, or attach_schema={...} to
 # override the schema used for the attach pass.
 

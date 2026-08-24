@@ -19,7 +19,6 @@ from kustology.ir import (
     LiteralExpr,
     Pipeline,
     QueryIR,
-    SchemaAttacher,
     Span,
     TableRef,
     TakeOp,
@@ -28,6 +27,7 @@ from kustology.ir import (
     UnknownSource,
     find_all,
 )
+from kustology.ir.binder import SchemaAttacher
 
 
 @pytest.fixture

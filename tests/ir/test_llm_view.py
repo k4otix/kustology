@@ -20,9 +20,9 @@ import pytest
 from kustology.ir import (
     IRBuilder,
     QueryIR,
-    SchemaAttacher,
     to_llm_dict,
 )
+from kustology.ir.binder import SchemaAttacher
 from kustology.utils.analysis import build_global_state
 
 STORM_EVENTS_SCHEMA = {
