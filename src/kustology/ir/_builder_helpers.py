@@ -639,39 +639,34 @@ def literal_value_and_ticks(node: Any) -> tuple[Any, int | None]:
 
 # --- aggregate output naming -------------------------------------------------
 #
-# KQL's auto-name for an unnamed aggregate is ``<function>_<first column>``
-# for most of the library, and the exceptions below are not derivable from
-# the function's name -- they have to be listed.
+# Most of an unnamed aggregate's auto-name comes from Microsoft's own
+# ``ResultNameKind``/``ResultNamePrefix`` symbol properties now (see
+# ``IRBuilder._function_result_name`` in builder.py, a port of
+# ``GetFunctionResultName``). The two sets below are the cases that symbol
+# read cannot answer -- not because the port is incomplete, but because
+# Microsoft's own ``ResultNameKind`` is ``None`` for these functions too, and
+# still have to be listed by hand.
 
-# ``make_set(s)`` is ``set_s``, not ``make_set_s``, and the ``_if`` variants
-# share the plain form's prefix.
-AGGREGATE_NAME_PREFIXES: dict[str, str] = {
-    "make_set": "set",
-    "make_set_if": "set",
-    "make_list": "list",
-    "make_list_if": "list",
-    "make_bag": "bag",
-    "make_bag_if": "bag",
-    "percentile": "percentile",
-    "percentilew": "percentile",
-    "percentiles": "percentile",
-    "percentilesw": "percentile",
-}
-
-# Aggregates that emit their argument columns under the columns' own names:
-# ``take_any(a)`` is ``a`` and ``arg_max(t, *)`` starts with ``t``.
+# Aggregates that emit their argument columns under the columns' own names,
+# optionally with the symbol's own ``ResultNamePrefix`` in front: ``take_any(a)``
+# is ``a``, ``arg_max(t, *)`` starts with ``t``, and ``argmin(s)`` -- the
+# same multi-output shape as ``arg_min``, but with ``ResultNamePrefix="min"``
+# -- is ``min_s``. These are the multi-output (``TupleSymbol``) aggregates:
+# Microsoft's own ``ResultNameKind`` is ``None`` for every one of them,
+# because no single symbol property can name a star's worth of columns
+# (``AddFunctionTupleResultColumn`` names each member instead), so which
+# column the ``Assignment`` borrows its name from stays a hand-written rule
+# -- the prefix, when there is one, is still read off the symbol.
 COLUMN_NAMED_AGGREGATES = frozenset({
-    "arg_max", "arg_min", "take_any", "take_anyif",
+    "arg_max", "arg_min", "argmin", "argmax", "take_any", "take_anyif",
 })
 
-# Aggregates that can emit more than one column, so no single
-# ``Assignment.name`` describes their output. That is why their names are
-# the ones a ``ResultType``-per-aggregate alignment cannot be read for --
-# the counts do not line up, so the builder falls back to deriving the name
-# from the call rather than taking Microsoft's.
-MULTI_OUTPUT_AGGREGATES = COLUMN_NAMED_AGGREGATES | {
-    "percentiles", "percentilesw",
-}
+# The whole percentile family's ``ResultNameKind`` is ``None`` too: the
+# value suffix (``percentile(a, 95)`` -> ``percentile_a_95``) is not a symbol
+# property Microsoft exposes, so its spelling stays hand-written as well.
+PERCENTILE_AGGREGATES = frozenset({
+    "percentile", "percentilew", "percentiles", "percentilesw",
+})
 
 
 def percentile_token(value: Any) -> str:
@@ -684,16 +679,3 @@ def percentile_token(value: Any) -> str:
     text = str(value)
     text = text.removesuffix(".0")
     return text.replace(".", "_")
-
-
-def aggregate_function_name(expr: Any) -> str:
-    """Lower-cased function name of an aggregate expression, ``""`` if none.
-
-    Discriminates on ``kind`` rather than by ``isinstance``: a bare
-    ``ColumnRef`` also has a ``name``, and reading that as a function name
-    would classify a column called ``arg_max`` as the aggregate.
-    """
-    if getattr(expr, "kind", None) != "func_call":
-        return ""
-    name = getattr(expr, "name", None)
-    return name.lower() if isinstance(name, str) else ""

@@ -28,11 +28,9 @@ from ..services import _UNKNOWN_NAME_CODES
 from ..utils.walker import iter_elements as _iter_elements
 from ..utils.walker import node_text as _node_text
 from ._builder_helpers import (
-    AGGREGATE_NAME_PREFIXES,
     ARITHMETIC_OPS,
     COLUMN_NAMED_AGGREGATES,
-    MULTI_OUTPUT_AGGREGATES,
-    aggregate_function_name,
+    PERCENTILE_AGGREGATES,
     extract_hints,
     extract_named_param,
     extract_qualified_table_ref,
@@ -933,7 +931,6 @@ class IRBuilder:
             if hasattr(n, "ByClause") and n.ByClause and hasattr(n.ByClause, "Expressions"):
                 for el in _iter_elements(n.ByClause.Expressions):
                     by.append(self._visit_expr_as_assignment(el, mode="grouping"))
-            self._take_binder_aggregate_names(n, aggs, by)
             return SummarizeOp(aggregations=aggs, by=by, span=span)
 
         if kind == "JoinOperator":
@@ -1976,9 +1973,10 @@ class IRBuilder:
         # Bare column refs carry their own name; leave them unwrapped.
         if kind == "NameReference":
             return self._visit_expr(node)
-        # In grouping context, function-wrapped column refs project the inner
-        # column name (KQL's auto-naming for ``by bin(C, ...)`` -> ``C``).
-        # Wrap as Assignment so downstream consumers see the canonical name.
+        # In grouping context, an unnamed function call's canonical name is
+        # Microsoft's own auto-name (``by bin(TG, 1h)`` -> ``TG``, but
+        # ``by gettype(x)`` -> ``type_x`` -- not every wrapper projects the
+        # inner column). Wrap as Assignment so downstream consumers see it.
         if mode == "grouping":
             auto = self._auto_name(node, "grouping")
             if auto is not None:
@@ -1992,13 +1990,39 @@ class IRBuilder:
     def _auto_name(self, node: Any, mode: str) -> str | None:
         """Canonical KQL output column name for an unnamed expression.
 
-        Mirrors the binder's auto-naming so ``Assignment.name`` matches what
-        ``ResultType.Columns`` reports. Returns None when no canonical name is
-        derivable (caller falls back to source text).
+        The primary source is Microsoft's own naming:
+        :meth:`_function_result_name` ports ``GetFunctionResultName``
+        (Binder_Projection.cs:612-700), reading ``ResultNameKind``/
+        ``ResultNamePrefix`` off the call's resolved ``FunctionSymbol``. That
+        read is per-expression and does not depend on the table's schema
+        (aggregates live in ``GlobalState.Default``), so the name is the same
+        whether or not the query is bound -- which matters because
+        ``Assignment.name`` is hashed. Falls back to today's
+        ``f"{fname}_{first_col}"`` / ``f"{fname}_"`` form only when
+        :meth:`_function_result_name` itself returns None -- no symbol, its
+        ``ResultNameKind`` is ``None`` (an unresolved function, or a raw
+        ``KustoCode.Parse`` tree with no binder pass at all), an
+        argument-count precondition fails, or the kind has neither a prefix
+        nor an argument name to offer. A prefix alone is not one of those
+        cases: ``make_list(x + y)`` -> ``list_``, not the generic fallback's
+        ``make_list_``, because C# still has a prefix to concatenate even
+        when the argument itself isn't nameable. Returns None only when no
+        canonical name is derivable at all (caller falls back to source
+        text).
 
-        - ``mode="aggregation"``: ``count()`` -> ``count_``, ``avg(X)`` -> ``avg_X``.
-        - ``mode="grouping"``: any function wrapping a column ref projects the
-          inner column name (``bin(TG, 1h)`` -> ``TG``, ``tostring(D)`` -> ``D``).
+        - ``mode="aggregation"``: ``count()`` -> ``count_``, ``avg(X)`` ->
+          ``avg_X``, ``make_set(s)`` -> ``set_s``, ``buildschema(d)`` ->
+          ``schema_d``. ``COLUMN_NAMED_AGGREGATES`` and the percentile
+          literal-token case take precedence over the symbol read: they
+          answer the multi-output (``arg_max(t, *)`` -> ``t``) and
+          percentile-value (``percentile(a, 95)`` -> ``percentile_a_95``)
+          cases Microsoft's own per-column name cannot, because
+          ``Assignment.name`` names one call, not the columns a star or a
+          value list expands into.
+        - ``mode="grouping"``: the symbol read applies here too
+          (``bin(TG, 1h)`` -> ``TG``, ``gettype(x)`` -> ``type_x``), falling
+          back to the first column argument's own name when the symbol does
+          not resolve to one.
         """
         kind = str(type(node).__name__)
         if kind == "ParenthesizedExpression" and hasattr(node, "Expression"):
@@ -2031,7 +2055,12 @@ class IRBuilder:
 
         first_col: str | None = None
         first_literal: Any = None
+        arg_count = 0
         if hasattr(node, "ArgumentList") and node.ArgumentList:
+            try:
+                arg_count = node.ArgumentList.Expressions.Count
+            except AttributeError:  # pragma: no cover
+                arg_count = 0
             try:
                 for el in _iter_elements(node.ArgumentList.Expressions):
                     inner_kind = str(type(el).__name__)
@@ -2046,83 +2075,116 @@ class IRBuilder:
                 logger.debug("argument-list walk fell through: %s", e)
 
         if mode == "grouping":
-            return first_col
+            auto = self._function_result_name(node, first_col, arg_count)
+            return auto if auto is not None else first_col
+
         # aggregation mode
         if not fname:
             return None
         lowered = fname.lower()
         if lowered in COLUMN_NAMED_AGGREGATES:
             # ``take_any(a)`` is ``a`` and ``arg_max(t, *)`` starts with ``t``
-            # -- the column keeps its own name. With no named column
-            # (``take_any(*)``) there is nothing to borrow and the generic
-            # form stands. What the star actually expands to is Microsoft's
-            # answer, carried on ``Operator.result_schema``; this names only
-            # the ``Assignment``.
+            # -- the column keeps its own name, prefixed with the symbol's
+            # own ``ResultNamePrefix`` when it has one (``argmin(s)`` ->
+            # ``min_s``: the same multi-output shape as ``arg_min``, just a
+            # different prefix -- ``AddFunctionTupleResultColumn`` applies it
+            # per member column, not ``GetFunctionResultName``). With no
+            # named column (``take_any(*)``) there is nothing to borrow and
+            # the generic form stands. What the star actually expands to is
+            # Microsoft's answer, carried on ``Operator.result_schema``; this
+            # names only the ``Assignment``.
+            prefix = getattr(ref_sym, "ResultNamePrefix", None) if ref_sym is not None else None
+            if prefix is not None:
+                return f"{prefix}_{first_col}" if first_col else f"{prefix}_"
             return first_col or f"{lowered}_"
-        prefix = AGGREGATE_NAME_PREFIXES.get(lowered)
-        if prefix and first_col:
-            if prefix == "percentile" and first_literal is not None:
-                return f"percentile_{first_col}_{percentile_token(first_literal)}"
-            return f"{prefix}_{first_col}"
+        if lowered in PERCENTILE_AGGREGATES and first_col and first_literal is not None:
+            # ``ResultNameKind`` is ``None`` for the whole percentile family
+            # -- the value suffix is not a symbol property, so it stays a
+            # hand-written spelling.
+            return f"percentile_{first_col}_{percentile_token(first_literal)}"
+        auto = self._function_result_name(node, first_col, arg_count)
+        if auto is not None:
+            return auto
         return f"{fname}_{first_col}" if first_col else f"{fname}_"
 
-    def _take_binder_aggregate_names(
-        self, node: Any, aggs: list[Any], by: list[Any],
-    ) -> None:
-        """Rename each aggregate to the column Microsoft says it produces.
+    def _function_result_name(
+        self, node: Any, first_arg_name: str | None, arg_count: int,
+    ) -> str | None:
+        """Port of Microsoft's ``GetFunctionResultName`` (Binder_Projection.cs:612-700).
 
-        The hand-written rules above mirror KQL's auto-naming, and mirrors
-        drift: every aggregate the library does not know about falls back to
-        ``<function>_<column>``, which is right for most of them and silently
-        wrong for the rest. ``SummarizeOperator.ResultType`` is the binder's
-        own answer, and it carries the right names even for an *open* symbol
-        -- a query over a table nobody described still reports ``set_s`` for
-        ``make_set(s)``, because the name does not depend on the schema.
-        Types do, which is why only the name is taken here.
+        Reads ``ResultNameKind``/``ResultNamePrefix`` off the call's resolved
+        ``FunctionSymbol`` and applies the same 8-kind switch Microsoft's
+        binder uses to name a function-call column -- folding
+        ``NameAndFirstArgument``/``NameAndOnlyArgument`` into their
+        ``Prefix...`` counterparts with ``prefix = symbol.Name``, exactly as
+        the C# does. ``first_arg_name`` is the caller's first-argument column
+        name (``None`` when the first argument is not a bare column
+        reference -- the paren-unwrap/``NameReference`` walk this builder
+        already does, standing in for ``GetExpressionResultName``);
+        ``arg_count`` is the argument list's length.
 
-        The columns are ``by`` keys followed by aggregates, so aggregate *i*
-        is column ``len(by) + i`` -- but only while every aggregate produces
-        exactly one column. A multi-output aggregate breaks the alignment,
-        and it breaks it *differently* depending on how much the binder
-        knows: bound, ``arg_max(t, *)`` reports six columns; open, it reports
-        one. ``Assignment.name`` is hashed, so a name read off a misaligned
-        list makes the same query hash two ways depending on whether a schema
-        was passed.
+        An unnamed first argument does not by itself fall through: C#
+        string-concatenates a null name (``prefix + "_" + name``), so
+        ``PrefixAndFirstArgument``/``PrefixAndOnlyArgument`` with a prefix
+        still returns ``f"{prefix}_"`` when the argument isn't a bare column
+        reference (``make_list(x + y)`` -> ``list_``, matching Microsoft
+        exactly). What this port cannot recover is a *non-bare* argument
+        name Microsoft itself derives from richer expression shapes
+        (``GetExpressionResultName``'s ``PathExpression``/``ElementExpression``
+        cases) -- e.g. ``treepath(D[0])`` is Microsoft's ``tree_D_0`` but
+        this port's ``tree_`` (no ``NameReference`` to read), since only the
+        bare-column walk is ported here, by design (see the module's callers).
 
-        **The gate against that has to be syntactic.** An earlier version
-        compared ``Columns.Count`` against ``len(by) + len(aggs)`` and skipped
-        the multi-output functions individually, and that is not enough,
-        because the *count* is exactly the thing that varies:
-        ``summarize arg_max(t, *), buildschema(d)`` lines up in the unbound
-        state (1 + 1 == 2) and not in the bound one (6 + 1 != 2), so the
-        early return fired in one state only and ``buildschema`` -- which the
-        skip-list does not cover, because it is single-output -- was named
-        ``schema_d`` bound and ``buildschema_d`` unbound. Six of the common
-        aggregates behave that way beside an ``arg_max(t, *)``.
-
-        So the decision is made from the function names alone, before the
-        count is looked at: if any aggregate in this ``summarize`` is
-        multi-output, none of them takes a binder name and every one is
-        named from the call text instead, in both bind states. That is what
-        the code did before this read existed. Aligning the aggregates *before* the first
-        multi-output one -- whose indices genuinely do not move -- would
-        recover a little of it, and is deliberately not done: it reintroduces
-        a length-sensitive read (``len(by) + i`` must exist in both states)
-        for the sake of an argument order nobody writes.
+        Returns None when the symbol is unresolved, its ``ResultNameKind`` is
+        ``None``, a kind's own argument-count precondition fails
+        (``OnlyArgument``/``PrefixAndOnlyArgument`` with other than one
+        argument), or the kind has no prefix and no argument name to report
+        at all -- the caller falls back to ``<fn>_<col>``.
+        ``FirstArgumentValueIfColumn`` also always falls through: it
+        requires a row-scope lookup of a string-literal argument, and no
+        aggregate in Microsoft's library uses it today.
         """
-        if any(
-            aggregate_function_name(getattr(agg, "expr", None))
-            in MULTI_OUTPUT_AGGREGATES
-            for agg in aggs
-        ):
-            return
-        result_type = getattr(node, "ResultType", None)
-        columns = getattr(result_type, "Columns", None) if result_type else None
-        if columns is None or columns.Count != len(by) + len(aggs):
-            return
-        for i, agg in enumerate(aggs):
-            if isinstance(agg, Assignment):
-                agg.name = str(columns[len(by) + i].Name)
+        sym = getattr(node, "ReferencedSymbol", None)
+        if sym is None:
+            return None
+        try:
+            result_kind = str(sym.ResultNameKind)
+            prefix = sym.ResultNamePrefix
+        except AttributeError:
+            return None
+        if result_kind == "None":
+            return None
+        if result_kind == "NameAndFirstArgument":
+            prefix = sym.Name
+            result_kind = "PrefixAndFirstArgument"
+        elif result_kind == "NameAndOnlyArgument":
+            prefix = sym.Name
+            result_kind = "PrefixAndOnlyArgument"
+
+        if result_kind == "PrefixAndFirstArgument":
+            if arg_count > 0:
+                if first_arg_name is None:
+                    # Binder_Projection.cs:634-641: ``prefix + "_" + name``
+                    # with a null ``name`` is still ``prefix + "_"`` in C#
+                    # (null-concat is ""); ``make_list(x + y)`` -> ``list_``.
+                    return f"{prefix}_" if prefix is not None else None
+                return f"{prefix}_{first_arg_name}" if prefix is not None else first_arg_name
+            return f"{prefix}_" if prefix is not None else None
+        if result_kind == "PrefixAndOnlyArgument":
+            if arg_count == 1:
+                if first_arg_name is None:
+                    return f"{prefix}_" if prefix is not None else None
+                return f"{prefix}_{first_arg_name}" if prefix is not None else first_arg_name
+            return None
+        if result_kind == "FirstArgument":
+            return first_arg_name if arg_count > 0 else None
+        if result_kind == "PrefixOnly":
+            return prefix if prefix is not None else None
+        if result_kind == "OnlyArgument":
+            return first_arg_name if arg_count == 1 else None
+        # FirstArgumentValueIfColumn, and any future kind: fall back rather
+        # than guess.
+        return None
 
     def _visit_list(self, node: Any) -> list[AnyExpr]:
         exprs: list[AnyExpr] = []

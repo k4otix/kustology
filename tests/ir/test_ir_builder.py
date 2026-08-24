@@ -1974,3 +1974,134 @@ def test_the_schemaless_docstrings_do_not_claim_built_ins_fail_to_resolve():
         doc = " ".join(raw.split())
         assert "built-in" in doc, doc
         assert "database" in doc.lower(), doc
+
+
+# Aggregate auto-names from Microsoft's symbol properties ---------------------
+
+
+def test_buildschema_takes_microsofts_name_even_beside_a_multi_output_aggregate():
+    """`arg_max(t, *)` reports six columns bound and one unbound, so the old
+    operator-level alignment read had to give up on the whole summarize --
+    and `buildschema(d)` fell to the hand rule's `buildschema_d` where the
+    engine says `schema_d` (Aggregates.cs declares PrefixAndFirstArgument +
+    prefix "schema"). Reading ResultNameKind off the resolved symbol is
+    per-expression, so the alignment problem does not exist."""
+    ir = parse("T | summarize arg_max(t, *), buildschema(d)").to_ir()
+    names = [a.name for a in ir.main_pipeline.operators[0].aggregations]
+    assert names == ["t", "schema_d"]
+
+
+def test_auto_names_are_bind_invariant_under_the_symbol_read():
+    """``binary_all_and`` is ``ResultNameKind.FirstArgument`` (probed against
+    the DLL directly, and cross-checked against ``SummarizeOperator.
+    ResultType.Columns``): the name is the first argument's own name, ``a``
+    -- not ``binary_all_and_a``, which is what the old hand-written fallback
+    produced. Aggregates live in ``GlobalState.Default``, so the symbol
+    (and therefore its ``ResultNameKind``) resolves identically whether or
+    not the table has a schema.
+    """
+    q = "T | summarize buildschema(d), make_set(s), binary_all_and(a)"
+    bound = parse(q, schema={"T": {"d": "dynamic", "s": "string", "a": "long"}}).to_ir()
+    unbound = parse(q).to_ir()
+    pick = lambda ir: [a.name for a in ir.main_pipeline.operators[0].aggregations]
+    assert pick(bound) == pick(unbound) == ["schema_d", "set_s", "a"]
+
+
+def test_aggregate_auto_names_match_microsofts_for_the_whole_library():
+    """For every aggregate in Microsoft's own library that our probe can call
+    with a single *bare-column* argument, the Assignment.name we derive must
+    equal the column name Microsoft reports for `T | summarize fn(col)`. This
+    pins the ResultNameKind port against the DLL, upgrade after upgrade --
+    but the bare-column probe cannot see a divergence that only shows up for
+    a *non*-bare first argument (an expression, not a `NameReference`); see
+    `test_auto_names_hold_a_prefix_even_without_a_bare_column_argument` for
+    that battery."""
+    from Kusto.Language import Aggregates
+
+    from kustology.bridge import KustoCode
+    from kustology.utils.analysis import build_global_state
+
+    schema = {"T": {
+        "s": "string", "n": "long", "r": "real", "b": "bool",
+        "t": "datetime", "ts": "timespan", "d": "dynamic", "g": "guid",
+    }}
+    by_type = {"string": "s", "long": "n", "int": "n", "real": "r",
+               "decimal": "r", "bool": "b", "datetime": "t",
+               "timespan": "ts", "dynamic": "d", "guid": "g"}
+    state = build_global_state(schema)
+    mismatches, probed = [], 0
+    for sym in Aggregates.All:
+        name = str(sym.Name)
+        probe = None
+        for arg in by_type.values():
+            q = f"T | summarize {name}({arg})"
+            code = KustoCode.ParseAndAnalyze(q, state)
+            result_type = getattr(code, "ResultType", None)
+            columns = getattr(result_type, "Columns", None)
+            if columns is None or columns.Count != 1 or any(
+                str(d.Severity) == "Error" for d in code.GetDiagnostics()
+            ):
+                continue
+            probe = (q, str(columns[0].Name))
+            break
+        if probe is None:
+            continue  # needs literals/multiple args; the MATRIX covers the famous ones
+        probed += 1
+        q, expected = probe
+        ir = parse(q, schema=schema).to_ir()
+        (agg,) = ir.main_pipeline.operators[0].aggregations
+        if agg.name != expected:
+            mismatches.append((name, agg.name, expected))
+    assert mismatches == []
+    # The loop must not silently degrade into probing nothing. Measured
+    # against the vendored DLL: 35 of ``Aggregates.All`` are callable with a
+    # single column argument (the ``*if``/``covariance*``/percentile-family
+    # ones need a second literal or predicate column and are skipped) --
+    # this is a coverage floor a few below that, not the measured count.
+    assert probed >= 30, f"only {probed} aggregates were probe-able"
+
+
+def test_auto_names_hold_a_prefix_even_without_a_bare_column_argument():
+    """C# string-concatenates a null argument name (``prefix + "_" + name``,
+    Binder_Projection.cs:634-641/652-663), so ``PrefixAndFirstArgument``/
+    ``PrefixAndOnlyArgument`` still produce ``f"{prefix}_"`` when the first
+    argument isn't a bare column reference -- Microsoft-confirmed via direct
+    ``ResultType.Columns`` probes:
+
+    - ``make_list(x + y)`` -> ``list_`` (not the generic fallback's
+      ``make_list_``)
+    - ``make_set(x + y)`` -> ``set_``
+    - ``buildschema(pack('a', x))`` -> ``schema_``
+
+    Each is bind-stable: aggregates resolve their symbol (and so their
+    ``ResultNameKind``/``ResultNamePrefix``) the same way whether or not the
+    table has a schema.
+
+    ``by treepath(D[0])`` is a *known, accepted* residual divergence:
+    Microsoft's ``GetExpressionResultName`` derives ``D_0`` from the
+    ``ElementExpression`` (``PathExpression``/``ElementExpression`` cases,
+    Binder_Projection.cs:706-), giving ``tree_D_0`` -- this port only reads a
+    bare ``NameReference`` for the argument name, so it produces ``tree_``
+    instead. Pinned here rather than silently drifting; widening the
+    argument-name walk to cover element/path expressions is out of scope for
+    this port.
+    """
+    schema = {"T": {"x": "long", "y": "long", "D": "dynamic"}}
+    cases = [
+        ("T | summarize make_list(x + y)", "list_"),
+        ("T | summarize make_set(x + y)", "set_"),
+        ("T | summarize buildschema(pack('a', x))", "schema_"),
+    ]
+    for q, expected in cases:
+        bound = parse(q, schema=schema).to_ir()
+        unbound = parse(q).to_ir()
+        pick = lambda ir: [a.name for a in ir.main_pipeline.operators[0].aggregations]
+        assert pick(bound) == pick(unbound) == [expected], q
+
+    q = "T | summarize count() by treepath(D[0])"
+    bound = parse(q, schema=schema).to_ir()
+    unbound = parse(q).to_ir()
+    pick_by = lambda ir: [b.name for b in ir.main_pipeline.operators[0].by]
+    # Bind-stable, and pinned at today's (known-divergent) answer: "tree_",
+    # not Microsoft's "tree_D_0" -- see the docstring above.
+    assert pick_by(bound) == pick_by(unbound) == ["tree_"]
