@@ -41,9 +41,9 @@ runtime is not on a standard path.
    history — several branches can land between releases and still share one
    increment.
 7. Open a PR. CI runs the same checks on Linux across Python 3.10–3.13,
-   with macOS and Windows sanity cells on 3.12. `.github/workflows/test.yml`
-   defines nine jobs; `test`, `test-ir` and `lint` are the loop above, and
-   the other **six** have no local counterpart:
+   with macOS and Windows sanity cells on 3.12. `test`, `test-ir` and `lint`
+   in `.github/workflows/test.yml` are the loop above; every other job in
+   that workflow has no local counterpart and is listed below:
 
    | Job | What it adds |
    | --- | --- |

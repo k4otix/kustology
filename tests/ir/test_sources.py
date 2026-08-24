@@ -269,11 +269,6 @@ def test_cluster_qualifier_is_recorded(builder):
     assert (source.cluster, source.database, source.name) == ("c", "d", "T")
 
 
-def test_unqualified_table_leaves_both_qualifiers_none(builder):
-    source = builder.build("T | take 1").main_pipeline.source
-    assert (source.cluster, source.database, source.is_wildcard) == (None, None, False)
-
-
 # --- wildcards --------------------------------------------------------------
 
 

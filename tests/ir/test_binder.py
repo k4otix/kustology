@@ -1540,7 +1540,7 @@ def test_an_unparseable_query_gets_no_result_schema():
     assert ir.main_pipeline.result_schema is None
 
 
-def test_the_unknown_column_type_sentinel_is_documented_on_tabular_schema():
+def test_both_schema_producers_agree_the_unknown_column_sentinel_is_unknown():
     """``TabularSchema.columns`` maps a column to a type *string*, and the
     string for "no type known" is ``"unknown"`` — not
     ``KustoType.UNRESOLVED.value``, which is ``"unresolved"``.
@@ -1555,13 +1555,12 @@ def test_the_unknown_column_type_sentinel_is_documented_on_tabular_schema():
     falling back on an expression it could not type must agree, and they
     agree on Microsoft's word rather than on the IR enum's.
 
-    Both producers are exercised here so the docstring is pinned to
-    behaviour and not to itself.
+    Both producers are exercised directly; the sentinel is pinned to
+    behaviour, not to a docstring's wording.
     """
     import warnings
 
     from kustology import parse
-    from kustology.ir.query import TabularSchema
     from kustology.ir.types import KustoType
 
     assert KustoType.UNRESOLVED.value == "unresolved"
@@ -1578,7 +1577,3 @@ def test_the_unknown_column_type_sentinel_is_documented_on_tabular_schema():
     ir = IRBuilder().build("T | extend n = some_fn(x) | project n")
     SchemaAttacher({"T": {"x": "long"}}).enrich(ir)
     assert ir.main_pipeline.result_schema.columns == {"n": "unknown"}
-
-    doc = TabularSchema.__doc__
-    assert '"unknown"' in doc, doc
-    assert "KustoType.UNRESOLVED" in doc, doc

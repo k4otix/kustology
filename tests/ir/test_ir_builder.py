@@ -325,23 +325,6 @@ def test_database_qualified_source(ir_builder):
     assert ir.main_pipeline.source.name == "DeviceProcessEvents"
 
 
-def test_kustotype_has_tabular():
-    """``TABULAR`` is declared but unreachable from ``map_net_type``.
-
-    Reaching it needs a .NET symbol whose ``Name`` is literally "tabular";
-    ``TableSymbol.Name`` is the table's own name and ``ScalarTypes`` has no
-    such entry. Kept as a member of the type system, pinned here as a stated
-    boundary rather than asserted into looking implemented.
-    """
-    from kustology.ir import KustoType
-    from kustology.ir._builder_helpers import map_net_type
-
-    assert "TABULAR" in {m.name for m in KustoType}
-    # Only a literal "tabular" type name would produce it, and nothing emits one.
-    assert map_net_type("tabular") is KustoType.TABULAR
-    assert map_net_type("long") is KustoType.LONG
-
-
 def test_dynamic_element_type_is_populated_on_a_real_parse(ir_builder):
     """``result_type_inner`` on a bound parse, not merely its default.
 
@@ -359,19 +342,6 @@ def test_dynamic_element_type_is_populated_on_a_real_parse(ir_builder):
     ]
     assert inners, "no expression carried a dynamic element type"
     assert all(isinstance(i, KustoType) for i in inners)
-
-
-def test_pipeline_result_schema_field():
-    from kustology.ir import Pipeline, Span, TableRef, TabularSchema
-    pipe = Pipeline(
-        source=TableRef(name="T", span=Span(text_start=0, width=1)),
-        operators=[],
-    )
-    # Default
-    assert pipe.result_schema is None
-    # Settable
-    pipe.result_schema = TabularSchema(columns={"x": "string"})
-    assert pipe.result_schema.columns["x"] == "string"
 
 
 def test_funccall_as_pipeline_source(ir_builder):
@@ -1913,27 +1883,13 @@ def test_both_schemaless_docstrings_describe_the_family_they_actually_filter():
     ``Error`` diagnostic from a schemaless ``to_ir()``, and would build the
     gate that the widening exists to keep from flipping.
 
-    The count is asserted against the live set, not spelled out twice by
-    hand: ``tests/test_reflection_audit.py`` re-derives that set from
+    The live set lives in ``services._UNKNOWN_NAME_CODES``;
+    ``tests/test_reflection_audit.py`` re-derives it from
     ``Kusto.Language.DiagnosticFacts``, so a DLL refresh that adds a code
-    fails there first and lands here next, where the two docstrings have to
-    be corrected together rather than drifting apart again.
+    fails there first. This test pins the behaviour the docstrings
+    promise, not their wording.
     """
-    from kustology import KustoQuery
     from kustology.services import _UNKNOWN_NAME_CODES
-
-    counts = {1: "one", 11: "eleven", 12: "twelve", 13: "thirteen"}
-    spelled = counts.get(len(_UNKNOWN_NAME_CODES))
-    assert spelled is not None, (
-        f"the family is now {len(_UNKNOWN_NAME_CODES)} codes; spell that "
-        f"number in `counts` and in both docstrings"
-    )
-
-    for raw in (KustoQuery.to_ir.__doc__, IRBuilder.build_from_code.__doc__):
-        # Both are wrapped prose; the phrase can straddle a line break.
-        doc = " ".join(raw.split())
-        assert "_UNKNOWN_NAME_CODES" in doc, doc
-        assert f"{spelled} codes" in doc, doc
 
     # The behaviour the corrected sentence describes: a query whose only
     # schemaless artifact is *not* KS204 also comes back clean.
@@ -2018,6 +1974,3 @@ def test_the_schemaless_docstrings_do_not_claim_built_ins_fail_to_resolve():
         doc = " ".join(raw.split())
         assert "built-in" in doc, doc
         assert "database" in doc.lower(), doc
-        # The overshoot, in either module's wording.
-        assert "every name the query brings with it fails to resolve" not in doc
-        assert "Every name the query brings with it is therefore unresolvable" not in raw

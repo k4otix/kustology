@@ -67,7 +67,7 @@ exists". Before adding a probe of either style, confirm the member exists:
 [m for m in dir(node) if m[:1].isupper()]
 ```
 
-### Never write an exhaustive claim about a Microsoft data structure
+### Never write an exhaustive count or enumeration you do not derive — Microsoft's structures, this repo's own files, prose, docstrings, and comments alike. Derive it, or describe what qualifies and let the reader count.
 `IRBuilder.build`'s docstring said `GlobalState.Default` describes "built-in
 functions, aggregates and plug-ins, **and nothing else**". Four rewrites later
 it was still wrong, most recently by omitting `Operators`, of which the

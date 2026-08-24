@@ -307,8 +307,6 @@ def test_schema_like_alias_no_longer_advertises_a_bare_string():
     assert set(typing.get_args(SchemaLike)) == {dict, types.NoneType}
     assert typing.get_type_hints(parse_service)["schema"] == SchemaLike
     assert typing.get_type_hints(validate)["schema"] == SchemaLike
-    for fn in (parse_service, validate):
-        assert "schema string" not in fn.__doc__, fn.__name__
 
 
 def test_scalar_type_names_resolve_regardless_of_case():
@@ -453,7 +451,7 @@ def test_a_valid_schema_string_warns_about_nothing():
     assert state.Database.Tables[0].Columns.Count == 3
 
 
-def test_dict_keys_are_raw_column_names_and_the_docstring_says_so():
+def test_dict_keys_are_raw_column_names_not_bracket_quoted_query_syntax():
     """`{"T": {"['my col']": "string"}}` builds a column whose *name* is the
     ten characters `['my col']`, brackets and quotes included.
 
@@ -461,8 +459,7 @@ def test_dict_keys_are_raw_column_names_and_the_docstring_says_so():
     is not a bare identifier; a schema dict key is not query text, it is the
     name itself, so quoting it produces a column nothing can reference. The
     behaviour is Microsoft's `ColumnSymbol(name, type)` and is correct — a
-    column really can be named anything — so this is a documentation fix,
-    and the docstring is what the test pins alongside it.
+    column really can be named anything.
     """
     from kustology.utils.schema_state import (
         build_global_state,
@@ -473,9 +470,6 @@ def test_dict_keys_are_raw_column_names_and_the_docstring_says_so():
     assert extract_schemas_from_global_state(state) == {
         "T": {"['my col']": "string", "my col": "long"},
     }
-
-    doc = build_global_state.__doc__.lower()
-    assert "raw name" in doc and "bracket-quoting" in doc, doc
 
 
 def test_an_empty_schema_string_raises_value_error_not_a_clr_exception():

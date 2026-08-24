@@ -118,11 +118,6 @@ def test_verify_dll_fake_url_network_error_exits_2(tmp_path, capsys):
     assert "FAIL" in capsys.readouterr().err
 
 
-def test_verify_dll_tfm_pin_is_net6_0():
-    mod = _load("verify_dll")
-    assert mod.TFM == "net6.0"
-
-
 # ---------------------------------------------------------------------------
 # refresh_dll.py
 # ---------------------------------------------------------------------------

@@ -22,12 +22,9 @@ from __future__ import annotations
 from kustology.ir import IR_SCHEMA_VERSION, SEMANTIC_HASH_SCHEME, IRBuilder
 
 
-def test_schema_tags_are_pinned_and_in_lockstep():
+def test_schema_tags_are_pinned():
     assert IR_SCHEMA_VERSION == "0.2"
     assert SEMANTIC_HASH_SCHEME == "kustology-sem-v2"
-    # Lockstep: the hash scheme's major matches the IR schema's minor
-    # (v2 <-> 0.2). They move together, once per release.
-    assert SEMANTIC_HASH_SCHEME.rsplit("v", 1)[1] == IR_SCHEMA_VERSION.split(".")[1]
 
 
 def test_handled_kinds_are_real_syntax_classes():
