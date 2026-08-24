@@ -73,22 +73,13 @@ def test_a_single_statement_query_has_no_additional_pipelines():
 
 
 # -- the hash responds ----------------------------------------------------
-
-def test_a_second_statement_changes_the_hash():
-    """The collision the field exists to close."""
-    assert _hash("T | count; U | count") != _hash("T | count")
-
-
-def test_queries_differing_only_in_the_second_statement_hash_apart():
-    """Proof that ``additional_pipelines`` reaches the payload.
-
-    Both queries have byte-identical first statements, so a payload dict that
-    names only ``let_bindings`` and ``main_pipeline`` produces one digest for
-    the pair however faithfully the builder filled the new field.
-    """
-    assert _hash("T | count; U | count") != _hash("T | count; V | count")
-    assert _hash("T | count; U | take 1") != _hash("T | count; U | take 2")
-
+#
+# test_a_second_statement_changes_the_hash and
+# test_queries_differing_only_in_the_second_statement_hash_apart moved to
+# tests/ir/test_hash_battery.py as second-statement-dropped,
+# second-statement-table and second-statement-operator-param (the last one
+# added by this task -- the battery previously only proved the later
+# pipeline's source name reaches the digest, not its operators).
 
 def test_statement_order_is_hashed():
     """``T | count; U | take 1`` and ``U | take 1; T | count`` are different

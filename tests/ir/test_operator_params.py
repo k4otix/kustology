@@ -49,14 +49,6 @@ def test_typed_capture_renders_name_and_type():
     assert op.patterns[1].canonical_form == "b:long"
 
 
-def test_typed_capture_differs_from_untyped_capture():
-    assert _hash("T | parse a with 'x' b:long") != _hash("T | parse a with 'x' b")
-
-
-def test_capture_type_reaches_the_hash():
-    assert _hash("T | parse a with 'x' b:long") != _hash("T | parse a with 'x' b:string")
-
-
 def test_typed_capture_is_reachable_through_find_all():
     from kustology.ir import find_all
     ir = _ir("T | parse a with 'x' b:long")
@@ -119,21 +111,9 @@ def test_mv_expand_reads_the_legacy_bagexpansion_spelling():
     assert op.expand_kind == "array"
 
 
-def test_the_two_mv_expand_kind_spellings_agree():
-    """``bagexpansion=bag`` is the deprecated spelling of ``kind=bag`` --
-    the DLL gives both the same value set -- so they must hash alike."""
-    assert _hash("T | mv-expand bagexpansion=bag a") == _hash(
-        "T | mv-expand kind=bag a"
-    )
-
-
 def test_bare_mv_expand_records_kqls_effective_kind():
     (op,) = _ops("T | mv-expand a")
     assert op.expand_kind == "bag"
-
-
-def test_bare_mv_expand_hashes_as_its_effective_kind():
-    assert _hash("T | mv-expand a") == _hash("T | mv-expand kind=bag a")
 
 
 def test_mv_expand_kind_value_set_is_the_dlls():
@@ -162,12 +142,6 @@ def test_mv_expand_modifiers_all_reach_the_hash():
         "kinded": _hash("T | mv-expand kind=array a"),
     }
     assert len(set(variants.values())) == len(variants), variants
-
-
-def test_mv_expand_element_type_is_a_value_not_a_flag():
-    assert _hash("T | mv-expand a to typeof(string)") != _hash(
-        "T | mv-expand a to typeof(long)"
-    )
 
 
 def test_mv_expand_still_binds_the_expanded_column():
@@ -205,24 +179,6 @@ def test_bare_parse_where_records_kqls_effective_kind():
     assert op.parse_kind == "simple"
 
 
-def test_parse_kind_reaches_the_hash():
-    assert _hash("T | parse kind=regex a with 'x' b") != _hash(
-        "T | parse kind=simple a with 'x' b"
-    )
-
-
-def test_bare_parse_hashes_as_its_effective_kind():
-    assert _hash("T | parse a with 'x' b") == _hash(
-        "T | parse kind=simple a with 'x' b"
-    )
-
-
-def test_parse_flags_reach_the_hash():
-    assert _hash("T | parse kind=regex flags='i' a with 'x' b") != _hash(
-        "T | parse kind=regex a with 'x' b"
-    )
-
-
 # -- union ----------------------------------------------------------------
 
 _UNION_ALL = "union kind=inner withsource=S isfuzzy=true T, U"
@@ -246,22 +202,6 @@ def test_union_records_isfuzzy_as_a_bool():
 def test_bare_union_records_kqls_effective_kind():
     (op,) = _ops("union T, U")
     assert op.union_kind == "outer"
-
-
-def test_union_kind_reaches_the_hash():
-    assert _hash("union kind=inner T, U") != _hash("union kind=outer T, U")
-
-
-def test_bare_union_hashes_as_its_effective_kind():
-    assert _hash("union T, U") == _hash("union kind=outer T, U")
-
-
-def test_union_withsource_reaches_the_hash():
-    assert _hash("union withsource=S T, U") != _hash("union T, U")
-
-
-def test_union_isfuzzy_reaches_the_hash():
-    assert _hash("union isfuzzy=true T, U") != _hash("union T, U")
 
 
 # -- search ---------------------------------------------------------------
@@ -292,14 +232,6 @@ def test_a_let_bound_name_in_search_in_is_a_let_ref():
 def test_search_qualified_table_keeps_its_database():
     (op,) = _ops("search in (database('d').T) 'x'")
     assert (op.tables[0].name, op.tables[0].database) == ("T", "d")
-
-
-def test_search_kind_reaches_the_hash():
-    assert _hash("search kind=case_sensitive 'x'") != _hash("search 'x'")
-
-
-def test_searched_table_reaches_the_hash():
-    assert _hash("search in (A) 'x'") != _hash("search in (B) 'x'")
 
 
 def test_search_scope_reaches_the_hash():
@@ -345,28 +277,6 @@ def test_a_let_bound_name_in_find_in_is_a_let_ref():
     assert isinstance(op.tables[0], LetRef)
 
 
-def test_find_project_reaches_the_hash():
-    assert _hash("find in (T) where a == 1 project a") != _hash(
-        "find in (T) where a == 1"
-    )
-
-
-def test_find_withsource_reaches_the_hash():
-    assert _hash("find withsource=S in (T) where a == 1") != _hash(
-        "find in (T) where a == 1"
-    )
-
-
-def test_a_comment_before_a_found_table_does_not_reach_the_hash():
-    """The routed finding: ``FindOp.tables`` was read with a bare
-    ``ToString()``, which is ``IncludeTrivia.All`` and prepends the node's
-    leading trivia -- so the table name was recorded as ``"// note\\n T"``
-    and a comment split the digest."""
-    assert _hash("find in (// note\n T) where x == 1") == _hash(
-        "find in (T) where x == 1"
-    )
-
-
 # -- make-series ----------------------------------------------------------
 
 _MS_RANGE = (
@@ -402,20 +312,10 @@ def test_from_to_step_clause_still_populates_the_same_fields():
     assert op.step.value == "01:00:00"
 
 
-def test_make_series_default_reaches_the_hash():
-    assert _hash("T | make-series n=count() default=0 on t step 1h") != _hash(
-        "T | make-series n=count() default=1 on t step 1h"
-    )
-
-
 def test_make_series_default_differs_from_no_default():
     assert _hash("T | make-series n=count() default=0 on t step 1h") != _hash(
         "T | make-series n=count() on t step 1h"
     )
-
-
-def test_make_series_range_bounds_reach_the_hash():
-    assert _hash(_MS_RANGE) != _hash(_MS_RANGE.replace("2024-01-02", "2024-01-03"))
 
 
 # -- render ---------------------------------------------------------------
@@ -435,23 +335,9 @@ def test_render_records_the_legacy_parameter_spelling():
     assert op.properties == {"kind": "stacked"}
 
 
-def test_the_two_render_property_spellings_agree():
-    """``render c kind=stacked`` and ``render c with (kind=stacked)`` are the
-    same query written two ways, so they must hash alike."""
-    assert _hash("T | render columnchart kind=stacked") == _hash(
-        "T | render columnchart with (kind=stacked)"
-    )
-
-
 def test_render_properties_reach_the_hash():
     assert _hash('T | render timechart with (title="a")') != _hash(
         "T | render timechart"
-    )
-
-
-def test_render_property_values_reach_the_hash():
-    assert _hash('T | render timechart with (title="a")') != _hash(
-        'T | render timechart with (title="b")'
     )
 
 
@@ -460,16 +346,6 @@ def test_render_property_values_reach_the_hash():
 def test_bare_join_records_kqls_effective_kind():
     (op,) = _ops("T | join U on k")
     assert op.join_kind == "innerunique"
-
-
-def test_bare_join_hashes_as_innerunique():
-    assert _hash("T | join U on k") == _hash("T | join kind=innerunique U on k")
-
-
-def test_innerunique_and_inner_are_different_joins():
-    """The pair that makes the default worth recording: KQL's default
-    deduplicates the left side and ``kind=inner`` does not."""
-    assert _hash("T | join U on k") != _hash("T | join kind=inner U on k")
 
 
 def test_written_join_kind_is_kept():
@@ -482,27 +358,11 @@ def test_bare_lookup_records_kqls_effective_kind():
     assert op.lookup_kind == "leftouter"
 
 
-def test_bare_lookup_hashes_as_leftouter():
-    assert _hash("T | lookup U on k") == _hash("T | lookup kind=leftouter U on k")
-
-
-def test_lookup_kind_reaches_the_hash():
-    assert _hash("T | lookup U on k") != _hash("T | lookup kind=inner U on k")
-
-
 # -- hints (volatile: recorded, never hashed) -----------------------------
 
 def test_join_hint_is_recorded():
     (op,) = _ops("T | join hint.strategy=shuffle (U) on k")
     assert op.hints == {"hint.strategy": "shuffle"}
-
-
-def test_join_hint_does_not_reach_the_hash():
-    """A hint is an execution instruction, not a change of meaning: the two
-    queries return the same rows and must share a digest."""
-    assert _hash("T | join hint.strategy=shuffle (U) on k") == _hash(
-        "T | join (U) on k"
-    )
 
 
 def test_summarize_hint_is_recorded_and_not_hashed():
@@ -562,10 +422,6 @@ def test_bare_search_records_kqls_effective_kind():
     """
     (op,) = _ops("search 'x'")
     assert op.search_kind == "default"
-
-
-def test_bare_search_hashes_as_its_effective_kind():
-    assert _hash("search 'x'") == _hash("search kind=default 'x'")
 
 
 def test_search_default_and_case_sensitive_hash_apart():

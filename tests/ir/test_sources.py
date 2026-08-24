@@ -64,13 +64,6 @@ def test_datatable_source_records_columns_and_reshaped_rows(builder):
     assert all(isinstance(c, LiteralExpr) for row in source.rows for c in row)
 
 
-def test_two_different_datatables_hash_differently(builder):
-    """The collapse this closes: same shape, different data, one hash."""
-    a = builder.build("datatable(a:long)[1] | take 1").semantic_hash
-    b = builder.build("datatable(a:long)[2] | take 1").semantic_hash
-    assert a != b
-
-
 def test_datatable_columns_seed_the_binder_scope(builder):
     """A ``datatable`` declares its own schema, so the binder needs no help."""
     ir = builder.build("datatable(a:long, b:string)[1,'x'] | project a")
@@ -96,18 +89,6 @@ def test_datatable_in_expression_position_is_modeled():
     (dt,) = find_all(ir, DataTableExpr)
     assert dt.columns == [("x", "string")]
     assert [cell.value for row in dt.rows for cell in row] == ["v", "w"]
-
-
-def test_expression_datatable_values_reach_the_hash():
-    a = parse('T | where a in ((datatable(x:string)["v"]))').to_ir().semantic_hash
-    b = parse('T | where a in ((datatable(x:string)["w"]))').to_ir().semantic_hash
-    assert a != b
-
-
-def test_expression_datatable_whitespace_does_not_split():
-    a = parse('T | where a in ((datatable(x:string)["v"]))').to_ir().semantic_hash
-    b = parse('T | where a in ((datatable(x:string) [ "v" ]))').to_ir().semantic_hash
-    assert a == b
 
 
 # --- externaldata -----------------------------------------------------------
@@ -160,18 +141,6 @@ def test_externaldata_keeps_every_with_clause_property(builder):
     # library reads, and it is matched case-insensitively where the dict
     # keeps whatever casing the query wrote.
     assert source.format == "csv"
-
-
-def test_externaldata_ignore_first_record_reaches_the_hash(builder):
-    """The collision the property dict closes, stated as the pair."""
-    with_header = builder.build(
-        'externaldata(a:string)["https://x"] '
-        'with (format="csv", ignoreFirstRecord=true) | count'
-    )
-    without = builder.build(
-        'externaldata(a:string)["https://x"] with (format="csv") | count'
-    )
-    assert with_header.semantic_hash != without.semantic_hash
 
 
 def test_externaldata_in_expression_position_keeps_properties_too(builder):
@@ -300,13 +269,6 @@ def test_cluster_qualifier_is_recorded(builder):
     assert (source.cluster, source.database, source.name) == ("c", "d", "T")
 
 
-def test_different_databases_hash_differently(builder):
-    """``database('d1').T`` and ``database('d2').T`` read different tables."""
-    a = builder.build("database('d1').T | take 1").semantic_hash
-    b = builder.build("database('d2').T | take 1").semantic_hash
-    assert a != b
-
-
 def test_unqualified_table_leaves_both_qualifiers_none(builder):
     source = builder.build("T | take 1").main_pipeline.source
     assert (source.cluster, source.database, source.is_wildcard) == (None, None, False)
@@ -342,13 +304,6 @@ def test_all_three_table_ref_fields_land_on_one_composite(builder):
     assert (inner.cluster, inner.database, inner.name, inner.is_wildcard) == (
         "c", "d", "T*", True,
     )
-
-
-def test_wildcard_and_literal_table_hash_differently(builder):
-    """``T*`` matches a set of tables; a table *named* ``T*`` is one table."""
-    a = builder.build("union T*").semantic_hash
-    b = builder.build("union ['T*']").semantic_hash
-    assert a != b
 
 
 def test_wildcard_source_resolves_to_an_empty_binder_scope(builder):

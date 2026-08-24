@@ -149,11 +149,7 @@ One thing is deliberately absent:
 import pytest
 
 from kustology import parse
-from kustology.ir import (
-    FilterOp,
-    compute_semantic_hash,
-    walk,
-)
+from kustology.ir import walk
 
 
 def _hash(query: str) -> str:
@@ -188,7 +184,6 @@ MUST_DIFFER = [
     ("has-any-vs-has-all", 'T | where x has_any ("a","b")', 'T | where x has_all ("a","b")'),
     ("between-polarity", "T | where a between (1 .. 5)", "T | where a !between (1 .. 5)"),
     ("between-bounds-order", "T | where a between (1 .. 5)", "T | where a between (5 .. 1)"),
-    ("isnotnull-vs-isnotempty", "T | where isnotnull(x)", "T | where isnotempty(x)"),
     ("and-or-grouping", "T | where a and (b or c)", "T | where (a and b) or c"),
     ("not-scope", "T | where not(a and b)", "T | where not(a) and b"),
     ("arith-precedence", "T | project x = (a + b) * c", "T | project x = a + b * c"),
@@ -252,9 +247,22 @@ MUST_DIFFER = [
     # which decide the order rows come back in -- reached neither the IR nor
     # the digest. Three operators share that wrapper.
     ("sort-direction", "T | sort by a asc", "T | sort by a desc"),
+    # `sort by a` defaults to `desc` (pinned below in MUST_EQUAL), so it must
+    # still hash apart from the explicit `asc` spelling -- the default and
+    # the opposite direction are not the same query.
+    ("sort-bare-vs-asc", "T | sort by a", "T | sort by a asc"),
     ("sort-nulls-placement", "T | sort by a nulls first", "T | sort by a nulls last"),
+    # The nulls clause is a real field with a `None` default of its own,
+    # distinct from the direction default above -- writing `nulls first` must
+    # reach the digest relative to not writing a nulls clause at all, not
+    # merely relative to `nulls last`.
+    ("sort-nulls-clause-vs-absent", "T | sort by a desc nulls first", "T | sort by a desc"),
     ("order-by-direction", "T | order by a asc", "T | order by a desc"),
     ("top-by-direction", "T | top 5 by a asc", "T | top 5 by a desc"),
+    # The `top` analogue of `sort-bare-vs-asc` above: `top 5 by a` defaults to
+    # `desc` too (`top-bare-is-desc` in MUST_EQUAL), so it must hash apart
+    # from the explicit `asc` spelling for the same reason.
+    ("top-bare-vs-asc", "T | top 5 by a", "T | top 5 by a asc"),
     ("sort-per-key-direction", "T | sort by a asc, b desc", "T | sort by a desc, b asc"),
     # 4.1 fix round -- ReorderKey. `project-reorder` is the third consumer of
     # the same wrapper; with the unwrap gone it fell through to an
@@ -327,7 +335,10 @@ MUST_DIFFER = [
     # operator returns and none of them was read.
     ("mv-expand-to-typeof", "T | mv-expand a to typeof(string)", "T | mv-expand a to typeof(long)"),
     ("mv-expand-limit", "T | mv-expand a limit 10", "T | mv-expand a limit 20"),
-    ("mv-expand-with-itemindex", "T | mv-expand with_itemindex=i a", "T | mv-expand a"),
+    # `with_itemindex=i` vs bare is retired here: `test_operator_params.py`'s
+    # `test_mv_expand_modifiers_all_reach_the_hash` pairwise-checks it (as
+    # "indexed" vs "bare") among five mutually-distinct variants, which is a
+    # stronger guarantee than this single pair.
     ("mv-expand-kind", "T | mv-expand kind=array a", "T | mv-expand kind=bag a"),
     ("parse-kind", "T | parse x with 'a' y", "T | parse kind=regex x with 'a' y"),
     ("parse-flags", "T | parse kind=regex flags='i' x with 'a' y", "T | parse kind=regex x with 'a' y"),
@@ -387,6 +398,10 @@ MUST_DIFFER = [
     # hashed exactly as `T | count`.
     ("second-statement-table", "T | count; U | count", "T | count; V | count"),
     ("second-statement-dropped", "T | count; U | count", "T | count"),
+    # `second-statement-table` only proves the later pipeline's *source name*
+    # reaches the digest; this pins that a change inside its operators does
+    # too, so `additional_pipelines` is not hashed by source name alone.
+    ("second-statement-operator-param", "T | count; U | take 1", "T | count; U | take 2"),
     # 4.6 -- LetValueRef. A let-bound scalar lowered to a ColumnRef, so a
     # query-local constant and a real column of that name were one node.
     #
@@ -414,8 +429,10 @@ MUST_DIFFER = [
     # 4.8 -- small fidelity gaps.
     ("compound-string-literal", "T | where x == 'a' 'b'", "T | where x == 'a'"),
     ("project-reorder-star", "T | project-reorder *, a", "T | project-reorder b, a"),
-    ("isnull-vs-isempty", "T | where isnull(x)", "T | where isempty(x)"),
-    ("isnull-vs-isnotnull", "T | where isnull(x)", "T | where isnotnull(x)"),
+    # `isnull`/`isempty`/`isnotnull`/`isnotempty` pairwise-distinctness lives
+    # in `test_ir_builder.py::test_all_four_null_tests_hash_distinctly`,
+    # which is pairwise-complete over all four and therefore a strict
+    # superset of a `isnull-vs-isempty`/`isnull-vs-isnotnull` pair here.
     # `datatable(...)` in expression position used to fall through to
     # UnknownExpr, hashing the raw source text -- which happened to
     # discriminate on value too, so this pair passed for the wrong reason
@@ -498,6 +515,12 @@ MUST_EQUAL = [
     # exercise the missing-node path -- would both stay green if the
     # keyword-absent path stopped defaulting.
     ("sort-nulls-only-is-desc", "T | sort by a nulls first", "T | sort by a desc nulls first"),
+    # `order by` is a bare alias of `sort by` -- not merely a query that
+    # defaults the same way, but the identical operator under a different
+    # keyword -- so the two spellings must be one digest, direction bare or
+    # written.
+    ("order-by-is-sort-by", "T | order by a", "T | sort by a"),
+    ("order-by-desc-is-sort-by-desc", "T | order by a asc", "T | sort by a asc"),
     ("mv-expand-bare-is-bag", "T | mv-expand a", "T | mv-expand kind=bag a"),
     ("parse-bare-is-simple", "T | parse x with 'a' y", "T | parse kind=simple x with 'a' y"),
     # `parse-where` is a separate operator class carrying its own copy of the
@@ -650,36 +673,6 @@ def test_known_collision(case_id, query_a, query_b):
         f"CHANGELOG 0.2.0's survivor list, and the matching KNOWN_MERGES row "
         f"in examples/semantic_hash_demo.py, which is failing beside this."
     )
-
-
-
-
-def test_double_negation_collapses_at_a_bare_expr_root():
-    """``double-negation`` above exercises ``not(not(X))`` nested inside a
-    ``FilterOp`` -- the replacement ``normalize_in_place`` returns gets
-    installed via the parent's ``setattr`` in ``_normalize_node``. There is
-    a second path with no parent to install into: ``compute_semantic_hash``
-    accepts a bare ``Expr`` subtree directly (its own docstring says so),
-    and at the root of *that* call there is no field to rebind through --
-    ``normalize_expressions`` has to hand back the replacement itself, which
-    is exactly the "Rebind" case its docstring calls out. This is the "incl.
-    root" half of the ``double-negation`` category: a bug in the rebind-at-
-    root path would not show up nested inside a query, only when a caller
-    hashes an extracted predicate on its own.
-    """
-
-    def predicate(query: str):
-        ir = parse(query).to_ir()
-        (op,) = (o for o in ir.main_pipeline.operators if isinstance(o, FilterOp))
-        return op.predicate
-
-    nested = predicate("T | where not(not(a == 1))")
-    plain = predicate("T | where a == 1")
-    assert compute_semantic_hash(nested) == compute_semantic_hash(plain), (
-        "not(not(a == 1)) and a == 1 must hash alike even when compute_semantic_hash "
-        "is called on the bare predicate Expr rather than the whole query"
-    )
-
 
 def test_no_battery_pair_discriminates_on_an_unmodelled_blob():
     """Every query in this file must build IR that carries no source text.

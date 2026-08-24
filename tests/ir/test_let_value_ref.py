@@ -127,12 +127,12 @@ def test_only_bindings_declared_earlier_produce_a_let_value_ref():
 
 
 # -- the hash --------------------------------------------------------------
-
-def test_renaming_a_scalar_let_binding_no_longer_changes_the_hash():
-    """The collision the node exists to restore. ``n`` and ``m`` are local
-    labels; the queries are the same query."""
-    assert _hash("let n = 5; T | where a > n") == _hash("let m = 5; T | where a > m")
-
+#
+# The rename pair itself (``let n ...`` vs ``let m ...``) is asserted in
+# test_hash_battery.py (let-scalar-name-rename) and, with the structural
+# checks that go with it, in test_ir_builder.py's
+# test_renaming_a_scalar_let_binding_does_not_change_the_hash -- the copy
+# that used to live here was a third, redundant assertion of the same pair.
 
 def test_a_let_scalar_and_a_real_column_still_hash_apart():
     """The near-miss the ``ColumnRef`` lowering was protecting: reading a

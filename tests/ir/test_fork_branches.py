@@ -120,11 +120,12 @@ def test_nested_fork_branches_are_built_too():
 # -- hashing --------------------------------------------------------------
 
 MUST_DIFFER = [
-    ("branch-bodies", "T | fork (take 1) (count)", "T | fork (count) (where x == 1)"),
-    ("branch-order", "T | fork (take 1) (count)", "T | fork (count) (take 1)"),
+    # branch-bodies, branch-order and branch-name-value are dropped: they
+    # duplicate test_hash_battery.py's fork-branch-bodies, fork-branch-order
+    # and fork-branch-name pairs exactly. The rest stay -- none is in the
+    # battery.
     ("branch-count", "T | fork (take 1) (count)", "T | fork (take 1)"),
     ("branch-name-present", "T | fork a=(count) (take 1)", "T | fork (count) (take 1)"),
-    ("branch-name-value", "T | fork a=(count) (take 1)", "T | fork b=(count) (take 1)"),
     ("inside-a-branch", "T | fork (where x == 1) (count)", "T | fork (where x == 2) (count)"),
 ]
 

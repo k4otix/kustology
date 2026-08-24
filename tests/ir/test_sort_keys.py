@@ -161,37 +161,15 @@ def test_binder_reaches_expressions_through_the_new_wrapper():
 
 
 # -- hashing --------------------------------------------------------------
-
-MUST_DIFFER = [
-    ("sort-asc-vs-desc", "T | sort by x asc", "T | sort by x desc"),
-    ("sort-bare-vs-asc", "T | sort by x", "T | sort by x asc"),
-    ("sort-nulls-first-vs-default", "T | sort by x desc nulls first", "T | sort by x desc"),
-    ("sort-nulls-first-vs-last", "T | sort by x desc nulls first", "T | sort by x desc nulls last"),
-    ("sort-per-key-direction", "T | sort by x asc, y desc", "T | sort by x desc, y asc"),
-    ("top-asc-vs-desc", "T | top 5 by x asc", "T | top 5 by x desc"),
-    ("top-bare-vs-asc", "T | top 5 by x", "T | top 5 by x asc"),
-]
-
-MUST_EQUAL = [
-    ("bare-sort-is-desc", "T | sort by x", "T | sort by x desc"),
-    ("bare-top-is-desc", "T | top 5 by x", "T | top 5 by x desc"),
-    ("order-by-is-sort-by", "T | order by x", "T | sort by x"),
-    ("order-by-desc-is-sort-by-desc", "T | order by x asc", "T | sort by x asc"),
-]
-
-
-@pytest.mark.parametrize("case_id, a, b", MUST_DIFFER, ids=[c[0] for c in MUST_DIFFER])
-def test_ordering_modifiers_hash_apart(case_id, a, b):
-    assert _hash(a) != _hash(b), (
-        f"{case_id}: {a!r} and {b!r} return rows in different orders but "
-        f"produced the same semantic_hash"
-    )
-
-
-@pytest.mark.parametrize("case_id, a, b", MUST_EQUAL, ids=[c[0] for c in MUST_EQUAL])
-def test_equivalent_orderings_hash_alike(case_id, a, b):
-    assert _hash(a) == _hash(b), f"{case_id}: {a!r} and {b!r} mean the same thing"
-
+#
+# Every pair that used to be pinned here lives in tests/ir/test_hash_battery.py
+# now: sort-asc-vs-desc/sort-per-key-direction/top-asc-vs-desc/bare-sort-is-desc/
+# bare-top-is-desc as sort-direction/sort-per-key-direction/top-by-direction/
+# sort-bare-is-desc/top-bare-is-desc; sort-nulls-first-vs-last as
+# sort-nulls-placement; sort-bare-vs-asc, top-bare-vs-asc,
+# sort-nulls-first-vs-default (as sort-nulls-clause-vs-absent),
+# order-by-is-sort-by and order-by-desc-is-sort-by-desc were moved there by
+# this task since the battery lacked them.
 
 # -- serialization --------------------------------------------------------
 
@@ -404,8 +382,10 @@ def test_a_prefix_wildcard_and_a_bare_one_do_not_hash_alike():
 
 
 REORDER_MUST_DIFFER = [
-    ("asc-vs-desc", "T | project-reorder x asc", "T | project-reorder x desc"),
-    ("asc-vs-bare", "T | project-reorder x asc", "T | project-reorder x"),
+    # asc-vs-desc and asc-vs-bare are dropped: they duplicate
+    # test_hash_battery.py's project-reorder-direction and
+    # project-reorder-direction-vs-unwritten pairs exactly. desc-vs-bare and
+    # per-term stay -- neither is in the battery.
     ("desc-vs-bare", "T | project-reorder x desc", "T | project-reorder x"),
     ("per-term", "T | project-reorder x asc, y desc", "T | project-reorder x desc, y asc"),
 ]
