@@ -482,10 +482,8 @@ class SearchOp(Operator):
     kind: Literal["search"] = "search"
     predicate: AnyExpr | None = None
     search_kind: str
-    # Left-to-right, as ``Pipeline.source`` is: both classes are a bare
-    # ``name`` plus a ``span``, so only the ``kind`` literal tells a dumped
-    # ``LetRef`` from a ``TableRef`` on the way back in.
-    tables: list[Annotated[TableRef | LetRef, Field(union_mode="left_to_right")]] = []
+    # Discriminated on the kind literal; member order is not load-bearing.
+    tables: list[Annotated[TableRef | LetRef, Field(discriminator="kind")]] = []
 
 
 class UnionOp(Operator):
@@ -865,7 +863,8 @@ class FindOp(Operator):
     KIND: ClassVar[str] = "find"
     kind: Literal["find"] = "find"
     predicate: AnyExpr | None = None
-    tables: list[Annotated[TableRef | LetRef, Field(union_mode="left_to_right")]] = []
+    # Discriminated on the kind literal; member order is not load-bearing.
+    tables: list[Annotated[TableRef | LetRef, Field(discriminator="kind")]] = []
     withsource: str | None = None
     project: list[AnyExpr] = []
 
@@ -1146,27 +1145,12 @@ class Pipeline(BaseModel):
     model_config = {"extra": "forbid"}
     KIND: ClassVar[str] = "pipeline"
     kind: Literal["pipeline"] = "pipeline"
-    # The ORDERING RULE below applies here too. It reads oddly against this
-    # list because ``ImplicitSource`` -- the one fields-less source -- is not
-    # first: every other source class has at least one *required* field, so
-    # none of them can absorb a bare ``span``+``kind`` payload and the rule
-    # has nothing to bite on among them. What the rule protects against is a
-    # source class whose fields are all optional or defaulted; the position
-    # to keep clear is therefore *before* ``ImplicitSource``, which is where
-    # a new source goes. ``UnknownSource`` trails it as ``UnknownOp`` trails
-    # the operator list.
+    # Discriminated on the kind literal; member order is not load-bearing.
     source: Annotated[Union[
         TableRef, LetRef, FuncCallSource, DataTableSource, ExternalDataSource,
         ImplicitSource, UnknownSource, "Pipeline",
-    ], Field(union_mode="left_to_right")]
-    # Left-to-right Union mode is load-bearing. ORDERING RULE: fields-less
-    # operator subclasses (only ``span`` + ``kind``) MUST appear before any
-    # subclass that adds optional or defaulted fields. Pydantic's default
-    # "smart" union mode would otherwise prefer a defaulted-fields class
-    # (e.g. ``FindOp`` with ``predicate=None``) when given JSON containing
-    # only a span+kind, breaking round-trip for the true fields-less class
-    # (e.g. ``GetSchemaOp``). New ops: add to the right of fields-less ops
-    # but to the left of ``UnknownOp``.
+    ], Field(discriminator="kind")]
+    # Discriminated on the kind literal; member order is not load-bearing.
     operators: list[Annotated[Union[
         GetSchemaOp, ConsumeOp, ExecuteAndCacheOp,
         FilterOp, ExtendOp, SummarizeOp, ProjectOp, ProjectAwayOp,
@@ -1181,7 +1165,7 @@ class Pipeline(BaseModel):
         GraphMatchOp, GraphMarkComponentsOp, GraphShortestPathsOp,
         GraphToTableOp, GraphWhereEdgesOp, GraphWhereNodesOp,
         UnknownOp,
-    ], Field(union_mode="left_to_right")]]
+    ], Field(discriminator="kind")]]
     # The columns this pipeline emits. Set at build time from the pipe
     # chain's own ``ResultType`` when the parse was bound and Microsoft's
     # symbol is closed -- so ``to_ir(attach_schema=False)`` has the shape

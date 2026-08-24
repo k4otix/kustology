@@ -3,14 +3,23 @@
 
 """Every ``Pipeline`` union member must round-trip back to its own class.
 
-``Pipeline.operators`` has carried ``union_mode="left_to_right"`` and an
-ordering rule (fields-less operators first, ``UnknownOp`` last) since the
-model was written; ``Pipeline.source`` did not, and gained one when the
-source position grew ``DataTableSource`` and ``ExternalDataSource``. Adding
-a union mode changes how validation resolves *every* member of that union,
-not just the new ones, so the check that matters is exhaustive rather than
-sampled: dump one instance of each member and assert it validates back to
-the same class.
+``Pipeline.source``, ``Pipeline.operators``, ``SearchOp.tables`` and
+``FindOp.tables`` used to carry ``union_mode="left_to_right"`` plus a
+hand-maintained ordering rule (fields-less classes first, ``UnknownOp``/
+``UnknownSource`` last): pydantic's default "smart" mode would otherwise
+prefer a defaulted-fields class over the true fields-less one when given a
+span+kind payload, so the position of every member in the list mattered.
+That failure mode no longer exists -- all four unions are now
+``Field(discriminator="kind")``, and every member of them carries a unique
+``kind: Literal[...]``, so member order is cosmetic and a kind-less or
+mismatched payload is rejected by name instead of absorbed by shape (see
+``test_operator_payload_without_kind_is_rejected_with_a_discriminator_error``
+below).
+
+The exhaustive-membership checks and round-trip tests stay regardless: a
+discriminator only changes *how* a payload is matched to a class, not
+whether a class can go missing from the union declaration or a ``Literal``
+can be mis-declared, so the same coverage still catches both.
 
 The two membership assertions are the load-bearing half. Without them a
 class added to the union later would simply not be exercised, and the
@@ -166,3 +175,15 @@ def test_operator_round_trips_to_its_own_class(sample):
     assert back.operators[0] == sample
     from_json = Q.Pipeline.model_validate_json(pipeline.model_dump_json())
     assert type(from_json.operators[0]) is type(sample)
+
+
+def test_operator_payload_without_kind_is_rejected_with_a_discriminator_error():
+    """Under left_to_right unions a kind-less payload was absorbed by shape
+    (20 of 53 classes collapsed onto a structural twin). A discriminated
+    union refuses it by name instead."""
+    import pydantic
+    import pytest
+    payload = {"source": {"kind": "implicit_source", "span": {"text_start": 0, "width": 0}},
+               "operators": [{"span": {"text_start": 0, "width": 0}}]}
+    with pytest.raises(pydantic.ValidationError, match="kind"):
+        Q.Pipeline.model_validate(payload)

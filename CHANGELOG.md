@@ -1362,6 +1362,10 @@ release is in `docs/superpowers/reports/`.
   points and are unchanged; a subclass that overrode `visit` itself gets a
   `TypeError` the first time the base recurses into it. Nothing in this
   repository does.
+- IR unions (`Pipeline.source`/`.operators`, `SearchOp.tables`,
+  `FindOp.tables`) are discriminated on `kind`. Hand-assembled JSON omitting
+  `kind` no longer validates by shape — `model_dump` output always carried
+  it, so only hand-built payloads are affected.
 
 ### Internal
 

@@ -1206,9 +1206,10 @@ def test_literal_take_count_is_int():
 
 def test_count_field_round_trips_correct_shape_through_json():
     """``count: int | AnyExpr`` lists ``int`` first per the repo's
-    union-ordering convention (see ``Pipeline.operators`` for the same
-    rule applied under explicit ``union_mode="left_to_right"``). This test
-    has two parts.
+    union-ordering convention. (``Pipeline.operators`` used to be the other
+    example of that convention under explicit ``union_mode="left_to_right"``;
+    it is now discriminated on ``kind`` instead, so declaration order there
+    is likewise no longer load-bearing.) This test has two parts.
 
     The first round-trips both shapes through the wire format end to end
     -- ``QueryIR.model_validate_json(ir.model_dump_json())`` on real

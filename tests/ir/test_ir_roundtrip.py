@@ -196,18 +196,20 @@ def test_dumps_missing_a_field_added_this_release_are_rejected():
     with pytest.raises(ValidationError) as excinfo:
         QueryIR.model_validate_json(json.dumps(payload))
 
-    # `Pipeline.operators` is a big union, so pydantic reports a branch per
-    # member and most of them are noise about the wrong operator. The one
-    # that matters is the SortOp branch, reported by full path -- matching
-    # on the leaf name alone would also accept a `missing` on some unrelated
-    # member's own `expression` field.
+    # `Pipeline.operators` is a discriminated union (on `kind`), so pydantic
+    # picks the `SortOp` member by its `"sort"` tag directly instead of
+    # trying every member and reporting a branch of noise per failed one --
+    # the tag value itself shows up as a `loc` segment in place of the old
+    # per-member class-name segment. Matching on the leaf name alone would
+    # also accept a `missing` on some unrelated member's own `expression`
+    # field, so the path is still checked in full.
     missing = {
         ".".join(str(part) for part in err["loc"])
         for err in excinfo.value.errors()
         if err["type"] == "missing"
     }
     named = sorted(
-        loc for loc in missing if "SortOp" in loc and loc.endswith(".expression")
+        loc for loc in missing if ".sort." in loc and loc.endswith(".expression")
     )
     assert named, (
         f"the ValidationError must name the field the old dump lacks, by "
