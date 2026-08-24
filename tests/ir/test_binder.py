@@ -11,7 +11,8 @@ list — without it, downstream column refs see the wrong view.
 
 import pytest
 
-from kustology.ir import IRBuilder
+from kustology import parse
+from kustology.ir import ColumnRef, IRBuilder, find_all
 from kustology.ir.binder import SchemaAttacher
 
 
@@ -1538,6 +1539,21 @@ def test_an_unparseable_query_gets_no_result_schema():
     assert not ir.main_pipeline.operators
     SchemaAttacher(FALLBACK_SCHEMA).enrich(ir)
     assert ir.main_pipeline.result_schema is None
+
+
+@pytest.mark.parametrize("schema,query,expect", [
+    ({"T": {"a": "long", "k": "string"}, "U": {"a": "long"}},
+     "T | partition by k (search in (U) a > 1)", {"k": "T", "a": "U"}),
+    ({"T": {"a": "long", "k": "string"}, "U": {"z": "long"}},
+     "T | partition by k (search a > 1)", {"k": "T", "a": "T"}),
+    ({"T": {"a": "long", "k": "string"}, "U": {"a": "long"}},
+     "T | partition by k (search a > 1)", {"k": "T", "a": None}),  # ambiguous: correct answer is None
+])
+def test_search_inside_partition_resolves_scope(schema, query, expect):
+    ir = parse(query).to_ir()
+    SchemaAttacher(schema).enrich(ir)
+    got = {c.name: c.table for c in find_all(ir, ColumnRef) if c.name in expect}
+    assert got == expect
 
 
 def test_both_schema_producers_agree_the_unknown_column_sentinel_is_unknown():

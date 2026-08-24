@@ -586,6 +586,7 @@ def compute_semantic_hash(node: BaseModel) -> str:
     canonical = normalize_expressions(canonical)
     _clear_volatile(canonical)
     if isinstance(canonical, QueryIR):
+        # Must run before _sort_commutative: renaming changes the JSON sort keys of operands containing LetValueRefs; sorted-then-renamed, two spellings of the same query order differently and split.
         _canonicalize_let_names(canonical)
     # After ``_clear_volatile``, so the sort key cannot see a span offset.
     _sort_commutative(canonical)
