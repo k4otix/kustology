@@ -26,10 +26,12 @@ AnyExpr = Union[
 ]
 
 
-# KIND is the LLM-facing discriminator surfaced by ``ir.llm_view.to_llm_dict``.
-# Keeping it separate from the Python class name lets the wire format use
-# snake_case KQL-aligned labels (``filter``, ``column_ref``) regardless of
-# the CamelCase Python naming conventions.
+# Every subclass declares ``kind: Literal["..."] = "..."``, a snake_case
+# KQL-aligned label (``filter``, ``column_ref``) independent of the CamelCase
+# Python class name. It is the discriminator pydantic's unions build on
+# (``AnyExpr`` excepted — see ``test_every_ir_model_class_has_kind_field``)
+# and what ``ir.llm_view.to_llm_dict`` reads via
+# ``model_fields["kind"].default`` to lead every emitted dict.
 class Expr(BaseModel):
     # ``extra="forbid"`` propagates to every Expr subclass — see
     # ``query.Operator`` for the matching policy on operator nodes.

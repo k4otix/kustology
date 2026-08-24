@@ -40,10 +40,12 @@ from .expr import (  # noqa: F401 — names referenced via forward refs
 )
 from .spans import Span
 
-# KIND is the LLM-facing discriminator surfaced by ``ir.llm_view.to_llm_dict``.
-# Keeping it separate from the Python class name lets the wire format use
-# snake_case KQL-aligned labels (``filter``, ``column_ref``) regardless of
-# the CamelCase Python naming conventions.
+# Every model below declares ``kind: Literal["..."] = "..."``, a snake_case
+# KQL-aligned label (``filter``, ``column_ref``) independent of the CamelCase
+# Python class name. It is the discriminator behind ``Pipeline.source``/
+# ``.operators``, ``SearchOp.tables`` and ``FindOp.tables``, and what
+# ``ir.llm_view.to_llm_dict`` reads via ``model_fields["kind"].default`` to
+# lead every emitted dict.
 
 class Diagnostic(BaseModel):
     model_config = {"extra": "forbid"}
