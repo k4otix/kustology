@@ -124,26 +124,62 @@ def test_to_ir_explicit_attach_schema_true_still_works():
     assert ir.schema_attached is True
 
 
-def test_to_ir_explicit_attach_schema_dict_overrides_parse_schema():
-    """Passing a dict to ``attach_schema`` overrides the parse-time schema —
-    useful when the binder ran against a partial schema but the attacher
-    should see a more complete one."""
-    parse_schema = {"DeviceProcessEvents": {"FileName": "string"}}
-    attach_only = {
-        "DeviceProcessEvents": {
-            "FileName": "string",
-            "DeviceName": "string",
-        },
-    }
-    ir = parse(
-        "DeviceProcessEvents "
-        "| where FileName == 'cmd.exe' "
-        "| summarize attempts = count() by DeviceName",
-        schema=parse_schema,
-    ).to_ir(attach_schema=attach_only)
-    assert ir.schema_attached is True
-    assert ir.main_pipeline.result_schema is not None
-    assert "DeviceName" in dict(ir.main_pipeline.result_schema.columns)
+def test_a_dict_attach_reaches_microsofts_binder():
+    """`attach_schema=dict` must bind through build_global_state + Analyze.
+
+    `scan declare` adds columns (`v`, `match_id`) that only Microsoft's
+    binder computes -- ScanOp is modeled as raw text and the hand rules
+    never answered for it -- so their presence proves the dict reached
+    Microsoft rather than the mirror."""
+    q = "T | scan declare (v: long = 0) with (step s1: true => v = 1;)"
+    ir = parse(q).to_ir(attach_schema={"T": {"a": "long"}})
+    cols = list(ir.main_pipeline.result_schema.columns)
+    assert "v" in cols
+    assert "match_id" in cols
+
+
+def test_the_dict_path_equals_the_parse_time_binding():
+    """`to_ir(attach_schema=d)` and `parse(q, schema=d).to_ir()` are now the
+    same computation, shape included: `let A = T` lowers to rhs_pipeline in
+    both, where the old dict path (unbound build) produced rhs_expr."""
+    schema = {"T": {"a": "long"}}
+    q = "let A = T; A | project a"
+    via_dict = parse(q).to_ir(attach_schema=schema)
+    via_parse = parse(q, schema=schema).to_ir()
+    assert via_dict.model_dump(mode="json") == via_parse.model_dump(mode="json")
+
+
+def test_a_dict_override_on_a_bound_parse_rebinds():
+    """A dict on an already-bound parse re-binds against the dict, rather
+    than overlaying the parse-time answer (which kept the old types)."""
+    ir = parse("T | project a", schema={"T": {"a": "long"}}).to_ir(
+        attach_schema={"T": {"a": "real"}}
+    )
+    assert ir.main_pipeline.result_schema.columns == {"a": "real"}
+
+
+def test_the_dict_path_leaves_the_receiver_syntactic():
+    kq = parse("T | take 1")
+    kq.to_ir(attach_schema={"T": {"a": "long"}})
+    assert kq.has_semantics is False
+
+
+def test_a_partial_dict_stays_lenient():
+    """Unknown tables under a partial dict are the Sentinel norm: the IR
+    builds, and operators Microsoft leaves open report result_schema=None
+    rather than raising or guessing. (The honest-None half tightens further
+    in the binder-surgery task; here it just must not error.)"""
+    q = "Unknown | where x > 1"
+    ir = parse(q).to_ir(attach_schema={"T": {"a": "long"}})
+    assert ir.main_pipeline is not None
+
+
+def test_an_empty_dict_means_no_attach_and_no_rebind():
+    """`attach_schema={}` is falsy: no rebind, no provenance pass -- same
+    as False. The dict reroute triggers only on a non-empty dict."""
+    ir = parse("T | take 1").to_ir(attach_schema={})
+    assert ir.schema_attached is False
+    assert ir.main_pipeline.result_schema is None
 
 
 def test_schemaless_to_ir_analyzes_without_a_second_parse(parse_counter):

@@ -16,6 +16,7 @@ from .utils.analysis import (
     node_to_dict,
     replace_table,
 )
+from .utils.schema_state import build_global_state
 from .utils.schema_state import extract_schemas_from_global_state as _extract_schemas_from_global_state
 
 
@@ -241,15 +242,21 @@ class KustoQuery:
         mean the query's tables, columns or user functions exist. Bind with
         a schema to ask that question.
 
-        Two passes populate the IR's type / provenance information:
+        Microsoft's binder is where types and per-operator output schemas
+        come from whenever a schema is in play — ``Expr.result_type`` and
+        ``Pipeline.result_schema`` alike. That schema can arrive at parse
+        time (``parse(query, schema=...)``) or right here: a non-empty
+        ``dict`` passed as ``attach_schema`` re-binds the *same tree*
+        against it (``self._code.Analyze(build_global_state(dict))`` — no
+        re-parse, and the receiver stays untouched) rather than merely
+        decorating whatever the parse already knew. ``SchemaAttacher`` is
+        the second, separate pass: it fills ``ColumnRef.table`` — which
+        table a resolved column came from — and sets
+        ``QueryIR.schema_attached = True``.
 
-        * **Microsoft binder** (runs when ``parse(query, schema=...)`` is
-          used) — fills ``Expr.result_type``.
-        * **``SchemaAttacher``** (separate pass) — fills
-          ``ColumnRef.table`` and ``Pipeline.result_schema`` and sets
-          ``QueryIR.schema_attached = True``.
-
-        ``attach_schema`` controls the second pass:
+        ``attach_schema`` controls whether the provenance pass
+        (``SchemaAttacher``) runs — and, only for a non-empty ``dict``,
+        what the binder binds against for this call too:
 
         * ``None`` (default) — auto-attach iff the parse was bound, so
           ``parse(query, schema=...).to_ir()`` returns a fully enriched
@@ -259,13 +266,36 @@ class KustoQuery:
         * ``False`` — skip the attach pass even on a bound parse. Use
           when you only want the binder's ``result_type`` and none of
           the table provenance.
-        * ``dict`` — force the attach pass using the supplied schema
-          dict, overriding the parse-time schema for this step only.
+        * non-empty ``dict`` — re-bind against ``build_global_state(dict)``
+          and run the attach pass with the same dict. This is a real
+          re-bind, not an overlay: on an already-bound parse it replaces
+          the parse-time schema for this call rather than layering on top
+          of it, and the resulting IR — shape included — is now identical
+          to ``parse(query, schema=dict).to_ir()``. ``let A = T`` lowers
+          to ``rhs_pipeline`` whenever ``T`` resolves in *either* path;
+          the unbound dict path used to fall back to ``rhs_expr`` because
+          the tree was never actually bound. A partial dict — one that
+          omits a table the query references — leaves that symbol open:
+          Microsoft's binder does not raise, it reports the affected
+          operator's ``result_schema`` as ``None`` rather than guessing.
+        * ``{}`` — falsy, so treated the same as ``False``: no re-bind,
+          no attach pass.
         """
         from .ir.builder import IRBuilder  # local import: triggers the [ir] extra guard lazily
 
         bound_by_caller = self._code.HasSemantics
-        if bound_by_caller:
+        schemas = (
+            attach_schema
+            if isinstance(attach_schema, dict) and attach_schema
+            else None
+        )
+        if schemas is not None:
+            # A dict is a real binding request: re-bind the tree in hand
+            # against it. ``Analyze`` does not re-lex the text and does not
+            # mutate ``self._code``, so the receiver stays syntactic (or
+            # keeps its parse-time binding) regardless.
+            code = self._code.Analyze(build_global_state(schemas))
+        elif bound_by_caller:
             code = self._code
         else:
             # D5/K27. ``Analyze`` binds this tree; it does not re-lex the
@@ -278,13 +308,12 @@ class KustoQuery:
         # Default: attach iff we have a bound parse to extract schemas from.
         # Explicit True/False/dict always wins.
         if attach_schema is None:
-            attach_schema = self._code.HasSemantics
+            attach_schema = bound_by_caller
 
         if attach_schema:
             from .ir.binder import SchemaAttacher
 
-            schemas = attach_schema if isinstance(attach_schema, dict) else None
-            if schemas is None and self._code.HasSemantics:
+            if schemas is None and bound_by_caller:
                 schemas = _extract_schemas_from_global_state(self._code.Globals)
             SchemaAttacher(schemas or {}).enrich(ir)
 
