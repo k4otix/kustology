@@ -1417,6 +1417,7 @@ release is in `docs/superpowers/reports/`.
   lockfile and `github-actions` for the SHA-pinned `uses:` lines, which
   nothing else keeps current.
 - `release.yml` now hard-gates on the offline DLL pin and treats an unreachable NuGet as a warning, matching `test.yml`'s split.
+- The test suite was deduplicated against the hash battery as the single pair registry, and mechanically-parametrized guards were collapsed to looped equivalents; behavioral coverage is unchanged (the do-not-cut set from the 2026-08-23 audit was preserved verbatim).
 
 ## [0.1.0] — 2026-06-01
 
