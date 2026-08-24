@@ -89,6 +89,20 @@ before you write a count of anything on the far side of the bridge:
  for m in ("Operators", "Functions", "Aggregates", "PlugIns")]
 ```
 
+### Changelog entries are one to three lines
+A `CHANGELOG.md` entry states what changed, who is affected, and what to do
+about it — nothing else. Mechanism, rationale, and measurement evidence
+belong in the commit message and the docs, not the changelog; a bullet that
+needs a worked example belongs in README instead, with the changelog line
+pointing at it. A contract disclosure (a known collision, an unmodelled
+modifier) gets one line plus a pointer to the README section that owns it,
+not the derivation.
+
+The 0.2.0 release cycle needed several correction rounds specifically
+because entries had grown past changelog altitude — essays standing in for
+what a consumer needed to decide whether to upgrade. Keep new entries short
+in the first draft rather than writing long and trimming later.
+
 ### `LiteralValue` is lazy, cached, and culture-sensitive
 Microsoft's parser computes `node.LiteralValue` on **property access**, not at
 parse time, then caches it. The .NET culture live at that first read decides the
