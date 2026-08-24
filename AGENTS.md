@@ -301,10 +301,14 @@ schema, `False` skips even on a bound parse. A non-empty `dict` **re-binds
 the same tree** through Microsoft's binder
 (`self._code.Analyze(build_global_state(dict))`) before building the IR,
 then runs the attach pass against that schema — a real re-bind, not an
-overlay, so the IR that comes back (shape included) is identical to
-`parse(q, schema=dict).to_ir()`. `{}` is falsy and treated the same as
-`False`: no re-bind, no attach. Tests that assert the no-reparse invariant
-or that exercise enrichment-free IR should pass `attach_schema=False`.
+overlay, so the output schemas, types, and IR shape that come back match
+`parse(q, schema=dict).to_ir()` exactly. Diagnostics are the exception:
+`ignore_unknown_tables` tracks the *receiver's* own bind state, not the
+dict's, so `parse(q).to_ir(attach_schema=d)` stays lenient about unknown
+names while `parse(q, schema=d).to_ir()` keeps them. `{}` is falsy and
+treated the same as `False`: no re-bind, no attach. Tests that assert the
+no-reparse invariant or that exercise enrichment-free IR should pass
+`attach_schema=False`.
 
 ### `KustoType` is a `StrEnum`
 `str(KustoType.LONG)` returns `'long'` (the wire value), not

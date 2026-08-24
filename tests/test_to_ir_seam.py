@@ -231,6 +231,18 @@ def test_a_schemaless_parse_still_has_no_result_schema():
     assert ir.main_pipeline.result_schema is None
 
 
+def test_a_partial_dict_keeps_the_receivers_diagnostic_leniency():
+    """The dict path binds like parse(q, schema=...) for schemas, types and
+    shape -- but diagnostics follow the receiver: an unbound receiver stays
+    lenient about unknown names, a bound receiver keeps them."""
+    q = "Unknown | where x > 1"
+    d = {"T": {"a": "long"}}
+    lenient = parse(q).to_ir(attach_schema=d)
+    strict = parse(q, schema=d).to_ir()
+    assert lenient.diagnostics == []
+    assert any(diag.code == "KS204" for diag in strict.diagnostics)
+
+
 def test_the_counter_is_wired_to_every_module_to_ir_parses_through(parse_counter):
     """The fixture must patch ``core``, or the tests above guard nothing.
 

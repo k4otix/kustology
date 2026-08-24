@@ -2061,6 +2061,73 @@ def test_aggregate_auto_names_match_microsofts_for_the_whole_library():
     assert probed >= 30, f"only {probed} aggregates were probe-able"
 
 
+def test_grouping_key_names_match_microsofts_for_the_whole_library():
+    """For every *scalar* function whose ``ResultNameKind`` is not ``None``,
+    the grouping-key name we derive for ``T | summarize count() by fn(col)``
+    must equal the column name Microsoft reports for that same query. This
+    pins the grouping-mode symbol read (``_auto_name(mode="grouping")``)
+    against the DLL, the same way
+    `test_aggregate_auto_names_match_microsofts_for_the_whole_library` pins
+    the aggregation-mode read -- but iterates ``Functions.All`` rather than
+    ``Aggregates.All``, since a grouping key is usually a scalar call.
+
+    A function whose ``ResultNameKind`` *is* ``None`` is out of scope here
+    on purpose: Microsoft names that grouping key ``Column1`` and this port
+    falls back to the first bare-column argument's own name instead -- a
+    known, disclosed divergence (see ``_auto_name``'s grouping bullet and
+    CHANGELOG's Known limitations), not something this parity probe should
+    paper over by excluding the mismatching cases.
+    """
+    from Kusto.Language import Functions
+
+    from kustology.bridge import KustoCode
+    from kustology.utils.analysis import build_global_state
+
+    schema = {"T": {
+        "s": "string", "n": "long", "r": "real", "b": "bool",
+        "t": "datetime", "ts": "timespan", "d": "dynamic", "g": "guid",
+    }}
+    by_type = {"string": "s", "long": "n", "int": "n", "real": "r",
+               "decimal": "r", "bool": "b", "datetime": "t",
+               "timespan": "ts", "dynamic": "d", "guid": "g"}
+    state = build_global_state(schema)
+    mismatches, probed, candidates = [], 0, 0
+    for sym in Functions.All:
+        kind = getattr(sym, "ResultNameKind", None)
+        if kind is None or str(kind) == "None":
+            continue
+        candidates += 1
+        name = str(sym.Name)
+        probe = None
+        for arg in by_type.values():
+            q = f"T | summarize count() by {name}({arg})"
+            code = KustoCode.ParseAndAnalyze(q, state)
+            if any(str(d.Severity) == "Error" for d in code.GetDiagnostics()):
+                continue
+            result_type = getattr(code, "ResultType", None)
+            columns = getattr(result_type, "Columns", None)
+            if columns is None or columns.Count < 1:
+                continue
+            probe = (q, str(columns[0].Name))
+            break
+        if probe is None:
+            continue  # needs literals/multiple args; not this probe's job
+        probed += 1
+        q, expected = probe
+        ir = parse(q, schema=schema).to_ir()
+        (key,) = ir.main_pipeline.operators[0].by
+        got = getattr(key, "name", None)
+        if got != expected:
+            mismatches.append((name, got, expected, q))
+    assert mismatches == []
+    # Measured against the vendored DLL: 82 of Functions.All declare a
+    # ResultNameKind other than None, 45 of those are callable with a single
+    # bare-column argument in a grouping position. This floor is a few below
+    # that, not the measured count.
+    assert candidates >= 70, f"only {candidates} candidate functions found"
+    assert probed >= 40, f"only {probed} functions were probe-able"
+
+
 def test_auto_names_hold_a_prefix_even_without_a_bare_column_argument():
     """C# string-concatenates a null argument name (``prefix + "_" + name``,
     Binder_Projection.cs:634-641/652-663), so ``PrefixAndFirstArgument``/

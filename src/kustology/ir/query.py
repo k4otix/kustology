@@ -61,9 +61,13 @@ class TabularSchema(BaseModel):
     """Tabular result type: ``{column_name: kusto_type_string}``, in the order
     the engine emits them.
 
-    Carried by :class:`Operator` and :class:`Pipeline`. On a bound parse it
-    is Microsoft's binder's answer, captured at build time; otherwise
-    ``SchemaAttacher``'s, derived from its own walk.
+    Carried by :class:`Operator` and :class:`Pipeline`. Present only when the
+    parse was bound and Microsoft's binder answered for that step, captured
+    at build time straight from the binder's own stamp — see
+    :attr:`Operator.result_schema` for what "answered" requires and what
+    ``None`` means otherwise. ``SchemaAttacher`` is not a second producer: it
+    overlays this onto its scope for provenance and derives nothing of its
+    own.
 
     **A column whose type is not known is the string ``"unknown"``** — not
     ``KustoType.UNRESOLVED``, whose value is ``"unresolved"``. The two
@@ -72,11 +76,8 @@ class TabularSchema(BaseModel):
     an unplaced expression type is ``KustoType.UNRESOLVED``; ``columns``
     values are Microsoft's type *names* as strings, and Microsoft's own name
     for the absent one is ``ScalarTypes.Unknown.Name`` == ``"unknown"``.
-    Both producers therefore agree on Microsoft's word: a bound parse
-    propagating a column the binder could not type, and
-    ``SchemaAttacher`` falling back on an expression whose ``result_type``
-    stayed ``KustoType.UNRESOLVED``. Test a ``columns`` value against
-    ``"unknown"``; test a ``result_type`` against ``KustoType.UNRESOLVED``.
+    Test a ``columns`` value against ``"unknown"``; test a ``result_type``
+    against ``KustoType.UNRESOLVED``.
 
     Distinct again from ``columns is None`` on the enclosing
     :attr:`Operator.result_schema` / :attr:`Pipeline.result_schema`, which

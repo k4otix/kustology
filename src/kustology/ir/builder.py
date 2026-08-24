@@ -2022,7 +2022,13 @@ class IRBuilder:
         - ``mode="grouping"``: the symbol read applies here too
           (``bin(TG, 1h)`` -> ``TG``, ``gettype(x)`` -> ``type_x``), falling
           back to the first column argument's own name when the symbol does
-          not resolve to one.
+          not resolve to one. **Known divergence:** when a grouping
+          function's ``ResultNameKind`` is itself ``None`` -- ``tolower``,
+          ``toupper``, ``hash``, ``endofday``, ``dayofweek``, ``substring``,
+          ``strcat``, ``isempty``, ``array_length``, ``coalesce``,
+          ``extract`` (DLL-confirmed) -- Microsoft names the grouping key
+          ``Column1``; this fallback keeps the first bare-column argument's
+          own name instead. Pre-existing, disclosed rather than fixed here.
         """
         kind = str(type(node).__name__)
         if kind == "ParenthesizedExpression" and hasattr(node, "Expression"):

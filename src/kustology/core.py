@@ -270,14 +270,20 @@ class KustoQuery:
           and run the attach pass with the same dict. This is a real
           re-bind, not an overlay: on an already-bound parse it replaces
           the parse-time schema for this call rather than layering on top
-          of it, and the resulting IR — shape included — is now identical
-          to ``parse(query, schema=dict).to_ir()``. ``let A = T`` lowers
-          to ``rhs_pipeline`` whenever ``T`` resolves in *either* path;
-          the unbound dict path used to fall back to ``rhs_expr`` because
-          the tree was never actually bound. A partial dict — one that
-          omits a table the query references — leaves that symbol open:
-          Microsoft's binder does not raise, it reports the affected
+          of it, and the resulting output schemas, types, and IR shape now
+          match ``parse(query, schema=dict).to_ir()`` exactly. ``let A = T``
+          lowers to ``rhs_pipeline`` whenever ``T`` resolves in *either*
+          path; the unbound dict path used to fall back to ``rhs_expr``
+          because the tree was never actually bound. A partial dict — one
+          that omits a table the query references — leaves that symbol
+          open: Microsoft's binder does not raise, it reports the affected
           operator's ``result_schema`` as ``None`` rather than guessing.
+          Diagnostics do not follow that equivalence: unknown-name
+          suppression tracks the *receiver's* own bind state, not the
+          dict's, so a dict on an unbound receiver stays lenient about
+          unknown names (``parse(q).to_ir(attach_schema=d)``) while the
+          same dict on a bound receiver keeps them
+          (``parse(q, schema=d).to_ir()``).
         * ``{}`` — falsy, so treated the same as ``False``: no re-bind,
           no attach pass.
         """

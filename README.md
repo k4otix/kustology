@@ -340,8 +340,10 @@ ir = parse("StormEvents | where DeathsDirect > 0", schema=schema).to_ir()
 # result_type -- the builder stamps both at construction, independent of
 # attach_schema. attach_schema instead controls table provenance
 # (ColumnRef.table, schema_attached): False skips it, {...} rebinds
-# against a schema after the fact -- identical to having parsed with
-# schema=.
+# against a schema after the fact -- output schemas, types and IR shape
+# then match having parsed with schema= exactly. Diagnostics do not:
+# they still follow this call's own receiver, so an unbound receiver
+# stays lenient about unknown names where a bound one would not.
 
 for op in ir.main_pipeline.operators:
     if isinstance(op, FilterOp):

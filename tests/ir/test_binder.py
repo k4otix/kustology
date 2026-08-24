@@ -164,11 +164,13 @@ def test_every_documented_schema_value_shape_reaches_the_walk(value, expect_type
 
 
 def test_a_schema_string_does_not_crash_the_walks_type_fallback():
-    """Regression: ``_fill``'s type fallback did ``schemas[table].get(name)``.
-
-    With a string value that is ``str.get`` -- ``AttributeError`` -- and a
-    bogus type name is not needed to reach it, only a resolved
-    ``ColumnRef.table`` and an unresolved ``result_type``.
+    """Historical regression pin: ``_fill``'s type fallback used to do
+    ``schemas[table].get(name)``, which raised ``AttributeError`` against a
+    string schema value. Since the reroute, ``core.to_ir`` normalizes every
+    schema shape (dict/string/list) through ``build_global_state`` before
+    ``SchemaAttacher`` ever runs, so a raw string no longer reaches this
+    code on the public path -- this test pins the public path against the
+    historical crash rather than exercising the fallback directly.
     """
     import warnings
 
@@ -180,11 +182,13 @@ def test_a_schema_string_does_not_crash_the_walks_type_fallback():
 
 
 def test_a_schema_string_does_not_crash_the_search_seeding():
-    """Regression: ``search`` seeds ``ScopeEntry(columns=dict(...))`` from the
-    dict, and ``dict("(a:long)")`` is a ``ValueError``.
-
-    A different crash site from the one above and reachable with a perfectly
-    ordinary type, which is why both are pinned.
+    """Historical regression pin: ``search`` used to seed
+    ``ScopeEntry(columns=dict(...))`` straight from the schema value, and
+    ``dict("(a:long)")`` is a ``ValueError``. Since the reroute,
+    ``core.to_ir`` normalizes the schema shape before ``SchemaAttacher`` ever
+    runs, so this string no longer reaches the seeding code on the public
+    path either -- a different crash site from the one above, pinned the
+    same way, against a perfectly ordinary type.
     """
     ir = parse("search in (T) 'x'").to_ir(attach_schema={"T": "(a:long)"})
     assert ir.main_pipeline.result_schema.columns == {

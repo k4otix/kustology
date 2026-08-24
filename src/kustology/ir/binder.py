@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-"""Schema-driven enrichment of an already-built IR.
+"""Provenance pass over an already-built IR. Internal since 0.2.0.
 
 Fills ``result_type`` on expressions the .NET binder couldn't resolve and
 attaches ``table`` provenance to ``ColumnRef`` nodes by walking the pipeline
-with a growing scope. The constructor takes a ``{table: {column: type}}``
-dict directly — callers handle JSON/YAML/IO themselves.
+with a growing scope. Not a public entry point: ``parse(query,
+schema=...)``/``to_ir(attach_schema=...)`` construct and drive it; a caller
+never builds :class:`SchemaAttacher` directly.
 """
 
 from __future__ import annotations
@@ -197,14 +198,15 @@ class SchemaAttacher:
       literal's own kind, a comparison's ``bool``. Arithmetic is left
       unresolved rather than guessed at.
 
-    **Per operator: provenance first, then the overlay.** Three families need
-    a structural branch, because they bring *sources* into scope and the
-    overlay cannot recover where a column came from once the sources are
-    forgotten: ``join``/``lookup`` (the right-hand pipeline, and the sides
-    ``on`` resolves against), ``union`` (one entry per arm), ``search`` (an
-    implicit source — without seeding, its own predicate resolves against
-    nothing). Everything else fills its expressions and walks its nested
-    pipelines with the scope untouched.
+    **Per operator: provenance first, then the overlay.** Of the four
+    constructs that bring *sources* into scope, three get a structural
+    branch here, because the overlay cannot recover where a column came from
+    once the sources are forgotten: ``join``/``lookup`` (the right-hand
+    pipeline, and the sides ``on`` resolves against), ``union`` (one entry
+    per arm), ``search`` (an implicit source — without seeding, its own
+    predicate resolves against nothing). ``find`` is the fourth and has no
+    branch at all (see **Accepted narrowings** below). Everything else fills
+    its expressions and walks its nested pipelines with the scope untouched.
 
     **Accepted narrowings**, each a loss of provenance rather than of a
     column, and each a case where the walk cannot say which source a name
@@ -225,6 +227,12 @@ class SchemaAttacher:
       (search in (U) a > 1)`` answers ``None`` for ``a`` where the search
       alone would answer ``U``. Replacing the scope instead would be a claim
       about the operator's output, which is Microsoft's to make.
+    * ``find``'s brought-in tables are not seeded at all. Unlike
+      ``join``/``lookup``, ``union``, and ``search``, ``find in (T) where
+      ...`` gets no structural branch here, so a predicate column resolves
+      as ambiguous (``table=None``) rather than to ``T`` — where the
+      equivalent ``search in (T)`` does resolve it. Pre-existing; disclosed
+      rather than fixed.
 
     ``project-rename`` is deliberately *not* in this list: its target is a
     name no scope entry holds, but the query states outright which input

@@ -101,7 +101,9 @@ three independent version tags (`__version__`, `IR_SCHEMA_VERSION`,
    your operator reshape *which table* a column comes from? `join` /
    `lookup`, `union` and `search` do — they bring new sources into scope —
    and each needs a structural branch in
-   `SchemaAttacher._walk_operator_provenance()`.
+   `SchemaAttacher._walk_operator_provenance()`. (`find` brings a source
+   into scope too and has no branch — a known, disclosed gap; don't treat
+   it as a model to copy.)
    If your operator just passes its input scope through unreshaped, the
    generic fallback already fills its expressions and walks its
    sub-pipelines, and there is nothing to add. Either way, add a row to

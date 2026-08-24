@@ -242,9 +242,10 @@ def _heuristic_schema(query: str) -> dict[str, dict[str, str]]:
     ``GlobalState``, which decides Microsoft's output order, which this gate
     compares as an ordered list. Every case agrees on every seed today, so
     nothing is flaky now — but a gate whose expected value depends on the
-    seed is one change away from passing on CI and failing on a laptop, and
-    the ``xfail(strict=True)`` markers would turn that into an xpass failure
-    with no visible cause.
+    seed is one change away from passing on CI and failing on a laptop.
+    There are no ``xfail`` markers left in this module to turn that into a
+    quieter xpass/xfail flip; it would surface as a direct assertion
+    failure instead, with no visible cause beyond the seed.
     """
     q = parse(query)
     columns = {
@@ -383,9 +384,12 @@ def dict_path_columns(query: str, schema: dict, ir=None) -> list[tuple[str, str]
     re-binds that same tree through Microsoft's own binder
     (``build_global_state(schema)`` + ``KustoCode.Analyze``) before building
     the IR, so this is the caller-facing path a schema dict with no cluster
-    to bind against actually takes -- and, since Task 1, it is byte-identical
-    to ``parse(query, schema=schema).to_ir()``. Pass ``ir`` when the caller
-    already built one.
+    to bind against actually takes -- and, since Task 1, its output schemas,
+    types, and IR shape are byte-identical to
+    ``parse(query, schema=schema).to_ir()``. (Diagnostics are not: they
+    follow the receiver's own bind state, not the dict's -- out of scope for
+    this module, which compares ``result_schema`` only.) Pass ``ir`` when
+    the caller already built one.
     """
     if ir is None:
         ir = parse(query).to_ir(attach_schema=schema)
@@ -451,16 +455,19 @@ def test_corpus_fixture_matches_microsoft_via_dict_path(
 def test_auto_names_do_not_depend_on_the_bind_state():
     """``Assignment.name`` must be the same bound and unbound.
 
-    The builder prefers Microsoft's own ``ResultType`` column name for an
-    unnamed aggregate, and that list is *shorter* when the binder cannot
-    determine the schema: bound, ``arg_max(t, *)`` reports six columns;
-    against a table nobody described, one. A per-index read would therefore
-    give the same query two different names -- and ``Assignment.name`` is
-    hashed, so it would give it two different ``semantic_hash`` values.
+    The builder names an unnamed aggregate from ``ResultNameKind`` /
+    ``ResultNamePrefix`` on the call's resolved ``ReferencedSymbol`` (see
+    ``_auto_name`` / ``_function_result_name``), and aggregate function
+    symbols live in ``GlobalState.Default`` -- the same global state
+    regardless of whether the query's own tables are bound to a schema. The
+    read is per-expression, not derived from the operator's result schema,
+    so it resolves identically whether the parse is bound against ``SCHEMA``,
+    a corpus fixture's heuristic schema, or not bound at all. Since
+    ``Assignment.name`` is hashed, a bind-state-dependent name would give the
+    same query two different ``semantic_hash`` values.
 
-    The guard in the builder is a length check plus a skip-list of the
-    multi-output aggregates. This asserts the guard holds over the whole
-    matrix and corpus rather than over the two cases that motivated it.
+    This asserts that identity holds over the whole matrix and corpus, not
+    just over the cases that originally motivated it.
     """
     from kustology.ir import compute_semantic_hash
 
