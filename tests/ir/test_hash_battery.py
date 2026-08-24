@@ -681,12 +681,7 @@ def test_double_negation_collapses_at_a_bare_expr_root():
     )
 
 
-@pytest.mark.parametrize(
-    "query",
-    sorted({q for _, a, b in MUST_DIFFER + MUST_EQUAL + KNOWN_COLLISIONS for q in (a, b)}),
-    ids=lambda q: q[:60],
-)
-def test_no_battery_pair_discriminates_on_an_unmodelled_blob(query):
+def test_no_battery_pair_discriminates_on_an_unmodelled_blob():
     """Every query in this file must build IR that carries no source text.
 
     A ``MUST_DIFFER`` pair proves nothing if the builder did not model
@@ -716,14 +711,16 @@ def test_no_battery_pair_discriminates_on_an_unmodelled_blob(query):
     instead means a node added to the partly-modelled list is covered from
     the moment it is defined, the same rule the rest of this suite follows.
     """
-    ir = parse(query).to_ir()
-    carriers = sorted(
-        f"{type(n).__name__}({n.raw_text!r})"
-        for n in walk(ir)
-        if n is not ir and "raw_text" in type(n).model_fields and n.raw_text
-    )
-    assert not carriers, (
-        f"{query!r} did not lower cleanly -- these nodes carry their own "
-        f"source text into the digest: {carriers}. A battery pair built on "
-        f"one of them discriminates on that text, not on the modelled field."
+    offenders: dict[str, list[str]] = {}
+    for query in sorted({q for _, a, b in MUST_DIFFER + MUST_EQUAL + KNOWN_COLLISIONS for q in (a, b)}):
+        ir = parse(query).to_ir()
+        carriers = sorted(
+            f"{type(n).__name__}({n.raw_text!r})" for n in walk(ir)
+            if n is not ir and "raw_text" in type(n).model_fields and n.raw_text
+        )
+        if carriers:
+            offenders[query] = carriers
+    assert not offenders, (
+        "these queries did not lower cleanly -- their nodes carry source "
+        f"text into the digest: {offenders}"
     )
