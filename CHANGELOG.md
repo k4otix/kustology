@@ -9,6 +9,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - **`SchemaAttacher` now walks a `let`-function's and a `declare pattern` arm's body as its own scope**, masking every parameter name so a same-named real table cannot leak its columns into a reference that is really the parameter. A call site still acquires nothing from the body; a scalar parameter shadowing a same-named *column* (rather than table) of a table the body reads is a narrower, still-open provenance gap. Digest-silent — every field this pass writes was already volatile/digest-excluded.
+- **`search`/`find`'s `let`-alias seeding is honest again.** An alias absent from `_let_schemas` (a scalar or function binding, or a tabular one this walk could not close) now seeds `ScopeEntry(table=None, columns={})` — the same fallback `_source_entry` already used for a pipeline's own source position, via a helper the two now share — instead of writing the alias name into `table` regardless. Digest-silent: `ColumnRef.table` is not in the digest payload.
 
 ### Fixed
 
@@ -21,6 +22,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Internal
 
+- **`expr.AnyExpr` is now `Field(discriminator="kind")`**, like the four unions Task 4 converted — the last plain "smart"-mode union left in the IR. A kind-less or shape-ambiguous payload is now rejected by name (`union_tag_not_found`) instead of a wall of per-member shape errors, and a kind-less `And`/`Or`-shaped payload can no longer silently validate as whichever member happens to sort first. Validation-only: every payload that round-tripped before still does. No corpus digest movement.
 - Bumped bundled `Kusto.Language.dll` 12.3.2 → 12.4.1 (latest stable on nuget.org); `[tool.kustology] kusto_language_version` and `bin/VERSION.txt`'s SHA-256 re-pinned, provenance chain re-verified via `scripts/verify_dll.py`. No corpus digest movement across all 49 fixtures; the pattern-arity binder crash (`IndexOutOfRangeException` from `VisitPatternDeclaration`) is unchanged.
 
 ## [0.2.0] — 2026-08-24

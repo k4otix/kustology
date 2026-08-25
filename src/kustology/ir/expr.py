@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-from typing import TYPE_CHECKING, Literal, Union
+from typing import TYPE_CHECKING, Annotated, Literal, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .spans import Span
 from .types import KustoType
@@ -15,7 +15,9 @@ if TYPE_CHECKING:
     # module's namespace. See ``ToScalarExpr``.
     from .query import Pipeline
 
-AnyExpr = Union[
+# Discriminated on the kind literal; member order is not load-bearing (see
+# ``test_union_ordering``).
+AnyExpr = Annotated[Union[
     "BinOp", "UnaryOp", "SetMembership", "Between", "And", "Or", "Not",
     "Exists", "RegexMatch", "CaseExpr", "ColumnRef", "LetValueRef",
     "TypedNameDecl",
@@ -23,14 +25,13 @@ AnyExpr = Union[
     "FuncCall", "PathExpr", "ElementExpr", "StarExpr", "NamedExpr",
     "CompoundNamedExpr", "BracketedExpr", "ToScalarExpr",
     "SubqueryExpr", "ExternalDataExpr", "DataTableExpr", "UnknownExpr", "Expr",
-]
+], Field(discriminator="kind")]
 
 
 # Every subclass declares ``kind: Literal["..."] = "..."``, a snake_case
 # KQL-aligned label (``filter``, ``column_ref``) independent of the CamelCase
-# Python class name. It is the discriminator pydantic's unions build on
-# (``AnyExpr`` excepted — see ``test_every_ir_model_class_has_kind_field``)
-# and what ``ir.llm_view.to_llm_dict`` reads via
+# Python class name. It is the discriminator pydantic's unions build on,
+# ``AnyExpr`` included, and what ``ir.llm_view.to_llm_dict`` reads via
 # ``model_fields["kind"].default`` to lead every emitted dict.
 class Expr(BaseModel):
     # ``extra="forbid"`` propagates to every Expr subclass — see

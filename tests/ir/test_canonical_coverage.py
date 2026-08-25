@@ -86,13 +86,19 @@ def _all_expr_subclasses(cls: type = E.Expr) -> set[type]:
 def _anyexpr_member_names() -> set[str]:
     """The class names named by `expr.AnyExpr`, forward references included.
 
-    Members are written as string literals (the union is defined before the
-    classes it names), so `get_args` hands back a mix of `ForwardRef` and --
-    once pydantic's `model_rebuild` has resolved them -- real classes.
-    Normalize both to a bare name.
+    `AnyExpr` is `Annotated[Union[...], Field(discriminator="kind")]`, so
+    `get_args` on it first hands back the `Union` and the `FieldInfo`
+    metadata; strip the `Annotated` wrapper before reading the union
+    members. Members are written as string literals (the union is defined
+    before the classes it names), so the underlying `get_args` hands back a
+    mix of `ForwardRef` and -- once pydantic's `model_rebuild` has resolved
+    them -- real classes. Normalize both to a bare name.
     """
+    annotation = E.AnyExpr
+    while typing.get_origin(annotation) is typing.Annotated:
+        annotation = typing.get_args(annotation)[0]
     out: set[str] = set()
-    for arg in typing.get_args(E.AnyExpr):
+    for arg in typing.get_args(annotation):
         name = getattr(arg, "__forward_arg__", None) or getattr(arg, "__name__", None)
         assert name is not None, f"unrecognized AnyExpr member: {arg!r}"
         out.add(name)

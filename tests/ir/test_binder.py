@@ -721,6 +721,37 @@ def test_a_masked_search_tables_own_name_does_not_surface_through_a_later_join(
     assert refs["Unknown"].table is None
 
 
+def test_a_search_over_a_non_tabular_let_alias_does_not_surface_through_a_later_join(
+    schema,
+):
+    """The sibling of the masking test above, for the other half of the same
+    ``ScopeEntry(table=..., columns={})`` fallback: ``search``/``find``'s
+    ``LetRef`` seeding wrote ``table=alias`` even when ``alias`` never
+    reached ``_let_schemas`` (a scalar ``let``, a function binding, a
+    tabular ``let`` the binder could not close), the one case
+    ``_source_entry`` already got right for a pipeline's own source
+    position (see ``_source_entry``'s ``LetRef`` branch).
+
+    Unreachable through the columns path directly -- an empty-columns entry
+    contributes nothing to ``_column_origins`` -- but ``_flatten_side``
+    reads every contributing entry's ``.table`` regardless of its columns,
+    so the same right-side-of-a-join reproduction as the masking test above
+    surfaces it: with ``A`` a scalar (no schema, never registered in
+    ``_let_schemas``), ``search in (A)`` used to hand ``$right.Unknown``
+    the label ``"A"`` -- a table the query never actually read from.
+    """
+    ir = parse(
+        "let A = 5; DeviceFileEvents | join (search in (A) 'x') "
+        "on $left.FileName == $right.Unknown",
+        schema=schema,
+    ).to_ir(attach_schema=schema)
+    refs = {c.name: c for c in find_all(ir, ColumnRef)}
+    assert refs["FileName"].join_side == "left"
+    assert refs["FileName"].table == "DeviceFileEvents"
+    assert refs["Unknown"].join_side == "right"
+    assert refs["Unknown"].table is None
+
+
 def test_a_pattern_arms_body_is_walked_through_the_same_helper(schema):
     """``declare pattern`` reuses ``_walk_function_body`` with no parameters
     to mask: the arm's own columns still get their table, even though the

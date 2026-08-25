@@ -503,6 +503,27 @@ class SchemaAttacher:
         """
         return None if name in self._masked_tables else name
 
+    def _let_alias_entry(self, name: str) -> ScopeEntry:
+        """The scope entry a ``let`` alias is honestly entitled to.
+
+        Shared by ``_source_entry``'s ``LetRef`` branch (a pipeline's own
+        source) and ``search``/``find``'s table seeding -- both name a
+        ``let`` alias rather than a real table, and both used to write the
+        alias into ``table`` unconditionally. That is right when
+        ``_let_schemas`` actually has the alias's columns (a tabular
+        binding the walk closed): the alias *is* what the pipeline reads,
+        and reporting the underlying table would lose the step the query
+        actually wrote. It is wrong when the alias never made it into
+        ``_let_schemas`` -- a scalar or function binding, or one this walk
+        could not close -- where nothing backs the label and it is exactly
+        the unearned-name failure mode ``_entry_table`` closes for a masked
+        table.
+        """
+        columns = self._let_schemas.get(name)
+        if columns is not None:
+            return ScopeEntry(table=name, columns=dict(columns))
+        return ScopeEntry(table=None, columns={})
+
     def _source_entry(self, pipeline: Pipeline) -> ScopeEntry:
         """The scope a pipeline starts from, derived from its source.
 
@@ -527,14 +548,7 @@ class SchemaAttacher:
             columns = dict(source.result_schema.columns) if source.result_schema else {}
             return ScopeEntry(table=None, columns=columns)
         if isinstance(source, LetRef):
-            # A let alias carries the binding's output columns, and keeps its
-            # own name as provenance -- the alias *is* what the pipeline
-            # reads, and reporting the underlying table would lose the step
-            # the query actually wrote.
-            columns = self._let_schemas.get(source.name)
-            if columns is not None:
-                return ScopeEntry(table=source.name, columns=dict(columns))
-            return ScopeEntry(table=None, columns={})
+            return self._let_alias_entry(source.name)
         if isinstance(source, TableRef) and source.is_wildcard:
             # ``union T*`` names a *set* of tables. Resolving it against a
             # schema entry literally called ``T*`` would be a coincidence,
@@ -764,10 +778,12 @@ class SchemaAttacher:
           -- would resolve against nothing. One entry per named table is
           appended -- or per table in ``self.schemas`` for an unqualified
           search/find, the dict standing in for "every table in the
-          database" -- plus one entry per ``let``-alias table, its columns
-          read from ``self._let_schemas`` the same way ``_source_entry``
-          reads them for a pipeline's own source position. The predicate
-          (and ``project``) is filled *after*, against the seeded scope.
+          database" -- plus one entry per ``let``-alias table, built by
+          ``_let_alias_entry``, the same helper ``_source_entry`` calls for
+          a pipeline's own source position, so an alias absent from
+          ``self._let_schemas`` seeds ``table=None`` here exactly as it does
+          there. The predicate (and ``project``) is filled *after*, against
+          the seeded scope.
           ``search``'s ``$table`` and ``find``'s ``withsource`` -- the
           column each names for its own found-in-table marker -- are
           Microsoft's to state, not this walk's.
@@ -813,10 +829,7 @@ class SchemaAttacher:
                 )
                 for n in names
             )
-            scope.extend(
-                ScopeEntry(table=a, columns=dict(self._let_schemas.get(a, {})))
-                for a in aliases
-            )
+            scope.extend(self._let_alias_entry(a) for a in aliases)
             self._fill(op.predicate, scope)
             for expr in getattr(op, "project", []):
                 self._fill(expr, scope)

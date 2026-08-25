@@ -9,7 +9,11 @@ hand-maintained ordering rule (fields-less classes first, ``UnknownOp``/
 ``UnknownSource`` last): pydantic's default "smart" mode would otherwise
 prefer a defaulted-fields class over the true fields-less one when given a
 span+kind payload, so the position of every member in the list mattered.
-That failure mode no longer exists -- all four unions are now
+``expr.AnyExpr`` never carried that config, but plain "smart" mode has the
+same order-dependent tie-break among structurally identical members --
+a kind-less ``And``/``Or`` payload (both just ``span`` + ``operands``)
+silently validated as whichever came first in the ``Union``. That failure
+mode no longer exists for any of the five -- all are now
 ``Field(discriminator="kind")``, and every member of them carries a unique
 ``kind: Literal[...]``, so member order is cosmetic and a kind-less or
 mismatched payload is rejected by name instead of absorbed by shape (see

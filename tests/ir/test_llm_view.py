@@ -311,12 +311,15 @@ def test_every_ir_model_class_has_kind_field():
 
     This test used to check for a ``KIND`` ClassVar. Task 4 converted the
     four big operator/source/tables unions to ``Field(discriminator="kind")``,
-    which now enforces (at model-build time) that every member of those
-    unions carries a working ``kind`` discriminator. But ``Expr`` subclasses
-    are gathered into the smart-mode ``AnyExpr`` union, which is a plain
-    ``Union`` rather than a discriminated one, so nothing else guarantees
-    every ``Expr`` class still carries a ``kind`` field. This test is what
-    is left to catch that after the ``KIND`` ClassVar's removal.
+    and Task 7 did the same for ``Expr``'s own ``AnyExpr`` union, so pydantic
+    now enforces (at model-build time) that every member of those unions
+    carries a working ``kind`` discriminator -- ``Expr`` subclasses included,
+    since they are all gathered into ``AnyExpr``. But some exported models
+    (``SortKey``, ``ReorderKey``, ``ForkBranch`` and their siblings -- see
+    ``test_canonical_coverage.py``) hang off an operator field directly
+    rather than sitting in any discriminated union, so nothing else
+    guarantees they still carry a ``kind`` field. This test is what is left
+    to catch that after the ``KIND`` ClassVar's removal.
     """
     from pydantic import BaseModel
 
@@ -343,11 +346,14 @@ def test_every_ir_model_class_has_kind_field():
 def test_kind_values_are_unique_per_class():
     """Two different IR classes must not share a ``kind`` default.
 
-    Discriminated unions (Task 4) already reject a duplicate discriminator
-    value for the classes they cover, but ``Expr`` subclasses sit outside
-    any discriminated union (see ``test_every_ir_model_class_has_kind_field``),
-    so this test is the only thing still checking uniqueness across the
-    full exported vocabulary, ``Expr`` included.
+    Discriminated unions (Task 4's four, and Task 7's ``AnyExpr``) already
+    reject a duplicate discriminator value among the classes *within* the
+    same union, but each union is checked in isolation -- pydantic has no
+    way to notice a ``FilterOp`` and some unrelated ``Expr`` subclass both
+    claiming ``kind="filter"``, since the two never validate against the
+    same tagged union. So this test is the only thing still checking
+    uniqueness across the full exported vocabulary, every discriminated
+    union included.
     """
     from pydantic import BaseModel
 
