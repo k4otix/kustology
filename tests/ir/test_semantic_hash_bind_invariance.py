@@ -39,6 +39,20 @@ SCHEMA = {
             id="let-alias",
         ),
         pytest.param("T | join U on $left.a == $right.b", id="join"),
+        pytest.param(
+            "let f = (X:(*)) { X | where a > 1 | project a }; T | count",
+            id="let-function-tabular-param",
+        ),
+        pytest.param(
+            "let f = (n:long) { "
+            "let Filtered = T | where a > n; Filtered | project a "
+            "}; T | count",
+            id="let-function-body-lets",
+        ),
+        pytest.param(
+            "let f = (T:long) { U | where b > T }; T | where a > 1",
+            id="let-function-scalar-param-collides-with-table",
+        ),
     ],
 )
 def test_recomputed_hash_is_the_same_bound_and_unbound(query):

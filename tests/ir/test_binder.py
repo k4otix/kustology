@@ -22,7 +22,7 @@ empty ``TabularSchema`` stay distinguishable.
 import pytest
 
 from kustology import parse
-from kustology.ir import ColumnRef, IRBuilder, find_all
+from kustology.ir import ColumnRef, IRBuilder, Pipeline, find_all
 from kustology.ir.binder import SchemaAttacher
 
 
@@ -437,6 +437,166 @@ def test_let_names_do_not_leak_between_enrich_calls(schema):
     ).to_ir(attach_schema=False)
     attacher.enrich(third)
     assert attacher._let_schemas == {}
+
+
+# --- function and pattern bodies --------------------------------------------
+
+
+def test_builder_schemas_snapshot_reaches_body_pipelines(schema):
+    """Precondition, not behaviour: ``find_all(ir, Pipeline)`` is a generic
+    walk, so it already reaches a let-function's ``body_pipeline`` -- the
+    ``_builder_schemas`` snapshot ``enrich`` takes at entry covers it before
+    ``_walk_function_body`` exists to consume it. Pinned directly rather
+    than inferred from downstream provenance, so a regression here reads as
+    this assertion failing, not as a mystifying resolution gap two layers
+    away."""
+    ir = parse(
+        "let f = (n:long) { DeviceProcessEvents | where ProcessId > n }; "
+        "DeviceProcessEvents | count",
+        schema=schema,
+    ).to_ir(attach_schema=False)
+    body_pipeline = ir.let_bindings[0].rhs_function.body_pipeline
+    snapshot = {id(p): p.result_schema for p in find_all(ir, Pipeline)}
+    assert id(body_pipeline) in snapshot
+
+
+def test_a_function_bodys_columns_acquire_table_from_a_real_table_it_reads(schema):
+    """The body is walked as its own scope: a column the body reads off a
+    real table gets that table's provenance, the same as any other
+    pipeline. The scalar parameter ``n`` names no table's column, so it
+    stays honestly unresolved rather than borrowing one."""
+    ir = parse(
+        "let f = (n:long) { "
+        "DeviceProcessEvents | where ProcessId > n | project AccountName "
+        "}; DeviceProcessEvents | count",
+        schema=schema,
+    ).to_ir(attach_schema=schema)
+    fn = ir.let_bindings[0].rhs_function
+    refs = _refs(fn)
+    assert refs["ProcessId"] == {"DeviceProcessEvents"}
+    assert refs["AccountName"] == {"DeviceProcessEvents"}
+    assert refs["n"] == {None}
+
+
+def test_a_tabular_parameters_columns_answer_no_table_rather_than_the_callers(schema):
+    """A tabular parameter's ``TableRef`` masks to an empty scope: nothing
+    says what columns it carries, so a column read off it stays
+    ``table=None`` rather than resolving through the parameter's bare name
+    as though it were a real, schema-described table.
+
+    Probed and pinned rather than assumed: the alternative honest-looking
+    answer was ``table="X"`` (the parameter's own name, still labelling the
+    source even though no columns are known). That never happens, because
+    ``_resolve_column_table`` only ever answers from a scope entry's
+    *known* columns (see ``_column_origins``) -- there is no join-side-style
+    single-entry fallback for an ordinary source, masked or not -- so an
+    unknown column of a masked entry resolves to ``None`` the same way an
+    unknown column of any other schema-less table would.
+
+    The parameter is named after a real schema table on purpose, and ``a``
+    is a real column of that table's schema: without the mask, ``_table_
+    schema`` would answer the real table's columns for this name and this
+    same reference would resolve to ``DeviceProcessEvents`` -- a genuine
+    leak of the caller's table into a value the body never actually reads.
+    """
+    ir = parse(
+        "let f = (DeviceProcessEvents:(*)) { "
+        "DeviceProcessEvents | where AccountName == 'x' | project AccountName "
+        "}; DeviceProcessEvents | count",
+        schema=schema,
+    ).to_ir(attach_schema=schema)
+    fn = ir.let_bindings[0].rhs_function
+    assert _refs(fn)["AccountName"] == {None}
+
+
+def test_body_lets_chain_inside_a_function_body(schema):
+    """A tabular body ``let`` threads into the tail exactly as a top-level
+    one threads into the main pipeline -- the whole point of walking the
+    body as its own scope rather than leaving it opaque."""
+    ir = parse(
+        "let f = (n:long) { "
+        "let Filtered = DeviceProcessEvents | where ProcessId > n; "
+        "Filtered | project AccountName "
+        "}; DeviceProcessEvents | count",
+        schema=schema,
+    ).to_ir(attach_schema=schema)
+    fn = ir.let_bindings[0].rhs_function
+    (body_let,) = fn.body_lets
+    assert body_let.rhs_pipeline.result_schema is not None
+    assert "AccountName" in body_let.rhs_pipeline.result_schema.columns
+    assert _refs(fn)["AccountName"] == {"Filtered"}
+
+
+def test_a_scalar_parameter_colliding_with_a_schema_table_does_not_leak_it(schema):
+    """A scalar parameter named after a real schema table masks that table
+    for the length of the body -- a reference to the parameter must not
+    resolve against the table it merely shares a name with -- and the mask
+    is gone once the body is done: the main pipeline's own reference to the
+    real table resolves normally right after."""
+    ir = parse(
+        "let f = (DeviceProcessEvents:long) { "
+        "DeviceFileEvents | where TimeGenerated > DeviceProcessEvents "
+        "}; DeviceProcessEvents | project AccountName",
+        schema=schema,
+    ).to_ir(attach_schema=schema)
+    fn = ir.let_bindings[0].rhs_function
+    body_refs = _refs(fn)
+    # The real table the body actually reads resolves normally.
+    assert body_refs["TimeGenerated"] == {"DeviceFileEvents"}
+    # The parameter reference does not borrow the colliding table's identity.
+    assert body_refs["DeviceProcessEvents"] == {None}
+    # Restored: the main pipeline's own real-table reference is unaffected.
+    assert _refs(ir.main_pipeline)["AccountName"] == {"DeviceProcessEvents"}
+    assert ir.main_pipeline.result_schema.columns["AccountName"] == "string"
+
+
+def test_masking_is_restored_even_if_the_body_walk_raises(schema):
+    """``_masked_tables``/``_let_schemas`` are restored in ``finally``
+    inside ``_walk_function_body``, not only on the happy path -- a bug (or
+    a future exception) partway through one function's body must not leave
+    the attacher permanently masking a real table, or permanently holding a
+    stale let, for every query it enriches afterwards."""
+    attacher = SchemaAttacher(schema)
+    ir = parse(
+        "let f = (DeviceProcessEvents:long) { "
+        "DeviceFileEvents | where TimeGenerated > DeviceProcessEvents "
+        "}; DeviceProcessEvents | project AccountName",
+        schema=schema,
+    ).to_ir(attach_schema=False)
+    fn = ir.let_bindings[0].rhs_function
+
+    original_walk_pipeline = attacher._walk_pipeline
+
+    def exploding_walk_pipeline(pipeline, inherited=None):
+        if pipeline is fn.body_pipeline:
+            raise RuntimeError("boom")
+        return original_walk_pipeline(pipeline, inherited)
+
+    attacher._walk_pipeline = exploding_walk_pipeline
+    with pytest.raises(RuntimeError, match="boom"):
+        attacher.enrich(ir)
+
+    assert attacher._masked_tables == set()
+    assert "DeviceProcessEvents" not in attacher._let_schemas
+
+
+def test_a_pattern_arms_body_is_walked_through_the_same_helper(schema):
+    """``declare pattern`` reuses ``_walk_function_body`` with no parameters
+    to mask: the arm's own columns still get their table, even though the
+    arm has no parameters of its own and the call site acquires nothing
+    from it either way."""
+    ir = parse(
+        'declare pattern P = (a:string) { '
+        '("x") = { DeviceProcessEvents | where ProcessId > 1 '
+        '| project AccountName }; '
+        '}; DeviceProcessEvents | count',
+        schema=schema,
+    ).to_ir(attach_schema=schema)
+    (stmt,) = ir.statements
+    (match,) = stmt.matches
+    refs = _refs(match)
+    assert refs["ProcessId"] == {"DeviceProcessEvents"}
+    assert refs["AccountName"] == {"DeviceProcessEvents"}
 
 
 # Microsoft's per-operator schema (K-ARCH-1, Task 5.2) --------------------

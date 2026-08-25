@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **`SchemaAttacher` now walks a `let`-function's and a `declare pattern` arm's body as its own scope**, masking every parameter name so a same-named real table cannot leak its columns into a reference that is really the parameter. A call site still acquires nothing from the body; a scalar parameter shadowing a same-named *column* (rather than table) of a table the body reads is a narrower, still-open provenance gap. Digest-silent — every field this pass writes was already volatile/digest-excluded.
+
 ### Fixed
 
 - **The remaining operator-modifier collisions are closed.** `MvApplyOp` gains `to_typeof`, `row_limit` and `item_index`; `ParseKvOp` gains `properties` (its `with (...)` clause, a list since `quote` legally repeats); `GetSchemaOp` gains `output_kind`; `ConsumeOp` gains `decodeblocks`. The 0.2.0 Known-limitations entry naming these is gone — every modifier-pair the sweep found is now modelled.

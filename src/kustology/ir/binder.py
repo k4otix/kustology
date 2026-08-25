@@ -31,9 +31,12 @@ from .query import (
     ExternalDataSource,
     FindOp,
     JoinOp,
+    LetBinding,
+    LetFunctionParameter,
     LetRef,
     LookupOp,
     Operator,
+    PatternStmt,
     Pipeline,
     ProjectRenameOp,
     QueryIR,
@@ -249,6 +252,16 @@ class SchemaAttacher:
         # Reset per call, not per instance: a reused attacher must not carry
         # one query's binding names into the next.
         self._let_schemas: dict[str, dict[str, str]] = {}
+        # Names masked for the length of a function or pattern-arm body
+        # currently being walked -- a let-function's or pattern's own
+        # parameters, shadowing any same-named real table the way the
+        # builder's own ``_param_names`` shadows them for naming (see
+        # ``_walk_function_body``). ``_table_schema`` answers ``{}`` for a
+        # masked name, so a tabular parameter's ``TableRef`` resolves to an
+        # honestly-empty scope rather than a same-named caller table's real
+        # columns. Reset per call, same reason as ``_let_schemas``, and
+        # saved/restored around each body.
+        self._masked_tables: set[str] = set()
         # (left entries, right entries) while filling a join's ``on`` clause,
         # None everywhere else. Saved and restored around the fill and around
         # every nested pipeline walk, so a join inside an ``on`` clause
@@ -272,27 +285,51 @@ class SchemaAttacher:
         gives ``Account`` the type ``string`` and the provenance ``"Base"``
         rather than leaving both unresolved.
 
+        A let-function's and a pattern arm's bodies are walked too, each as
+        its own scope (:meth:`_walk_function_body`): every parameter name is
+        masked for the length of the body, so a same-named real table's
+        columns cannot leak into what is really a parameter reference, and a
+        tabular body ``let`` threads into the tail the same way a top-level
+        one threads into the main pipeline. ``find_all(ir, Pipeline)``
+        already reaches these nested pipelines — which is why the
+        ``_builder_schemas`` snapshot below covers them regardless — so
+        walking them for provenance adds no new reach, only a new pass over
+        ground already found.
+
         Four boundaries remain, and are boundaries rather than bugs:
 
         * A binding naming one declared *later* is not a ``LetRef`` at all
           (see :class:`LetRef`), so there is nothing to thread — it stays an
           opaque table.
-        * ``let``-declared functions are recorded, not expanded, so a call
-          site does not acquire the body's schema.
-        * ``QueryIR.statements`` is not walked. A ``declare pattern`` arm
-          holds a real :class:`Pipeline` and this pass leaves it alone: a
-          pattern body runs under the values its call site supplies, so
-          "which columns does it emit" has no one answer to attach. The
-          statements are still *reachable* — ``find_all(ir, Pipeline)``
-          finds them, which is why the ``_builder_schemas`` snapshot below
-          covers them — they are simply not enriched, so what a bound parse
-          left on them is what stays. ``ir.schema_attached`` reads across
-          the whole IR, statements included, since it asks whether anything
-          in this IR came from somewhere real.
+        * A call site — ``f(1)``, ``P("x")`` — acquires nothing from the
+          body it calls: ``let``-declared functions and ``declare pattern``
+          arms are recorded, not expanded, so the body is walked once, from
+          the declaration, and never again from where it is invoked. A
+          pattern arm additionally has no schema of its own to give a call
+          site even in principle — it runs under the values that call site
+          supplies, so "which columns does it emit" has no one answer to
+          attach there.
+        * A scalar parameter is not told apart from a same-named column of a
+          table the body reads: the builder lowers both to the identical
+          ``ColumnRef(name=...)`` (see :class:`~kustology.ir.query.LetFunctionParameter`),
+          so a reference meant as the parameter can resolve against the
+          table's real column and report a table it never came from.
+          Masking closes this for a *table* name — a tabular parameter's own
+          ``TableRef`` never resolves to a caller table — but a scalar
+          parameter shadowing a *column* is a narrower gap this pass does
+          not close.
         * An alias may shadow a real table name -- ``let SecurityEvent =
           SecurityEvent | where …`` is a common Sentinel idiom -- so
           ``ColumnRef.table`` alone cannot say which namespace its string
           came from.
+
+        The other four statement kinds ``QueryIR.statements`` can hold —
+        ``set``, ``declare query_parameters``, ``alias database``,
+        ``restrict access to`` — are still not walked at all; whatever a
+        bound parse left on their expressions is what stays.
+        ``ir.schema_attached`` reads across the whole IR, statements
+        included, since it asks whether anything in this IR came from
+        somewhere real.
 
         Shadowing does not mislead the binder: types come from the binding's
         own output schema, so ``let SecurityEvent = Other | …`` gives columns
@@ -313,6 +350,7 @@ class SchemaAttacher:
         also flags the binding body's own columns, which read the table.
         """
         self._let_schemas = {}
+        self._masked_tables = set()
         # A pipeline with no operators has nothing to read its output shape
         # off, so ``_walk_pipeline`` falls back to ``Pipeline.result_schema``
         # -- the builder's record of what Microsoft made of the source. It
@@ -332,12 +370,26 @@ class SchemaAttacher:
         }
         try:
             for binding in ir.let_bindings:
-                if binding.rhs_pipeline is None:
-                    continue
-                self._walk_pipeline(binding.rhs_pipeline)
-                schema = binding.rhs_pipeline.result_schema
-                if schema is not None:
-                    self._let_schemas[binding.name] = dict(schema.columns)
+                if binding.rhs_pipeline is not None:
+                    self._walk_pipeline(binding.rhs_pipeline)
+                    schema = binding.rhs_pipeline.result_schema
+                    if schema is not None:
+                        self._let_schemas[binding.name] = dict(schema.columns)
+                elif binding.rhs_function is not None:
+                    self._walk_function_body(
+                        binding.rhs_function.parameters,
+                        binding.rhs_function.body_lets,
+                        binding.rhs_function.body_pipeline,
+                    )
+                # A scalar binding (``rhs_expr``) carries no output schema to
+                # thread and nothing here resolves against it by name --
+                # skipped, same as before.
+            for stmt in ir.statements:
+                if isinstance(stmt, PatternStmt):
+                    for match in stmt.matches:
+                        self._walk_function_body(
+                            [], match.body_lets, match.body_pipeline,
+                        )
             self._walk_pipeline(ir.main_pipeline)
             # Later tabular statements are pipelines like any other; skipping
             # them would leave the same column resolved in statement one and
@@ -359,8 +411,55 @@ class SchemaAttacher:
         )
         return ir
 
+    def _walk_function_body(
+        self,
+        parameters: list[LetFunctionParameter],
+        body_lets: list[LetBinding],
+        body_pipeline: Pipeline | None,
+    ) -> None:
+        """Walk a let-function's or pattern arm's body as its own scope.
+
+        Mirrors the builder's own body-scope pattern
+        (``IRBuilder._visit_function_body``): every parameter name is
+        masked for the length of the body, so a same-named real table
+        cannot leak its columns into a reference that is really the
+        parameter (see ``_table_schema``); a tabular body ``let`` is walked
+        and its output columns registered under its name exactly as a
+        top-level tabular binding is, so a later body ``let`` or the tail
+        resolves against it; and both ``self._let_schemas`` and
+        ``self._masked_tables`` are restored in ``finally``, so nothing
+        this call discovers or masks survives past the closing brace --
+        not even on an exception.
+
+        ``parameters`` is empty for a pattern arm: a pattern's own
+        parameters are matched against the arm's *values*, not bound as
+        names inside the body (see
+        :class:`~kustology.ir.query.PatternStmt`), so there is nothing of
+        its own to mask.
+
+        A scalar body ``let`` (``rhs_expr``) is skipped, the same as a
+        top-level scalar binding is in :meth:`enrich` -- its expression is
+        not walked and its name resolves against nothing.
+        """
+        saved_let_schemas = dict(self._let_schemas)
+        saved_masked = self._masked_tables
+        self._masked_tables = saved_masked | {p.decl.name for p in parameters}
+        try:
+            for binding in body_lets:
+                if binding.rhs_pipeline is None:
+                    continue
+                self._walk_pipeline(binding.rhs_pipeline)
+                schema = binding.rhs_pipeline.result_schema
+                if schema is not None:
+                    self._let_schemas[binding.name] = dict(schema.columns)
+            if body_pipeline is not None:
+                self._walk_pipeline(body_pipeline)
+        finally:
+            self._let_schemas = saved_let_schemas
+            self._masked_tables = saved_masked
+
     def _table_schema(self, name: str | None) -> dict[str, str]:
-        if not name:
+        if not name or name in self._masked_tables:
             return {}
         return self.schemas.get(name, {})
 
