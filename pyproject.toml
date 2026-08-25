@@ -140,4 +140,4 @@ ignore_errors = true
 [tool.kustology]
 # Pinned version of Microsoft.Azure.Kusto.Language NuGet package (Kusto.Language.dll).
 # Refresh with `python scripts/refresh_dll.py --pin --version X.Y.Z`.
-kusto_language_version = "12.3.2"
+kusto_language_version = "12.4.1"

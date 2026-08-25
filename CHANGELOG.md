@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Internal
+
+- Bumped bundled `Kusto.Language.dll` 12.3.2 → 12.4.1 (latest stable on nuget.org); `[tool.kustology] kusto_language_version` and `bin/VERSION.txt`'s SHA-256 re-pinned, provenance chain re-verified via `scripts/verify_dll.py`. No corpus digest movement across all 49 fixtures; the pattern-arity binder crash (`IndexOutOfRangeException` from `VisitPatternDeclaration`) is unchanged.
+
 ## [0.2.0] — 2026-08-24
 
 First release since 0.1.0. Two themes: values the library reported wrongly (culture-corrupted literals, mis-assigned column provenance, conflated operators), and public surface that never worked (`LetBinding`'s fields, `LetRef`, `ExternalDataExpr`'s contents). Tier 2 breaks in several places, as its pre-1.0 policy permits — see **Upgrading from 0.1.0** and **Breaking** below. Root-cause detail for the audits behind this release is in `docs/superpowers/reports/`.
