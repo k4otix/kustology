@@ -128,7 +128,7 @@ First release since 0.1.0. Two themes: values the library reported wrongly (cult
 - A handful of operator modifiers remain unmodelled and still collide: `mv-apply`'s `to typeof`/`limit`/`with_itemindex`, `parse-kv`'s `with (...)` properties, `getschema`'s `kind=csl`, and `consume`'s `decodeblocks=`.
 - Five statement kinds are not modelled at all (`SetOptionStatement`, `QueryParametersStatement`, `PatternStatement`, `AliasStatement`, `RestrictStatement`) and hash as though absent — `set query_now=...; T | take 1` collides with a bare `T | take 1`.
 - `semantic_hash` can differ between a bound and an unbound parse of a query whose `let` aliases a table — accepted rather than papered over, since proving it needs the binder.
-- A `summarize ... by` grouping key named by a function whose `ResultNameKind` is `None` (`tolower`, `toupper`, `hash`, `endofday`, `dayofweek`, `substring`, `strcat`, `isempty`, `array_length`, `coalesce`, `extract`) takes the first bare-column argument's own name; Microsoft names it `Column1`. Pre-existing, disclosed rather than fixed.
+- **`ColumnN` default names are a deliberate divergence** (grouping keys and unnamed `extend`/`project` columns alike): Microsoft's ``ColumnN`` counter is query-global and scope-sensitive, unreproducible bind-stably; first-bare-column naming is deterministic and stable. See ``_auto_name``'s grouping mode for the full list and design rationale.
 
 See README's "What `semantic_hash` deliberately ignores" section for the worked detail behind each.
 

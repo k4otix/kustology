@@ -2185,13 +2185,18 @@ class IRBuilder:
         - ``mode="grouping"``: the symbol read applies here too
           (``bin(TG, 1h)`` -> ``TG``, ``gettype(x)`` -> ``type_x``), falling
           back to the first column argument's own name when the symbol does
-          not resolve to one. **Known divergence:** when a grouping
+          not resolve to one. **Deliberate divergence:** when a grouping
           function's ``ResultNameKind`` is itself ``None`` -- ``tolower``,
           ``toupper``, ``hash``, ``endofday``, ``dayofweek``, ``substring``,
           ``strcat``, ``isempty``, ``array_length``, ``coalesce``,
-          ``extract`` (DLL-confirmed) -- Microsoft names the grouping key
-          ``Column1``; this fallback keeps the first bare-column argument's
-          own name instead. Pre-existing, disclosed rather than fixed here.
+          ``extract`` (DLL-confirmed) -- Microsoft's ``ColumnN`` counter is
+          query-global and scope-sensitive (skips names bindable in scope,
+          tables included; resets in function bodies; carries across
+          statements), which cannot be reproduced bind-stably and would make
+          ``Assignment.name`` — a hashed field — shift under unrelated edits.
+          Deterministic first-bare-column naming is the deliberate choice,
+          applied wherever ``_visit_assignment`` names an unnamed call
+          (``extend tolower(s)`` → ``tolower_s``).
         """
         kind = str(type(node).__name__)
         if kind == "ParenthesizedExpression" and hasattr(node, "Expression"):

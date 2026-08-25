@@ -2072,11 +2072,10 @@ def test_grouping_key_names_match_microsofts_for_the_whole_library():
     ``Aggregates.All``, since a grouping key is usually a scalar call.
 
     A function whose ``ResultNameKind`` *is* ``None`` is out of scope here
-    on purpose: Microsoft names that grouping key ``Column1`` and this port
-    falls back to the first bare-column argument's own name instead -- a
-    known, disclosed divergence (see ``_auto_name``'s grouping bullet and
-    CHANGELOG's Known limitations), not something this parity probe should
-    paper over by excluding the mismatching cases.
+    because those names are deliberately ours: we use first-bare-column naming
+    instead of Microsoft's ``ColumnN`` counter (see ``_auto_name``'s grouping
+    bullet and CHANGELOG's Known limitations for the design rationale). This
+    parity probe checks only Microsoft-compatible names.
     """
     from Kusto.Language import Functions
 
