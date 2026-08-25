@@ -1290,11 +1290,31 @@ class IRBuilder:
             )
 
         if kind == "EvaluateOperator":
-            # `evaluate <plugin>(...)` — .NET node exposes FunctionCall.
+            # `evaluate <plugin>(...) : (x:string)` — .NET node exposes
+            # FunctionCall and an optional Schema (EvaluateSchemaClause).
             func_expr = self._visit_expr(n.FunctionCall) if hasattr(n, "FunctionCall") else None
             if not isinstance(func_expr, FuncCall):
                 func_expr = FuncCall(name="<unparsed>", args=[], span=span)
-            return EvaluateOp(func=func_expr, span=span)
+            declared_schema: list[tuple[str, str]] | None = None
+            declared_schema_star = False
+            schema_clause = getattr(n, "Schema", None)
+            if schema_clause is not None:
+                row_schema = getattr(schema_clause, "Schema", None)
+                if row_schema is not None:
+                    # ``read_row_schema`` accepts the clause itself: its
+                    # fallthrough reaches this same ``EvaluateRowSchema``
+                    # through the clause's own ``.Schema`` and reads
+                    # ``.Columns`` off it.
+                    declared_schema = read_row_schema(schema_clause)
+                    asterisk = getattr(row_schema, "AsteriskToken", None)
+                    declared_schema_star = bool(asterisk) and asterisk.Width > 0
+                # else: error recovery dropped the inner schema — stays None.
+            return EvaluateOp(
+                func=func_expr,
+                declared_schema=declared_schema,
+                declared_schema_star=declared_schema_star,
+                span=span,
+            )
 
         if kind == "CountOperator":
             as_name: str | None = None

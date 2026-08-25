@@ -182,6 +182,11 @@ MATRIX: list[tuple[str, str]] = [
     # half of ``evaluate``, and the case where nothing about the input
     # schema changes.
     ("evaluate-autocluster", "T | evaluate autocluster()"),
+    # The written output-schema clause: Microsoft's binder builds
+    # ``result_schema`` from the clause itself (Binder_NodeBinder.cs:3605-3650),
+    # not from the plug-in's own signature, so this is a different code path
+    # than the two rows above rather than a third `evaluate` variant of them.
+    ("evaluate-declared-schema", "T | evaluate bag_unpack(d) : (x:string)"),
     ("facet-by", "T | facet by k"),
     ("partition", "T | partition by k (top 1 by a)"),
     ("sort", "T | sort by a desc"),

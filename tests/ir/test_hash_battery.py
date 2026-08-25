@@ -444,6 +444,30 @@ MUST_DIFFER = [
         'T | where a in ((datatable(x:string)["v"]))',
         'T | where a in ((datatable(x:string)["w"]))',
     ),
+    # `evaluate`'s output-schema clause closure (moved out of
+    # KNOWN_COLLISIONS): `EvaluateOp` used to carry only `func`, dropping the
+    # .NET `EvaluateSchemaClause` (`EvaluateOperator.Schema`) entirely.
+    # `declared_schema`/`declared_schema_star` now carry it, so a written
+    # schema, a different written schema, and no clause at all are three
+    # distinct digests.
+    (
+        "evaluate-schema-clause-columns",
+        "T | evaluate bag_unpack(d) : (x:string)",
+        "T | evaluate bag_unpack(d) : (y:long, z:datetime)",
+    ),
+    (
+        "evaluate-schema-clause-vs-absent",
+        "T | evaluate bag_unpack(d) : (x:string)",
+        "T | evaluate bag_unpack(d)",
+    ),
+    # `: (*, x:string)` appends `x` to the plug-in's own columns instead of
+    # replacing them -- `declared_schema_star` is the only thing that
+    # distinguishes it from the non-star spelling with the same columns.
+    (
+        "evaluate-schema-star",
+        "T | evaluate bag_unpack(d) : (*, x:string)",
+        "T | evaluate bag_unpack(d) : (x:string)",
+    ),
 ]
 
 
@@ -573,6 +597,14 @@ MUST_EQUAL = [
         'T | where a in ((datatable(x:string)["v"]))',
         'T | where a in ((datatable(x:string) [ "v" ]))',
     ),
+    # `read_row_schema` reads the clause's columns as expressions, not raw
+    # text, so formatting within `evaluate`'s schema clause does not reach
+    # the digest -- the closure-side sibling of the pairs above.
+    (
+        "evaluate-schema-whitespace",
+        "T | evaluate bag_unpack(d) : (x:string)",
+        "T | evaluate bag_unpack(d) :  ( x : string )",
+    ),
 ]
 
 
@@ -605,9 +637,9 @@ def test_must_equal(case_id, query_a, query_b):
 # silently ceasing to be one is a documentation defect even though the
 # behaviour improved. The failure message says to move the pair to
 # MUST_DIFFER and describes what else has to change with it. It names no
-# count, because the disclosure sites differ per row -- the `let`-function
-# rows are also described on `LetFunction` and in README's Tier 2 boundary
-# section, which the `evaluate` rows are not.
+# count, because the disclosure sites differ per row -- every row remaining
+# here is a `let`-function gap, also described on `LetFunction` and in
+# README's Tier 2 boundary section.
 #
 # Every case here is also a row in `examples/semantic_hash_demo.py`'s
 # KNOWN_MERGES, which the suite runs -- that file prints the verdict for a
@@ -615,22 +647,6 @@ def test_must_equal(case_id, query_a, query_b):
 # ---------------------------------------------------------------------------
 
 KNOWN_COLLISIONS = [
-    # `EvaluateOp` carries only `func`; the .NET `EvaluateSchemaClause`
-    # (property `EvaluateOperator.Schema`) is dropped by the builder. What
-    # collides is the operator's result *shape* -- the clause declares the
-    # columns the plug-in returns -- and the binder still derives each
-    # spelling's real `result_schema` from it, so two parts of the same IR
-    # disagree about whether these are the same query.
-    (
-        "evaluate-schema-clause-columns",
-        "T | evaluate bag_unpack(d) : (x:string)",
-        "T | evaluate bag_unpack(d) : (y:long, z:datetime)",
-    ),
-    (
-        "evaluate-schema-clause-vs-absent",
-        "T | evaluate bag_unpack(d) : (x:string)",
-        "T | evaluate bag_unpack(d)",
-    ),
     # A `let` function's body is not built and `body_span` is volatile, so
     # nothing between the braces reaches the digest. The largest gap in the
     # release: what collides is an arbitrary amount of query rather than one

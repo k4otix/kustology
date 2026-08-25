@@ -117,10 +117,11 @@ First release since 0.1.0. Two themes: values the library reported wrongly (cult
 - **Six public `KustoQuery` members gained docstrings (tier 1)** (`get_operator_chain`, `get_referenced_columns`, `get_referenced_functions`, `get_structural_hash`, `syntax`, `text`); a test now fails if a public member ships undocumented.
 - **The CLI now emits UTF-8 on every platform (tier 1).** Non-ASCII query text no longer raises `UnicodeEncodeError` on Windows.
 - **Aggregate and `summarize ... by` grouping auto-names now come from Microsoft's own `ResultNameKind`/`ResultNamePrefix` symbol properties (tier 2)**, not a hand-written prefix table — irregulars (`buildschema(d)` → `schema_d`, `argmax`/`argmin` (`argmax_t` → `max_t`), `binary_all_and(a)` → `a`, and family) are named as the engine names them, in both bind states.
+- `evaluate`'s output-schema clause (`: (x:string)`, and the `*` append form) is now modeled on `EvaluateOp.declared_schema` and reaches `semantic_hash`; the two documented clause collisions are closed.
 
 ### Known limitations
 
-- A `let`-declared function's body never reaches `semantic_hash` (only parameter names/count do) — two functions with the same signature and different bodies collide, and Tier 1/Tier 2 lineage disagree for queries built around one. `evaluate`'s output-schema clause (`: (x:string)`) collides the same way, though `result_schema` itself is correct.
+- A `let`-declared function's body never reaches `semantic_hash` (only parameter names/count do) — two functions with the same signature and different bodies collide, and Tier 1/Tier 2 lineage disagree for queries built around one.
 - A handful of operator modifiers remain unmodelled and still collide: `mv-apply`'s `to typeof`/`limit`/`with_itemindex`, `parse-kv`'s `with (...)` properties, `getschema`'s `kind=csl`, and `consume`'s `decodeblocks=`.
 - Five statement kinds are not modelled at all (`SetOptionStatement`, `QueryParametersStatement`, `PatternStatement`, `AliasStatement`, `RestrictStatement`) and hash as though absent — `set query_now=...; T | take 1` collides with a bare `T | take 1`.
 - `semantic_hash` can differ between a bound and an unbound parse of a query whose `let` aliases a table — accepted rather than papered over, since proving it needs the binder.

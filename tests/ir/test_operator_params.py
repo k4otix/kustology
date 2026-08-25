@@ -472,3 +472,31 @@ def test_find_project_smart_is_the_default_projection():
     assert _hash("find in (T) where a == 1 project-smart") == _hash(
         "find in (T) where a == 1"
     )
+
+
+# -- evaluate ---------------------------------------------------------------
+
+def test_evaluate_declared_schema_is_modeled():
+    """`: (x:string)` is the operator's declared result shape; it was dropped
+    (documented KNOWN_COLLISIONS) and now rides the IR in clause order."""
+    (op,) = _ir("T | evaluate bag_unpack(d) : (y:long, z:datetime)").main_pipeline.operators
+    assert op.declared_schema == [("y", "long"), ("z", "datetime")]
+    assert op.declared_schema_star is False
+
+
+def test_evaluate_schema_star_means_append():
+    (op,) = _ir("T | evaluate bag_unpack(d) : (*, x:string)").main_pipeline.operators
+    assert op.declared_schema == [("x", "string")]
+    assert op.declared_schema_star is True
+
+
+def test_evaluate_without_a_clause_stays_none():
+    (op,) = _ir("T | evaluate bag_unpack(d)").main_pipeline.operators
+    assert op.declared_schema is None
+    assert op.declared_schema_star is False
+
+
+def test_evaluate_bare_star_is_empty_with_the_flag():
+    (op,) = _ir("T | evaluate bag_unpack(d) : (*)").main_pipeline.operators
+    assert op.declared_schema == []
+    assert op.declared_schema_star is True

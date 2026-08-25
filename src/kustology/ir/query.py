@@ -712,22 +712,25 @@ class ParseWhereOp(Operator):
 
 
 class EvaluateOp(Operator):
-    """``evaluate`` — run a plug-in. Its output-schema clause is not modeled.
+    """``evaluate`` — run a plug-in, with its declared output-schema clause.
 
     ``evaluate bag_unpack(d) : (x:string)`` attaches an
     ``EvaluateSchemaClause`` (the .NET property is ``Schema``) declaring the
-    columns the plug-in returns. There is no field for it here, so the
-    builder drops it and the clause reaches neither the IR nor
-    ``semantic_hash``: two spellings with different declared schemas, and
-    one with none at all, are one digest. The binder still derives the real
-    ``result_schema`` from the clause, so ``result_schema`` and the digest
-    disagree about whether the queries differ. Documented as a known
-    collision in :func:`~kustology.ir.transforms.compute_semantic_hash`;
-    modelling it is post-0.2.0 work.
+    columns the plug-in returns. ``declared_schema`` holds those
+    ``(name, type)`` pairs in clause order; ``None`` means no clause was
+    written at all, distinct from ``[]`` (an empty clause, ``: (*)``).
+    ``declared_schema_star`` is ``True`` when the clause opens with ``*`` —
+    append the plug-in's columns to the schema rather than replace it. The
+    binder still derives the real ``result_schema`` from the clause; these
+    fields are the query's own declaration of it, now carried into
+    ``semantic_hash`` so two spellings with different declared schemas (or
+    none) no longer collide.
     """
 
     kind: Literal["evaluate"] = "evaluate"
     func: FuncCall
+    declared_schema: list[tuple[str, str]] | None = None
+    declared_schema_star: bool = False
 
 
 class CountOp(Operator):

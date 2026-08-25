@@ -435,6 +435,37 @@ def _operand_sort_key(child: BaseModel) -> str:
 SEMANTIC_HASH_SCHEME = "kustology-sem-v2"
 
 
+def _strip_unwritten_evaluate_schema(value: Any) -> None:
+    """Delete an ``EvaluateOp`` dict's schema-clause keys when they are the
+    unwritten default, in place, on the *dumped* JSON structure.
+
+    ``declared_schema``/``declared_schema_star`` are plain, non-volatile
+    fields — a written clause must reach the digest, so they cannot be
+    cleared like :data:`_VOLATILE_FIELDS` clears bind state. But a Pydantic
+    field cannot be conditionally *absent* from one ``model_dump`` call: the
+    key is always present, so merely adding the fields would move the digest
+    of every ``evaluate`` query, clause or not, only some of which is a real
+    collision closing. Operating after the dump, on the plain dict/list tree
+    rather than the model, is what makes the omission conditional: an
+    ``EvaluateOp`` whose clause was never written dumps exactly as it did
+    before these fields existed, and only a written clause's dict carries
+    the new keys at all.
+    """
+    if isinstance(value, dict):
+        if (
+            value.get("kind") == "evaluate"
+            and value.get("declared_schema") is None
+            and value.get("declared_schema_star") is False
+        ):
+            del value["declared_schema"]
+            del value["declared_schema_star"]
+        for child in value.values():
+            _strip_unwritten_evaluate_schema(child)
+    elif isinstance(value, list):
+        for item in value:
+            _strip_unwritten_evaluate_schema(item)
+
+
 def compute_semantic_hash(node: BaseModel) -> str:
     """SHA-256 of the canonical IR shape, prefixed with the scheme tag.
 
@@ -514,17 +545,6 @@ def compute_semantic_hash(node: BaseModel) -> str:
       ``to typeof(…)``, ``limit`` and ``with_itemindex=``, ``parse-kv``'s
       ``with (…)`` properties, ``getschema kind=csl``, ``consume
       decodeblocks=`` as of 0.2.0.
-    * **``evaluate``'s output-schema clause.** The same shape as the bullet
-      above, listed on its own because of what it costs: the clause *is*
-      the operator's result shape. :class:`~kustology.ir.query.EvaluateOp`
-      carries only ``func``, so the .NET ``EvaluateSchemaClause`` (reached
-      as ``EvaluateOperator.Schema``) is discarded, and
-      ``T | evaluate bag_unpack(d) : (x:string)``,
-      ``… : (y:long, z:datetime)`` and a bare ``T | evaluate bag_unpack(d)``
-      are one digest. The binder still computes each one's real
-      ``result_schema`` from the clause, so the IR *knows* the three differ
-      and the digest does not — a dedup consumer holding three rules that
-      return three different column sets sees one rule.
     * **A ``let``-declared function's body.** ``let f = (x:int) { … }``
       records a :class:`~kustology.ir.query.LetFunction` holding the
       parameter *names* and a ``body_span``; the body is not built and
@@ -607,6 +627,7 @@ def compute_semantic_hash(node: BaseModel) -> str:
         }
     else:
         payload = canonical.model_dump(mode="json")
+    _strip_unwritten_evaluate_schema(payload)
     digest = hashlib.sha256(
         json.dumps(payload, sort_keys=True).encode()
     ).hexdigest()

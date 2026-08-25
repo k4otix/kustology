@@ -93,6 +93,15 @@ SPLITS = [
      'T | where a in ("x")', 'T | where a in~ ("x")'),
     ("isnotnull vs isnotempty",
      "T | where isnotnull(a)", "T | where isnotempty(a)"),
+    # `evaluate`'s output-schema clause used to be the costliest known gap:
+    # it declares the columns the plug-in returns, so what collided was the
+    # operator's result *shape*. `EvaluateOp.declared_schema` now carries it.
+    ("evaluate's declared output schema splits",
+     "T | evaluate bag_unpack(d) : (x:string)",
+     "T | evaluate bag_unpack(d) : (y:long, z:datetime)"),
+    ("declared schema vs none splits",
+     "T | evaluate bag_unpack(d) : (x:string)",
+     "T | evaluate bag_unpack(d)"),
 ]
 
 KNOWN_MERGES = [
@@ -125,17 +134,6 @@ KNOWN_MERGES = [
      "T | getschema kind=csl", "T | getschema"),
     ("consume drops `decodeblocks=` — known gap",
      "T | consume decodeblocks=true", "T | consume"),
-    # `evaluate`'s clause is the same shape of gap and the costliest of them:
-    # it declares the columns the plug-in returns, so what collides is the
-    # operator's result *shape*. The binder still derives each spelling's
-    # real `result_schema` from the clause, so the IR knows these differ
-    # while the digest does not.
-    ("evaluate drops its output-schema clause — known gap",
-     "T | evaluate bag_unpack(d) : (x:string)",
-     "T | evaluate bag_unpack(d) : (y:long, z:datetime)"),
-    ("evaluate: a declared schema == no schema at all — known gap",
-     "T | evaluate bag_unpack(d) : (x:string)",
-     "T | evaluate bag_unpack(d)"),
     # A `let` function's body is not built, and `body_span` is volatile, so
     # nothing between the braces reaches the digest. This is the largest gap
     # in the list: what collides is an arbitrary amount of query rather than

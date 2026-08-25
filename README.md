@@ -510,13 +510,6 @@ Two caveats, both deliberate rather than accidental:
   decodeblocks=`. That list is what a modifier-pair sweep turned up, not a
   proof that nothing else remains.
 
-  **`evaluate` discards its output-schema clause**, which is the same shape
-  of gap but costs more, because the clause *is* the operator's result shape.
-  `T | evaluate bag_unpack(d) : (x:string)`, `… : (y:long, z:datetime)` and a
-  bare `T | evaluate bag_unpack(d)` are one digest. The binder still derives
-  each one's real `result_schema` from the clause, so the IR knows the three
-  differ while the digest does not.
-
   **A `let` function's body is invisible to the digest.** `LetFunction`
   records the parameter names and a volatile `body_span`, so two functions
   with the same name and parameters and completely different bodies collide —
