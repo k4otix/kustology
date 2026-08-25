@@ -87,9 +87,12 @@ def _enumerate_static_symbols(container_name: str) -> dict[str, object]:
     The ``dir()`` sweep is kept as a supplement rather than replaced, because
     ``All`` is not exhaustive either: ``PlugIns.SchemaMerge`` is a real
     ``evaluate`` plug-in that ``PlugIns.All`` omits. Neither list subsumes the
-    other, so both are read; on the bundled 12.3.2 assembly the union adds
-    three names to ``Functions`` and one to ``PlugIns``, and nothing to
-    ``Aggregates``.
+    other, so both are read. What each contributes moves with the assembly and
+    is not a reason to drop either: on the bundled 12.4.1 the ``dir()`` half
+    adds only ``schema_merge``, to ``PlugIns`` -- on 12.3.2 it contributed to
+    ``Functions`` as well, and 12.4.1 folded those into ``Functions.All`` --
+    while ``All`` still recovers ``tostring``, ``gettype`` and ``all``, which
+    ``dir()`` alone cannot see.
     """
     out: dict[str, object] = {}
     try:

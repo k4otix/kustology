@@ -502,8 +502,9 @@ def extract_hints(node: Any) -> dict[str, str]:
 
     The prefix match is **case-sensitive**, matching the grammar rather than
     being lenient about it. ``HINT.strategy=shuffle``, ``hint.STRATEGY=``
-    and ``Hint.Strategy=`` are none of them named parameters in 12.3.2: each
-    fails to parse as one and is diagnosed as an unknown name. A
+    and ``Hint.Strategy=`` are none of them named parameters in the bundled
+    grammar: each fails to parse as one and is diagnosed rather than
+    accepted (verified on 12.4.1). A
     case-insensitive match therefore could not admit anything extra, and
     pairing one with verbatim keys would have been the worse of both -- two
     dictionary entries for one hint, the first time a parser did accept a

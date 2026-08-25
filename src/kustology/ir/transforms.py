@@ -885,8 +885,9 @@ def compute_semantic_hash(node: BaseModel) -> str:
       ``declare pattern`` arm too, and for the name at a **call site** when
       the binding is a function: ``let f = () { … }; f()`` and
       ``let g = () { … }; g()`` are one digest, while any other call — a
-      built-in, a server-side function, or one sharing a *scalar* binding's
-      name, which KQL resolves in a separate namespace — is left as written
+      built-in, a server-side function, one sharing a *scalar* binding's
+      name, which KQL resolves in a separate namespace, or one whose binding
+      only *aliases* a function (``let g = f; g()``) — is left as written
     * ``let f = (w:int) { T | where a > w }`` vs the same function written
       ``(z:int) { T | where a > z }`` — a *parameter* name is a local label
       too, replaced by its position in the signature (``$param0``, …) along
@@ -965,7 +966,7 @@ def compute_semantic_hash(node: BaseModel) -> str:
     still on your own IR, populated as always; only the digest ignores them.
 
     **Equal digests are not a proof of equivalence.** What still merges is
-    listed here, and both entries are decisions rather than gaps — the last
+    listed here, and each entry is a decision rather than a gap — the last
     gap, five statement kinds contributing nothing of their own, closed when
     :attr:`~kustology.ir.query.QueryIR.statements` was modelled:
 
@@ -978,11 +979,22 @@ def compute_semantic_hash(node: BaseModel) -> str:
       inlines the body twice — which is the right answer for dedup (the two
       queries *are* the same query) but means a caller counting a table's
       occurrences in the digest is counting declarations, not reads.
+    * **A local name that shadows a real column.** Both renames above decide
+      what is local from the query text, where KQL resolves an unqualified
+      name to a row-scope column first, so ``let Count = 5; T | where Count >
+      1`` against a ``T`` that really has ``Count`` merges with the same query
+      written ``let Other = 5; … Other > 1``. A function parameter shadowing a
+      column behaves the same way. Deciding by symbol needs a bound parse and
+      would put the digest back under bind state — see
+      :class:`~kustology.ir.expr.LetValueRef` for the trade.
 
     A dedup consumer that must not merge across any of these has to compare
-    more than the hash. Rather than trusting the lists above,
-    run ``examples/semantic_hash_demo.py``: it hashes every case named here
-    and raises if any stops behaving as filed.
+    more than the hash. Rather than trusting the lists above, run
+    ``examples/semantic_hash_demo.py``: it hashes the first two and raises if
+    either stops behaving as filed. The third is pinned by
+    ``tests/ir/test_let_value_ref.py`` instead, and belongs there rather than
+    in the demo's ``KNOWN_MERGES``: that list is for merges of queries which
+    mean the *same* thing, and the shadow case merges two that do not.
 
     The hash operates on a deep copy of ``node`` — does not mutate the
     input, and the result reflects the IR shape at call time. Stale if

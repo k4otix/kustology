@@ -666,7 +666,7 @@ class IRBuilder:
         # -- checked against the parser rather than assumed. Every
         # ``ExpressionStatement`` constructor call in Kusto.Language either
         # takes an already-non-null ``Expression`` off a successful grammar
-        # match or -- ``QueryParser.ParseStatement``'s ``if (expr != null)
+        # match or -- ``QueryParser.ParseQueryBlockStatement``'s ``if (expr != null)
         # return new ExpressionStatement(expr); return null;`` -- returns no
         # statement at all rather than one with a null child; a malformed
         # source ("T |", "let", bare ";") probes to a placeholder

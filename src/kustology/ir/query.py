@@ -571,7 +571,7 @@ class MvExpandOp(Operator):
     ``bagexpansion=bogus`` are each diagnosed *"Expected one of: bag,
     array"*). Two fields split those spellings in the hash, the way reading
     only ``render``'s ``with`` clause would have split *its* two spellings.
-    A query writing both -- which parses clean in 12.3.2 -- records
+    A query writing both -- which parses clean in 12.4.1 -- records
     ``kind``, the modern spelling, as ``render``'s merge prefers its modern
     spelling too.
 
@@ -862,12 +862,14 @@ class FindOp(Operator):
 
     There is no ``project_away`` field. ``FindOperator.ProjectAway`` exists
     as a member on the .NET node, but no spelling of the clause reaches it
-    in the bundled parser (Kusto.Language 12.3.2): the eight forms probed --
-    including Microsoft's own documented example -- all parse
-    ``project-away`` as a *separate* ``ProjectAwayOperator`` statement with
-    an ``Expected: ;`` diagnostic. A declared field nothing can populate
-    reads as implemented and cannot be tested (AGENTS.md), so it is left out
-    until a DLL refresh makes the clause reachable.
+    in the bundled parser: the eight forms probed -- including Microsoft's
+    own documented example -- all parse ``project-away`` as a *separate*
+    ``ProjectAwayOperator`` statement with an ``Expected: ;`` diagnostic.
+    A declared field nothing can populate reads as implemented and cannot be
+    tested (AGENTS.md), so it is left out until a DLL refresh makes the
+    clause reachable. The 12.3.2 -> 12.4.1 refresh did not: re-probed on
+    12.4.1, ``FindOperator.ProjectAway`` is still ``None`` and the clause
+    still lands on its own ``ProjectAwayOperator``.
     """
 
     kind: Literal["find"] = "find"

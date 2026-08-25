@@ -522,13 +522,21 @@ Your own IR keeps every one of these as written; the canonicalization runs on
 a private copy. `normalize_expressions` is a separate, opt-in transform and
 still leaves your operand order alone.
 
-Two caveats, both deliberate rather than accidental:
+The caveats, all deliberate rather than accidental:
 
 - The digest is **not** invariant across bind state for a query whose `let`
   aliases a table. The binder proves it is a table, which changes the IR's
   *shape* rather than a field's value, and no amount of stripping hides
   that. The alternative is treating every bare name as a table without
   proof.
+- A local name is matched **by text**, where KQL resolves a column first. A
+  `let` name or a function parameter that shadows a same-named real column is
+  classified as the local one anyway, so the two rename rules above reach it
+  and two queries reading different things share a digest — as they do when
+  the shadowing column is one an earlier `extend` created. Deciding by symbol
+  instead needs a bound parse, which would put the digest back under bind
+  state; the invariant above is worth more than the shadow case is. See
+  `LetValueRef`'s docstring for the full trade.
 - Equal digests are **not** a proof of equivalence. What remains is narrower
   than it was: literal-level merges the library makes on purpose (typed
   nulls, obfuscated strings) and a `let` function's call sites, which record
@@ -546,7 +554,8 @@ Two caveats, both deliberate rather than accidental:
 
   `examples/semantic_hash_demo.py` hashes every remaining merge when it runs
   and raises if one stops behaving as filed; see also the CHANGELOG's
-  **Fixed** sections for the collisions that were closed.
+  **Fixed** section for the collisions that were closed, and its **Known
+  limitations** for the boundaries that remain.
 
 ## Development
 
