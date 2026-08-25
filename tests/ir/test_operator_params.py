@@ -164,6 +164,17 @@ def test_mv_apply_records_the_declared_element_type():
     assert op.to_typeof == "long"
 
 
+def test_mv_apply_multi_column_to_typeof_takes_the_first_written():
+    """Disclosed in :class:`~kustology.ir.query.MvApplyOp`'s docstring: with
+    two comma-separated columns each carrying its own ``to typeof(...)``, the
+    reader takes the first written occurrence across ``assignments``, not the
+    last."""
+    (op,) = _ops(
+        "T | mv-apply a to typeof(long), b to typeof(string) on (take 1)"
+    )
+    assert op.to_typeof == "long"
+
+
 def test_mv_apply_records_the_row_limit():
     (op,) = _ops(_MV_APPLY_ALL)
     assert op.row_limit == 3

@@ -341,8 +341,9 @@ def test_llm_view_renders_statements(query):
 
 
 def test_the_binder_tolerates_a_statement_carrying_query(sample_schema):
-    """The provenance pass does not walk statement bodies yet, and must not
-    trip over them either: the main pipeline still enriches."""
+    """The four statement kinds the provenance pass still does not walk --
+    ``set``, ``query_parameters``, ``alias``, ``restrict`` -- must not trip it
+    either: the main pipeline still enriches."""
     ir = parse(
         "set notruncation; DeviceFileEvents | where FileName == 'cmd.exe'",
         schema=sample_schema,

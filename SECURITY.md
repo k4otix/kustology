@@ -54,7 +54,7 @@ If you'd rather use a DLL you fetched yourself:
 
 ```bash
 python scripts/refresh_dll.py            # uses the pinned version
-python scripts/refresh_dll.py --version 12.3.2 --pin
+python scripts/refresh_dll.py --version 12.4.1 --pin
 ```
 
 This requires `dotnet` 8.0+, runs `dotnet publish` against a temporary

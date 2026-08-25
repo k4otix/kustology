@@ -433,10 +433,24 @@ MUST_DIFFER = [
         "T | mv-apply x=d to typeof(long) on (summarize count())",
         "T | mv-apply x=d on (summarize count())",
     ),
+    # The value-level companion: two different written types, not merely
+    # written-vs-absent. `getschema-kind`/`consume-decodeblocks` below have
+    # had this shape since 0.2.0; these four modifiers only had the
+    # present-vs-absent pair above until this pair was added.
+    (
+        "mv-apply-to-typeof-values",
+        "T | mv-apply x=d to typeof(long) on (summarize count())",
+        "T | mv-apply x=d to typeof(string) on (summarize count())",
+    ),
     (
         "mv-apply-limit",
         "T | mv-apply x=d limit 3 on (summarize count())",
         "T | mv-apply x=d on (summarize count())",
+    ),
+    (
+        "mv-apply-limit-values",
+        "T | mv-apply x=d limit 3 on (summarize count())",
+        "T | mv-apply x=d limit 5 on (summarize count())",
     ),
     # The modifier precedes the column name; the postfix spelling is a parse
     # error (see MvApplyOp), so the bare-vs-modifier pair is the only shape.
@@ -446,9 +460,19 @@ MUST_DIFFER = [
         "T | mv-apply x=d on (summarize count())",
     ),
     (
+        "mv-apply-with-itemindex-values",
+        "T | mv-apply with_itemindex=i x=d on (summarize count())",
+        "T | mv-apply with_itemindex=j x=d on (summarize count())",
+    ),
+    (
         "parse-kv-with-properties",
         "T | parse-kv a as (b:string) with (pair_delimiter=',')",
         "T | parse-kv a as (b:string)",
+    ),
+    (
+        "parse-kv-with-properties-values",
+        "T | parse-kv a as (b:string) with (pair_delimiter=',')",
+        "T | parse-kv a as (b:string) with (pair_delimiter=';')",
     ),
     ("getschema-kind", "T | getschema kind=csl", "T | getschema"),
     ("consume-decodeblocks", "T | consume decodeblocks=true", "T | consume"),

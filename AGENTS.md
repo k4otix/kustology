@@ -341,13 +341,13 @@ key:
 Do not "unify" these by sorting in the builder or in `normalize_expressions`.
 The IR's job is to be faithful; canonicalization is the hash's job.
 
-### `UnknownExpr` / `UnknownSource` / `UnknownOp` are deliberate fallbacks
+### `UnknownExpr` / `UnknownSource` / `UnknownOp` / `UnknownStmt` are deliberate fallbacks
 The builder emits one of these when it can't model a shape, rather than
 crashing. The coverage audit (`scripts/audit_syntax_kinds.py`) tracks
 baseline counts and fails CI when new shapes surface (typically after
 a DLL refresh). To add coverage: dispatch the shape explicitly in
-`IRBuilder` and append the `SyntaxKind` to
-`IRBuilder.HANDLED_OPERATOR_KINDS` or `IRBuilder.HANDLED_EXPR_KINDS` —
+`IRBuilder` and append the `SyntaxKind` to `IRBuilder.HANDLED_OPERATOR_KINDS`,
+`IRBuilder.HANDLED_EXPR_KINDS`, or `IRBuilder.HANDLED_STATEMENT_KINDS` —
 these are **public** attributes that the audit script reads as contract.
 
 ### Declare a field only in the change that populates it

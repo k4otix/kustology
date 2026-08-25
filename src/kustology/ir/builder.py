@@ -82,6 +82,7 @@ from .expr import (
 )
 from .query import (
     AliasStmt,
+    AnyStatement,
     AsOp,
     AssertSchemaOp,
     Assignment,
@@ -711,7 +712,7 @@ class IRBuilder:
             and node.GetFirstAncestor[PatternStatement]() is None
         )
 
-    def _visit_statements(self, root: Any) -> list[Any]:
+    def _visit_statements(self, root: Any) -> list[AnyStatement]:
         """Build every non-``let``, non-tabular statement, in source order.
 
         Five .NET classes, one sweep each, merged on ``TextStart``. Sorting

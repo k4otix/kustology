@@ -35,6 +35,7 @@ from .expr import (
 )
 from .query import (
     AliasStmt,
+    AnyStatement,
     AsOp, AssertSchemaOp, Assignment, ConsumeOp, CountOp, DataTableSource,
     Diagnostic, DistinctOp, EvaluateOp, ExecuteAndCacheOp, ExtendOp,
     ExternalDataSource, FacetOp, FilterOp,
@@ -109,6 +110,6 @@ __all__ = [
     "TableRef", "LetRef", "FuncCallSource", "DataTableSource",
     "ExternalDataSource", "ImplicitSource", "UnknownSource",
     # Statements (neither `let` nor tabular)
-    "SetOptionStmt", "QueryParametersStmt", "PatternStmt", "PatternMatch",
-    "AliasStmt", "RestrictStmt", "UnknownStmt",
+    "AnyStatement", "SetOptionStmt", "QueryParametersStmt", "PatternStmt",
+    "PatternMatch", "AliasStmt", "RestrictStmt", "UnknownStmt",
 ]

@@ -167,6 +167,36 @@ one blocked a downstream consumer's design entirely.
    populated node can still lose information" in `AGENTS.md`.
 7. Regenerate the baseline.
 
+**A new statement kind** (a `set`/`declare`/... construct that is neither
+`let` nor tabular, e.g. `alias database`, `restrict access to`):
+
+1. Add the IR node class in `src/kustology/ir/query.py`, in the "statements
+   that are neither `let` nor tabular" section, and add it as a new member of
+   the `AnyStatement` union there — **not** a new field on `QueryIR`.
+   `QueryIR.statements` is one field so that a new kind is one registration,
+   not three: the hash payload key in `compute_semantic_hash`, the
+   canonicalizer entry in `_canonicalize_let_names`'s scoping loop (both
+   `src/kustology/ir/transforms.py`), and the provenance pass's statement
+   loop in `src/kustology/ir/binder.py` each enumerate `QueryIR`'s fields by
+   name and already read `.statements` as a whole — a sibling field would
+   reach none of the three until added there too, the way five separate
+   fields would have needed fifteen registrations instead of three.
+2. Add its .NET `SyntaxKind` string(s) to `IRBuilder.HANDLED_STATEMENT_KINDS`
+   in `src/kustology/ir/builder.py` (the audit script reads this set as
+   contract, the same as `HANDLED_OPERATOR_KINDS`/`HANDLED_EXPR_KINDS`), and
+   a `(NetClass, self._visit_your_statement)` entry plus dispatch method in
+   `IRBuilder._visit_statements()`.
+3. Add the class to `__all__` in `src/kustology/ir/__init__.py`.
+4. If the new kind opens its own name scope the way a `declare pattern` arm
+   does, add a branch to the provenance pass's `for stmt in ir.statements:`
+   loop in `binder.py` (see how `PatternStmt` is handled there) — the payload
+   dump and the rename in step 1 walk generically and need no such branch,
+   but scoping does.
+5. Add a minimal `.kql` fixture and `MUST_EQUAL`/`MUST_DIFFER` rows in
+   `tests/ir/test_hash_battery.py` for the values the new kind carries.
+6. Regenerate the baseline:
+   `python scripts/audit_syntax_kinds.py --update-baseline`.
+
 **A new CLI subcommand**:
 
 1. Add the subparser + handler in `src/kustology/cli.py`.
@@ -185,6 +215,7 @@ protecting.
 | Every `.NET` member name `src/` reads exists in the assembly | `tests/test_reflection_audit.py` |
 | Every parser `SyntaxKind` is handled or explicitly skipped | `tests/test_coverage_audit.py` + `scripts/audit_syntax_kinds.py --check` |
 | Every kind in `HANDLED_OPERATOR_KINDS` actually builds from real KQL | `tests/ir/test_handled_kinds_smoke.py` |
+| A statement kind reaches `semantic_hash`'s payload, the `let`-rename canonicalizer, and (where it opens a body) the provenance pass | `tests/ir/test_hash_battery.py` (`set-two-values` et al., `pattern-body-let-rename`), `tests/ir/test_statements.py::test_statement_order_is_hashed` |
 | `canonical()`, `AnyExpr` and `ir.__all__` list every `Expr` subclass | `tests/ir/test_canonical_coverage.py` |
 | Our `result_schema` equals Microsoft's `ResultType`, in order | `tests/ir/test_binder_oracle.py` (bound leg and dict-path leg) |
 | `semantic_hash` splits queries that differ and merges those that don't | `tests/ir/test_hash_battery.py` |

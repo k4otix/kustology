@@ -128,7 +128,7 @@ changes it. Always run the test suite after a refresh; upstream parser
 changes can shift diagnostic codes or AST kinds. The coverage audit is the one that catches a *new*
 `SyntaxKind` the builder has never seen — regenerate its baseline with
 `--update-baseline` once you have decided whether to model the new kind or
-let it fall through to `UnknownOp` / `UnknownExpr`, and commit
+let it fall through to `UnknownOp` / `UnknownExpr` / `UnknownStmt`, and commit
 `tests/fixtures/syntax_kinds_baseline.json` with the change.
 
 ## Coding conventions

@@ -1238,6 +1238,14 @@ class LetFunctionParameter(BaseModel):
     so inside the body it shadows any same-named ``let`` from the enclosing
     query and a reference to it lowers as a ``ColumnRef``/``TableRef``, never
     a ``LetValueRef``/``LetRef`` — see :class:`LetFunction`.
+
+    Unlike its two ``declare``-statement siblings — a ``declare
+    query_parameters`` name and a ``declare pattern`` parameter name, which
+    stay verbatim (see :class:`QueryParametersStmt`, :class:`PatternStmt`) —
+    this name *is* alpha-canonicalized: renamed to ``$param<i>`` by
+    declaration position, the same rule a ``let`` name gets, because it is
+    bound inside one call's body rather than naming a caller-facing contract.
+    See :func:`~kustology.ir.transforms._canonicalize_let_names`.
     """
 
     model_config = {"extra": "forbid"}
