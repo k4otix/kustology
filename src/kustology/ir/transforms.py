@@ -538,10 +538,27 @@ def _strip_unwritten_fields(value: Any, kind: str, defaults: dict[str, Any]) -> 
     field -- README's "Four operators still discard a modifier" list
     (``mv-apply``, ``parse-kv``, ``getschema``, ``consume``) is the same
     problem shape -- rather than writing a new one-off dict walk.
+
+    The gate also requires ``field in value`` for every field, not merely
+    ``value.get(field) is default``: a dict that lacks the keys entirely
+    dumps ``.get`` as ``None`` too, and for the current call that can never
+    pass -- ``declared_schema_star``'s default is ``False``, and a missing
+    key can only look like a missing ``None``. A future field set that is
+    ``None`` all the way down loses that protection, and without ``field in
+    value`` a *foreign* dict that merely lacks the keys (wrong shape, not an
+    unwritten instance of this one -- e.g. a nested ``properties`` dict that
+    happens to carry the same ``kind`` tag) would match the gate and then
+    crash on ``del``. Requiring the keys to be present keeps today's evaluate
+    dicts matching exactly as before (every real ``EvaluateOp`` dump always
+    carries both keys, written or not) while making a shape that never had
+    the keys at all fail the gate instead of being misread as "all defaults"
+    -- which is the correct read: a dict with nothing to strip is left alone,
+    not silently matched and then no-opped.
     """
     if isinstance(value, dict):
         if value.get("kind") == kind and all(
-            value.get(field) is default for field, default in defaults.items()
+            field in value and value.get(field) is default
+            for field, default in defaults.items()
         ):
             for field in defaults:
                 del value[field]

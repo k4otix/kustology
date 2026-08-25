@@ -1265,6 +1265,12 @@ class LetBinding(BaseModel):
     # ``find_all(rhs_pipeline, LetRef)``. Keeping aliases out means the field
     # answers "which tables does this binding read", which is what a lineage
     # consumer wants, rather than mixing the two kinds of name.
+    #
+    # One exception survives inside ``rhs_function``: a tabular parameter
+    # (``(T:(*))``) is not a real table either, but a reference to it inside
+    # the body shadows textually the same way any other parameter does (see
+    # ``LetFunctionParameter``) and lowers as a ``TableRef``, so it is
+    # indistinguishable here from a genuine table name.
     inner_tables: list[str] = []
     inner_time_exprs: list[AnyExpr] = []
 

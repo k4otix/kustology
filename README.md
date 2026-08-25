@@ -44,7 +44,10 @@ two apart from real columns and real tables:
 So `find_all(ir, TableRef)` answers "which tables does this query read" and
 `find_all(ir, ColumnRef)` answers "which columns does it touch" — neither
 list is polluted by `let` names. Use `find_all(ir, LetRef)` for the tabular
-aliases and `find_all(ir, LetValueRef)` for the scalars.
+aliases and `find_all(ir, LetValueRef)` for the scalars. One exception: a
+tabular function parameter (`(T:(*))`) shadows the same way any other
+parameter does, so a reference to it inside the body lowers as a `TableRef`
+too, indistinguishable there from a real table name.
 
 A bound parse resolves columns *through* a tabular alias: in
 `let Base = SecurityEvent | …; Base | project Account`, `Account` carries the
@@ -484,7 +487,10 @@ returns. Within `kustology-sem-v2` these are ignored:
   so `let n = 5; T | where a > n` and `let m = 5; T | where a > m` collide —
   and so do the same two spellings of a `let` written inside a function body.
   Which binding a reference points at is still hashed, and a `let`-bound `n`
-  never collides with a real column `n`.
+  never collides with a real column `n`. A function's own name at its call
+  site is not renamed — it may name a server-side function rather than a
+  local `let` — so `let f = () {…}; f()` and `let g = () {…}; g()` still
+  hash apart.
 - **The host's timezone and locale.** A `datetime` literal is normalized to
   UTC before it is hashed, and numeric literals render invariant, so the same
   query digests identically in Tokyo and in New York, under `de-DE` and

@@ -231,6 +231,13 @@ MUST_DIFFER = [
     # KNOWN_COLLISIONS until the body was built; the body one was the largest
     # gap in the release, because what collided was an arbitrary amount of
     # query rather than one modifier.
+    # Parameter names are not alpha-canonicalized: a body reference to a
+    # parameter lowers as a textual `ColumnRef`/`TableRef` (see
+    # `LetFunctionParameter`), not a renameable `let` name, so nothing folds
+    # `w` and `z` together the way `_canonicalize_let_names` folds two
+    # differently-spelled `let`s. Parameter-aware renaming is future work;
+    # splitting these alpha-equivalent signatures is the safe direction for a
+    # dedup consumer meanwhile.
     (
         "let-function-parameter-name",
         "let S = (w:int) { A | where x > 1 }; S(5)",
@@ -699,6 +706,21 @@ MUST_EQUAL = [
         "let S = () { let z = 5; A | take z }; S()",
         "let S = () { let y = 5; A | take y }; S()",
     ),
+    # `LetBinding.inner_time_exprs` aliases the same `FuncCall` objects found
+    # inside `rhs_function`, not copies, so `_canonicalize_let_names` reaches
+    # each one twice: once through `rhs_function` (renamed against the body's
+    # own scope) and once through `inner_time_exprs` (skipped, already seen).
+    # That only renames correctly because `rhs_function` is declared before
+    # `inner_time_exprs` on `LetBinding` -- see the "index-field aliasing"
+    # paragraph on `_canonicalize_let_names`. Here `d`/`e` is a duration
+    # bound inside the function body and read through `ago(...)`, so the
+    # alias is exercised on a `let`-function's own `inner_time_exprs`, not
+    # merely a top-level one; this row is the tripwire for that field order.
+    (
+        "let-function-body-time-alias-rename",
+        "let S = () { let d = 1h; A | where t > ago(d) | take 1 }; S()",
+        "let S = () { let e = 1h; A | where t > ago(e) | take 1 }; S()",
+    ),
 ]
 
 
@@ -759,14 +781,14 @@ KNOWN_COLLISIONS: list[tuple[str, str, str]] = []
 def test_known_collision(case_id, query_a, query_b):
     hash_a, hash_b = _hash(query_a), _hash(query_b)
     assert hash_a == hash_b, (
-        f"{case_id}: {query_a!r} and {query_b!r} are a documented 0.2.0 "
-        f"collision and no longer collide ({hash_a!r} vs {hash_b!r}). If the "
-        f"gap was closed on purpose, move this pair to MUST_DIFFER and update "
+        f"{case_id}: {query_a!r} and {query_b!r} are a documented collision "
+        f"and no longer collide ({hash_a!r} vs {hash_b!r}). If the gap was "
+        f"closed on purpose, move this pair to MUST_DIFFER and update "
         f"everything that still discloses it -- not a fixed list, so find "
         f"them: compute_semantic_hash's docstring, the docstring of the IR "
         f"node that drops the construct, README (its `semantic_hash` section, "
-        f"plus any boundary section that describes the construct), "
-        f"CHANGELOG 0.2.0's survivor list, and the matching KNOWN_MERGES row "
+        f"plus any boundary section that describes the construct), the "
+        f"CHANGELOG entry that filed it, and the matching KNOWN_MERGES row "
         f"in examples/semantic_hash_demo.py, which is failing beside this."
     )
 
