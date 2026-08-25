@@ -489,10 +489,14 @@ returns. Within `kustology-sem-v2` these are ignored:
   or a `declare pattern` arm. Which binding a reference points at is still
   hashed, and a `let`-bound `n` never collides with a real column `n`. A
   function's own name **at its call site** is part of the same rename, so
-  `let f = () {…}; f()` and `let g = () {…}; g()` collide too — but only
-  because a visible `let` declared the name. A call to anything else is a
-  server-side or built-in function and is left exactly as written, so two
-  queries calling two different server functions still hash apart.
+  `let f = () {…}; f()` and `let g = () {…}; g()` collide too — but only when
+  the visible `let` bound a *function*. KQL resolves values and functions in
+  separate namespaces (`let abs = 5; T | extend y = abs(x)` binds a value and
+  calls the built-in, both cleanly), so any other call — a built-in, a
+  server-side function, or one sharing a scalar binding's name — is left
+  exactly as written and two queries calling two different functions still
+  hash apart. A `let` bound to a function by *alias* (`let g = f; g()`) is not
+  renamed either, so two spellings of that split.
 - **Function parameter names.** A parameter is a local label as much as a
   `let` is: each is replaced by its position in the signature (`$param0`, …)
   and every reference to it inside that body follows, so

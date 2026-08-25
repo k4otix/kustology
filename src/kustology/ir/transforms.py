@@ -371,8 +371,8 @@ def _clear_volatile(root: BaseModel) -> None:
 # Every model carrying a ``let``-bound name in a ``name`` field: the
 # declaration, the source-position reference and the expression-position
 # reference. Append to this tuple when a new one lands -- nothing else needs
-# to change, since ``_canonicalize_let_names`` walks by isinstance against the
-# whole tuple.
+# to change, since ``_canonicalize_let_names`` renames by one isinstance
+# check against the whole tuple.
 #
 # ``LetValueRef`` is the reason the tuple was written to be extended.
 # ``ColumnRef`` deliberately is not a member and must not become one: a real
@@ -393,20 +393,20 @@ _LET_NAME_MODELS: tuple[type[BaseModel], ...] = (LetBinding, LetRef, LetValueRef
 # path. ``let f = () { … }; f()`` writes the binding's own name at the call,
 # so it is as much a local label as the declaration is.
 #
-# These go through the *same* map as the references above, and the map is the
-# safety: a name no visible ``let`` declared is a server-side or built-in
-# function, and ``visible.get(name, name)`` leaves it exactly as written. A
-# blanket rename here would merge two queries calling two different
-# server-side functions -- see the ``let-function-body-server-call`` row in
-# ``tests/ir/test_hash_battery.py``.
+# The gate on these is **narrower** than on the references above, and it has
+# to be: a visible ``let`` of the call's name is not enough, because KQL keeps
+# values and functions in separate namespaces. ``let abs = 5; T | extend y =
+# abs(x)`` binds a value called ``abs`` and still calls the *built-in* ``abs``,
+# and Microsoft's binder accepts it with no diagnostic at all -- ``abs(x) +
+# abs`` resolves both readings in one expression. A name-only gate therefore
+# renamed that call to the binding's ``$let<i>`` and merged the query with the
+# ``sqrt`` spelling of it, which computes something else. So only a ``let``
+# that bound a **function** (``rhs_function``) renames its call sites, and
+# everything else -- a built-in, a stored server-side function, a call whose
+# name a scalar binding happens to share -- is left exactly as written. Both
+# halves are pinned: ``let-scalar-shadowing-a-builtin-call`` and
+# ``let-function-body-server-call`` in ``tests/ir/test_hash_battery.py``.
 _CALL_SITE_NAME_MODELS: tuple[type[BaseModel], ...] = (FuncCallSource, FuncCall)
-
-# Every model whose ``name`` field is rewritten through the visible-bindings
-# map, in one isinstance check. ``LetBinding`` is excluded at the call site
-# rather than here, since it is the one member renamed positionally instead.
-_MAPPED_NAME_MODELS: tuple[type[BaseModel], ...] = (
-    _LET_NAME_MODELS + _CALL_SITE_NAME_MODELS
-)
 
 # The two models a *parameter* reference lowers to. Kept apart from the tuples
 # above because the rename that reaches them is scoped differently: they carry
@@ -450,12 +450,25 @@ def _canonicalize_let_names(ir: QueryIR) -> None:
     :class:`~kustology.ir.query.PatternMatch`) and opens a child scope the
     same way.
 
-    **A call site is a reference.** ``let f = () { … }; f()`` writes the
-    binding's own name at the call, so it renames through ``visible`` like any
-    other reference (:data:`_CALL_SITE_NAME_MODELS`). The map is what keeps
-    that safe: a call to a name no visible ``let`` declared is a server-side
-    or built-in function and is left exactly as written, so two queries
-    calling two different server functions still hash apart.
+    **A call site is a reference, when the binding is a function.**
+    ``let f = () { … }; f()`` writes the binding's own name at the call, so it
+    renames through ``visible`` like any other reference
+    (:data:`_CALL_SITE_NAME_MODELS`) -- but only if that binding populated
+    ``rhs_function``. A visible ``let`` of the name is *not* sufficient,
+    because KQL resolves values and functions in separate namespaces:
+    ``let abs = 5; T | extend y = abs(x)`` calls the built-in and binds a
+    value, both cleanly, so renaming the call through the value binding merged
+    it with the ``sqrt`` spelling. Everything outside the narrowed gate -- a
+    built-in, a stored server-side function, a call sharing a scalar
+    binding's name -- is left exactly as written, so two queries calling two
+    different functions still hash apart.
+
+    One residual is accepted rather than closed: a ``let`` bound to a function
+    by *alias* (``let g = f; g()``) records ``rhs_expr``, not
+    ``rhs_function``, so its call sites keep the written name and two
+    spellings of such a query split. That is the safe direction -- a split
+    costs a dedup consumer a duplicate, where the merge this narrowing
+    prevents costs it a rule.
 
     **Parameters are a second scope, with a counter of their own.** A
     parameter is a local label too -- ``(w:int) { … x > w }`` and
@@ -526,6 +539,15 @@ def _canonicalize_let_names(ir: QueryIR) -> None:
     counter = itertools.count()
     param_counter = itertools.count()
     seen: set[int] = set()
+    # The canonical names of the bindings that bound a *function*, which is
+    # what a call site is allowed to rename through. One query-global set
+    # rather than a second scope-threaded map: a canonical name is unique
+    # across the query, so by the time ``visible`` has answered "which binding
+    # does this name reach from here", scope is already resolved and all that
+    # is left to ask is what that binding bound. Shadowing follows for free --
+    # ``let f = () { … }; let f = 5;`` leaves ``visible["f"]`` pointing at the
+    # scalar's canonical name, which is not in here.
+    function_lets: set[str] = set()
 
     def rename(node: BaseModel, visible: dict[str, str]) -> None:
         """Rewrite every reference under ``node`` against ``visible``."""
@@ -559,8 +581,16 @@ def _canonicalize_let_names(ir: QueryIR) -> None:
                 rename(node.path_value, visible)
             canon_body(node, [], visible)
             return
-        if isinstance(node, _MAPPED_NAME_MODELS) and not isinstance(node, LetBinding):
+        if isinstance(node, _LET_NAME_MODELS) and not isinstance(node, LetBinding):
             object.__setattr__(node, "name", visible.get(node.name, node.name))
+        elif isinstance(node, _CALL_SITE_NAME_MODELS):
+            # The same lookup, then one more question -- see
+            # :data:`_CALL_SITE_NAME_MODELS` for why the name alone is not
+            # enough. ``visible.get`` yields ``None`` for a name no binding
+            # reaches, and ``None`` is never in the set.
+            canonical = visible.get(node.name)
+            if canonical in function_lets:
+                object.__setattr__(node, "name", canonical)
         for field_name in type(node).model_fields:
             for item in _models_in(getattr(node, field_name)):
                 rename(item, visible)
@@ -574,6 +604,8 @@ def _canonicalize_let_names(ir: QueryIR) -> None:
             rename(binding, visible)
             canonical = f"$let{next(counter)}"
             visible[written] = canonical
+            if binding.rhs_function is not None:
+                function_lets.add(canonical)
             object.__setattr__(binding, "name", canonical)
 
     def canon_body(
@@ -850,10 +882,11 @@ def compute_semantic_hash(node: BaseModel) -> str:
     * ``let X = …; X | take 1`` vs ``let Y = …; Y | take 1`` — a ``let`` name
       is a local label, replaced by its position in a scope-ordered walk
       (``$let0``, …). Holds for a ``let`` written inside a function body or a
-      ``declare pattern`` arm too, and for the name at a **call site**:
-      ``let f = () { … }; f()`` and ``let g = () { … }; g()`` are one digest,
-      while a call to a name no visible ``let`` declared — a server-side or
-      built-in function — is left as written
+      ``declare pattern`` arm too, and for the name at a **call site** when
+      the binding is a function: ``let f = () { … }; f()`` and
+      ``let g = () { … }; g()`` are one digest, while any other call — a
+      built-in, a server-side function, or one sharing a *scalar* binding's
+      name, which KQL resolves in a separate namespace — is left as written
     * ``let f = (w:int) { T | where a > w }`` vs the same function written
       ``(z:int) { T | where a > z }`` — a *parameter* name is a local label
       too, replaced by its position in the signature (``$param0``, …) along

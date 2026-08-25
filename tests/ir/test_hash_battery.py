@@ -254,6 +254,24 @@ MUST_DIFFER = [
         "let n = 5; let S = () { A | where x > f(n) }; S()",
         "let n = 5; let S = () { A | where x > g(n) }; S()",
     ),
+    # The other half of the gate, and the sharper one: a visible `let` of the
+    # call's name is *not* enough, because KQL keeps values and functions in
+    # separate namespaces. `let abs = 5; T | extend y = abs(x)` binds a value
+    # called `abs` and still calls the built-in `abs`, and Microsoft's binder
+    # accepts it with no diagnostic -- `let abs = 5; T | extend y = abs(x) +
+    # abs` resolves both readings at once. So a name-only gate renamed the
+    # call to the binding's `$let<i>` and merged two queries computing
+    # different things. Only a `let` that bound a *function* (`rhs_function`)
+    # renames its call sites; the same holds for a stored server-side function
+    # of that name, which no schema in this suite can show but which the
+    # cluster resolves identically. KS211 ("does not refer to any known
+    # function") fires only when no function of the name exists at all, so it
+    # is not a signal that could have been used here.
+    (
+        "let-scalar-shadowing-a-builtin-call",
+        "let abs = 5; T | extend y = abs(x)",
+        "let sqrt = 5; T | extend y = sqrt(x)",
+    ),
     (
         "let-function-parameter-count",
         "let S = (w:int) { A | where x > 1 }; S(5)",
