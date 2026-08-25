@@ -125,9 +125,8 @@ If the operator's inner structure is genuinely not worth modelling yet, the
 honest fallback is a single `raw_text` field plus a class docstring saying
 what is inside the string and what that costs — see `ScanOp` and the seven
 operators it names. Do **not** declare typed fields you cannot populate: a
-declared-but-unfilled field reads as implemented, and
-`docs/superpowers/reports/2026-08-20-stub-sweep.md` is the record of what
-that cost last time.
+declared-but-unfilled field reads as implemented, and 0.1.0 shipped several —
+one blocked a downstream consumer's design entirely.
 
 **A new IR expression** (e.g. a new literal kind, a new operator shape):
 
@@ -147,8 +146,7 @@ that cost last time.
    it's just a new `literal_kind`).
 2. Add the class to the `AnyExpr` union in `expr.py` **and** to `__all__` in
    `src/kustology/ir/__init__.py`. Omitting either half produces surface
-   that looks implemented and is not — both directions shipped in v0.1.0
-   (see `docs/superpowers/reports/2026-08-20-stub-sweep.md`).
+   that looks implemented and is not — both directions shipped in v0.1.0.
 3. Add its kind to `IRBuilder.HANDLED_EXPR_KINDS`.
 4. Add a dispatch branch in `IRBuilder._visit_expr()`.
 5. Add a render branch to `canonical()` in `src/kustology/ir/_normalize.py`,
@@ -219,5 +217,3 @@ version). CI verifies the hash on every push via `scripts/verify_dll.py`.
 - `CHANGELOG.md` — every minor version's breaking changes.
 - `examples/` — runnable, and smoke-tested by `tests/test_examples.py`.
   `walk_tree.py` and `walk_ir.py` are the same query through each tier.
-- `docs/superpowers/reports/` — the audits behind 0.2.0, including the
-  stub sweep and the `MaterializeExpr` reachability proof.

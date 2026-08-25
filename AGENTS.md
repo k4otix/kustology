@@ -358,11 +358,8 @@ downstream consumer entirely. If you cannot populate it now, do not declare it �
 and when a field turns out to be unpopulatable *and* unread, deleting it is
 usually better than implementing it (`category` was removed, not filled in).
 
-A full sweep for this pattern lives in
-`docs/superpowers/reports/2026-08-20-stub-sweep.md`. Both of its open follow-ups
-are now closed: `MaterializeExpr` was proven unreachable and removed
-(`docs/superpowers/reports/2026-08-20-materialize-reachability.md`), and
-`SetMembership` gained an `op` field — see lossy lowering below.
+Two more cases surfaced later: `MaterializeExpr` was proven unreachable and
+removed, and `SetMembership` gained an `op` field — see lossy lowering below.
 
 **Two detection questions, not one.** "Is this field ever assigned?" is the
 obvious check and it is not sufficient — it would not have caught `category`,

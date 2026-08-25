@@ -12,7 +12,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.2.0] — 2026-08-24
 
-First release since 0.1.0. Two themes: values the library reported wrongly (culture-corrupted literals, mis-assigned column provenance, conflated operators), and public surface that never worked (`LetBinding`'s fields, `LetRef`, `ExternalDataExpr`'s contents). Tier 2 breaks in several places, as its pre-1.0 policy permits — see **Upgrading from 0.1.0** and **Breaking** below. Root-cause detail for the audits behind this release is in `docs/superpowers/reports/`.
+First release since 0.1.0. Two themes: values the library reported wrongly (culture-corrupted literals, mis-assigned column provenance, conflated operators), and public surface that never worked (`LetBinding`'s fields, `LetRef`, `ExternalDataExpr`'s contents). Tier 2 breaks in several places, as its pre-1.0 policy permits — see **Upgrading from 0.1.0** and **Breaking** below.
 
 ### Upgrading from 0.1.0
 
@@ -138,7 +138,7 @@ See README's "What `semantic_hash` deliberately ignores" section for the worked 
 
 ### Internal
 
-- `docs/superpowers/reports/` records the two audits behind this release (unpopulated-surface sweep, `MaterializeExpr` reachability proof); `tests/test_reflection_audit.py` asserts every reflected .NET member name actually exists.
+- `tests/test_reflection_audit.py` asserts every reflected .NET member name actually exists.
 - Corpus coverage gates now walk the whole `QueryIR` via `find_all` (including `let` right-hand sides) instead of hand-maintained attribute lists; `tests/ir/test_binder_oracle.py` is a new gate comparing our `result_schema` against Microsoft's own `ResultType`, column-by-column and in order, across an operator matrix and the fixture corpus, on both the bound and dict-path entry points.
 - CI lints `examples/` and every job installs from `uv.lock`. The IR test matrix now runs the full suite on every cell (previously one) and adds Python 3.13, with `fail-fast: false`; a locale/timezone leg (`de_DE`, `fr_FR`, `en_US` + `TZ=Asia/Tokyo`) guards the culture pin and the datetime-`Kind` fix.
 - A weekly upstream canary (`.github/workflows/canary.yml`) resolves `pyproject.toml`'s dependency ranges fresh, catching what the pinned `uv.lock` hides. `.github/dependabot.yml` declares the update cadence and grouping that previously lived only in repository settings. `release.yml` now hard-gates on the offline DLL pin.

@@ -143,8 +143,8 @@ let it fall through to `UnknownOp` / `UnknownExpr`, and commit
   a base install. `tests/test_examples.py` runs every one of them.
 - Do not declare a model field you cannot populate in the same change.
   A declared-but-unfilled field reads as implemented and is invisible to
-  tests; `docs/superpowers/reports/2026-08-20-stub-sweep.md` is the record
-  of what that cost.
+  tests; 0.1.0 shipped several — one blocked a downstream consumer's design
+  entirely.
 
 ## Further reading
 
@@ -156,4 +156,3 @@ let it fall through to `UnknownOp` / `UnknownExpr`, and commit
   that shipped once.
 - `examples/` — runnable and CI-tested; the fastest read of what each tier
   can do.
-- `docs/superpowers/reports/` — the audits behind 0.2.0.
