@@ -63,6 +63,24 @@ QUERIES = [
     ),
     "let Doubled = (n:long) { n * 2 }; DeviceProcessEvents | extend P = Doubled(ProcessId)",
     "let AllDevices = view () { DeviceProcessEvents | project DeviceId }; AllDevices()",
+    # Parameter names and call-site names are alpha-canonicalized in the
+    # digest and recorded verbatim in the IR, and this file pins the join
+    # between those two facts: the reloaded copy must reproduce its own
+    # `semantic_hash`, which it cannot if a parameter's `TypedNameDecl`, a
+    # tabular parameter's body `TableRef` or a call site's name comes back
+    # differently. Two parameters, one of them tabular, so the rename has to
+    # be positional and has to reach both classes it lowers to.
+    (
+        "let Filtered = (Src:(*), n:long) { Src | where ProcessId > n }; "
+        "Filtered(DeviceProcessEvents, 5) | take 1"
+    ),
+    # A call-site pair: source position and expression position in one query,
+    # which are two IR classes built by two different paths.
+    (
+        "let Half = (n:long) { n / 2 }; "
+        "let Rows = () { DeviceProcessEvents | take 1 }; "
+        "Rows() | extend H = Half(ProcessId)"
+    ),
     # Union / sub-pipelines.
     "union DeviceProcessEvents, DeviceFileEvents | where FileName == 'cmd.exe'",
     # take / top / sort / search.

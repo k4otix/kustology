@@ -28,15 +28,26 @@ from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 
 from ._normalize import normalize_in_place
-from .expr import And, Expr, LetValueRef, Or, SetMembership
+from .expr import (
+    And,
+    ColumnRef,
+    Expr,
+    FuncCall,
+    LetValueRef,
+    Or,
+    SetMembership,
+    TypedNameDecl,
+)
 from .query import (
     FilterOp,
+    FuncCallSource,
     LetBinding,
     LetFunction,
     LetRef,
     PatternMatch,
     Pipeline,
     QueryIR,
+    TableRef,
 )
 from .spans import Span
 from .types import KustoType
@@ -230,6 +241,41 @@ _VOLATILE_FIELDS = frozenset({
     "result_schema", "hints",
 })
 
+# Cleared by the same pass on the same private copy, for a different reason,
+# which is why they are a separate set rather than two more entries above.
+# Nothing here is bind state: :attr:`LetBinding.inner_tables` and
+# :attr:`LetBinding.inner_time_exprs` are a **derived index**, written by the
+# builder from the very subtree (``rhs_pipeline`` / ``rhs_function``) that is
+# already in the digest -- ``_collect_inner_tables`` / ``_collect_inner_time_exprs``
+# are pure functions of it. So excluding them cannot merge anything the tree
+# still splits: whatever the index recorded, the nodes it indexed are hashed
+# beside it.
+#
+# Two things go wrong while they *are* hashed, and both are the same fault --
+# an index is a copy, and a copy of a name desynchronizes from the name.
+#
+# * ``inner_tables`` is a list of plain ``str``. No node rename can reach a
+#   string, so a body reading a tabular parameter records ``["T"]`` against
+#   ``["U"]`` however thoroughly the ``TableRef`` beside it is canonicalized,
+#   and two alpha-equivalent functions split on the index alone. It holds
+#   real table names only today, which is why the ``let`` rename never hit
+#   this -- but a tabular parameter reference is indistinguishable from a
+#   table name there (see :class:`~kustology.ir.query.LetBinding`), so the
+#   parameter rename does, and any later rename over a name this index can
+#   hold would too.
+# * ``inner_time_exprs`` holds the *same objects* as the right-hand side
+#   beside it rather than copies, so the rename walk reached each one twice
+#   and only renamed it correctly because ``rhs_function`` happens to be
+#   declared before the index on :class:`~kustology.ir.query.LetBinding`.
+#   Clearing the index before the rename runs retires that dependency
+#   outright: there is no second path left to reach the node by.
+#
+# A future index field over query content belongs here, not above: the test is
+# whether the field's value is *recoverable* from what is already hashed.
+_DERIVED_INDEX_FIELDS = frozenset({"inner_tables", "inner_time_exprs"})
+
+_CLEARED_FIELDS = _VOLATILE_FIELDS | _DERIVED_INDEX_FIELDS
+
 # Not the only "keep a field's written value out of the digest" mechanism --
 # see :func:`_strip_unwritten_fields` below for the sibling case: a field
 # whose *written* value must reach the digest, but whose *unwritten* default
@@ -289,13 +335,16 @@ def _normalize_raw_text(text: str) -> str:
 
 
 def _clear_volatile(root: BaseModel) -> None:
-    """Clear every volatile field on ``root`` and its descendants, in place.
+    """Clear every digest-excluded field on ``root`` and its descendants, in
+    place: :data:`_VOLATILE_FIELDS` (bind state and offsets) and
+    :data:`_DERIVED_INDEX_FIELDS` (values recoverable from the subtree that is
+    hashed anyway).
 
     Intended for the hash's private deep copy — it rewrites node state.
     """
     for node in walk(root):
         fields = type(node).model_fields
-        for name in _VOLATILE_FIELDS & fields.keys():
+        for name in _CLEARED_FIELDS & fields.keys():
             if name in ("span", "body_span"):
                 object.__setattr__(node, name, _ZERO_SPAN)
             else:
@@ -328,19 +377,48 @@ def _clear_volatile(root: BaseModel) -> None:
 # ``LetValueRef`` is the reason the tuple was written to be extended.
 # ``ColumnRef`` deliberately is not a member and must not become one: a real
 # column named ``n`` is a different query from a ``let``-bound ``n``, so
-# renaming one would collapse the two. That distinction is what makes a
-# *function parameter* nothing to do with this tuple either: a parameter
-# shadows a same-named ``let`` inside the body, and the builder lowers the
-# shadowed reference as a ``ColumnRef``/``TableRef`` precisely so no rename
-# here can reach it.
+# renaming one would collapse the two. A *function parameter* is renamed
+# through those very classes, and that is not an exception to this rule but a
+# consequence of it: the builder lowers a shadowed parameter reference as a
+# ``ColumnRef`` / ``TableRef``, so it is reached by the scope-local parameter
+# map (:data:`_PARAM_NAME_MODELS`) inside the one body that bound the name,
+# never by this tuple and never anywhere else in the query.
 #
 # ``LetBinding`` is a member as the declaration, but it is renamed only by the
 # scope walker below, never through the reference map -- see the docstring.
 _LET_NAME_MODELS: tuple[type[BaseModel], ...] = (LetBinding, LetRef, LetValueRef)
 
+# A call site's name: source position, expression position and ``invoke``'s
+# callee, which is the expression-position class reached by a third builder
+# path. ``let f = () { … }; f()`` writes the binding's own name at the call,
+# so it is as much a local label as the declaration is.
+#
+# These go through the *same* map as the references above, and the map is the
+# safety: a name no visible ``let`` declared is a server-side or built-in
+# function, and ``visible.get(name, name)`` leaves it exactly as written. A
+# blanket rename here would merge two queries calling two different
+# server-side functions -- see the ``let-function-body-server-call`` row in
+# ``tests/ir/test_hash_battery.py``.
+_CALL_SITE_NAME_MODELS: tuple[type[BaseModel], ...] = (FuncCallSource, FuncCall)
+
+# Every model whose ``name`` field is rewritten through the visible-bindings
+# map, in one isinstance check. ``LetBinding`` is excluded at the call site
+# rather than here, since it is the one member renamed positionally instead.
+_MAPPED_NAME_MODELS: tuple[type[BaseModel], ...] = (
+    _LET_NAME_MODELS + _CALL_SITE_NAME_MODELS
+)
+
+# The two models a *parameter* reference lowers to. Kept apart from the tuples
+# above because the rename that reaches them is scoped differently: they carry
+# ordinary column and table names nearly everywhere they appear, so they are
+# rewritten only within the body of the declaration that bound the name, and
+# only against that scope's own parameter map -- never against ``visible``.
+_PARAM_NAME_MODELS: tuple[type[BaseModel], ...] = (ColumnRef, TableRef)
+
 
 def _canonicalize_let_names(ir: QueryIR) -> None:
-    """Rename every ``let`` binding to ``$let<i>`` in scope-walk order.
+    """Rename every ``let`` binding to ``$let<i>``, and every function
+    parameter to ``$param<i>``, in scope-walk order.
 
     A ``let`` name is a local label with no meaning outside the query, so
     ``let X = …; X | take 1`` and ``let Y = …; Y | take 1`` are the same
@@ -370,29 +448,75 @@ def _canonicalize_let_names(ir: QueryIR) -> None:
     outside the braces. A ``declare pattern`` arm's body is the same
     construct reached by a different route (a ``FunctionBody`` owned by a
     :class:`~kustology.ir.query.PatternMatch`) and opens a child scope the
-    same way. Function parameters never enter any of these maps: the
-    builder has already lowered a parameter reference to a ``ColumnRef`` /
-    ``TableRef``, which this function does not touch. Nor do a
-    ``declare query_parameters`` statement's parameter names, and there the
-    exclusion is a *decision* rather than a consequence: those names are the
-    caller-facing API of a saved query, so renaming them would merge two
-    queries with different call contracts -- see
-    :class:`~kustology.ir.query.QueryParametersStmt`.
+    same way.
 
-    The ``$let<i>`` counter is **query-global**, not per scope. Numbering each
-    scope from zero would let a body's own first binding and its encloser's
-    first binding both be ``$let0``, so a body reading its own ``z`` and a body
+    **A call site is a reference.** ``let f = () { … }; f()`` writes the
+    binding's own name at the call, so it renames through ``visible`` like any
+    other reference (:data:`_CALL_SITE_NAME_MODELS`). The map is what keeps
+    that safe: a call to a name no visible ``let`` declared is a server-side
+    or built-in function and is left exactly as written, so two queries
+    calling two different server functions still hash apart.
+
+    **Parameters are a second scope, with a counter of their own.** A
+    parameter is a local label too -- ``(w:int) { … x > w }`` and
+    ``(z:int) { … x > z }`` are one function -- but it is not a ``let``, and
+    it is reached through different classes: the builder lowers a body
+    reference under a parameter's shadow to a ``ColumnRef`` / ``TableRef``
+    (see :class:`~kustology.ir.query.LetFunctionParameter`), never to a
+    ``LetValueRef`` / ``LetRef``. So each declaration's parameters are
+    numbered ``$param<i>`` in declaration order and a **scope-local** map is
+    applied to those two classes within that body's subtree and nowhere else
+    -- ``visible`` never carries a parameter, and no query outside the braces
+    can see one. Numbering runs before the body's own ``let``s, so the two
+    sequences do not interleave with each other's nesting.
+
+    The shadow edge is where the two renames meet, and they do not collide:
+    in ``let S = (w:int) { let w = 5; A | where x > w }`` the *declaration*
+    renames as a ``let`` (``LetBinding`` → ``$let<i>``, through the child
+    scope) while the *reference* renames as a parameter (``ColumnRef`` →
+    ``$param<i>``, through the map), because the builder had already committed
+    that reference to the shadow reading. Two disjoint node classes, so
+    neither pass can reach the other's node and their order is not
+    load-bearing.
+
+    Two boundaries follow from applying the map textually, and both are the
+    reading the builder already committed to rather than new guesses:
+
+    * A body reference matching a parameter name is treated as the parameter
+      even where KQL would resolve it to a row-scope column of the same name
+      first -- the same text-only shadow rule, and the same accepted
+      consequence, that :class:`~kustology.ir.expr.LetValueRef` documents for
+      ``let`` names.
+    * A ``declare query_parameters`` statement's names are never renamed, by
+      either mechanism, and there the exclusion is a *decision* rather than a
+      consequence: those names are the caller-facing API of a saved query, so
+      renaming them would merge two queries with different call contracts --
+      see :class:`~kustology.ir.query.QueryParametersStmt`. A
+      ``declare pattern``'s own parameters stay verbatim too, for the reason
+      :class:`~kustology.ir.query.PatternStmt` records: they are not bound as
+      names inside an arm's body (the builder shadows nothing there), so this
+      scope has nothing to apply and folding two spellings of a pattern
+      signature would be a merge nothing here can justify.
+
+    Both counters are **query-global**, not per scope. Numbering each scope
+    from zero would let a body's own first binding and its encloser's first
+    binding both be ``$let0``, so a body reading its own ``z`` and a body
     reading the outer ``n`` would render identically -- two different queries,
-    one digest. One counter over a deterministic walk order keeps every
-    binding in the query distinctly numbered.
+    one digest. Parameters are the sharper case, since nesting makes them
+    cumulative by construction (the builder's ``_param_names`` accumulates
+    through nested bodies): two nested ``$param0``s would be one name for two
+    different parameters, both live at once. One counter each over a
+    deterministic walk order keeps every name in the query distinctly
+    numbered.
 
-    A single ``seen`` id-set spans the whole traversal, which is what handles
-    the index-field aliasing: ``LetBinding.inner_time_exprs`` holds the *same*
-    objects as the ``rhs_pipeline`` / ``rhs_function`` beside it, and the
-    owning field is declared first, so the aliases are reached (and renamed)
-    through the owner and skipped on the second approach. That is the same
-    field-declaration-order dependency :func:`_sort_commutative` documents,
-    for the same reason.
+    A single ``seen`` id-set spans the whole traversal. It was load-bearing
+    while ``LetBinding.inner_time_exprs`` reached the digest -- that index
+    holds the *same* objects as the ``rhs_pipeline`` / ``rhs_function`` beside
+    it, so a node was approached twice and renamed correctly only because the
+    owning field is declared first. Both index fields are cleared before this
+    runs now (:data:`_DERIVED_INDEX_FIELDS`), so no alias survives to be
+    reached, and the set is a guard against a future one rather than the thing
+    that makes today's rename correct.
     """
     # The early-out has to account for ``statements`` as well as bindings: a
     # ``declare pattern`` arm can declare a ``let`` of its own while the query
@@ -400,6 +524,7 @@ def _canonicalize_let_names(ir: QueryIR) -> None:
     if not ir.let_bindings and not ir.statements:
         return
     counter = itertools.count()
+    param_counter = itertools.count()
     seen: set[int] = set()
 
     def rename(node: BaseModel, visible: dict[str, str]) -> None:
@@ -409,34 +534,32 @@ def _canonicalize_let_names(ir: QueryIR) -> None:
         seen.add(id(node))
         if isinstance(node, LetFunction):
             # The body is a child scope. Parameters and their defaults are
-            # written at the declaration site, so they resolve in the parent.
+            # written at the declaration site, so they resolve in the parent
+            # -- the *name* half of each parameter is the body's, and
+            # ``canon_body`` takes it from here.
             for parameter in node.parameters:
                 rename(parameter, visible)
             for statement in node.body_query_parameters:
                 rename(statement, visible)
-            body_visible = dict(visible)
-            canon_scope(node.body_lets, body_visible)
-            for sub in (node.body_pipeline, node.body_expr):
-                if sub is not None:
-                    rename(sub, body_visible)
+            canon_body(node, [p.decl for p in node.parameters], visible)
             return
         if isinstance(node, PatternMatch):
             # A pattern arm's body is a ``FunctionBody`` too, so it opens a
-            # child scope on exactly the same terms. The arm's own selector --
+            # child scope on exactly the same terms -- the same helper, with
+            # no parameters of its own to number. The arm's own selector --
             # the matched values and the path value -- is written at the
             # declaration site and resolves in the parent, the way a
-            # function's parameter defaults do.
+            # function's parameter defaults do. The pattern's declared
+            # parameters sit on the owning ``PatternStmt`` and stay verbatim:
+            # they name the arm's match slots, not values an arm's body can
+            # read, so there is nothing in here for a map to rewrite.
             for value in node.values:
                 rename(value, visible)
             if node.path_value is not None:
                 rename(node.path_value, visible)
-            body_visible = dict(visible)
-            canon_scope(node.body_lets, body_visible)
-            for sub in (node.body_pipeline, node.body_expr):
-                if sub is not None:
-                    rename(sub, body_visible)
+            canon_body(node, [], visible)
             return
-        if isinstance(node, _LET_NAME_MODELS) and not isinstance(node, LetBinding):
+        if isinstance(node, _MAPPED_NAME_MODELS) and not isinstance(node, LetBinding):
             object.__setattr__(node, "name", visible.get(node.name, node.name))
         for field_name in type(node).model_fields:
             for item in _models_in(getattr(node, field_name)):
@@ -452,6 +575,86 @@ def _canonicalize_let_names(ir: QueryIR) -> None:
             canonical = f"$let{next(counter)}"
             visible[written] = canonical
             object.__setattr__(binding, "name", canonical)
+
+    def canon_body(
+        owner: LetFunction | PatternMatch,
+        decls: list[TypedNameDecl],
+        visible: dict[str, str],
+    ) -> None:
+        """Walk one declaration's body as a child scope: parameters numbered,
+        then the body's own ``let``s, then the tail -- and finally the
+        parameter map applied over the whole body subtree.
+
+        Shared by both constructs that own a ``FunctionBody``, which is what
+        keeps a body reached through a ``declare pattern`` arm scoped exactly
+        as one reached through a ``let``-declared function.
+
+        The parameter map is applied *after* the recursive walk, and that
+        order is what makes an inner scope win over an outer one: a nested
+        function's own parameters are already ``$param<i>`` by the time this
+        map is offered the subtree, and a canonical name matches no key here
+        (the keys are names the query wrote, and ``$`` is not a legal KQL
+        identifier character). A body reference to an *enclosing* function's
+        parameter is left untouched by the inner map for the same reason, and
+        picked up by this one.
+        """
+        param_map = canon_params(decls)
+        body_visible = dict(visible)
+        canon_scope(owner.body_lets, body_visible)
+        # The body's own ``let``s are part of the body: a parameter read in
+        # one's right-hand side is the same reference as one read in the tail.
+        bodies: list[BaseModel] = [*owner.body_lets]
+        for tail in (owner.body_pipeline, owner.body_expr):
+            if tail is not None:
+                bodies.append(tail)
+                rename(tail, body_visible)
+        for sub in bodies:
+            apply_params(sub, param_map)
+
+    def canon_params(decls: list[TypedNameDecl]) -> dict[str, str]:
+        """Number one declaration's parameters, returning the body-local map.
+
+        The canonical names are handed out first and the map is built from the
+        names as *written*, before any declaration is overwritten -- otherwise
+        the second parameter of ``(a:int, b:int)`` would map from the name the
+        first one had just been given.
+
+        Declarations are renamed by position for the reason
+        :func:`canon_scope`'s are: a duplicate name is a query KQL rejects but
+        the error-tolerant builder still emits, and a name-keyed rename would
+        stop ``$param<i>`` meaning "the ith parameter". References follow the
+        map, so on such a query the last declaration of a name wins -- which
+        is the same rule a shadowing redeclaration follows everywhere else.
+        """
+        canonical = [f"$param{next(param_counter)}" for _ in decls]
+        param_map = dict(zip((d.name for d in decls), canonical, strict=True))
+        for decl, name in zip(decls, canonical, strict=True):
+            object.__setattr__(decl, "name", name)
+        return param_map
+
+    def apply_params(node: BaseModel, param_map: dict[str, str]) -> None:
+        """Rewrite one body's parameter references, in place.
+
+        A plain ``walk`` rather than the scope-aware ``rename`` above: by the
+        time this runs every scope decision inside the subtree has been made,
+        and what is left is a flat substitution over two classes.
+        """
+        if not param_map:
+            return
+        for sub in walk(node):
+            if not isinstance(sub, _PARAM_NAME_MODELS):
+                continue
+            if sub.name not in param_map:
+                continue
+            # A qualified name is never a parameter reference: the builder
+            # lowers a shadowed parameter to a bare ``TableRef``, so
+            # ``database("d").w`` names a real table in a real database and
+            # renaming it would merge two queries that read different ones.
+            # ``ColumnRef`` needs no such guard -- its ``table`` is
+            # binder-written and already cleared before this runs.
+            if isinstance(sub, TableRef) and (sub.database or sub.cluster):
+                continue
+            object.__setattr__(sub, "name", param_map[sub.name])
 
     visible: dict[str, str] = {}
     canon_scope(ir.let_bindings, visible)
@@ -492,15 +695,16 @@ def _sort_commutative(root: BaseModel) -> None:
 
     One caveat on that second point, since ``walk`` yields a shared object
     only at the *first* path that reaches it. A node an index field aliases
-    (``LetBinding.inner_time_exprs`` holds the same objects as the
-    ``rhs_pipeline`` / ``rhs_function`` beside it) is positioned by whichever
-    field is declared first, and if the index came first the node would be
-    yielded above its real parent and sorted after it. Nothing hits that
-    today: the only aliasing fields hold ``FuncCall`` and ``TableRef``, which
-    this function never sorts, and they are declared after both right-hand-side
-    fields anyway. A new index field over ``And``/``Or``/``SetMembership``
-    would need a genuinely post-order traversal here rather than a reversed
-    pre-order.
+    is positioned by whichever field is declared first, and if the index came
+    first the node would be yielded above its real parent and sorted after
+    it. The IR's only aliasing fields are ``LetBinding.inner_time_exprs`` and
+    ``inner_tables``, which held the same objects as the ``rhs_pipeline`` /
+    ``rhs_function`` beside them -- and :func:`_clear_volatile` now empties
+    both before this runs (:data:`_DERIVED_INDEX_FIELDS`), so no alias
+    survives to be mispositioned. A new index field over
+    ``And``/``Or``/``SetMembership`` that reached the digest would need a
+    genuinely post-order traversal here rather than a reversed pre-order --
+    or, better, to be excluded the same way these two are.
 
     ``walk`` iterates ``model_fields``, so this reaches a ``let`` function's
     body as readily as a top-level pipeline: ``let f = () { T | where a and b
@@ -646,8 +850,17 @@ def compute_semantic_hash(node: BaseModel) -> str:
     * ``let X = …; X | take 1`` vs ``let Y = …; Y | take 1`` — a ``let`` name
       is a local label, replaced by its position in a scope-ordered walk
       (``$let0``, …). Holds for a ``let`` written inside a function body or a
-      ``declare pattern`` arm too. A ``declare query_parameters`` name is
-      **not** a local label and is never renamed — see
+      ``declare pattern`` arm too, and for the name at a **call site**:
+      ``let f = () { … }; f()`` and ``let g = () { … }; g()`` are one digest,
+      while a call to a name no visible ``let`` declared — a server-side or
+      built-in function — is left as written
+    * ``let f = (w:int) { T | where a > w }`` vs the same function written
+      ``(z:int) { T | where a > z }`` — a *parameter* name is a local label
+      too, replaced by its position in the signature (``$param0``, …) along
+      with every reference to it in that body. A ``declare pattern``'s own
+      parameters and a ``declare query_parameters`` name are **not** local
+      labels and are never renamed — see
+      :class:`~kustology.ir.query.PatternStmt` and
       :class:`~kustology.ir.query.QueryParametersStmt`
     * ``| where A | where B`` vs ``| where B | where A``, and either against
       ``| where B and A`` — the merge and the sort *compose*: consecutive
@@ -659,9 +872,10 @@ def compute_semantic_hash(node: BaseModel) -> str:
     Two subtrees with different literal values, operators, identifiers,
     or operator sequences do *not* collide. Nor do the near-misses of the
     rules above: ``A < B`` and ``B < A`` are opposite predicates and only
-    genuinely commutative operands are sorted; the ``let`` rename is
-    positional, so reading from the first binding and reading from the
-    second stay apart; and only a run of *consecutive* filters merges, so
+    genuinely commutative operands are sorted; both renames are positional,
+    so reading from the first binding and reading from the second stay apart,
+    as do reading the first parameter and reading the second; and only a run
+    of *consecutive* filters merges, so
     ``| where A | take 5`` and ``| take 5 | where A`` — which return
     different rows — still hash apart.
 
@@ -674,15 +888,19 @@ def compute_semantic_hash(node: BaseModel) -> str:
       in the IR is reordered; ``Expr.canonical_form`` sorts the same three
       places by *rendered string*, which is a different key for the same
       set, and ``normalize_expressions`` sorts nothing at all.
-    * **``let`` renaming** is positional and scope-ordered. Each binding is
-      replaced by its position in one query-global sequence, taken in scope
-      order — top-level declarations, then a function body's or a pattern
-      arm's own declarations as that body is reached — and each reference by
-      whatever was visible where it was written. The names are labels and the
-      wiring is not (:func:`_canonicalize_let_names`). Two kinds of name are
-      deliberately outside the rule: a function or pattern *parameter*, which
-      the builder has already lowered to a textual reference, and a
-      ``declare query_parameters`` name, which is a caller-facing API name.
+    * **Name renaming** is positional and scope-ordered, over two sequences.
+      Each ``let`` binding is replaced by its position in one query-global
+      ``$let<i>`` sequence, taken in scope order — top-level declarations,
+      then a function body's or a pattern arm's own declarations as that body
+      is reached — and each reference, call sites included, by whatever was
+      visible where it was written. Each *parameter* is replaced by its
+      position in a second query-global ``$param<i>`` sequence, and its
+      references are rewritten within that one body only. The names are
+      labels and the wiring is not (:func:`_canonicalize_let_names`). Two
+      kinds of name are deliberately outside both rules: a ``declare
+      pattern``'s own parameters, which name an arm's match slots rather than
+      anything an arm's body reads, and a ``declare query_parameters`` name,
+      which is a caller-facing API name.
     * **Datetime literals are UTC.** The builder Kind-normalizes every
       ``datetime`` literal before recording ``value`` and ``ticks``
       (``_builder_helpers.literal_value_and_ticks``), and numeric and timespan
@@ -703,6 +921,15 @@ def compute_semantic_hash(node: BaseModel) -> str:
     the same way, on ``body_expr`` vs ``body_pipeline``. Queries that do not
     alias a bare table name in either position are unaffected. See the note
     above :data:`_VOLATILE_FIELDS` for why that is preferred to guessing.
+
+    **Derived indexes.** Two more fields are excluded, for an unrelated
+    reason: :attr:`~kustology.ir.query.LetBinding.inner_tables` and
+    :attr:`~kustology.ir.query.LetBinding.inner_time_exprs` are an index the
+    builder writes over the right-hand side sitting beside them
+    (:data:`_DERIVED_INDEX_FIELDS`), so hashing them added nothing the tree
+    does not already carry — while, being a *copy* of names the renames above
+    rewrite, they cost the collisions that copy desynchronized on. They are
+    still on your own IR, populated as always; only the digest ignores them.
 
     **Equal digests are not a proof of equivalence.** What still merges is
     listed here, and both entries are decisions rather than gaps — the last

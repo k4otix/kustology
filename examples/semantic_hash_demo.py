@@ -75,6 +75,15 @@ MERGES = [
      "T | where a == 1 | where b == 2", "T | where a == 1 and b == 2"),
     ("`let` names are positional labels",
      "let n = 5; T | where a > n", "let m = 5; T | where a > m"),
+    # ...and so are the two other kinds of local label a `let`-declared
+    # function introduces. The split half of each is in SPLITS below: which
+    # parameter a body reads still matters, and a call to a name no visible
+    # `let` declared is a server-side function and is never renamed.
+    ("function parameter names are positional labels",
+     "let S = (w:int) { T | where a > w }; S(5)",
+     "let S = (z:int) { T | where a > z }; S(5)"),
+    ("a call site names the binding it calls",
+     "let f = () { T | take 1 }; f()", "let g = () { T | take 1 }; g()"),
     ("tolower(x) == y folds to x =~ y",
      'T | where tolower(a) == "x"', 'T | where a =~ "x"'),
     ("a `hint.*` changes execution, not rows",
@@ -116,6 +125,16 @@ SPLITS = [
     ("a parameter's declared type splits",
      "let S = (w:int) { A | where x > w }; S(5)",
      "let S = (w:long) { A | where x > w }; S(5)"),
+    # The other half of the two merges above: the rename is positional, so
+    # which parameter a body reads is still in the digest...
+    ("which parameter the body reads splits",
+     "let S = (a:int, b:int) { A | where x > a }; S(1, 2)",
+     "let S = (a:int, b:int) { A | where x > b }; S(1, 2)"),
+    # ...and the call-site rename is gated on the visible bindings, so a call
+    # to a server-side function the query never declared is left as written.
+    ("two different server-side functions split",
+     "let n = 5; let S = () { A | where x > f(n) }; S()",
+     "let n = 5; let S = () { A | where x > g(n) }; S()"),
     ("a parameter's default splits",
      "let S = (w:int) { A | where x > w }; S(5)",
      "let S = (w:int=3) { A | where x > w }; S(5)"),

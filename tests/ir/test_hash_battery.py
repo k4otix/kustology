@@ -224,24 +224,35 @@ MUST_DIFFER = [
         'T | where tolower(x) == "Y"',
         'T | where x =~ "Y"',
     ),
-    # `LetFunction`, whole. Every part of a `let`-declared function now
-    # reaches the digest -- the signature (names, count, declared types,
-    # defaults, `view`) and the body, statements and tail alike. Three of the
-    # rows below (`-parameter-type`, `-parameter-default`, `-body`) were
-    # KNOWN_COLLISIONS until the body was built; the body one was the largest
-    # gap in the release, because what collided was an arbitrary amount of
-    # query rather than one modifier.
-    # Parameter names are not alpha-canonicalized: a body reference to a
-    # parameter lowers as a textual `ColumnRef`/`TableRef` (see
-    # `LetFunctionParameter`), not a renameable `let` name, so nothing folds
-    # `w` and `z` together the way `_canonicalize_let_names` folds two
-    # differently-spelled `let`s. Parameter-aware renaming is future work;
-    # splitting these alpha-equivalent signatures is the safe direction for a
-    # dedup consumer meanwhile.
+    # `LetFunction`, whole. Every part of a `let`-declared function reaches
+    # the digest -- the signature (parameter count, declared types, defaults,
+    # `view`) and the body, statements and tail alike. Three of the rows below
+    # (`-parameter-type`, `-parameter-default`, `-body`) were KNOWN_COLLISIONS
+    # until the body was built; the body one was the largest gap in the
+    # release, because what collided was an arbitrary amount of query rather
+    # than one modifier.
+    #
+    # A parameter's *name* is deliberately not among them: it is a local label
+    # like a `let` name, and is alpha-canonicalized to `$param<i>` by
+    # declaration position (see `let-function-parameter-name` in MUST_EQUAL,
+    # which was a row here until 0.2.0). What that buys has to be paid for in
+    # this list: once the name stops mattering, *which* parameter a reference
+    # reads has to start mattering, and a rename that fired on names it was
+    # never given has to be caught. The next two rows are those two guards.
     (
-        "let-function-parameter-name",
-        "let S = (w:int) { A | where x > 1 }; S(5)",
-        "let S = (z:int) { A | where x > 1 }; S(5)",
+        "let-function-param-positional",
+        "let S = (a:int, b:int) { A | where x > a }; S(1, 2)",
+        "let S = (a:int, b:int) { A | where x > b }; S(1, 2)",
+    ),
+    # The call-site rename is map-gated rather than blanket: a call is
+    # rewritten only when a *visible* `let` declared that name. Neither `f`
+    # nor `g` is one -- both name a server-side function the query never
+    # declared -- so they must still split, while the `n` written beside them
+    # renames identically on both sides.
+    (
+        "let-function-body-server-call",
+        "let n = 5; let S = () { A | where x > f(n) }; S()",
+        "let n = 5; let S = () { A | where x > g(n) }; S()",
     ),
     (
         "let-function-parameter-count",
@@ -568,6 +579,20 @@ MUST_DIFFER = [
         "declare query_parameters(n:long = 5); T | take 1",
         "declare query_parameters(n:long = 9); T | take 1",
     ),
+    # The discriminating pair for "a `declare query_parameters` name is never
+    # alpha-canonicalized". Both sides also declare a `let` of that same name,
+    # and that one *does* rename -- to `$let0`, identically on both sides --
+    # so the parameter name is the only thing left that can split them. It
+    # does, and it would stop doing so the moment `TypedNameDecl` joined
+    # `_LET_NAME_MODELS`: the two queries accept different requests, so the
+    # merge would be a real collision rather than a spelling fold. A pair
+    # without the `let` could not see that, since nothing would rename in it
+    # at all.
+    (
+        "query-parameters-shadowed-by-let",
+        "let p = 5; declare query_parameters(p:long = 1); T | take 1",
+        "let q = 5; declare query_parameters(q:long = 1); T | take 1",
+    ),
     (
         "alias-two-databases",
         "alias database D = cluster('c').database('d'); T | take 1",
@@ -766,6 +791,68 @@ MUST_EQUAL = [
         "let S = (w:int) { A | take 1 }; S(5)",
         "let S = ( w : int ) { A | take 1 }; S(5)",
     ),
+    # A parameter name is a local label too. It is renamed to `$param<i>` by
+    # declaration position -- the declaration and every body reference the
+    # builder lowered under the parameter's shadow -- so two alpha-equivalent
+    # signatures are one query. This row was a MUST_DIFFER until 0.2.0, when
+    # the only place a parameter name reached the digest was the declaration
+    # and nothing folded `w` onto `z`.
+    (
+        "let-function-parameter-name",
+        "let S = (w:int) { A | where x > 1 }; S(5)",
+        "let S = (z:int) { A | where x > 1 }; S(5)",
+    ),
+    # The same rename with the parameter actually read in the body, which is
+    # the half the row above cannot see: renaming the declaration alone and
+    # leaving the reference written as the query spelled it splits these two.
+    (
+        "let-function-param-used-in-body",
+        "let S = (w:int) { A | where x > w }; S(5)",
+        "let S = (z:int) { A | where x > z }; S(5)",
+    ),
+    # A tabular parameter is the same rename reaching a `TableRef` instead of
+    # a `ColumnRef`, and it is the row that needs the derived-index strip:
+    # `LetBinding.inner_tables` records the body's table names as plain
+    # *strings*, which no node rename can reach, so `["T"]` and `["U"]` kept
+    # these apart until the index stopped reaching the digest at all.
+    (
+        "let-function-tabular-param-rename",
+        "let S = (T:(*)) { T | count }; S(A)",
+        "let S = (U:(*)) { U | count }; S(A)",
+    ),
+    # The shadow edge, where the two renames meet: the body declares a `let`
+    # of the parameter's own name. The declaration renames as a `let`
+    # (`$let<i>`, through the body scope) and the reference renames as a
+    # parameter (`$param<i>`, through the scope-local map), because the
+    # builder committed that reference to the shadow reading and lowered it
+    # as a `ColumnRef`. Two disjoint node classes, so neither rename can
+    # reach the other's node and their order does not matter.
+    (
+        "let-function-shadow-edge",
+        "let S = (w:int) { let w = 5; A | where x > w }; S(1)",
+        "let S = (z:int) { let z = 5; A | where x > z }; S(1)",
+    ),
+    # A call site names the binding it calls, so it is as much a local label
+    # as the declaration is -- in source position...
+    (
+        "let-function-call-site-rename",
+        "let f = () { T | count }; f()",
+        "let g = () { T | count }; g()",
+    ),
+    # ...in expression position, which is a different IR class (`FuncCall`,
+    # not `FuncCallSource`) reached by a different builder path...
+    (
+        "let-function-call-expr-rename",
+        "let f = () { 1 }; T | extend y = f()",
+        "let g = () { 1 }; T | extend y = g()",
+    ),
+    # ...and through `invoke`, a third call site that builds the
+    # expression-position class. One map-gated branch covers all three.
+    (
+        "let-function-invoke-rename",
+        "let f = (X:(*)) { X | count }; U | invoke f()",
+        "let g = (X:(*)) { X | count }; U | invoke g()",
+    ),
     # The composition claim, stated as a pair rather than asserted in prose:
     # `_sort_commutative` walks `model_fields`, so it reaches a function body
     # the same way it reaches `main_pipeline`.
@@ -788,16 +875,21 @@ MUST_EQUAL = [
         "let S = () { let z = 5; A | take z }; S()",
         "let S = () { let y = 5; A | take y }; S()",
     ),
-    # `LetBinding.inner_time_exprs` aliases the same `FuncCall` objects found
-    # inside `rhs_function`, not copies, so `_canonicalize_let_names` reaches
-    # each one twice: once through `rhs_function` (renamed against the body's
-    # own scope) and once through `inner_time_exprs` (skipped, already seen).
-    # That only renames correctly because `rhs_function` is declared before
-    # `inner_time_exprs` on `LetBinding` -- see the "index-field aliasing"
-    # paragraph on `_canonicalize_let_names`. Here `d`/`e` is a duration
-    # bound inside the function body and read through `ago(...)`, so the
-    # alias is exercised on a `let`-function's own `inner_time_exprs`, not
-    # merely a top-level one; this row is the tripwire for that field order.
+    # A `let` bound inside a function body and read through a time function:
+    # `d`/`e` is a duration the body declares and `ago(d)` reads, so the row
+    # pins that the body's own scope reaches a reference nested inside a call
+    # argument.
+    #
+    # It used to pin something narrower and more fragile.
+    # `LetBinding.inner_time_exprs` aliases the same `FuncCall` objects that
+    # live inside `rhs_function` rather than copies of them, so the rename
+    # walk reached each one twice and only renamed it correctly because
+    # `rhs_function` is declared *before* the index on `LetBinding` -- this
+    # row was the tripwire for that field order. The index is cleared before
+    # the rename runs now (`transforms._DERIVED_INDEX_FIELDS`), so there is no
+    # second path to the node and no field order to trip over. The row stays
+    # because what it asserts is still true and still worth asserting; what it
+    # no longer needs to be read as is a warning about declaration order.
     (
         "let-function-body-time-alias-rename",
         "let S = () { let d = 1h; A | where t > ago(d) | take 1 }; S()",

@@ -488,13 +488,23 @@ returns. Within `kustology-sem-v2` these are ignored:
   and so do the same two spellings of a `let` written inside a function body
   or a `declare pattern` arm. Which binding a reference points at is still
   hashed, and a `let`-bound `n` never collides with a real column `n`. A
-  function's own name at its call site is not renamed — it may name a
-  server-side function rather than a local `let` — so `let f = () {…}; f()`
-  and `let g = () {…}; g()` still hash apart. Neither is a
-  `declare query_parameters` name, and that one is a decision rather than a
-  side effect: it is the caller-facing API of a saved query, so
-  `declare query_parameters(p:long)` and `declare query_parameters(q:long)`
-  accept different requests and must not merge.
+  function's own name **at its call site** is part of the same rename, so
+  `let f = () {…}; f()` and `let g = () {…}; g()` collide too — but only
+  because a visible `let` declared the name. A call to anything else is a
+  server-side or built-in function and is left exactly as written, so two
+  queries calling two different server functions still hash apart.
+- **Function parameter names.** A parameter is a local label as much as a
+  `let` is: each is replaced by its position in the signature (`$param0`, …)
+  and every reference to it inside that body follows, so
+  `let f = (w:int) { T | where a > w }` and `let f = (z:int) { T | where a > z
+  }` are one digest. Which parameter a body reads is still hashed, and the
+  rename reaches inside that one body only. `declare pattern`'s own
+  parameters are **not** renamed — they name an arm's match slots rather than
+  values an arm's body reads. Neither is a `declare query_parameters` name,
+  and that one is a decision rather than a side effect: it is the
+  caller-facing API of a saved query, so `declare query_parameters(p:long)`
+  and `declare query_parameters(q:long)` accept different requests and must
+  not merge.
 - **The host's timezone and locale.** A `datetime` literal is normalized to
   UTC before it is hashed, and numeric literals render invariant, so the same
   query digests identically in Tokyo and in New York, under `de-DE` and

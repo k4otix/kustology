@@ -1353,6 +1353,19 @@ class LetBinding(BaseModel):
     # the body shadows textually the same way any other parameter does (see
     # ``LetFunctionParameter``) and lowers as a ``TableRef``, so it is
     # indistinguishable here from a genuine table name.
+    #
+    # **Both fields are a digest-excluded derived index.** They are written
+    # from the right-hand side sitting beside them and hold the same objects
+    # (``inner_time_exprs``) or a copy of their names (``inner_tables``), so
+    # ``compute_semantic_hash`` clears them before it dumps -- see
+    # ``transforms._DERIVED_INDEX_FIELDS``. Nothing is lost by that: the nodes
+    # they index are hashed through the right-hand side. Something was lost by
+    # the alternative -- a *copy* of a name cannot be alpha-canonicalized, so
+    # while ``inner_tables`` was hashed a body reading a tabular parameter
+    # carried its written name (``["T"]`` vs ``["U"]``) into the digest after
+    # every ``TableRef`` beside it had been renamed, and two spellings of one
+    # function split. Read them freely off your own IR; they are populated as
+    # always, and only the digest ignores them.
     inner_tables: list[str] = []
     inner_time_exprs: list[AnyExpr] = []
 
@@ -1424,9 +1437,19 @@ class QueryParametersStmt(BaseModel):
     caller-facing API of a saved query or dashboard tile -- the key a caller
     passes the value under -- so ``declare query_parameters(p:long)`` and
     ``declare query_parameters(q:long)`` accept different requests and must
-    not merge. Nothing has to be excluded to get that: the name lives on a
-    :class:`~kustology.ir.expr.TypedNameDecl`, which is not one of the
-    ``let``-name models the rename walks.
+    not merge.
+
+    The exclusion is by *scope*, and it has to be: the name lives on a
+    :class:`~kustology.ir.expr.TypedNameDecl`, and that class is renamed
+    elsewhere -- a ``let``-declared function's parameters are ``TypedNameDecl``
+    too, and are alpha-canonicalized to ``$param<i>``. What keeps these out is
+    that the rename runs per *declaration body*: it numbers the parameters of
+    the signature whose body it is about to walk, and a
+    ``declare query_parameters`` statement opens no body. Nothing about the
+    class or the field decides it, so a rename that ever became class-keyed
+    would silently merge two different call contracts --
+    ``query-parameters-shadowed-by-let`` in ``tests/ir/test_hash_battery.py``
+    is the pair that fails when it does.
 
     One boundary: a reference to a parameter *inside* the query is not linked
     back to this declaration. ``declare query_parameters(n:long); T | take n``
@@ -1488,11 +1511,20 @@ class PatternStmt(BaseModel):
     ``parameters`` and ``path_parameter`` are the pattern's call shape --
     ``(a:string)[L:string]`` -- read as :class:`~kustology.ir.expr.TypedNameDecl`
     through the same path every other ``name:type`` position in the grammar
-    uses. Their names are recorded **verbatim**, not alpha-canonicalized: a
-    pattern parameter is not a ``let`` name, and folding two spellings of one
-    signature is a merge, which is the direction a dedup consumer cannot
-    recover from. Splitting them is the safe side of a call that does not have
-    to be made here.
+    uses. Their names are recorded **verbatim**, not alpha-canonicalized, and
+    that is now an asymmetry with a ``let``-declared function's parameters,
+    which *are* renamed to ``$param<i>``. The difference is what the name
+    binds. A function parameter is bound inside the body: the builder shadows
+    it there (see :class:`LetFunctionParameter`), so every reference to it is
+    identifiable and renaming the declaration and its references together is
+    a spelling fold. A pattern parameter names a *match slot* -- an arm
+    supplies values positionally through :attr:`PatternMatch.values`, and the
+    body reads none of them, which is why the builder shadows nothing for a
+    pattern arm. There is nothing here to rename *with* the declaration, so
+    renaming it alone would fold two spellings of a signature and nothing
+    else: a merge, which is the direction a dedup consumer cannot recover
+    from. Splitting them is the safe side of a call that does not have to be
+    made here.
 
     Microsoft's binder crashes outright on a pattern whose match arm supplies
     more values than the declaration has parameters
