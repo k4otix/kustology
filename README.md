@@ -496,7 +496,7 @@ returns. Within `kustology-sem-v2` these are ignored:
   server-side function, or one sharing a scalar binding's name — is left
   exactly as written and two queries calling two different functions still
   hash apart. A `let` bound to a function by *alias* (`let g = f; g()`) is not
-  renamed either, so two spellings of that split.
+  renamed either; the caveats below say what that costs.
 - **Function parameter names.** A parameter is a local label as much as a
   `let` is: each is replaced by its position in the signature (`$param0`, …)
   and every reference to it inside that body follows, so
@@ -537,6 +537,13 @@ The caveats, all deliberate rather than accidental:
   instead needs a bound parse, which would put the digest back under bind
   state; the invariant above is worth more than the shadow case is. See
   `LetValueRef`'s docstring for the full trade.
+- The call-site rename is conservative in the other direction. Only a `let`
+  whose right-hand side *is* a function renames its call sites, so a binding
+  that merely aliases one (`let g = f; g()`) keeps the name as written and
+  splits from `let f = …; f()`. That is the direction to err in — a split
+  costs a deduplicating consumer a duplicate entry, where the merge the
+  narrow gate prevents would cost it a rule — but it is a boundary of the
+  rename, not an exception the digest hides.
 - Equal digests are **not** a proof of equivalence. What remains is narrower
   than it was: literal-level merges the library makes on purpose (typed
   nulls, obfuscated strings) and a `let` function's call sites, which record
@@ -552,10 +559,11 @@ The caveats, all deliberate rather than accidental:
   they no longer appear under `unhandled` in
   `tests/fixtures/syntax_kinds_baseline.json`.
 
-  `examples/semantic_hash_demo.py` hashes every remaining merge when it runs
-  and raises if one stops behaving as filed; see also the CHANGELOG's
-  **Fixed** section for the collisions that were closed, and its **Known
-  limitations** for the boundaries that remain.
+  `examples/semantic_hash_demo.py` hashes every merge it files when it runs
+  and raises if one stops behaving as filed — the literal-level pair; the
+  call-site one is pinned by `tests/ir/test_let_bindings.py` instead. See
+  also the CHANGELOG's **Fixed** section for the collisions that were
+  closed, and its **Known limitations** for the boundaries that remain.
 
 ## Development
 

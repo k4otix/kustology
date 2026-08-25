@@ -989,12 +989,16 @@ def compute_semantic_hash(node: BaseModel) -> str:
       :class:`~kustology.ir.expr.LetValueRef` for the trade.
 
     A dedup consumer that must not merge across any of these has to compare
-    more than the hash. Rather than trusting the lists above, run
-    ``examples/semantic_hash_demo.py``: it hashes the first two and raises if
-    either stops behaving as filed. The third is pinned by
-    ``tests/ir/test_let_value_ref.py`` instead, and belongs there rather than
-    in the demo's ``KNOWN_MERGES``: that list is for merges of queries which
-    mean the *same* thing, and the shadow case merges two that do not.
+    more than the hash. Each entry is pinned, though not all in one place, so
+    read the pin rather than trusting the prose above. The literal-level
+    merges are ``KNOWN_MERGES`` in ``examples/semantic_hash_demo.py``, which
+    hashes every row it holds when it runs and raises if one stops behaving
+    as filed. Recording the body once at the declaration is pinned by
+    ``test_a_call_site_is_still_not_expanded`` in
+    ``tests/ir/test_let_bindings.py``, and the shadow merge by
+    ``test_the_shadowing_case_collapses_two_queries_onto_one_hash`` in
+    ``tests/ir/test_let_value_ref.py``. Neither of those is in
+    ``KNOWN_MERGES``, so the demo's table is not the whole list.
 
     The hash operates on a deep copy of ``node`` — does not mutate the
     input, and the result reflects the IR shape at call time. Stale if
