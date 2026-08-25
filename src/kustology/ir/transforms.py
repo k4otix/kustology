@@ -217,6 +217,14 @@ _VOLATILE_FIELDS = frozenset({
     "result_schema", "hints",
 })
 
+# Not the only "keep a field's written value out of the digest" mechanism --
+# see :func:`_strip_unwritten_fields` below for the sibling case: a field
+# whose *written* value must reach the digest, but whose *unwritten* default
+# must not move a query that never used it. Clearing to the default (this
+# mechanism) is wrong there, because the default is the thing being hashed;
+# omitting the key from the dump (that one) is wrong here, because these
+# fields are never absent, only ever reset.
+
 # ``span`` and ``body_span`` are required and have no default, so unlike the
 # other volatile fields there is nothing to clear them *to*. A zero span is
 # the answer rather than ``None``: it keeps the copy a valid IR. Pydantic 2.13
@@ -435,35 +443,48 @@ def _operand_sort_key(child: BaseModel) -> str:
 SEMANTIC_HASH_SCHEME = "kustology-sem-v2"
 
 
-def _strip_unwritten_evaluate_schema(value: Any) -> None:
-    """Delete an ``EvaluateOp`` dict's schema-clause keys when they are the
+def _strip_unwritten_fields(value: Any, kind: str, defaults: dict[str, Any]) -> None:
+    """Delete an operator dict's keys when every one is still at its
     unwritten default, in place, on the *dumped* JSON structure.
 
-    ``declared_schema``/``declared_schema_star`` are plain, non-volatile
-    fields — a written clause must reach the digest, so they cannot be
-    cleared like :data:`_VOLATILE_FIELDS` clears bind state. But a Pydantic
-    field cannot be conditionally *absent* from one ``model_dump`` call: the
-    key is always present, so merely adding the fields would move the digest
-    of every ``evaluate`` query, clause or not, only some of which is a real
-    collision closing. Operating after the dump, on the plain dict/list tree
-    rather than the model, is what makes the omission conditional: an
-    ``EvaluateOp`` whose clause was never written dumps exactly as it did
-    before these fields existed, and only a written clause's dict carries
-    the new keys at all.
+    The sibling of :data:`_VOLATILE_FIELDS`/:func:`_clear_volatile` above,
+    for the opposite kind of field: one that is plain and non-volatile
+    (a written value must reach the digest -- clearing it to a canonical
+    default the way ``_clear_volatile`` clears bind state would hide real
+    differences) but that was *added* to an operator IR node with no field
+    for it before, the way :class:`~kustology.ir.query.EvaluateOp`'s
+    ``declared_schema``/``declared_schema_star`` were. A Pydantic field
+    cannot be conditionally *absent* from one ``model_dump`` call: the key
+    is always present at its default, so merely adding such a field moves
+    the digest of every query using that operator, written or not -- only
+    the written case is a real collision closing. Operating after the dump,
+    on the plain dict/list tree rather than the model, is what makes the
+    omission conditional: an operator dict whose fields are all still at
+    ``defaults`` dumps exactly as it did before those fields existed, and
+    only a dict with at least one written field keeps the new keys at all.
+
+    ``defaults`` maps field name to its *exact* unwritten value, compared by
+    identity (``is``) rather than ``==`` -- evaluate's is ``None``/``False``,
+    and ``0 == False`` would wrongly match a future int-typed field whose
+    real default is ``0`` under equality. Every field in ``defaults`` must
+    match for the dict's keys to be dropped: a partially-written modifier
+    (e.g. only one of several flags set) keeps every key, so the digest
+    still reflects what was actually written. Reuse this for the next such
+    field -- README's "Four operators still discard a modifier" list
+    (``mv-apply``, ``parse-kv``, ``getschema``, ``consume``) is the same
+    problem shape -- rather than writing a new one-off dict walk.
     """
     if isinstance(value, dict):
-        if (
-            value.get("kind") == "evaluate"
-            and value.get("declared_schema") is None
-            and value.get("declared_schema_star") is False
+        if value.get("kind") == kind and all(
+            value.get(field) is default for field, default in defaults.items()
         ):
-            del value["declared_schema"]
-            del value["declared_schema_star"]
+            for field in defaults:
+                del value[field]
         for child in value.values():
-            _strip_unwritten_evaluate_schema(child)
+            _strip_unwritten_fields(child, kind, defaults)
     elif isinstance(value, list):
         for item in value:
-            _strip_unwritten_evaluate_schema(item)
+            _strip_unwritten_fields(item, kind, defaults)
 
 
 def compute_semantic_hash(node: BaseModel) -> str:
@@ -627,7 +648,11 @@ def compute_semantic_hash(node: BaseModel) -> str:
         }
     else:
         payload = canonical.model_dump(mode="json")
-    _strip_unwritten_evaluate_schema(payload)
+    # See :func:`_strip_unwritten_fields` -- an unwritten evaluate schema
+    # clause must dump exactly as it did before EvaluateOp had fields for it.
+    _strip_unwritten_fields(
+        payload, "evaluate", {"declared_schema": None, "declared_schema_star": False},
+    )
     digest = hashlib.sha256(
         json.dumps(payload, sort_keys=True).encode()
     ).hexdigest()
