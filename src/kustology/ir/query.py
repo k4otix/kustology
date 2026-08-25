@@ -1265,17 +1265,18 @@ class LetFunction(BaseModel):
     wildcard ``union *`` picks the function up — a difference in which rows a
     query returns, not a spelling.
 
-    Three boundaries remain, and are boundaries rather than omissions:
+    A ``declare query_parameters`` written inside the body lands in
+    ``body_query_parameters``, scoped there for the same reason. It used to be
+    dropped: the ``FunctionBody`` grammar admits exactly ``let`` and
+    ``QueryParametersStatement``, and the second was the statement kind the
+    builder modelled nowhere.
+
+    Two boundaries remain, and are boundaries rather than omissions:
 
     * **Call sites are not expanded.** ``f(1)`` stays a
       :class:`FuncCallSource` (or a ``FuncCall``); the body is reachable once,
       through the declaration. Inlining it would report the body's tables once
       per call and make the digest grow with the call count.
-    * **``declare query_parameters`` inside a body is dropped.** A
-      ``FunctionBody``'s statement list admits only ``let`` and
-      ``QueryParametersStatement``, and the second is the statement kind the
-      builder does not model anywhere — see
-      :func:`~kustology.ir.transforms.compute_semantic_hash`.
     * **Parameter references are textual.** A parameter shadows a same-named
       ``let`` from the enclosing query for the length of the body, decided
       from the declaration text alone so it cannot depend on whether a schema
@@ -1296,6 +1297,11 @@ class LetFunction(BaseModel):
     # each is visible to the ones after it and to the tail, and to nothing
     # outside the braces.
     body_lets: list["LetBinding"] = []
+    # ``declare query_parameters`` written inside the body -- the only other
+    # statement kind the ``FunctionBody`` grammar admits. Scoped here for the
+    # same reason ``body_lets`` is, and read by the same code path the
+    # top-level statement takes, so the two cannot drift.
+    body_query_parameters: list["QueryParametersStmt"] = []
     body_pipeline: Pipeline | None = None
     body_expr: AnyExpr | None = None
     body_span: Span
@@ -1351,6 +1357,242 @@ class LetBinding(BaseModel):
     inner_time_exprs: list[AnyExpr] = []
 
 
+# -- statements that are neither ``let`` nor tabular -------------------------
+#
+# KQL's statement list admits five more kinds, and until 0.2.0 the builder
+# read none of them: whatever they said was absent from the IR and from
+# ``semantic_hash``, so two *different* values of one statement hashed alike
+# rather than merely colliding with a query that omitted it. They live on one
+# ordered :attr:`QueryIR.statements` list rather than five per-kind fields --
+# the hash payload, the canonicalizer and the binder each enumerate
+# ``QueryIR``'s fields by name, so one field is three registration points and
+# five would be fifteen places for a new kind to go silently unhashed.
+#
+# None of them carries a ``span``. Every other model in this file does, and
+# these deliberately do not: a span is volatile (stripped before the digest)
+# and these nodes have no consumer that triangulates back to source text the
+# way an operator or an expression does. :attr:`PatternMatch.body_span` is the
+# single exception, and it is there for the same reason
+# :attr:`LetFunction.body_span` is -- a body is a region a caller may want to
+# read the text of.
+
+
+class SetOptionStmt(BaseModel):
+    """``set`` — one query option, and the value it was set to.
+
+    ``set query_now=datetime(2020-01-01)`` pins what ``now()`` returns for
+    the whole query, so two different values are two different queries and a
+    query that pins it is not the query that does not. All three used to
+    share one digest.
+
+    ``value`` is ``None`` for the valueless spelling (``set notruncation``),
+    where the .NET ``ValueClause`` really is absent rather than defaulted.
+    That is the honest record: KQL substitutes no effective value here, so
+    there is nothing to put in its place, and the flag form and an
+    explicitly-valued form are different statements.
+
+    The value is an expression rather than a string because the grammar
+    admits one (``set query_now=datetime(...)``), and because a
+    :class:`~kustology.ir.expr.LiteralExpr` carries the literal *kind* --
+    ``datetime`` vs ``string`` -- that a rendered value would lose.
+    """
+
+    model_config = {"extra": "forbid"}
+    kind: Literal["set_option_statement"] = "set_option_statement"
+    name: str
+    value: AnyExpr | None = None
+
+
+class QueryParametersStmt(BaseModel):
+    """``declare query_parameters(p:long = 1, q:string)`` — the query's own
+    declared parameters.
+
+    ``parameters`` reuses :class:`LetFunctionParameter`, and not for
+    convenience: the .NET node's ``Parameters`` is the identical
+    ``SyntaxList[SeparatedElement[FunctionParameter]]`` a ``let``-declared
+    function's is, read by the same builder path, so the two readings cannot
+    drift. Both a parameter's declared type and its default reach
+    ``semantic_hash`` for the reason that class records -- a parameter that
+    may be omitted is a different contract from one that may not, and two
+    defaults are two different queries for every caller that omits the value.
+
+    **A parameter name here is never alpha-canonicalized, and that is a
+    deliberate asymmetry with ``let``.** A ``let`` name is a local label with
+    no meaning outside the query, so ``compute_semantic_hash`` replaces it
+    with its position (:func:`~kustology.ir.transforms._canonicalize_let_names`).
+    A ``declare query_parameters`` name is the opposite: it is the
+    caller-facing API of a saved query or dashboard tile -- the key a caller
+    passes the value under -- so ``declare query_parameters(p:long)`` and
+    ``declare query_parameters(q:long)`` accept different requests and must
+    not merge. Nothing has to be excluded to get that: the name lives on a
+    :class:`~kustology.ir.expr.TypedNameDecl`, which is not one of the
+    ``let``-name models the rename walks.
+
+    One boundary: a reference to a parameter *inside* the query is not linked
+    back to this declaration. ``declare query_parameters(n:long); T | take n``
+    lowers ``n`` as an ordinary column reference (or, if a ``let`` of that name
+    precedes it, as that binding), the same textual reading a
+    :class:`LetFunction` parameter gets outside its own body.
+    """
+
+    model_config = {"extra": "forbid"}
+    kind: Literal["query_parameters_statement"] = "query_parameters_statement"
+    parameters: list[LetFunctionParameter] = []
+
+
+class PatternMatch(BaseModel):
+    """One arm of a ``declare pattern`` body: the values it matches, and what
+    it expands to.
+
+    ``("Kusto").["Info"] = { T | take 1 }`` is reached by
+    ``P("Kusto").["Info"]`` and by nothing else, so ``values`` and
+    ``path_value`` are the arm's selector rather than decoration.
+    ``path_value`` is ``None`` for the comma spelling, which has no path
+    segment at all.
+
+    The body is a ``FunctionBody`` -- the same node a ``let``-declared
+    function's body is -- so it is built by the same rule:
+    :attr:`body_pipeline` for a tabular tail, :attr:`body_expr` for a scalar
+    one, at most one of the two ever set.
+
+    ``body_lets`` is where a ``let`` written inside the braces lives, and it
+    is scoped **here**. It used to be hoisted into
+    :attr:`QueryIR.let_bindings`, because the top-level sweep's ancestor
+    filter named ``FunctionDeclaration`` and a pattern body is owned by a
+    ``PatternMatch``. That declared the binding in a scope the query never
+    wrote it in, and once this field exists it would declare it twice.
+
+    ``body_span`` locates the body for callers that want the text; it stays
+    volatile, so it does not reach ``semantic_hash``.
+    """
+
+    model_config = {"extra": "forbid"}
+    kind: Literal["pattern_match"] = "pattern_match"
+    values: list[AnyExpr] = []
+    path_value: AnyExpr | None = None
+    body_lets: list[LetBinding] = []
+    body_pipeline: Pipeline | None = None
+    body_expr: AnyExpr | None = None
+    body_span: Span
+
+
+class PatternStmt(BaseModel):
+    """``declare pattern`` — a named table of expansions.
+
+    ``declared_only`` marks the forward declaration ``declare pattern P;``,
+    where the .NET ``Pattern`` child is ``None``. It is not the same
+    statement as a pattern whose body happens to be empty, and a bool is what
+    keeps the two apart once ``parameters`` and ``matches`` are both ``[]``
+    either way.
+
+    ``parameters`` and ``path_parameter`` are the pattern's call shape --
+    ``(a:string)[L:string]`` -- read as :class:`~kustology.ir.expr.TypedNameDecl`
+    through the same path every other ``name:type`` position in the grammar
+    uses. Their names are recorded **verbatim**, not alpha-canonicalized: a
+    pattern parameter is not a ``let`` name, and folding two spellings of one
+    signature is a merge, which is the direction a dedup consumer cannot
+    recover from. Splitting them is the safe side of a call that does not have
+    to be made here.
+
+    Microsoft's binder crashes outright on a pattern whose match arm supplies
+    more values than the declaration has parameters
+    (``IndexOutOfRangeException`` from ``VisitPatternDeclaration``, unchanged
+    from Kusto.Language 12.3.2 through 12.4.1). The parse is clean, so nothing
+    warns first. kustology contains it: every analyze call falls back to the
+    unanalyzed parse and records an ``Error`` diagnostic of its own -- see
+    :func:`kustology.services._analyze_guarded`.
+    """
+
+    model_config = {"extra": "forbid"}
+    kind: Literal["pattern_statement"] = "pattern_statement"
+    name: str
+    declared_only: bool = False
+    parameters: list[TypedNameDecl] = []
+    path_parameter: TypedNameDecl | None = None
+    matches: list[PatternMatch] = []
+
+
+class AliasStmt(BaseModel):
+    """``alias database db1 = cluster('c').database('d')`` — a local name for
+    a database.
+
+    ``expression`` is what the alias points at, and it is the whole point of
+    the statement: two aliases naming different databases send every
+    qualified reference in the query somewhere else, and used to share a
+    digest with each other and with a query that declared no alias at all.
+    """
+
+    model_config = {"extra": "forbid"}
+    kind: Literal["alias_statement"] = "alias_statement"
+    name: str
+    expression: AnyExpr
+
+
+class RestrictStmt(BaseModel):
+    """``restrict access to (database("d"), T) with (a=1)`` — narrow what the
+    rest of the query can see.
+
+    ``expressions`` is the entity list, built after the ``let`` sweep so a
+    name an earlier ``let`` bound resolves to that binding rather than to a
+    column of whatever the pipeline reads.
+
+    They are :data:`~kustology.ir.expr.AnyExpr` because that is the position
+    the grammar puts them in, and the consequence is worth stating: a bare
+    entity name arrives as a :class:`~kustology.ir.expr.ColumnRef` (or a
+    :class:`~kustology.ir.expr.LetValueRef` when bound), *not* a
+    :class:`TableRef` -- so ``find_all(ir, TableRef)`` does not report a
+    restrict target, and a lineage consumer reading only that will not see
+    one. ``database("d")`` arrives as the :class:`~kustology.ir.expr.FuncCall`
+    it is written as.
+
+    ``properties`` is the ``with (...)`` clause as a **list of pairs, not a
+    dict**, the same shape and for the same reason as
+    :attr:`ParseKvOp.properties`: a repeated name would silently collapse onto
+    its last value in a dict. ``[]`` means the clause was absent.
+    """
+
+    model_config = {"extra": "forbid"}
+    kind: Literal["restrict_statement"] = "restrict_statement"
+    expressions: list[AnyExpr] = []
+    properties: list[tuple[str, str]] = []
+
+
+class UnknownStmt(BaseModel):
+    """Statement the IR builder couldn't dispatch — captures provenance.
+
+    The statement-position sibling of :class:`UnknownOp` and
+    :class:`~kustology.ir.expr.UnknownExpr`, and defensive in the same
+    register: it exists so a statement kind a future Kusto.Language adds
+    lands somewhere visible instead of vanishing the way all five modelled
+    kinds used to.
+
+    It is the **one** statement model that carries ``raw_text``, and that is
+    a deliberate exception rather than an oversight. Recorded source text
+    hashes as text, so a node carrying it discriminates on formatting and
+    would let a test pair pass for a reason unrelated to the field it claims
+    to guard -- which is why
+    ``test_hash_battery.py::test_no_battery_pair_discriminates_on_an_unmodelled_blob``
+    asserts no battery query reaches a text-carrying node, this one included.
+    Nothing the builder currently parses produces it.
+    """
+
+    model_config = {"extra": "forbid"}
+    kind: Literal["unknown_stmt"] = "unknown_stmt"
+    raw_text: str
+
+
+# Discriminated on the kind literal; member order is not load-bearing.
+AnyStatement = Annotated[
+    SetOptionStmt
+    | QueryParametersStmt
+    | PatternStmt
+    | AliasStmt
+    | RestrictStmt
+    | UnknownStmt,
+    Field(discriminator="kind"),
+]
+
+
 class QueryIR(BaseModel):
     model_config = {"extra": "forbid"}
     kind: Literal["query"] = "query"
@@ -1364,6 +1606,19 @@ class QueryIR(BaseModel):
     # :func:`kustology.ir.compute_semantic_hash` to refresh.
     semantic_hash: str
     let_bindings: list[LetBinding]
+    # Every statement that is neither a ``let`` nor a tabular expression, in
+    # source order. The order is semantic rather than cosmetic -- ``set``
+    # scopes the query that follows it -- and a list keeps it for free, which
+    # a per-kind field could not.
+    #
+    # The field is always present in the ``semantic_hash`` payload, empty
+    # list included, mirroring ``additional_pipelines``. That is what moved
+    # every digest in 0.2.0 once, deliberately: the alternative (omitting the
+    # key when the list is empty, the way ``_strip_unwritten_fields`` omits an
+    # unwritten operator modifier) buys a stable digest for statement-free
+    # queries at the cost of a payload whose shape depends on its own
+    # contents, and the digest was already moving in this release.
+    statements: list[AnyStatement] = []
     main_pipeline: Pipeline
     # The second and later tabular statements of a multi-statement query, in
     # source order. KQL separates statements with ``;`` and a query may hold
@@ -1408,7 +1663,17 @@ for _expr_cls in REBUILT_BY_QUERY_MODULE:
 Pipeline.model_rebuild()
 LetBinding.model_rebuild()
 LetFunctionParameter.model_rebuild()
+SetOptionStmt.model_rebuild()
+QueryParametersStmt.model_rebuild()
+PatternMatch.model_rebuild()
+PatternStmt.model_rebuild()
+AliasStmt.model_rebuild()
+RestrictStmt.model_rebuild()
+# After the statement models: ``LetFunction.body_query_parameters`` is a
+# forward reference to one of them, and ``QueryIR.statements`` a union over
+# all six.
 LetFunction.model_rebuild()
+QueryIR.model_rebuild()
 UnionOp.model_rebuild()
 MvApplyOp.model_rebuild()
 LookupOp.model_rebuild()

@@ -4,7 +4,7 @@
 import json
 
 from .bridge import GlobalState, KustoCode
-from .services import _diagnostic_dicts
+from .services import _analyze_guarded, _diagnostic_dicts
 from .utils.analysis import (
     find_table_references,
     find_time_expressions,
@@ -21,8 +21,16 @@ from .utils.schema_state import extract_schemas_from_global_state as _extract_sc
 
 
 class KustoQuery:
-    def __init__(self, kusto_code: KustoCode):
+    def __init__(
+        self, kusto_code: KustoCode, *, extra_diagnostics: list[dict] | None = None,
+    ):
         self._code = kusto_code
+        # Diagnostics kustology raised about this parse rather than ones
+        # Microsoft's parser or binder produced. Currently exactly one thing
+        # goes here: :func:`kustology.services._analyze_guarded`'s record that
+        # the analyzer crashed and the tree was left unbound. Keyword-only and
+        # defaulted, so every existing ``KustoQuery(code)`` call is unchanged.
+        self._extra_diagnostics: list[dict] = list(extra_diagnostics or [])
 
     @property
     def syntax(self):
@@ -53,8 +61,15 @@ class KustoQuery:
         there is no way to suppress ``KS204`` here. Filter the list yourself
         — ``[d for d in q.diagnostics if d["code"] != "KS204"]`` — since the
         parse is already done and doing it here would only hide rows.
+
+        One row can come from kustology rather than from Microsoft: if the
+        analyzer crashed while ``parse(..., schema=...)`` was binding this
+        tree, the crash is reported here as an ``Error`` with the code
+        :data:`kustology.services.ANALYZE_FAILED_CODE` and the tree is the
+        unbound parse. :meth:`to_ir` does not repeat that row — it re-analyzes
+        and records its own.
         """
-        return _diagnostic_dicts(self._code.GetDiagnostics())
+        return _diagnostic_dicts(self._code.GetDiagnostics()) + self._extra_diagnostics
 
     def get_referenced_tables(self, force_syntactic: bool = False) -> set[str]:
         """Return the set of tables referenced by the query.
@@ -295,12 +310,22 @@ class KustoQuery:
             if isinstance(attach_schema, dict) and attach_schema
             else None
         )
+        failure: dict | None = None
         if schemas is not None:
             # A dict is a real binding request: re-bind the tree in hand
             # against it. ``Analyze`` does not re-lex the text and does not
             # mutate ``self._code``, so the receiver stays syntactic (or
             # keeps its parse-time binding) regardless.
-            code = self._code.Analyze(build_global_state(schemas))
+            #
+            # Guarded: Microsoft's binder crashes outright on some
+            # clean-parsing input, and the fallback is the tree we already
+            # hold. ``build_global_state`` stays outside the guard -- a
+            # malformed schema dict is the caller's error and must still
+            # raise. See ``services._analyze_guarded``.
+            state = build_global_state(schemas)
+            code, failure = _analyze_guarded(
+                lambda: self._code.Analyze(state), lambda: self._code,
+            )
             # ``build_global_state`` accepts three value shapes -- a
             # ``{col: type}`` dict, a Kusto schema string ``"(col:type)"``,
             # and a bare ``[col]`` list -- and ``parse(schema=...)``
@@ -321,11 +346,26 @@ class KustoQuery:
             code = self._code
         else:
             # D5/K27. ``Analyze`` binds this tree; it does not re-lex the
-            # text and it does not mutate ``self._code``.
-            code = self._code.Analyze(GlobalState.Default)
+            # text and it does not mutate ``self._code``. Guarded for the
+            # same reason the dict path above is.
+            code, failure = _analyze_guarded(
+                lambda: self._code.Analyze(GlobalState.Default), lambda: self._code,
+            )
         ir = IRBuilder(global_state=code.Globals).build_from_code(
             code, ignore_unknown_tables=not bound_by_caller,
         )
+        if failure is not None:
+            from .ir.query import Diagnostic
+
+            # No span: the failure is a fault in the analyzer, not a region of
+            # the query. ``QueryIR.diagnostics`` is not in the hash payload,
+            # so appending after the build does not stale ``semantic_hash``.
+            ir.diagnostics.append(Diagnostic(
+                message=failure["message"],
+                severity=failure["severity"],
+                code=failure["code"],
+                category=failure["category"],
+            ))
 
         # Default: attach iff we have a bound parse to extract schemas from.
         # Explicit True/False/dict always wins.

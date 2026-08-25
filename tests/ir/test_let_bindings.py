@@ -300,8 +300,8 @@ def test_a_function_body_is_reachable_from_both_tiers():
     # The node carries the whole declaration: signature, body, and the span.
     (fn,) = find_all(ir, LetFunction)
     assert set(type(fn).model_fields) == {
-        "kind", "is_view", "parameters", "body_lets", "body_pipeline",
-        "body_expr", "body_span",
+        "kind", "is_view", "parameters", "body_lets", "body_query_parameters",
+        "body_pipeline", "body_expr", "body_span",
     }
 
 
@@ -396,6 +396,64 @@ def test_a_parameter_shadows_an_outer_let_in_source_position():
     fn = ir.let_bindings[1].rhs_function
     assert isinstance(fn.body_pipeline.source, TableRef)
     assert isinstance(ir.main_pipeline.source, LetRef)
+
+
+# -- the pattern-body twin of the function-body scoping above --------------
+#
+# A ``declare pattern`` body is a ``FunctionBody`` too, owned by a
+# ``PatternMatch`` rather than by a ``FunctionDeclaration``. While nothing
+# modelled the pattern statement, the top-level ``let`` sweep's ancestor
+# filter named only ``FunctionDeclaration``, so a ``let`` written inside a
+# pattern body was *hoisted* into ``QueryIR.let_bindings`` — declared in a
+# scope the query never wrote it in. ``PatternMatch.body_lets`` owns it now,
+# and hoisting it as well would declare it twice. These tests are the
+# inversion: what used to be asserted about ``let_bindings`` is asserted
+# about ``body_lets``.
+
+def test_a_pattern_body_let_is_scoped_to_the_body():
+    ir = parse(
+        'declare pattern P = (a:string) { ("x") = { let z = 5; T | take z }; }; '
+        "T | take 1"
+    ).to_ir()
+    assert ir.let_bindings == []
+
+    (stmt,) = ir.statements
+    (match,) = stmt.matches
+    assert [lb.name for lb in match.body_lets] == ["z"]
+    assert isinstance(match.body_lets[0].rhs_expr, LiteralExpr)
+    # The body's own use site resolves against the body's binding.
+    assert match.body_pipeline is not None
+    (take_op,) = match.body_pipeline.operators
+    assert isinstance(take_op.count, LetValueRef)
+    assert take_op.count.name == "z"
+
+
+def test_a_pattern_body_let_does_not_leak_past_the_statement():
+    """The name is a plain column again for everything written after it."""
+    ir = parse(
+        'declare pattern P = (a:string) { ("x") = { let z = 5; T | take z }; }; '
+        "T | where a > z"
+    ).to_ir()
+    (predicate,) = [
+        op.predicate for op in ir.main_pipeline.operators if hasattr(op, "predicate")
+    ]
+    assert isinstance(predicate.right, ColumnRef)
+    assert predicate.right.name == "z"
+
+
+def test_a_pattern_body_sees_the_querys_own_let_bindings():
+    """Scoping the body's own declarations there does not close the body off
+    from the enclosing query: an outer binding is still visible inside."""
+    ir = parse(
+        "let n = 5; "
+        'declare pattern P = (a:string) { ("x") = { T | take n }; }; T | take 1'
+    ).to_ir()
+    assert [lb.name for lb in ir.let_bindings] == ["n"]
+    (stmt,) = ir.statements
+    (match,) = stmt.matches
+    (take_op,) = match.body_pipeline.operators
+    assert isinstance(take_op.count, LetValueRef)
+    assert take_op.count.name == "n"
 
 
 def test_a_parameter_carries_its_declared_type_and_default():

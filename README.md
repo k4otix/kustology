@@ -485,12 +485,16 @@ returns. Within `kustology-sem-v2` these are ignored:
   `| where A | take 5` and `| take 5 | where A` still differ.
 - **`let` names.** Each is replaced by its position in a scope-ordered walk,
   so `let n = 5; T | where a > n` and `let m = 5; T | where a > m` collide —
-  and so do the same two spellings of a `let` written inside a function body.
-  Which binding a reference points at is still hashed, and a `let`-bound `n`
-  never collides with a real column `n`. A function's own name at its call
-  site is not renamed — it may name a server-side function rather than a
-  local `let` — so `let f = () {…}; f()` and `let g = () {…}; g()` still
-  hash apart.
+  and so do the same two spellings of a `let` written inside a function body
+  or a `declare pattern` arm. Which binding a reference points at is still
+  hashed, and a `let`-bound `n` never collides with a real column `n`. A
+  function's own name at its call site is not renamed — it may name a
+  server-side function rather than a local `let` — so `let f = () {…}; f()`
+  and `let g = () {…}; g()` still hash apart. Neither is a
+  `declare query_parameters` name, and that one is a decision rather than a
+  side effect: it is the caller-facing API of a saved query, so
+  `declare query_parameters(p:long)` and `declare query_parameters(q:long)`
+  accept different requests and must not merge.
 - **The host's timezone and locale.** A `datetime` literal is normalized to
   UTC before it is hashed, and numeric literals render invariant, so the same
   query digests identically in Tokyo and in New York, under `de-DE` and
@@ -511,22 +515,24 @@ Two caveats, both deliberate rather than accidental:
   *shape* rather than a field's value, and no amount of stripping hides
   that. The alternative is treating every bare name as a table without
   proof.
-- Equal digests are **not** a proof of equivalence. The known gap below
-  remains in 0.2.0, and if you deduplicate a rule library by hash it merges
-  queries you may not want merged.
+- Equal digests are **not** a proof of equivalence. What remains is narrower
+  than it was: literal-level merges the library makes on purpose (typed
+  nulls, obfuscated strings) and a `let` function's call sites, which record
+  the body once at the declaration rather than per call.
 
-  **Statement-level constructs other than `let` are dropped entirely** and
-  hash as if they were absent — `set`, `declare query_parameters`,
-  `declare pattern`, `alias database` and `restrict access to`. Two of those
-  change results: `set query_now=datetime(2020-01-01); T | take 1` shares a
-  digest with a bare `T | take 1` *and* with the same query pinned to a
-  different `query_now`, and two `declare query_parameters` defaults differing
-  only in their value collide. Nothing in the IR records that a statement was
-  there, so this is invisible rather than merely lossy. All five kinds are
-  tracked as unhandled in `tests/fixtures/syntax_kinds_baseline.json`.
+  **Every statement kind is now modelled.** `set`, `declare
+  query_parameters`, `declare pattern`, `alias database` and `restrict
+  access to` were dropped entirely before 0.2.0 and hashed as if absent, so
+  `set query_now=datetime(2020-01-01); T | take 1` shared a digest with a
+  bare `T | take 1` *and* with the same query pinned to a different
+  `query_now`. They live on `QueryIR.statements` in source order — order
+  included in the digest, since `set` scopes the query that follows it — and
+  they no longer appear under `unhandled` in
+  `tests/fixtures/syntax_kinds_baseline.json`.
 
-  See the CHANGELOG's `[0.2.0]` **Fixed** section for the collisions that
-  *were* closed.
+  `examples/semantic_hash_demo.py` hashes every remaining merge when it runs
+  and raises if one stops behaving as filed; see also the CHANGELOG's
+  **Fixed** sections for the collisions that were closed.
 
 ## Development
 

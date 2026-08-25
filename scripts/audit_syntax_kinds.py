@@ -5,9 +5,10 @@
 """Audit the IR builder's SyntaxKind coverage against Kusto.Language.dll.
 
 Compares the live ``Kusto.Language.Syntax.SyntaxKind`` enum (read via
-pythonnet reflection) against :attr:`IRBuilder.HANDLED_OPERATOR_KINDS` and
-:attr:`IRBuilder.HANDLED_EXPR_KINDS`. Writes (or compares to) a JSON baseline
-at ``tests/fixtures/syntax_kinds_baseline.json``.
+pythonnet reflection) against :attr:`IRBuilder.HANDLED_OPERATOR_KINDS`,
+:attr:`IRBuilder.HANDLED_EXPR_KINDS` and
+:attr:`IRBuilder.HANDLED_STATEMENT_KINDS`. Writes (or compares to) a JSON
+baseline at ``tests/fixtures/syntax_kinds_baseline.json``.
 
 Usage
 -----
@@ -18,9 +19,11 @@ Usage
 The baseline carries:
 
 * ``all_syntax_kinds`` — full enum from the loaded DLL.
-* ``handled_expr_kinds`` / ``handled_operator_kinds`` — the IR builder's
-  static dispatch contract (Python class names, since the builder
-  dispatches on ``type(node).__name__``).
+* ``handled_expr_kinds`` / ``handled_operator_kinds`` /
+  ``handled_statement_kinds`` — the IR builder's static dispatch contract
+  (Python class names, since the builder dispatches on
+  ``type(node).__name__``). Keyword and token *kinds* are therefore never
+  members: they have no node class behind them.
 * ``dispatched_via_class`` — empirical map from Python class name to the
   set of SyntaxKind enum values that resolve to it, discovered by
   parsing the corpus under ``tests/fixtures/complex_queries/`` and
@@ -137,7 +140,8 @@ def _compute_state(extra_skipped: set[str]) -> dict:
     all_kinds = set(syntax_kinds())
     handled_expr = set(IRBuilder.HANDLED_EXPR_KINDS)
     handled_op = set(IRBuilder.HANDLED_OPERATOR_KINDS)
-    handled_class_names = handled_expr | handled_op
+    handled_stmt = set(IRBuilder.HANDLED_STATEMENT_KINDS)
+    handled_class_names = handled_expr | handled_op | handled_stmt
 
     dispatched_via_class = _discover_dispatched_via_class()
 
@@ -151,13 +155,18 @@ def _compute_state(extra_skipped: set[str]) -> dict:
     default_skip = {k for k in all_kinds if _is_default_skipped(k)}
     deliberately_skipped = default_skip | extra_skipped
 
-    unhandled = all_kinds - handled_expr - handled_op - collapsed_kinds - deliberately_skipped
+    unhandled = (
+        all_kinds
+        - handled_expr - handled_op - handled_stmt
+        - collapsed_kinds - deliberately_skipped
+    )
 
     return {
         "kusto_language_version": _read_pin(),
         "all_syntax_kinds": sorted(all_kinds),
         "handled_expr_kinds": sorted(handled_expr),
         "handled_operator_kinds": sorted(handled_op),
+        "handled_statement_kinds": sorted(handled_stmt),
         "dispatched_via_class": dispatched_via_class,
         "deliberately_skipped": sorted(deliberately_skipped),
         "unhandled": sorted(unhandled),
@@ -199,7 +208,10 @@ def main() -> int:
         _write_baseline(state)
         print(f"Wrote {BASELINE_PATH.relative_to(REPO_ROOT)}")
         print(f"  total kinds: {len(state['all_syntax_kinds'])}")
-        print(f"  handled (expr+op): {len(state['handled_expr_kinds']) + len(state['handled_operator_kinds'])}")
+        print(
+            "  handled (expr+op+stmt): "
+            f"{len(state['handled_expr_kinds']) + len(state['handled_operator_kinds']) + len(state['handled_statement_kinds'])}"
+        )
         print(f"  deliberately skipped: {len(state['deliberately_skipped'])}")
         print(f"  unhandled: {len(state['unhandled'])}")
         return 0
@@ -234,6 +246,7 @@ def main() -> int:
     print(f"Total SyntaxKinds:    {len(state['all_syntax_kinds'])}")
     print(f"Handled (expr):       {len(state['handled_expr_kinds'])}")
     print(f"Handled (operator):   {len(state['handled_operator_kinds'])}")
+    print(f"Handled (statement):  {len(state['handled_statement_kinds'])}")
     print(f"Deliberately skipped: {len(state['deliberately_skipped'])}")
     print(f"Unhandled:            {len(state['unhandled'])}")
     if state["unhandled"]:

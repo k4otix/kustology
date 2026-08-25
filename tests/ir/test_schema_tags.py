@@ -10,11 +10,18 @@ release, so a *silent* bump -- one nobody noticed in review -- is the failure
 this file exists to prevent. Changing either constant should require changing
 this test, deliberately, in the same commit.
 
-The second test guards a different failure: ``HANDLED_OPERATOR_KINDS`` and
-``HANDLED_EXPR_KINDS`` are strings compared against ``str(node.Kind)``, so a
-typo or a name that Kusto.Language never emits sits in the set forever,
-claiming coverage the builder does not have. Every entry must name a real
-class in ``Kusto.Language.Syntax``.
+The second test guards a different failure: ``HANDLED_OPERATOR_KINDS``,
+``HANDLED_EXPR_KINDS`` and ``HANDLED_STATEMENT_KINDS`` are strings compared
+against ``str(node.Kind)``, so a typo or a name that Kusto.Language never
+emits sits in the set forever, claiming coverage the builder does not have.
+Every entry must name a real class in ``Kusto.Language.Syntax``.
+
+That is also what keeps the three sets meaning one thing. Many SyntaxKinds
+are *token* kinds with no node class — the 270-odd ``*Keyword`` members
+among them — and adding one to a handled set would take it out of the
+audit's ``unhandled`` count while leaving its 270 siblings in, so the count
+would stop answering any single question. This test makes that impossible
+rather than leaving it to reviewer memory.
 """
 
 from __future__ import annotations
@@ -30,6 +37,10 @@ def test_schema_tags_are_pinned():
 def test_handled_kinds_are_real_syntax_classes():
     import Kusto.Language.Syntax as S
 
-    handled = IRBuilder.HANDLED_OPERATOR_KINDS | IRBuilder.HANDLED_EXPR_KINDS
+    handled = (
+        IRBuilder.HANDLED_OPERATOR_KINDS
+        | IRBuilder.HANDLED_EXPR_KINDS
+        | IRBuilder.HANDLED_STATEMENT_KINDS
+    )
     missing = sorted(k for k in handled if not hasattr(S, k))
     assert missing == [], f"not classes in Kusto.Language.Syntax: {missing}"

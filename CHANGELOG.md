@@ -9,6 +9,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - **The remaining operator-modifier collisions are closed.** `MvApplyOp` gains `to_typeof`, `row_limit` and `item_index`; `ParseKvOp` gains `properties` (its `with (...)` clause, a list since `quote` legally repeats); `GetSchemaOp` gains `output_kind`; `ConsumeOp` gains `decodeblocks`. The 0.2.0 Known-limitations entry naming these is gone — every modifier-pair the sweep found is now modelled.
+- **The five unmodelled statement kinds are closed.** `QueryIR.statements` carries `set`, `declare query_parameters`, `declare pattern`, `alias database` and `restrict access to` in source order, as `SetOptionStmt`/`QueryParametersStmt`/`PatternStmt`/`AliasStmt`/`RestrictStmt` (plus a defensive `UnknownStmt`); `LetFunction.body_query_parameters` carries the one kind a function body admits. **Every digest moves once** — the payload key is present even when empty — and a query using any of these moves again on its content; the scheme tag stays `kustology-sem-v2` under the one-tag-per-unreleased-window rule.
+- **A `let` inside a `declare pattern` arm is scoped to that arm** (`PatternMatch.body_lets`) instead of being hoisted into `QueryIR.let_bindings`, matching what a `let`-function body already did. `declare query_parameters` names are never alpha-canonicalized: they are the caller-facing API of a saved query, not local labels.
+- **Microsoft's binder crashing no longer reaches the caller as a CLR traceback.** A `declare pattern` whose match arm supplies more values than the declaration has parameters parses clean and then throws `IndexOutOfRangeException` out of `VisitPatternDeclaration` (Kusto.Language 12.3.2–12.4.1). Every analyze seam — `parse(schema=…)`, `validate(schema=…)`, `to_ir()`, `IRBuilder.build()` — now falls back to the unanalyzed parse and reports one `Error` diagnostic with the kustology-owned code `KUSTOLOGY001`. `semantic_hash` is bind-invariant, so the fallback digest is the right digest.
 
 ### Internal
 
@@ -133,7 +136,6 @@ First release since 0.1.0. Two themes: values the library reported wrongly (cult
 
 ### Known limitations
 
-- Five statement kinds are not modelled at all (`SetOptionStatement`, `QueryParametersStatement`, `PatternStatement`, `AliasStatement`, `RestrictStatement`) and hash as though absent — `set query_now=...; T | take 1` collides with a bare `T | take 1`.
 - `semantic_hash` can differ between a bound and an unbound parse of a query whose `let` aliases a table — accepted rather than papered over, since proving it needs the binder.
 - **`ColumnN` default names are a deliberate divergence** (grouping keys and unnamed `extend`/`project` columns alike): Microsoft's ``ColumnN`` counter is query-global and scope-sensitive, unreproducible bind-stably; first-bare-column naming is deterministic and stable. See ``_auto_name``'s grouping mode for the full list and design rationale.
 

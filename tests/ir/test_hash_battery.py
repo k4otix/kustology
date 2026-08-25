@@ -551,6 +551,56 @@ MUST_DIFFER = [
         "T | evaluate bag_unpack(d) : (*, x:string)",
         "T | evaluate bag_unpack(d) : (x:string)",
     ),
+    # The five statement kinds. Each was a collision of the worst shape --
+    # nothing in the IR recorded that the statement was there, so two
+    # *different* values of one statement hashed alike, not merely a query
+    # with one against a query without. `QueryIR.statements` carries them
+    # now. Every row below was a KNOWN_MERGES row in
+    # `examples/semantic_hash_demo.py` until this task.
+    (
+        "set-two-values",
+        "set query_now=datetime(2020-01-01); T | take 1",
+        "set query_now=datetime(2021-01-01); T | take 1",
+    ),
+    ("set-vs-absent", "set query_now=datetime(2020-01-01); T | take 1", "T | take 1"),
+    (
+        "query-parameters-two-defaults",
+        "declare query_parameters(n:long = 5); T | take 1",
+        "declare query_parameters(n:long = 9); T | take 1",
+    ),
+    (
+        "alias-two-databases",
+        "alias database D = cluster('c').database('d'); T | take 1",
+        "alias database D = cluster('c').database('e'); T | take 1",
+    ),
+    (
+        "pattern-two-bodies",
+        'declare pattern P = (a:string) { ("x") = { T | take 1 }; }; T | take 1',
+        'declare pattern P = (a:string) { ("x") = { U | take 9 }; }; T | take 1',
+    ),
+    # A forward declaration names the pattern and nothing else; the full
+    # declaration also says what each arm does. `declared_only` is what keeps
+    # them apart from an empty-bodied pattern.
+    (
+        "pattern-forward-vs-full",
+        "declare pattern P; T | take 1",
+        'declare pattern P = (a:string) { ("x") = { T | take 1 }; }; T | take 1',
+    ),
+    (
+        "restrict-two-targets",
+        'restrict access to (database("d")); T | take 1',
+        'restrict access to (database("e")); T | take 1',
+    ),
+    # A `let` inside a pattern body used to be hoisted into top-level
+    # `let_bindings`, which is where its value reached the digest from. It is
+    # scoped to `PatternMatch.body_lets` now, so this pins that the value still
+    # splits -- the route changed and the answer must not have. Same shape as
+    # `let-function-body-nested-let-value` above.
+    (
+        "pattern-nested-let-scoped",
+        'declare pattern P = (a:string) { ("x") = { let z = 5; T | take z }; }; T | take 1',
+        'declare pattern P = (a:string) { ("x") = { let z = 9; T | take z }; }; T | take 1',
+    ),
 ]
 
 
@@ -752,6 +802,57 @@ MUST_EQUAL = [
         "let-function-body-time-alias-rename",
         "let S = () { let d = 1h; A | where t > ago(d) | take 1 }; S()",
         "let S = () { let e = 1h; A | where t > ago(e) | take 1 }; S()",
+    ),
+    # The statement kinds, modelled in 0.2.0. Whitespace is the shape that
+    # proves a statement is *structure* in the digest rather than recorded
+    # text: a node that kept its own source would split every one of these.
+    ("set-whitespace", "set querytrace; T | take 1", "set   querytrace;\nT | take 1"),
+    (
+        "query-parameters-whitespace",
+        "declare query_parameters(n:long = 5); T | take 1",
+        "declare query_parameters(\n  n : long = 5\n); T | take 1",
+    ),
+    (
+        "alias-whitespace",
+        "alias database D = cluster('c').database('d'); T | take 1",
+        "alias database D =\n    cluster('c').database('d');\nT | take 1",
+    ),
+    (
+        "pattern-whitespace",
+        'declare pattern P = (a:string) { ("x") = { T | take 1 }; }; T | take 1',
+        'declare pattern P = (a:string)\n{\n  ("x") = {\n    T | take 1\n  };\n};\nT | take 1',
+    ),
+    (
+        "restrict-whitespace",
+        'restrict access to (database("d")) with (a=1); T | take 1',
+        'restrict access to (\n  database("d")\n) with ( a = 1 );\nT | take 1',
+    ),
+    # A `let` inside a pattern body is a local label there, exactly as one
+    # inside a function body is, so renaming it is no more a change than
+    # renaming a top-level one. `_canonicalize_let_names` opens a child scope
+    # for a `PatternMatch` the same way it does for a `LetFunction`; without
+    # that branch these two would split.
+    (
+        "pattern-body-let-rename",
+        'declare pattern P = (a:string) { ("x") = { let z = 5; T | take z }; }; T | take 1',
+        'declare pattern P = (a:string) { ("x") = { let w = 5; T | take w }; }; T | take 1',
+    ),
+    # An outer binding renames *through* a pattern body that reads it, the
+    # other direction of the same scope rule.
+    (
+        "pattern-body-outer-let-rename",
+        'let n = 5; declare pattern P = (a:string) { ("x") = { T | take n }; }; T | take 1',
+        'let m = 5; declare pattern P = (a:string) { ("x") = { T | take m }; }; T | take 1',
+    ),
+    # ...and through a statement that is not a pattern. `restrict access to
+    # (V)` over a `let`-bound view reads the binding, so the rename has to
+    # reach `QueryIR.statements` or these two split on a local label. The
+    # `restrict-two-targets` row above is the other half: what the statement
+    # points *at* still has to matter.
+    (
+        "restrict-over-a-renamed-let",
+        "let V = T | take 1; restrict access to (V); T | count",
+        "let W = T | take 1; restrict access to (W); T | count",
     ),
 ]
 

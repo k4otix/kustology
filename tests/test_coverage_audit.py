@@ -29,6 +29,21 @@ from kustology.reflection import syntax_kinds
 BASELINE = Path(__file__).resolve().parent / "fixtures" / "syntax_kinds_baseline.json"
 
 
+def _handled_classes() -> set[str]:
+    """Every Python class name the builder claims to dispatch on.
+
+    Three sets, and all three have to be here: a kind missing from this
+    union is reported as unhandled however completely the builder models it,
+    which is how the statement kinds looked before they were modelled and how
+    they would look again if a future set were added and not wired in.
+    """
+    return set(
+        IRBuilder.HANDLED_EXPR_KINDS
+        | IRBuilder.HANDLED_OPERATOR_KINDS
+        | IRBuilder.HANDLED_STATEMENT_KINDS
+    )
+
+
 def _current_unhandled(skipped: set[str], collapsed: set[str]) -> set[str]:
     """Subtract directly-handled kinds, class-collapsed kinds, and the skip list.
 
@@ -37,9 +52,7 @@ def _current_unhandled(skipped: set[str], collapsed: set[str]) -> set[str]:
     in the baseline's ``dispatched_via_class`` section. Without this the
     audit would falsely flag every subkind of ``BinaryExpression`` etc.
     """
-    all_kinds = set(syntax_kinds())
-    handled = IRBuilder.HANDLED_EXPR_KINDS | IRBuilder.HANDLED_OPERATOR_KINDS
-    return all_kinds - handled - collapsed - skipped
+    return set(syntax_kinds()) - _handled_classes() - collapsed - skipped
 
 
 @pytest.mark.skipif(
@@ -54,9 +67,7 @@ def test_no_new_unhandled_syntax_kinds():
     # Recover the collapsed kinds the same way the audit script does:
     # union SyntaxKinds dispatched via Python classes that are in the
     # handled set.
-    handled_classes = (
-        IRBuilder.HANDLED_EXPR_KINDS | IRBuilder.HANDLED_OPERATOR_KINDS
-    )
+    handled_classes = _handled_classes()
     dispatched_via_class: dict[str, list[str]] = baseline.get(
         "dispatched_via_class", {},
     )

@@ -272,13 +272,23 @@ class SchemaAttacher:
         gives ``Account`` the type ``string`` and the provenance ``"Base"``
         rather than leaving both unresolved.
 
-        Three boundaries remain, and are boundaries rather than bugs:
+        Four boundaries remain, and are boundaries rather than bugs:
 
         * A binding naming one declared *later* is not a ``LetRef`` at all
           (see :class:`LetRef`), so there is nothing to thread — it stays an
           opaque table.
         * ``let``-declared functions are recorded, not expanded, so a call
           site does not acquire the body's schema.
+        * ``QueryIR.statements`` is not walked. A ``declare pattern`` arm
+          holds a real :class:`Pipeline` and this pass leaves it alone: a
+          pattern body runs under the values its call site supplies, so
+          "which columns does it emit" has no one answer to attach. The
+          statements are still *reachable* — ``find_all(ir, Pipeline)``
+          finds them, which is why the ``_builder_schemas`` snapshot below
+          covers them — they are simply not enriched, so what a bound parse
+          left on them is what stays. ``ir.schema_attached`` reads across
+          the whole IR, statements included, since it asks whether anything
+          in this IR came from somewhere real.
         * An alias may shadow a real table name -- ``let SecurityEvent =
           SecurityEvent | where …`` is a common Sentinel idiom -- so
           ``ColumnRef.table`` alone cannot say which namespace its string

@@ -20,14 +20,18 @@ and — new in 0.2.0 — the operators that used to collapse. ``in~`` /
 ``has_any`` / ``has_all`` all built one ``SetMembership`` with no field
 recording which, so ``has_any`` and ``has_all``, which are opposites,
 shared a digest. ``SetMembership.op`` is what separates them now, and
-``Exists.op`` does the same for ``isnotnull`` / ``isnotempty``.
+``Exists.op`` does the same for ``isnotnull`` / ``isnotempty``. The five
+statement kinds — ``set``, ``declare query_parameters``,
+``declare pattern``, ``alias database``, ``restrict access`` — join them:
+they were absent from the IR entirely, so two different values of one
+statement collided with each other, and they are on
+``QueryIR.statements`` now.
 
-**Merges you may not want.** Two of them are deliberate collapses in
-literals; the rest are known gaps in statement kinds. There is no tally in
-this sentence on purpose. Every case is a row in ``KNOWN_MERGES`` below and
-every row is hashed when this file runs, so the list *is* the claim — a
-number quoted about the list is one more thing that can drift away from it,
-and in this file it twice did.
+**Merges you may not want.** Every case is a row in ``KNOWN_MERGES`` below
+and every row is hashed when this file runs, so the list *is* the claim.
+There is no tally in this sentence on purpose — a number quoted about the
+list is one more thing that can drift away from it, and in this file it
+twice did.
 
 A consumer deduplicating on the digest acts on that third group, so the
 rows are load-bearing rather than illustrative: if any of them stops
@@ -138,41 +142,48 @@ SPLITS = [
      "T | getschema kind=csl", "T | getschema"),
     ("consume's `decodeblocks=` splits",
      "T | consume decodeblocks=true", "T | consume"),
+    # The five statement kinds that are neither `let` nor tabular. Until
+    # 0.2.0 the builder read none of them, and every row below sat in
+    # KNOWN_MERGES: not "a query with a statement collides with one without"
+    # (easy to shrug off) but two *different values of the same statement*
+    # colliding with each other, which is the shape that costs a dedup
+    # consumer a rule. `QueryIR.statements` carries them now, in source
+    # order, and the order is part of the digest too.
+    ("`set` splits: pinned query_now vs none",
+     "set query_now=datetime(2020-01-01); T | take 1", "T | take 1"),
+    ("`set` splits: two different query_now values",
+     "set query_now=datetime(2020-01-01); T | take 1",
+     "set query_now=datetime(2021-01-01); T | take 1"),
+    ("`declare query_parameters` splits: two different defaults",
+     "declare query_parameters(n:long = 5); T | take 1",
+     "declare query_parameters(n:long = 9); T | take 1"),
+    # A parameter name is the caller-facing API of a saved query, so unlike a
+    # `let` name it is never alpha-canonicalized.
+    ("`declare query_parameters` splits: two different parameter names",
+     "declare query_parameters(n:long); T | take 1",
+     "declare query_parameters(m:long); T | take 1"),
+    ("`alias database` splits: two different databases",
+     "alias database D = cluster('c').database('d'); T | take 1",
+     "alias database D = cluster('c').database('e'); T | take 1"),
+    ("`declare pattern` splits: two different bodies",
+     'declare pattern P = (a:string) { ("x") = { T | take 1 }; }; T | take 1',
+     'declare pattern P = (a:string) { ("x") = { U | take 9 }; }; T | take 1'),
+    ("`restrict access` splits: two different targets",
+     'restrict access to (database("d")); T | take 1',
+     'restrict access to (database("e")); T | take 1'),
 ]
 
+# Every row here is a *merge* the library makes on purpose. The statement
+# kinds used to be the rest of this list and are gone from it: they are in
+# SPLITS above, one row per kind, since 0.2.0 models all five. Nothing was
+# retired quietly — a gap that closes turns
+# `tests/ir/test_hash_battery.py`'s KNOWN_COLLISIONS red on purpose, and
+# that is the tripwire that brought this list here.
 KNOWN_MERGES = [
     ("typed nulls: real(null) == datetime(null) — deliberate",
      "T | where a > real(null)", "T | where a > datetime(null)"),
     ('obfuscated strings: h"x" == "x" — deliberate',
      'T | where a == h"x"', 'T | where a == "x"'),
-    # A statement that is neither `let` nor tabular contributes nothing of
-    # its own to the digest, so its content hashes as though absent. Every
-    # kind that behaves that way gets a row, and each uses the variant that
-    # costs a dedup consumer most — not "vs a query without one", which is
-    # easy to shrug off, but two *different* values of the same statement
-    # colliding with each other.
-    #
-    # "Nothing of its own" is exact: a `let` nested inside one of these is
-    # still hoisted into top-level let_bindings and does reach the digest,
-    # so the enclosing statement is not an opaque blank. See
-    # compute_semantic_hash's docstring.
-    ("`set` vanishes: pinned query_now == no query_now — known gap",
-     "set query_now=datetime(2020-01-01); T | take 1", "T | take 1"),
-    ("`set` vanishes: two different query_now values — known gap",
-     "set query_now=datetime(2020-01-01); T | take 1",
-     "set query_now=datetime(2021-01-01); T | take 1"),
-    ("`declare query_parameters` vanishes: two different defaults — known gap",
-     "declare query_parameters(n:long = 5); T | take 1",
-     "declare query_parameters(n:long = 9); T | take 1"),
-    ("`alias database` vanishes: two different databases — known gap",
-     "alias database D = cluster('c').database('d'); T | take 1",
-     "alias database D = cluster('c').database('e'); T | take 1"),
-    ("`declare pattern` vanishes: two different bodies — known gap",
-     'declare pattern P = (a:string) { ("x") = { T | take 1 }; }; T | take 1',
-     'declare pattern P = (a:string) { ("x") = { U | take 9 }; }; T | take 1'),
-    ("`restrict access` vanishes: two different targets — known gap",
-     'restrict access to (database("d")); T | take 1',
-     'restrict access to (database("e")); T | take 1'),
 ]
 
 

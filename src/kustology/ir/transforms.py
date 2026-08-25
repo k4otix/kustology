@@ -29,7 +29,15 @@ from pydantic_core import PydanticUndefined
 
 from ._normalize import normalize_in_place
 from .expr import And, Expr, LetValueRef, Or, SetMembership
-from .query import FilterOp, LetBinding, LetFunction, LetRef, Pipeline, QueryIR
+from .query import (
+    FilterOp,
+    LetBinding,
+    LetFunction,
+    LetRef,
+    PatternMatch,
+    Pipeline,
+    QueryIR,
+)
 from .spans import Span
 from .types import KustoType
 from .walk import _models_in, find_all, walk
@@ -359,9 +367,17 @@ def _canonicalize_let_names(ir: QueryIR) -> None:
     scope**, seeded from what is visible at the declaration site -- so a body
     reference to an outer binding renames through it, a ``let`` written inside
     the body extends the child scope only, and neither is visible to the query
-    outside the braces. Function parameters never enter any of these maps: the
+    outside the braces. A ``declare pattern`` arm's body is the same
+    construct reached by a different route (a ``FunctionBody`` owned by a
+    :class:`~kustology.ir.query.PatternMatch`) and opens a child scope the
+    same way. Function parameters never enter any of these maps: the
     builder has already lowered a parameter reference to a ``ColumnRef`` /
-    ``TableRef``, which this function does not touch.
+    ``TableRef``, which this function does not touch. Nor do a
+    ``declare query_parameters`` statement's parameter names, and there the
+    exclusion is a *decision* rather than a consequence: those names are the
+    caller-facing API of a saved query, so renaming them would merge two
+    queries with different call contracts -- see
+    :class:`~kustology.ir.query.QueryParametersStmt`.
 
     The ``$let<i>`` counter is **query-global**, not per scope. Numbering each
     scope from zero would let a body's own first binding and its encloser's
@@ -378,7 +394,10 @@ def _canonicalize_let_names(ir: QueryIR) -> None:
     field-declaration-order dependency :func:`_sort_commutative` documents,
     for the same reason.
     """
-    if not ir.let_bindings:
+    # The early-out has to account for ``statements`` as well as bindings: a
+    # ``declare pattern`` arm can declare a ``let`` of its own while the query
+    # declares none, and that name is as much a local label as a top-level one.
+    if not ir.let_bindings and not ir.statements:
         return
     counter = itertools.count()
     seen: set[int] = set()
@@ -393,6 +412,24 @@ def _canonicalize_let_names(ir: QueryIR) -> None:
             # written at the declaration site, so they resolve in the parent.
             for parameter in node.parameters:
                 rename(parameter, visible)
+            for statement in node.body_query_parameters:
+                rename(statement, visible)
+            body_visible = dict(visible)
+            canon_scope(node.body_lets, body_visible)
+            for sub in (node.body_pipeline, node.body_expr):
+                if sub is not None:
+                    rename(sub, body_visible)
+            return
+        if isinstance(node, PatternMatch):
+            # A pattern arm's body is a ``FunctionBody`` too, so it opens a
+            # child scope on exactly the same terms. The arm's own selector --
+            # the matched values and the path value -- is written at the
+            # declaration site and resolves in the parent, the way a
+            # function's parameter defaults do.
+            for value in node.values:
+                rename(value, visible)
+            if node.path_value is not None:
+                rename(node.path_value, visible)
             body_visible = dict(visible)
             canon_scope(node.body_lets, body_visible)
             for sub in (node.body_pipeline, node.body_expr):
@@ -420,9 +457,12 @@ def _canonicalize_let_names(ir: QueryIR) -> None:
     canon_scope(ir.let_bindings, visible)
     # Every tabular statement, not just the first: a ``let`` declared once is
     # in scope for all of them, so a reference written after the second
-    # semicolon has to be renamed too or the rename stops being one.
-    for pipeline in (ir.main_pipeline, *ir.additional_pipelines):
-        rename(pipeline, visible)
+    # semicolon has to be renamed too or the rename stops being one. The other
+    # statement kinds are in the same position -- ``restrict access to (V)``
+    # over a ``let``-bound view reads the binding -- and they come last so the
+    # numbering of a pattern arm's own bindings is deterministic.
+    for node in (ir.main_pipeline, *ir.additional_pipelines, *ir.statements):
+        rename(node, visible)
 
 
 def _sort_commutative(root: BaseModel) -> None:
@@ -605,7 +645,10 @@ def compute_semantic_hash(node: BaseModel) -> str:
       the values were written in carries no meaning
     * ``let X = …; X | take 1`` vs ``let Y = …; Y | take 1`` — a ``let`` name
       is a local label, replaced by its position in a scope-ordered walk
-      (``$let0``, …). Holds for a ``let`` written inside a function body too
+      (``$let0``, …). Holds for a ``let`` written inside a function body or a
+      ``declare pattern`` arm too. A ``declare query_parameters`` name is
+      **not** a local label and is never renamed — see
+      :class:`~kustology.ir.query.QueryParametersStmt`
     * ``| where A | where B`` vs ``| where B | where A``, and either against
       ``| where B and A`` — the merge and the sort *compose*: consecutive
       filters become one ``And`` and that ``And``'s operands are then sorted,
@@ -633,10 +676,13 @@ def compute_semantic_hash(node: BaseModel) -> str:
       set, and ``normalize_expressions`` sorts nothing at all.
     * **``let`` renaming** is positional and scope-ordered. Each binding is
       replaced by its position in one query-global sequence, taken in scope
-      order — top-level declarations, and a function body's own declarations
-      as the body is reached — and each reference by whatever was visible
-      where it was written. The names are labels and the wiring is not
-      (:func:`_canonicalize_let_names`).
+      order — top-level declarations, then a function body's or a pattern
+      arm's own declarations as that body is reached — and each reference by
+      whatever was visible where it was written. The names are labels and the
+      wiring is not (:func:`_canonicalize_let_names`). Two kinds of name are
+      deliberately outside the rule: a function or pattern *parameter*, which
+      the builder has already lowered to a textual reference, and a
+      ``declare query_parameters`` name, which is a caller-facing API name.
     * **Datetime literals are UTC.** The builder Kind-normalizes every
       ``datetime`` literal before recording ``value`` and ``ticks``
       (``_builder_helpers.literal_value_and_ticks``), and numeric and timespan
@@ -658,38 +704,14 @@ def compute_semantic_hash(node: BaseModel) -> str:
     alias a bare table name in either position are unaffected. See the note
     above :data:`_VOLATILE_FIELDS` for why that is preferred to guessing.
 
-    **Equal digests are not a proof of equivalence.** Several kinds of thing
-    still merge, and they differ in whether that is a decision or a gap:
+    **Equal digests are not a proof of equivalence.** What still merges is
+    listed here, and both entries are decisions rather than gaps — the last
+    gap, five statement kinds contributing nothing of their own, closed when
+    :attr:`~kustology.ir.query.QueryIR.statements` was modelled:
 
     * **Deliberate**, in literals — typed nulls and obfuscated strings; see
       :class:`~kustology.ir.expr.LiteralExpr` for why neither is a
       difference in what a query returns.
-    * **Statements that are neither ``let`` nor tabular.** The builder
-      collects ``let`` statements and pipelines; a statement of any other
-      kind contributes nothing of its own, so whatever it said is absent
-      from the digest. Two *different* values of one such statement
-      therefore collide with each other, not merely with a query that omits
-      it, and they parse with zero diagnostics so nothing signals the loss.
-      ``set``, ``declare query_parameters``, ``declare pattern``,
-      ``alias database`` and ``restrict access`` all behave this way today.
-      That includes a ``declare query_parameters`` written *inside* a
-      ``let``-function body, which is the only statement kind besides ``let``
-      the body grammar admits.
-
-      **It is "contributes nothing of its own", not "is skipped".** The
-      ``let`` collection walks ``GetDescendants[LetStatement]``, which is
-      recursive, so a ``let`` *nested inside* one of these statements is
-      hoisted into top-level ``let_bindings`` and does reach the digest —
-      ``declare pattern P = (a:string) { ("x") = { let z = 5; T | take z };
-      }; T | take 1`` splits both from the bare query and from the same
-      pattern with ``z = 9``. That is a split where the paragraph above
-      promises a merge, which is the safe direction (a dedup consumer fails
-      to merge rather than merging wrongly), but it means the enclosing
-      statement is not an opaque blank: only its own syntax is. A
-      ``declare pattern`` body is a ``FunctionBody`` owned by a
-      ``PatternMatch`` rather than by a ``FunctionDeclaration``, which is why
-      the hoist still reaches it while a ``let``-*function* body's own
-      bindings stay scoped to that body.
     * **A ``let``-declared function's call sites.** ``let f = () { … }; f();
       f()`` records the body once, on the declaration, and leaves each ``f()``
       a call. So a query that calls a function twice does not hash as one that
@@ -738,6 +760,13 @@ def compute_semantic_hash(node: BaseModel) -> str:
         # digest. Add every field that carries query meaning.
         payload: Any = {
             "let_bindings": [lb.model_dump(mode="json") for lb in canonical.let_bindings],
+            # Present even when empty, the way ``additional_pipelines`` is.
+            # A key whose presence depended on its own contents would make
+            # the payload's shape data, and ``_strip_unwritten_fields`` is
+            # for a *field* that must dump as it did before it existed --
+            # this one never existed at all until 0.2.0, and adding it moved
+            # every digest once, deliberately and disclosed.
+            "statements": [s.model_dump(mode="json") for s in canonical.statements],
             "main_pipeline": canonical.main_pipeline.model_dump(mode="json"),
             "additional_pipelines": [
                 p.model_dump(mode="json") for p in canonical.additional_pipelines

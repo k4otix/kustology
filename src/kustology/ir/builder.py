@@ -7,8 +7,9 @@ Two entry points: :meth:`IRBuilder.build` (string in, IR out, parses+binds)
 and :meth:`IRBuilder.build_from_code` (use when the caller already has a
 ``KustoCode``, e.g. via :meth:`kustology.KustoQuery.to_ir`).
 
-The handled-SyntaxKind sets are exposed as :attr:`HANDLED_OPERATOR_KINDS`
-and :attr:`HANDLED_EXPR_KINDS` for the coverage audit script.
+The handled-SyntaxKind sets are exposed as :attr:`HANDLED_OPERATOR_KINDS`,
+:attr:`HANDLED_EXPR_KINDS` and :attr:`HANDLED_STATEMENT_KINDS` for the
+coverage audit script.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from ..bridge import GlobalState, KustoCode  # re-export-friendly; also triggers
 # The diagnostic codes live in one module. Two spellings of "KS204" is
 # exactly the drift a DLL refresh turns into a silent behaviour split -- and
 # the two sets are deliberately different sizes; ``services`` documents why.
-from ..services import _UNKNOWN_NAME_CODES
+from ..services import _UNKNOWN_NAME_CODES, _analyze_guarded
 
 # Moved to Tier 1 so consumers walking the .NET tree can reach it without the
 # [ir] extra. The private alias keeps this module's call sites untouched.
@@ -80,6 +81,7 @@ from .expr import (
     UnknownExpr,
 )
 from .query import (
+    AliasStmt,
     AsOp,
     AssertSchemaOp,
     Assignment,
@@ -125,6 +127,8 @@ from .query import (
     ParseOp,
     ParseWhereOp,
     PartitionOp,
+    PatternMatch,
+    PatternStmt,
     Pipeline,
     PrintOp,
     ProjectAwayOp,
@@ -134,14 +138,17 @@ from .query import (
     ProjectRenameOp,
     ProjectReorderOp,
     QueryIR,
+    QueryParametersStmt,
     RangeOp,
     RenderOp,
     ReorderKey,
+    RestrictStmt,
     SampleDistinctOp,
     SampleOp,
     ScanOp,
     SearchOp,
     SerializeOp,
+    SetOptionStmt,
     SortKey,
     SortOp,
     SummarizeOp,
@@ -169,10 +176,15 @@ logger = logging.getLogger(__name__)
 # between the previous token and this one. ``Minimal`` renders the node's own
 # source: no leading trivia, interior comments dropped to a line break.
 from Kusto.Language.Syntax import (
+    AliasStatement,
     ExpressionStatement,
     FunctionDeclaration,
     IncludeTrivia,
     LetStatement,
+    PatternStatement,
+    QueryParametersStatement,
+    RestrictStatement,
+    SetOptionStatement,
 )
 
 
@@ -455,6 +467,36 @@ class IRBuilder:
         # the branches were empty, which was accurate then and is not now.
     })
 
+    # The statement kinds that are neither ``let`` nor a tabular expression,
+    # built by ``_visit_statements`` into ``QueryIR.statements``. The five
+    # statement classes, plus the satellite nodes each one's reader descends
+    # into -- a satellite listed here is a claim that its contents reach the
+    # IR, so ``OptionValueClause`` (the ``=value`` of ``set``) belongs and the
+    # ``set`` *keyword* does not.
+    #
+    # **Every entry names a real class in ``Kusto.Language.Syntax``**, the
+    # same contract ``HANDLED_OPERATOR_KINDS`` and ``HANDLED_EXPR_KINDS``
+    # keep and ``test_schema_tags.py`` enforces over all three. That rules out
+    # the keyword SyntaxKinds -- ``QueryParametersKeyword``, ``SetKeyword``,
+    # ``DeclareKeyword`` and the 270-odd others -- which are token kinds with
+    # no node class behind them. They stay in the audit's ``unhandled`` set,
+    # where every keyword kind already sits: claiming a handful of them and
+    # not the rest would make the set mean two different things at once.
+    #
+    # ``FunctionParameter`` / ``DefaultValueDeclaration`` /
+    # ``PrimitiveTypeExpression`` are likewise absent, and consistently so:
+    # ``LetFunction`` has read all three since 0.2.0 without listing them,
+    # because the kind the audit tracks for that shape is
+    # ``NameAndTypeDeclaration``, which ``HANDLED_EXPR_KINDS`` already carries.
+    HANDLED_STATEMENT_KINDS = frozenset({
+        "SetOptionStatement", "OptionValueClause",
+        "QueryParametersStatement",
+        "PatternStatement", "PatternDeclaration", "PatternMatch",
+        "PatternPathParameter", "PatternPathValue",
+        "AliasStatement",
+        "RestrictStatement", "RestrictStatementWithClause",
+    })
+
     def __init__(self, global_state: GlobalState | None = None):
         self.global_state = global_state or GlobalState.Default
         # Names bound by ``let`` statements already visited in the current
@@ -488,9 +530,29 @@ class IRBuilder:
         (:data:`_UNKNOWN_NAME_CODES`). A caller who supplied a real
         ``global_state`` and wants those rows should call
         :meth:`build_from_code` directly, which keeps them.
+
+        If Microsoft's analyzer crashes on the query the build still returns
+        an IR — from the unanalyzed parse, with one ``Error`` diagnostic of
+        kustology's own naming the .NET exception. See
+        :func:`kustology.services._analyze_guarded` for why that fallback is
+        harmless for ``semantic_hash`` and what it costs everywhere else.
         """
-        code = KustoCode.ParseAndAnalyze(query, self.global_state)
-        return self.build_from_code(code, ignore_unknown_tables=True)
+        code, failure = _analyze_guarded(
+            lambda: KustoCode.ParseAndAnalyze(query, self.global_state),
+            lambda: KustoCode.Parse(query),
+        )
+        ir = self.build_from_code(code, ignore_unknown_tables=True)
+        if failure is not None:
+            # No span: the failure is a fault in the analyzer, not a region of
+            # the query. ``diagnostics`` is not in the hash payload, so
+            # appending after the build does not stale ``semantic_hash``.
+            ir.diagnostics.append(Diagnostic(
+                message=failure["message"],
+                severity=failure["severity"],
+                code=failure["code"],
+                category=failure["category"],
+            ))
+        return ir
 
     def build_from_code(
         self, code: KustoCode, *, ignore_unknown_tables: bool = False,
@@ -549,20 +611,24 @@ class IRBuilder:
         self._let_names = set()
         self._param_names = set()
         let_bindings: list[LetBinding] = []
-        # ``GetDescendants`` is recursive, so both statement sweeps below have
-        # to say which statements are the *query's* own. A statement inside a
+        # ``GetDescendants`` is recursive, so every sweep below has to say
+        # which statements are the *query's* own. A statement inside a
         # ``FunctionDeclaration`` is not: it belongs to the body, is in scope
         # only there, and is built by ``_visit_function_declaration`` into
-        # ``LetFunction.body_lets``. Hoisting it here declared it twice, and
-        # declared it in a scope the query never wrote it in.
+        # ``LetFunction.body_lets`` / ``.body_query_parameters``. Hoisting it
+        # here declared it twice, and declared it in a scope the query never
+        # wrote it in.
         #
-        # ``declare pattern`` bodies are deliberately *not* caught by this
-        # filter: their braces hold a ``FunctionBody`` owned by a
-        # ``PatternMatch``, not by a ``FunctionDeclaration``, so a ``let``
-        # written inside one is still hoisted -- the disclosed behaviour
-        # ``compute_semantic_hash``'s docstring describes.
+        # A ``declare pattern`` body is the same case reached by a different
+        # route: its braces hold a ``FunctionBody`` owned by a
+        # ``PatternMatch`` rather than by a ``FunctionDeclaration``, so the
+        # ``FunctionDeclaration`` filter alone did not catch it and a ``let``
+        # written inside a pattern arm was hoisted to top level. That was the
+        # disclosed behaviour for as long as nothing modelled the pattern;
+        # ``PatternMatch.body_lets`` owns it now, so hoisting it as well
+        # would be the double declaration this filter exists to prevent.
         for ls in root.GetDescendants[LetStatement]():
-            if ls.GetFirstAncestor[FunctionDeclaration]() is not None:
+            if not self._is_a_top_level_statement(ls):
                 continue
             binding = self._visit_let_statement(ls)
             let_bindings.append(binding)
@@ -571,6 +637,14 @@ class IRBuilder:
             # further down still name whatever the cluster has. Resolving
             # those to the binding would be a guess, not a reading.
             self._let_names.add(binding.name)
+
+        # After the ``let`` sweep, so a statement naming an earlier binding
+        # reads the binding rather than guessing a column -- ``restrict access
+        # to (V)`` over a ``let``-bound view is the case that needs it. Every
+        # ``let`` in the query is registered by now regardless of where the
+        # statement sits, which matches KQL: a ``let`` is in scope for the
+        # whole query, not merely for what follows it.
+        statements = self._visit_statements(root)
 
         main_pipeline: Pipeline | None = None
         # Every tabular statement, not just the first. ``T | count; U | count``
@@ -586,7 +660,7 @@ class IRBuilder:
         additional_pipelines: list[Pipeline] = []
         expr_stmts = [
             st for st in root.GetDescendants[ExpressionStatement]()
-            if st.GetFirstAncestor[FunctionDeclaration]() is None
+            if self._is_a_top_level_statement(st)
         ]
         if expr_stmts:
             main_pipeline = self._visit_pipeline(expr_stmts[0].Expression)
@@ -599,12 +673,184 @@ class IRBuilder:
             raw_text=raw_text,
             semantic_hash="",  # populated below from the canonical IR shape
             let_bindings=let_bindings,
+            statements=statements,
             main_pipeline=main_pipeline,
             additional_pipelines=additional_pipelines,
             diagnostics=diagnostics,
         )
         ir.semantic_hash = compute_semantic_hash(ir)
         return ir
+
+    # -- statements that are neither ``let`` nor tabular ------------------
+
+    @staticmethod
+    def _is_a_top_level_statement(node: Any) -> bool:
+        """True when ``node`` is one of the *query's* own statements.
+
+        ``GetDescendants`` is recursive, so every statement sweep needs this:
+        a statement inside a ``let``-function body or a ``declare pattern``
+        arm belongs to that body and is built there. The two ancestor kinds
+        are the only two the grammar puts a ``FunctionBody`` under.
+        """
+        return (
+            node.GetFirstAncestor[FunctionDeclaration]() is None
+            and node.GetFirstAncestor[PatternStatement]() is None
+        )
+
+    def _visit_statements(self, root: Any) -> list[Any]:
+        """Build every non-``let``, non-tabular statement, in source order.
+
+        Five .NET classes, one sweep each, merged on ``TextStart``. Sorting
+        rather than concatenating per kind is what makes the list *source*
+        order: ``set querytrace; alias database d = …`` and the same two
+        statements the other way round are different queries (a ``set``
+        scopes what follows it), and a per-kind concatenation would render
+        them identically.
+
+        ``QueryParametersStatement`` is the only kind the ancestor filter can
+        actually exclude -- it is the one statement besides ``let`` a
+        ``FunctionBody`` admits, and it lands on
+        ``LetFunction.body_query_parameters`` instead. The other four cannot
+        legally appear inside a body (probed: each is a parse error there),
+        so the filter is belt to that braces rather than a live case.
+        """
+        found: list[tuple[int, Any]] = []
+        for net_cls, visit in (
+            (SetOptionStatement, self._visit_set_option_statement),
+            (QueryParametersStatement, self._visit_query_parameters_statement),
+            (PatternStatement, self._visit_pattern_statement),
+            (AliasStatement, self._visit_alias_statement),
+            (RestrictStatement, self._visit_restrict_statement),
+        ):
+            for st in root.GetDescendants[net_cls]():
+                if not self._is_a_top_level_statement(st):
+                    continue
+                found.append((st.TextStart, visit(st)))
+        return [stmt for _, stmt in sorted(found, key=lambda pair: pair[0])]
+
+    def _visit_set_option_statement(self, node: Any) -> SetOptionStmt:
+        value_clause = getattr(node, "ValueClause", None)
+        value = (
+            getattr(value_clause, "Expression", None)
+            if value_clause is not None else None
+        )
+        return SetOptionStmt(
+            name=visit_name(node.Name),
+            value=self._visit_expr(value) if value is not None else None,
+        )
+
+    def _visit_query_parameters_statement(self, node: Any) -> QueryParametersStmt:
+        return QueryParametersStmt(
+            parameters=self._read_function_parameters(
+                getattr(node, "Parameters", None),
+            ),
+        )
+
+    def _visit_pattern_statement(self, node: Any) -> PatternStmt:
+        declaration = getattr(node, "Pattern", None)
+        if declaration is None:
+            # ``declare pattern P;`` -- the forward declaration. Not the same
+            # statement as a pattern with an empty body, which is why the
+            # flag exists rather than being inferred from empty lists.
+            return PatternStmt(name=visit_name(node.Name), declared_only=True)
+
+        parameters = [
+            self._visit_typed_name(el) for el in _iter_elements(declaration.Parameters)
+        ]
+        path_parameter_node = getattr(declaration, "PathParameter", None)
+        path_parameter = (
+            self._visit_typed_name(path_parameter_node.Parameter)
+            if path_parameter_node is not None else None
+        )
+        return PatternStmt(
+            name=visit_name(node.Name),
+            parameters=parameters,
+            path_parameter=path_parameter,
+            matches=[
+                self._visit_pattern_match(pm)
+                for pm in _iter_elements(declaration.Patterns)
+            ],
+        )
+
+    def _visit_pattern_match(self, node: Any) -> PatternMatch:
+        """Build one arm of a pattern body.
+
+        The body is a ``FunctionBody`` -- the same node class a
+        ``let``-declared function's body is -- so it is read by
+        :meth:`_visit_function_body`, which is what keeps a ``let`` written
+        inside a pattern arm scoped and dispatched exactly as one written
+        inside a function is.
+        """
+        values = getattr(node, "ParameterValues", None)
+        path_value_node = getattr(node, "PathValue", None)
+        path_value = (
+            getattr(path_value_node, "Value", None)
+            if path_value_node is not None else None
+        )
+        body = getattr(node, "Body", None)
+        # The discarded slot is ``body_query_parameters``. A
+        # ``declare query_parameters`` inside a pattern arm is a parse error
+        # (probed: KS005 "Expected: }"), so the grammar never fills it here
+        # and ``PatternMatch`` has no field for something nothing can produce.
+        body_lets, _, body_pipeline, body_expr = self._visit_function_body(
+            body, shadowed=set(),
+        )
+        return PatternMatch(
+            values=[
+                self._visit_expr(el) for el in _iter_elements(values.Expressions)
+            ] if values is not None else [],
+            path_value=(
+                self._visit_expr(path_value) if path_value is not None else None
+            ),
+            body_lets=body_lets,
+            body_pipeline=body_pipeline,
+            body_expr=body_expr,
+            body_span=to_span(body if body is not None else node),
+        )
+
+    def _visit_alias_statement(self, node: Any) -> AliasStmt:
+        return AliasStmt(
+            name=visit_name(node.Name),
+            expression=self._visit_expr(node.Expression),
+        )
+
+    def _visit_restrict_statement(self, node: Any) -> RestrictStmt:
+        with_clause = getattr(node, "WithClause", None)
+        properties: list[tuple[str, str]] = []
+        if with_clause is not None:
+            # ``.Properties`` holds ``NamedParameter``s, the same node
+            # ``parse-kv``'s ``with (...)`` clause uses -- and read the same
+            # way, as a list of pairs rather than a dict, because a repeated
+            # name would otherwise collapse onto its last value.
+            for prop in _iter_elements(with_clause.Properties):
+                prop_name = named_param_name(prop)
+                prop_value = named_param_value(prop)
+                if prop_name is not None and prop_value is not None:
+                    properties.append((prop_name, prop_value))
+        return RestrictStmt(
+            expressions=[
+                self._visit_expr(el) for el in _iter_elements(node.Expressions)
+            ],
+            properties=properties,
+        )
+
+    def _visit_typed_name(self, node: Any) -> TypedNameDecl:
+        """Read a ``name:type`` declaration, whatever the builder makes of it.
+
+        ``_visit_expr``'s ``NameAndTypeDeclaration`` branch is the one reader
+        of this shape, so a pattern parameter's declared type is read exactly
+        as a ``parse`` capture's is. The fallback is defensive: an
+        error-recovery node that does not carry a type still yields a
+        declaration rather than dropping the parameter.
+        """
+        decl = self._visit_expr(node)
+        if isinstance(decl, TypedNameDecl):
+            return decl
+        return TypedNameDecl(  # pragma: no cover — defensive
+            name=visit_name(node),
+            declared_type="unknown",
+            span=to_span(node),
+        )
 
     # -- let statements --------------------------------------------------
 
@@ -661,57 +907,118 @@ class IRBuilder:
 
         return LetBinding(name=name, span=span, rhs_expr=self._visit_expr(expr))
 
+    def _read_function_parameters(self, params: Any) -> list[LetFunctionParameter]:
+        """Read a ``SyntaxList[SeparatedElement[FunctionParameter]]``.
+
+        Two node kinds hand over exactly this list: a ``FunctionDeclaration``
+        (through its ``FunctionParameters`` wrapper, hence the unwrap at that
+        call site) and a ``QueryParametersStatement`` (directly). Reading them
+        here rather than twice is what keeps ``let f = (p:long=1) {…}`` and
+        ``declare query_parameters(p:long=1)`` from drifting apart.
+
+        Each ``FunctionParameter`` carries a ``NameAndType`` (the ``p:long``,
+        read through ``_visit_expr``'s ``NameAndTypeDeclaration`` branch so a
+        parameter's declared type is read exactly as a ``parse`` capture's is)
+        and an optional ``DefaultValue`` whose ``.Value`` is the literal.
+        """
+        out: list[LetFunctionParameter] = []
+        if params is None:
+            return out
+        for param in _iter_elements(params):
+            name_and_type = getattr(param, "NameAndType", None)
+            if name_and_type is None:  # pragma: no cover — defensive
+                continue
+            default_clause = getattr(param, "DefaultValue", None)
+            default_value = (
+                getattr(default_clause, "Value", None)
+                if default_clause is not None else None
+            )
+            out.append(LetFunctionParameter(
+                decl=self._visit_typed_name(name_and_type),
+                default=self._visit_expr(default_value)
+                if default_value is not None else None,
+            ))
+        return out
+
+    def _visit_function_body(
+        self, body: Any, *, shadowed: set[str],
+    ) -> tuple[list[LetBinding], list[QueryParametersStmt], Pipeline | None, AnyExpr | None]:
+        """Read a ``FunctionBody``: its statements, then its tail.
+
+        The grammar restricts the statement list to ``let`` and
+        ``declare query_parameters``. The ``let``s are built in order and
+        registered as they go, so each is visible to the ones after it and to
+        the tail; the tail dispatches through :func:`_is_tabular_rhs`, the same
+        predicate a ``let`` right-hand side uses, so a tabular tail becomes a
+        pipeline and a scalar one an expression.
+
+        ``shadowed`` is the set of names bound by the *declaration* rather than
+        by the query -- a ``let``-function's parameters. Both it and
+        ``_let_names`` are restored in ``finally``, so nothing the body
+        declares and no name it shadows survives the body. The shadow is
+        textual, which is what keeps it -- and therefore ``semantic_hash`` --
+        independent of whether a schema was supplied.
+
+        Two owners: :meth:`_visit_function_declaration` and
+        :meth:`_visit_pattern_match`. A ``declare pattern`` arm's braces hold
+        a ``FunctionBody`` too, and sharing this reader is what makes a ``let``
+        written inside one scope and dispatch exactly as one written inside a
+        function does. A pattern arm passes ``shadowed=set()``: a pattern's
+        parameters are matched against the arm's values, not bound as names
+        inside the body.
+        """
+        body_lets: list[LetBinding] = []
+        body_query_parameters: list[QueryParametersStmt] = []
+        body_pipeline: Pipeline | None = None
+        body_expr: AnyExpr | None = None
+        if body is None:  # pragma: no cover — defensive
+            return body_lets, body_query_parameters, body_pipeline, body_expr
+
+        saved_params = self._param_names
+        saved_lets = set(self._let_names)
+        self._param_names = saved_params | shadowed
+        try:
+            stmts = getattr(body, "Statements", None)
+            if stmts is not None:
+                for st in _iter_elements(stmts):
+                    net_kind = str(type(st).__name__)
+                    if net_kind == "LetStatement":
+                        binding = self._visit_let_statement(st)
+                        body_lets.append(binding)
+                        self._let_names.add(binding.name)
+                    elif net_kind == "QueryParametersStatement":
+                        body_query_parameters.append(
+                            self._visit_query_parameters_statement(st),
+                        )
+                    # Anything else here is a parser error-recovery
+                    # placeholder: the grammar admits no third statement kind.
+            tail = getattr(body, "Expression", None)
+            while tail is not None and str(type(tail).__name__) == "ParenthesizedExpression":
+                tail = getattr(tail, "Expression", None)
+            if tail is not None:
+                if _is_tabular_rhs(tail):
+                    body_pipeline = self._visit_pipeline(tail)
+                else:
+                    body_expr = self._visit_expr(tail)
+        finally:
+            self._param_names = saved_params
+            self._let_names = saved_lets
+
+        return body_lets, body_query_parameters, body_pipeline, body_expr
+
     def _visit_function_declaration(self, node: Any) -> LetFunction:
         """Build a :class:`LetFunction` -- signature and body -- from a .NET
         ``FunctionDeclaration``.
 
         ``node.Parameters`` is a ``FunctionParameters`` wrapper whose own
-        ``.Parameters`` is a ``SyntaxList[SeparatedElement[FunctionParameter]]``
-        — hence the unwrap. Each ``FunctionParameter`` carries a
-        ``NameAndType`` (the ``w:int``, read through ``_visit_expr``'s existing
-        ``NameAndTypeDeclaration`` branch so a parameter's declared type is
-        read exactly as a ``parse`` capture's is) and an optional
-        ``DefaultValue`` whose ``.Value`` is the literal.
-
-        ``node.Body`` is a ``FunctionBody``: a statement list that the grammar
-        restricts to ``let`` and ``declare query_parameters``, then an optional
-        tail expression. The ``let``s are built in order and registered as they
-        go, so each is visible to the ones after it and to the tail; the tail
-        dispatches through :func:`_is_tabular_rhs`, the same predicate a
-        ``let`` right-hand side uses.
-
-        The body is visited under a **parameter shadow**: the parameter names
-        are added to ``_param_names`` and both that set and ``_let_names`` are
-        restored in ``finally``, so nothing the body declares and no name it
-        shadows survives the declaration. The shadow is textual, which is what
-        keeps it -- and therefore ``semantic_hash`` -- independent of whether a
-        schema was supplied.
+        ``.Parameters`` is the list :meth:`_read_function_parameters` reads;
+        ``node.Body`` is the ``FunctionBody`` :meth:`_visit_function_body`
+        reads, under a shadow of the parameter names.
         """
-        params: list[LetFunctionParameter] = []
         outer = getattr(node, "Parameters", None)
-        inner = getattr(outer, "Parameters", None) if outer is not None else None
-        if inner is not None:
-            for param in _iter_elements(inner):
-                name_and_type = getattr(param, "NameAndType", None)
-                if name_and_type is None:  # pragma: no cover — defensive
-                    continue
-                decl = self._visit_expr(name_and_type)
-                if not isinstance(decl, TypedNameDecl):  # pragma: no cover — defensive
-                    decl = TypedNameDecl(
-                        name=visit_name(name_and_type),
-                        declared_type="unknown",
-                        span=to_span(name_and_type),
-                    )
-                default_clause = getattr(param, "DefaultValue", None)
-                default_value = (
-                    getattr(default_clause, "Value", None)
-                    if default_clause is not None else None
-                )
-                params.append(LetFunctionParameter(
-                    decl=decl,
-                    default=self._visit_expr(default_value)
-                    if default_value is not None else None,
-                ))
+        params = self._read_function_parameters(
+            getattr(outer, "Parameters", None) if outer is not None else None,
+        )
 
         # A missing keyword is a null reference across the pythonnet boundary;
         # a *recovered* one is a zero-width token, which is the parser saying
@@ -725,41 +1032,17 @@ class IRBuilder:
                 is_view=is_view, parameters=params, body_span=to_span(node),
             )
 
-        body_lets: list[LetBinding] = []
-        body_pipeline: Pipeline | None = None
-        body_expr: AnyExpr | None = None
-
-        saved_params = self._param_names
-        saved_lets = set(self._let_names)
-        self._param_names = saved_params | {p.decl.name for p in params}
-        try:
-            stmts = getattr(body, "Statements", None)
-            if stmts is not None:
-                for st in _iter_elements(stmts):
-                    if str(type(st).__name__) == "LetStatement":
-                        binding = self._visit_let_statement(st)
-                        body_lets.append(binding)
-                        self._let_names.add(binding.name)
-                    # ``QueryParametersStatement`` -- the only other kind the
-                    # grammar admits here -- and the parser's error-recovery
-                    # placeholders are dropped, the same silence every
-                    # non-``let`` statement kind gets at top level.
-            tail = getattr(body, "Expression", None)
-            while tail is not None and str(type(tail).__name__) == "ParenthesizedExpression":
-                tail = getattr(tail, "Expression", None)
-            if tail is not None:
-                if _is_tabular_rhs(tail):
-                    body_pipeline = self._visit_pipeline(tail)
-                else:
-                    body_expr = self._visit_expr(tail)
-        finally:
-            self._param_names = saved_params
-            self._let_names = saved_lets
+        body_lets, body_query_parameters, body_pipeline, body_expr = (
+            self._visit_function_body(
+                body, shadowed={p.decl.name for p in params},
+            )
+        )
 
         return LetFunction(
             is_view=is_view,
             parameters=params,
             body_lets=body_lets,
+            body_query_parameters=body_query_parameters,
             body_pipeline=body_pipeline,
             body_expr=body_expr,
             body_span=to_span(body),

@@ -34,6 +34,7 @@ from .expr import (
     UnaryOp, UnknownExpr,
 )
 from .query import (
+    AliasStmt,
     AsOp, AssertSchemaOp, Assignment, ConsumeOp, CountOp, DataTableSource,
     Diagnostic, DistinctOp, EvaluateOp, ExecuteAndCacheOp, ExtendOp,
     ExternalDataSource, FacetOp, FilterOp,
@@ -46,13 +47,16 @@ from .query import (
     MakeGraphOp, MakeSeriesAggregate, MakeSeriesOp, MvApplyOp,
     MvExpandColumn, MvExpandOp,
     Operator, ParseKvOp,
-    ParseOp, ParseWhereOp, PartitionOp, Pipeline, PrintOp, ProjectAwayOp,
+    ParseOp, ParseWhereOp, PartitionOp, PatternMatch, PatternStmt, Pipeline,
+    PrintOp, ProjectAwayOp,
     ProjectByNamesOp, ProjectKeepOp, ProjectOp, ProjectRenameOp,
-    ProjectReorderOp, QueryIR, RangeOp, RenderOp, ReorderKey,
+    ProjectReorderOp, QueryIR, QueryParametersStmt, RangeOp, RenderOp,
+    ReorderKey, RestrictStmt,
     SampleDistinctOp, SampleOp,
-    ScanOp, SearchOp, SerializeOp, SortKey, SortOp, SummarizeOp, TableRef,
+    ScanOp, SearchOp, SerializeOp, SetOptionStmt, SortKey, SortOp, SummarizeOp,
+    TableRef,
     TabularSchema, TakeOp, TopHittersOp, TopNestedOp, TopOp, UnionOp,
-    UnknownOp, UnknownSource,
+    UnknownOp, UnknownSource, UnknownStmt,
 )
 from .builder import IRBuilder
 from .llm_view import to_llm_dict
@@ -104,4 +108,7 @@ __all__ = [
     # Sources
     "TableRef", "LetRef", "FuncCallSource", "DataTableSource",
     "ExternalDataSource", "ImplicitSource", "UnknownSource",
+    # Statements (neither `let` nor tabular)
+    "SetOptionStmt", "QueryParametersStmt", "PatternStmt", "PatternMatch",
+    "AliasStmt", "RestrictStmt", "UnknownStmt",
 ]
