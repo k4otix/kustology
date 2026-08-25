@@ -431,6 +431,19 @@ class SchemaAttacher:
         this call discovers or masks survives past the closing brace --
         not even on an exception.
 
+        ``body_lets`` gets the same three-way dispatch :meth:`enrich`'s
+        own let-binding loop does -- tabular threads, a nested function
+        binding recurses through this same method, scalar is skipped --
+        because a ``let`` written inside a function body can itself be a
+        ``FunctionDeclaration`` (``let outer = (x:long) { let inner =
+        (y:long) { ... }; ... }``), the same as one written at the top
+        level can. The recursive call's own mask is unioned onto this
+        call's (mirroring the builder's ``saved_params | shadowed``, not
+        replacing it), so ``inner``'s body also can't see through
+        ``outer``'s masked names -- a name ``outer``'s parameter shadows is
+        still shadowed while ``inner`` runs, the same as it would be for an
+        ordinary (non-function) reference written at that nesting depth.
+
         ``parameters`` is empty for a pattern arm: a pattern's own
         parameters are matched against the arm's *values*, not bound as
         names inside the body (see
@@ -446,12 +459,20 @@ class SchemaAttacher:
         self._masked_tables = saved_masked | {p.decl.name for p in parameters}
         try:
             for binding in body_lets:
-                if binding.rhs_pipeline is None:
-                    continue
-                self._walk_pipeline(binding.rhs_pipeline)
-                schema = binding.rhs_pipeline.result_schema
-                if schema is not None:
-                    self._let_schemas[binding.name] = dict(schema.columns)
+                if binding.rhs_pipeline is not None:
+                    self._walk_pipeline(binding.rhs_pipeline)
+                    schema = binding.rhs_pipeline.result_schema
+                    if schema is not None:
+                        self._let_schemas[binding.name] = dict(schema.columns)
+                elif binding.rhs_function is not None:
+                    self._walk_function_body(
+                        binding.rhs_function.parameters,
+                        binding.rhs_function.body_lets,
+                        binding.rhs_function.body_pipeline,
+                    )
+                # A scalar body `let` (`rhs_expr`) carries no output schema
+                # to thread and nothing here resolves against it by name --
+                # skipped, same as `enrich`'s top-level loop.
             if body_pipeline is not None:
                 self._walk_pipeline(body_pipeline)
         finally:
@@ -462,6 +483,25 @@ class SchemaAttacher:
         if not name or name in self._masked_tables:
             return {}
         return self.schemas.get(name, {})
+
+    def _entry_table(self, name: str | None) -> str | None:
+        """The label a bare-name :class:`ScopeEntry` is honestly entitled to.
+
+        ``_table_schema`` already answers ``{}`` for a masked name, but a
+        ``ScopeEntry`` built straight from a name -- ``_source_entry``'s
+        plain-``TableRef`` fallback, ``search``/``find``'s table seeding --
+        used to write that name into ``table`` regardless, on the theory
+        that a *label* is harmless even where the columns are withheld. It
+        is not: ``_resolve_side``'s single-entry fallback (built for an
+        honestly-unknown table -- one entry, so it must be the side, even
+        with no columns to confirm it) reads ``entries[0].table`` straight
+        back out, and a join's ``on`` clause is exactly where a single
+        masked entry is the whole side. Emptying the label here, at the one
+        place both call sites already narrow the columns, is what makes
+        ``_resolve_side``'s fallback honest again rather than teaching it
+        about masking too.
+        """
+        return None if name in self._masked_tables else name
 
     def _source_entry(self, pipeline: Pipeline) -> ScopeEntry:
         """The scope a pipeline starts from, derived from its source.
@@ -501,7 +541,7 @@ class SchemaAttacher:
             # and picking one member of the set would be a guess.
             return ScopeEntry(table=None, columns={})
         name = source.name if isinstance(source, TableRef) else None
-        return ScopeEntry(table=name, columns=self._table_schema(name))
+        return ScopeEntry(table=self._entry_table(name), columns=self._table_schema(name))
 
     def _walk_pipeline(
         self,
@@ -768,7 +808,9 @@ class SchemaAttacher:
             if not names and not aliases:
                 names = list(self.schemas)
             scope.extend(
-                ScopeEntry(table=n, columns=dict(self._table_schema(n)))
+                ScopeEntry(
+                    table=self._entry_table(n), columns=dict(self._table_schema(n)),
+                )
                 for n in names
             )
             scope.extend(
@@ -792,6 +834,11 @@ class SchemaAttacher:
         more and there is nothing to pick between them, so the caller leaves
         ``.table`` at ``None`` (there is no sentinel left to fall back to)
         rather than guessing.
+
+        A masked function/pattern parameter's side needs no special case
+        here: ``_entry_table`` already answers ``None`` for its
+        ``ScopeEntry.table``, so this fallback "stands in" with the honest
+        answer for free instead of surfacing the parameter's own name.
         """
         resolved = self._resolve_column_table(name, entries)
         if resolved:

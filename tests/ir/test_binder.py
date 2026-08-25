@@ -486,12 +486,18 @@ def test_a_tabular_parameters_columns_answer_no_table_rather_than_the_callers(sc
 
     Probed and pinned rather than assumed: the alternative honest-looking
     answer was ``table="X"`` (the parameter's own name, still labelling the
-    source even though no columns are known). That never happens, because
-    ``_resolve_column_table`` only ever answers from a scope entry's
-    *known* columns (see ``_column_origins``) -- there is no join-side-style
-    single-entry fallback for an ordinary source, masked or not -- so an
+    source even though no columns are known). Through this test's own
+    resolution path -- an ordinary bare ``ColumnRef``, filled by
+    ``_resolve_column_table``/``_column_origins`` -- that never happens:
+    those only ever answer from a scope entry's *known* columns, so an
     unknown column of a masked entry resolves to ``None`` the same way an
-    unknown column of any other schema-less table would.
+    unknown column of any other schema-less table would. This is **not**
+    the whole story, though -- ``_resolve_side``'s single-entry fallback (a
+    *different* resolution path, reached only from inside a join's ``on``
+    clause) used to answer the parameter's own name here, because
+    ``ScopeEntry.table`` carried it regardless of masking; that leak and its
+    fix (``_entry_table``) are covered separately by
+    ``test_a_masked_tabular_parameters_own_name_does_not_surface_inside_a_joins_on_clause``.
 
     The parameter is named after a real schema table on purpose, and ``a``
     is a real column of that table's schema: without the mask, ``_table_
@@ -507,6 +513,44 @@ def test_a_tabular_parameters_columns_answer_no_table_rather_than_the_callers(sc
     ).to_ir(attach_schema=schema)
     fn = ir.let_bindings[0].rhs_function
     assert _refs(fn)["AccountName"] == {None}
+
+
+def test_a_masked_tabular_parameters_own_name_does_not_surface_inside_a_joins_on_clause(
+    schema,
+):
+    """A second, separate leak path for the same root cause as the test
+    above -- caught by review, not by the original probe.
+
+    ``_source_entry``'s plain-``TableRef`` branch used to write the bare
+    name into ``ScopeEntry.table`` unconditionally; only ``_table_schema``
+    (the *columns*) knew about the mask. ``$left.AccountName`` has no known
+    column to resolve by name here (the left side's one entry is masked to
+    ``columns={}``), so it falls through to ``_resolve_side``'s
+    single-entry fallback -- built for an honestly-unknown table, where one
+    entry unambiguously names the side even with no columns to confirm it.
+    That fallback read ``entries[0].table`` straight back out, which used
+    to be the parameter's own (colliding) name: the exact leak masking
+    exists to prevent, on a path the original test's docstring claimed
+    (wrongly, as it turns out) could not reach it. ``_entry_table`` closes
+    it at the source: a masked name never becomes a ``ScopeEntry.table``
+    label in the first place, so this fallback answers ``None`` for free.
+
+    The real right-hand table is a plain, unmasked reference and is
+    unaffected -- only the masked left side used to leak.
+    """
+    ir = parse(
+        "let f = (DeviceProcessEvents:(*)) { "
+        "DeviceProcessEvents | join (DeviceFileEvents) "
+        "on $left.AccountName == $right.FileName "
+        "}; DeviceProcessEvents | count",
+        schema=schema,
+    ).to_ir(attach_schema=schema)
+    fn = ir.let_bindings[0].rhs_function
+    refs = {c.name: c for c in find_all(fn, ColumnRef)}
+    assert refs["AccountName"].join_side == "left"
+    assert refs["AccountName"].table is None
+    assert refs["FileName"].join_side == "right"
+    assert refs["FileName"].table == "DeviceFileEvents"
 
 
 def test_body_lets_chain_inside_a_function_body(schema):
@@ -550,6 +594,61 @@ def test_a_scalar_parameter_colliding_with_a_schema_table_does_not_leak_it(schem
     assert ir.main_pipeline.result_schema.columns["AccountName"] == "string"
 
 
+def test_a_nested_function_bodys_own_let_function_is_recursed_into(schema):
+    """A ``let`` written inside a function body can itself be a
+    ``FunctionDeclaration`` -- ``_walk_function_body``'s own ``body_lets``
+    loop gets the same three-way dispatch ``enrich``'s top-level loop does,
+    so a nested function's body is walked (and masked) too, not silently
+    skipped.
+
+    Both maskings apply, and independently, during the nested walk:
+    ``inner``'s own tabular parameter (``DeviceFileEvents``, colliding with
+    a real schema table) is masked while ``inner``'s body runs, and
+    ``outer``'s tabular parameter (``DeviceProcessEvents``, also colliding)
+    is *still* masked throughout -- unioned in when entering ``inner``, not
+    replaced. Restored correctly on the way back out: ``outer``'s own tail
+    still can't see through its own mask after ``inner`` returns, and the
+    main pipeline's real-table reference resolves normally once ``enrich``
+    is done with both.
+    """
+    walked_ids: set[int] = set()
+    attacher = SchemaAttacher(schema)
+    original_walk_pipeline = attacher._walk_pipeline
+
+    def recording_walk_pipeline(pipeline, inherited=None):
+        walked_ids.add(id(pipeline))
+        return original_walk_pipeline(pipeline, inherited)
+
+    attacher._walk_pipeline = recording_walk_pipeline
+
+    ir = parse(
+        "let outer = (DeviceProcessEvents:(*)) { "
+        "let inner = (DeviceFileEvents:(*)) { "
+        "DeviceFileEvents | where FileName == 'x' | project FileName "
+        "}; "
+        "DeviceProcessEvents | where AccountName == 'x' | project AccountName "
+        "}; "
+        "DeviceProcessEvents | project AccountName",
+        schema=schema,
+    ).to_ir(attach_schema=False)
+    attacher.enrich(ir)
+
+    outer = ir.let_bindings[0].rhs_function
+    (inner_binding,) = outer.body_lets
+    inner = inner_binding.rhs_function
+
+    # The nested body really was walked, not silently skipped.
+    assert id(inner.body_pipeline) in walked_ids
+
+    # Inner's own masked parameter does not leak the real DeviceFileEvents.
+    assert _refs(inner)["FileName"] == {None}
+    # Outer's masked parameter still doesn't leak, for outer's own tail,
+    # even after the nested call unwound.
+    assert _refs(outer)["AccountName"] == {None}
+    # And the real thing, outside both scopes, resolves normally.
+    assert _refs(ir.main_pipeline)["AccountName"] == {"DeviceProcessEvents"}
+
+
 def test_masking_is_restored_even_if_the_body_walk_raises(schema):
     """``_masked_tables``/``_let_schemas`` are restored in ``finally``
     inside ``_walk_function_body``, not only on the happy path -- a bug (or
@@ -578,6 +677,48 @@ def test_masking_is_restored_even_if_the_body_walk_raises(schema):
 
     assert attacher._masked_tables == set()
     assert "DeviceProcessEvents" not in attacher._let_schemas
+
+
+def test_a_masked_search_tables_own_name_does_not_surface_through_a_later_join(
+    schema,
+):
+    """The same ``_entry_table`` fix also closes ``search``/``find``'s table
+    seeding (``_walk_operator_provenance``'s ``SearchOp``/``FindOp`` branch),
+    which built its ``ScopeEntry`` the same unmasked-label way
+    ``_source_entry`` did -- confirmed exploitable, not just consistent for
+    its own sake.
+
+    A ``join`` *right after* a masked ``search`` does not reproduce it:
+    Microsoft always closes ``SearchOp.result_schema`` with at least a
+    ``$table`` marker column (even over an open ``(*)`` parameter), so
+    ``_overlay_result_schema`` always adds a second, anonymous entry
+    alongside the masked one -- which defeats ``_resolve_side``'s
+    *single*-entry fallback before masking ever needs to.
+
+    Putting the masked ``search`` on the **right** side of a join does
+    reproduce it: ``_flatten_side`` collapses a join's whole right-hand
+    scope into one entry, and it decides that entry's ``table`` by reading
+    every contributing entry's ``.table`` directly (not its columns) --
+    "keeps a table when every contributing entry named the same one". A
+    masked search-seeded entry with an unmasked label contributed its
+    (colliding) name there, `_flatten_side` gave the merged right side that
+    name outright, and ``_resolve_side``'s single-entry fallback (always
+    reached for a join's right side, which is one entry by construction)
+    read it straight back for an otherwise-unresolvable ``$right`` column.
+    """
+    ir = parse(
+        "let f = (DeviceProcessEvents:(*)) { "
+        "DeviceFileEvents | join (search in (DeviceProcessEvents) 'x') "
+        "on $left.FileName == $right.Unknown "
+        "}; DeviceProcessEvents | count",
+        schema=schema,
+    ).to_ir(attach_schema=schema)
+    fn = ir.let_bindings[0].rhs_function
+    refs = {c.name: c for c in find_all(fn, ColumnRef)}
+    assert refs["FileName"].join_side == "left"
+    assert refs["FileName"].table == "DeviceFileEvents"
+    assert refs["Unknown"].join_side == "right"
+    assert refs["Unknown"].table is None
 
 
 def test_a_pattern_arms_body_is_walked_through_the_same_helper(schema):
