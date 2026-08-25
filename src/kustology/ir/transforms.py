@@ -194,13 +194,17 @@ def _merge_at_one_level(ops: list) -> list:
 # it.
 #
 # ``join_side`` is deliberately *not* stripped, and is why it exists as a
-# field at all. ``table`` carries two different things: the source-derived
-# ``$left`` / ``$right`` sentinel, and the table the binder resolves -- which
-# it writes over the sentinel (see ``SchemaAttacher._fill``). Hashing ``table``
-# made the hash bind-dependent; dropping it without recording the side
-# elsewhere collapsed ``$left.a == $left.b`` into ``$left.a == $right.b``,
-# which are different queries. Splitting the two apart is the standing remedy
-# for lossy lowering -- see AGENTS.md.
+# field at all. ``table`` used to carry two different things: the
+# source-derived ``$left`` / ``$right`` sentinel, and the table the binder
+# resolves -- and the binder wrote the second over the first (see
+# ``SchemaAttacher._fill``). Hashing ``table`` made the hash bind-dependent;
+# dropping it without recording the side elsewhere collapsed
+# ``$left.a == $left.b`` into ``$left.a == $right.b``, which are different
+# queries. The sentinel is gone now -- an unresolvable side is honestly
+# ``None`` in ``table``, not a string to strip -- but the field would still
+# be reused for two purposes if the side lived there, so ``join_side``
+# remains the one place it lives, hashed on its own. Splitting the two apart
+# is the standing remedy for lossy lowering -- see AGENTS.md.
 #
 # Stripping these fields does *not* make bind state invisible to the hash, and
 # no field-stripping could. The builder's ``let`` dispatch is bind-dependent by

@@ -99,18 +99,22 @@ class LiteralExpr(Expr):
 class ColumnRef(Expr):
     kind: Literal["column_ref"] = "column_ref"
     name: str
-    # "$left"/"$right" in join on-clauses, concrete table name when resolved,
-    # None when the binder hasn't placed it. Reading through a `let` alias
-    # reports the alias, not the table behind it -- see
-    # ``SchemaAttacher.enrich``. Binder-populated, so it is stripped before
-    # ``semantic_hash``: the same query text must hash one way whether or not
-    # a schema was supplied.
+    # A real table name, a scope name (a `let` alias), or None -- never the
+    # `$left`/`$right` syntax the query wrote in a join's on-clause; that
+    # syntax's side lives in `join_side` instead, so an unresolvable
+    # `$left.x`/`$right.x` is honestly None here, not a leftover marker.
+    # Reading through a `let` alias reports the alias, not the table behind
+    # it -- see ``SchemaAttacher.enrich``. Binder-populated, so it is
+    # stripped before ``semantic_hash``: the same query text must hash one
+    # way whether or not a schema was supplied.
     table: str | None = None
     # Which side of a join the reference was written against, when the query
-    # said so with `$left.` / `$right.`. Separate from ``table`` because the
-    # binder *overwrites* that sentinel with the table it resolves to, so a
-    # bound parse would otherwise lose the side entirely -- and the side is
-    # semantic: `$left.a == $left.b` is not the join `$left.a == $right.b`.
+    # said so with `$left.` / `$right.` -- set by the builder on every such
+    # reference, resolved or not, and the sole carrier of the side now that
+    # `table` never holds `$left`/`$right` itself. Kept separate from
+    # `table` because the side is semantic: `$left.a == $left.b` is not the
+    # join `$left.a == $right.b`, and losing it on a bound parse would
+    # collapse the two.
     join_side: Literal["left", "right"] | None = None
 
 

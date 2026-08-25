@@ -51,9 +51,11 @@ def test_recomputed_hash_is_the_same_bound_and_unbound(query):
 
 
 def test_join_side_is_recorded_separately_from_resolved_table():
-    """``table`` alone cannot carry the join side: the binder overwrites the
-    ``$left`` / ``$right`` sentinel with the concrete table it resolves to,
-    so the side is gone from a bound parse. It needs its own field."""
+    """``table`` alone cannot carry the join side: it never holds the
+    ``$left`` / ``$right`` syntax at all (an unresolved side is honestly
+    ``None`` there), and a resolved side overwrites it with the concrete
+    table, so either way the side itself is gone from ``table`` on a bound
+    parse. It needs its own field."""
     query = "T | join U on $left.a == $right.b"
 
     unbound = {c.name: c for c in find_all(parse(query).to_ir(), ColumnRef)}

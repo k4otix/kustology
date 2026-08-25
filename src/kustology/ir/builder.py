@@ -1869,7 +1869,10 @@ class IRBuilder:
                 if lhs_name in ("$left", "$right") or is_table_symbol(getattr(expr_node, "ReferencedSymbol", None)):
                     side = lhs_name[1:] if lhs_name in ("$left", "$right") else None
                     res = ColumnRef(
-                        name=rhs_name, table=lhs_name, join_side=side, span=span,
+                        name=rhs_name,
+                        table=None if lhs_name in ("$left", "$right") else lhs_name,
+                        join_side=side,
+                        span=span,
                     )
                 else:
                     res = PathExpr(

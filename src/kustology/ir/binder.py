@@ -29,6 +29,7 @@ from .expr import (
 from .query import (
     DataTableSource,
     ExternalDataSource,
+    FindOp,
     JoinOp,
     LetRef,
     LookupOp,
@@ -44,20 +45,6 @@ from .query import (
 )
 from .types import KustoType
 from .walk import _models_in, find_all
-
-
-def _side_marker(table: str | None) -> str | None:
-    """``"left"`` / ``"right"`` for the ``$left`` / ``$right`` sentinels.
-
-    ``ColumnRef.join_side`` is the primary signal and is set by the builder;
-    this covers an IR that predates it or was assembled by hand, and is what
-    keeps a second ``enrich()`` from re-resolving an already-placed column.
-    """
-    if table == "$left":
-        return "left"
-    if table == "$right":
-        return "right"
-    return None
 
 
 def _renamed_columns(op: Operator) -> dict[str, str]:
@@ -97,12 +84,19 @@ def _flatten_side(entries: list[ScopeEntry]) -> ScopeEntry:
     The merged entry keeps a table when every contributing entry named the
     same one, and otherwise records provenance per column in ``origins`` --
     so a right-hand ``R | project b`` still reports ``b`` as ``R``'s.
+
+    A contributing entry counts by ``table`` alone, not ``table and
+    columns``: a named table this walk has no schema for still names the
+    side unambiguously (there is only ever one contributor once the
+    flattening is done), so requiring known columns too just threw that
+    identification away and left an honest ``$right.x`` unresolved when a
+    guess-free answer was sitting right there.
     """
     columns: dict[str, str] = {}
     origins: dict[str, str | None] = {}
     tables: set[str] = set()
     for entry in entries:
-        if entry.table and entry.columns:
+        if entry.table:
             tables.add(entry.table)
         for name, kind in entry.columns.items():
             if name in columns:
@@ -198,19 +192,23 @@ class SchemaAttacher:
       literal's own kind, a comparison's ``bool``. Arithmetic is left
       unresolved rather than guessed at.
 
-    **Per operator: provenance first, then the overlay.** Of the four
-    constructs that bring *sources* into scope, three get a structural
-    branch here, because the overlay cannot recover where a column came from
-    once the sources are forgotten: ``join``/``lookup`` (the right-hand
+    **Per operator: provenance first, then the overlay.** All four
+    constructs that bring *sources* into scope get a structural branch
+    here, because the overlay cannot recover where a column came from once
+    the sources are forgotten: ``join``/``lookup`` (the right-hand
     pipeline, and the sides ``on`` resolves against), ``union`` (one entry
-    per arm), ``search`` (an implicit source — without seeding, its own
-    predicate resolves against nothing). ``find`` is the fourth and has no
-    branch at all (see **Accepted narrowings** below). Everything else fills
-    its expressions and walks its nested pipelines with the scope untouched.
+    per arm), ``search``/``find`` (both implicit sources — without seeding,
+    the predicate, and for ``find`` every ``project`` column, resolves
+    against nothing). Everything else fills its expressions and walks its
+    nested pipelines with the scope untouched.
 
     **Accepted narrowings**, each a loss of provenance rather than of a
     column, and each a case where the walk cannot say which source a name
-    belongs to, so it answers ``None``.
+    belongs to, so it answers ``None`` — with no exception left for an
+    unplaceable join side: ``ColumnRef.table`` cannot hold ``"$left"`` /
+    ``"$right"`` at all now, so an unresolvable ``$left``/``$right``
+    reference lands here too, honestly, rather than keeping the syntax it
+    was written with.
 
     * A post-join collision pair — ``shared`` and Microsoft's ``shared1``.
       Both sides are in scope with a ``shared`` of their own, and neither of
@@ -220,19 +218,14 @@ class SchemaAttacher:
       what the sides are kept for.
     * A union type-conflict's split variants — ``a_long`` / ``a_string``.
       Neither arm carries a column under either name.
-    * A ``search``'s seeded tables, where the search is not the first thing
-      in its pipeline. The entries are *appended* to whatever scope the
-      operator inherited, so a column both the inherited scope and a
-      searched table carry reads as ambiguous — ``T | partition by k
-      (search in (U) a > 1)`` answers ``None`` for ``a`` where the search
-      alone would answer ``U``. Replacing the scope instead would be a claim
-      about the operator's output, which is Microsoft's to make.
-    * ``find``'s brought-in tables are not seeded at all. Unlike
-      ``join``/``lookup``, ``union``, and ``search``, ``find in (T) where
-      ...`` gets no structural branch here, so a predicate column resolves
-      as ambiguous (``table=None``) rather than to ``T`` — where the
-      equivalent ``search in (T)`` does resolve it. Pre-existing; disclosed
-      rather than fixed.
+    * A ``search``'s or ``find``'s seeded tables, where the operator is not
+      the first thing in its pipeline. The entries are *appended* to
+      whatever scope the operator inherited, so a column both the inherited
+      scope and a searched/found table carry reads as ambiguous —
+      ``T | partition by k (search in (U) a > 1)`` answers ``None`` for
+      ``a`` where the search alone would answer ``U``. Replacing the scope
+      instead would be a claim about the operator's output, which is
+      Microsoft's to make.
 
     ``project-rename`` is deliberately *not* in this list: its target is a
     name no scope entry holds, but the query states outright which input
@@ -602,7 +595,7 @@ class SchemaAttacher:
     ) -> None:
         """The scope structure provenance needs; never the output columns.
 
-        Three operator families get a branch, because they bring *sources*
+        Four operator families get a branch, because they bring *sources*
         into scope and the overlay cannot recover where a column came from
         once the sources are forgotten:
 
@@ -617,13 +610,18 @@ class SchemaAttacher:
           arm carries keeps that arm's table. Type-conflict splitting
           (``a_long`` / ``a_string``) and ``withsource`` are Microsoft's to
           state.
-        * ``search``: an implicit source, so without seeding here the
-          predicate and every emitted column would resolve against nothing.
-          One entry per named table is appended -- or per table in
-          ``self.schemas`` for an unqualified search, the dict standing in
-          for "every table in the database" -- and the predicate is filled
-          *after*, against the seeded scope. ``$table`` is Microsoft's to
-          state.
+        * ``search`` / ``find``: both an implicit source, so without seeding
+          here the predicate -- and, for ``find``, every ``project`` column
+          -- would resolve against nothing. One entry per named table is
+          appended -- or per table in ``self.schemas`` for an unqualified
+          search/find, the dict standing in for "every table in the
+          database" -- plus one entry per ``let``-alias table, its columns
+          read from ``self._let_schemas`` the same way ``_source_entry``
+          reads them for a pipeline's own source position. The predicate
+          (and ``project``) is filled *after*, against the seeded scope.
+          ``search``'s ``$table`` and ``find``'s ``withsource`` -- the
+          column each names for its own found-in-table marker -- are
+          Microsoft's to state, not this walk's.
 
         Everything else fills its expressions and walks its nested
         pipelines, scope untouched. Implicit-source sub-pipelines (the
@@ -654,15 +652,23 @@ class SchemaAttacher:
                     if entry not in scope:
                         scope.append(entry)
             return
-        if isinstance(op, SearchOp):
-            names = [t.name for t in op.tables if isinstance(t, TableRef)]
-            if not names:
+        if isinstance(op, (SearchOp, FindOp)):
+            refs = op.tables
+            names = [t.name for t in refs if isinstance(t, TableRef)]
+            aliases = [t.name for t in refs if isinstance(t, LetRef)]
+            if not names and not aliases:
                 names = list(self.schemas)
             scope.extend(
                 ScopeEntry(table=n, columns=dict(self._table_schema(n)))
                 for n in names
             )
+            scope.extend(
+                ScopeEntry(table=a, columns=dict(self._let_schemas.get(a, {})))
+                for a in aliases
+            )
             self._fill(op.predicate, scope)
+            for expr in getattr(op, "project", []):
+                self._fill(expr, scope)
             return
         self._fill_children(op, scope, inherited=scope)
 
@@ -674,8 +680,9 @@ class SchemaAttacher:
         has the column. Where the name is unknown -- an unbound right-hand
         table, a column the schema dict does not describe -- a *single* entry
         still names the side unambiguously, so its table stands in; two or
-        more and there is nothing to pick between them, and the ``$left`` /
-        ``$right`` marker is left in place rather than guessed at.
+        more and there is nothing to pick between them, so the caller leaves
+        ``.table`` at ``None`` (there is no sentinel left to fall back to)
+        rather than guessing.
         """
         resolved = self._resolve_column_table(name, entries)
         if resolved:
@@ -729,7 +736,7 @@ class SchemaAttacher:
         self._fill_children(expr, scope)
 
         if isinstance(expr, ColumnRef):
-            side = expr.join_side or _side_marker(expr.table)
+            side = expr.join_side
             sides = self._join_sides
             if side is not None:
                 if sides is not None:

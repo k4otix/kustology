@@ -19,10 +19,11 @@ Pair this with ``examples/walk_ir.py`` to see the trade-off:
 
 The query joins with an explicit ``on $left.DeviceId == $right.DeviceId``,
 which is what makes ``ColumnRef.join_side`` observable. ``join_side`` is a
-separate field from ``table`` because the binder *overwrites* the
-``$left`` / ``$right`` sentinel with the table it resolves to — so on a
-bound parse the side would otherwise be gone, and `$left.a == $left.b` is
-not the join `$left.a == $right.b`.
+separate field from ``table`` because ``table`` never carries the
+``$left`` / ``$right`` syntax at all — an unresolvable side there is
+honestly ``None``, so ``join_side`` is the only place the side survives on
+a bound parse, and `$left.a == $left.b` is not the join `$left.a ==
+$right.b`.
 
 Requires the ``[ir]`` extras: ``pip install 'kustology[ir]'``.
 """
@@ -73,10 +74,10 @@ def main() -> None:
     #
     # `join_side` is **not** binder-filled — it is read off the `$left.` /
     # `$right.` the query wrote, so it is already correct on an unbound
-    # parse. What binding changes is `table`, which goes from the sentinel
-    # `'$left'` to the resolved `'powershell_procs'`. That is exactly why
-    # `join_side` has to be its own field: the binder overwrites the only
-    # other place the side was recorded.
+    # parse. What binding changes is `table`, which goes from `None`
+    # (`table` never carries the `$left`/`$right` syntax itself) to the
+    # resolved `'powershell_procs'`. That is exactly why `join_side` has to
+    # be its own field: it is the only place the side is ever recorded.
     print("Columns:")
     print(f"  {'name':<12} {'result_type':<12} {'table':<20} join_side")
     for col in find_all(ir, ColumnRef):

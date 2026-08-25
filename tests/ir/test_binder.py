@@ -795,12 +795,20 @@ def test_dollar_right_resolves_through_the_right_pipelines_own_operators():
     assert right.table == "R"
 
 
-def test_an_unresolvable_dollar_side_keeps_its_marker():
-    """A right side that is not a table leaves ``$right`` in place rather
-    than inventing a name -- the marker is the honest answer."""
+def test_an_unresolvable_dollar_side_answers_none_and_keeps_its_side():
+    """The sentinel never reaches `.table` anymore: an unresolvable side is
+    honestly None, and `join_side` -- set by the builder even unbound -- is
+    the side's carrier."""
     ir = _dict_path("L | join (datatable(z:long)[1]) on $left.k == $right.z")
     _left, right = _on_refs(ir)
-    assert right.table == "$right"
+    assert right.table is None
+    assert right.join_side == "right"
+
+
+def test_an_unenriched_dollar_ref_has_no_sentinel_either():
+    (ref,) = [c for c in find_all(parse("L | join (R) on $left.k == $right.b").to_ir(), ColumnRef) if c.name == "k"]
+    assert ref.table is None
+    assert ref.join_side == "left"
 
 
 def test_a_bare_on_key_resolves_against_the_left_side():
@@ -965,6 +973,45 @@ def test_search_provenance_survives_an_authoritative_result_schema():
         op for op in ir.main_pipeline.operators if isinstance(op, FilterOp)
     )
     assert {c.table for c in find_all(where, ColumnRef)} == {"T"}
+
+
+# find: the fourth source-bringing operator, seeded like search --------------
+
+
+def test_find_seeds_its_tables_like_search():
+    """`find in (T) where a > 1`'s predicate resolves against T -- the fourth
+    source-bringing operator finally has its branch."""
+    ir = parse("find in (T) where a > 1").to_ir(attach_schema={"T": {"a": "long"}})
+    from kustology.ir import ColumnRef, FindOp, find_all
+    (op,) = [o for o in ir.main_pipeline.operators if isinstance(o, FindOp)]
+    assert {c.table for c in find_all(op.predicate, ColumnRef)} == {"T"}
+
+
+def test_find_project_columns_resolve_too():
+    ir = parse("find in (T) where a > 1 project a").to_ir(attach_schema={"T": {"a": "long"}})
+    from kustology.ir import ColumnRef, FindOp, find_all
+    (op,) = [o for o in ir.main_pipeline.operators if isinstance(o, FindOp)]
+    assert {c.table for c in find_all(op.project[0], ColumnRef)} == {"T"}
+
+
+def test_a_find_or_search_over_a_let_alias_resolves_through_it():
+    q = "let A = T | where a > 1; find in (A) where a > 5"
+    ir = parse(q).to_ir(attach_schema={"T": {"a": "long"}})
+    from kustology.ir import ColumnRef, FindOp, find_all
+    (op,) = [o for o in ir.main_pipeline.operators if isinstance(o, FindOp)]
+    assert {c.table for c in find_all(op.predicate, ColumnRef)} == {"A"}
+
+
+def test_a_search_over_a_let_alias_resolves_through_it_too():
+    """The sibling gap the map identified: `search`'s branch resolved a
+    `LetRef` table's schema against nothing, even though `_source_entry`
+    (a pipeline's own source position) has always threaded it through
+    ``_let_schemas``."""
+    q = "let A = T | where a > 1; search in (A) a > 5"
+    ir = parse(q).to_ir(attach_schema={"T": {"a": "long"}})
+    from kustology.ir import ColumnRef, SearchOp, find_all
+    (op,) = [o for o in ir.main_pipeline.operators if isinstance(o, SearchOp)]
+    assert {c.table for c in find_all(op.predicate, ColumnRef)} == {"A"}
 
 
 # K28: "nothing is known" is None, not an empty schema ------------------------
@@ -1192,3 +1239,27 @@ def test_the_unknown_column_sentinel_is_microsofts_word_and_only_microsofts():
     # A second pass over the same IR leaves it exactly as Microsoft left it.
     SchemaAttacher({}).enrich(bound)
     assert bound.main_pipeline.result_schema.columns == {"n": "unknown", "m": "unknown"}
+
+
+# Task 3 hash-silence: table/result_type are volatile, join_side is not -----
+
+
+def test_enrichment_is_hash_silent_for_a_join_and_a_find_query():
+    """Both of this task's changes -- the sentinel's retirement and find's
+    new seeding branch -- touch only ``ColumnRef.table`` (and, for find,
+    ``result_type``), and both are stripped from the hash payload before
+    ``semantic_hash`` is computed (``transforms.py``'s ``_VOLATILE_FIELDS``).
+    ``join_side`` is written by the builder, not this walk, so enriching
+    must not move either query's hash at all."""
+    from kustology.ir import compute_semantic_hash
+    from kustology.ir.binder import SchemaAttacher
+
+    join_ir = parse("L | join (R) on $left.k == $right.b").to_ir(attach_schema=False)
+    join_before = compute_semantic_hash(join_ir)
+    SchemaAttacher(DICT_SCHEMA).enrich(join_ir)
+    assert compute_semantic_hash(join_ir) == join_before
+
+    find_ir = parse("find in (T) where a > 1").to_ir(attach_schema=False)
+    find_before = compute_semantic_hash(find_ir)
+    SchemaAttacher(DICT_SCHEMA).enrich(find_ir)
+    assert compute_semantic_hash(find_ir) == find_before
