@@ -529,15 +529,25 @@ def _strip_unwritten_fields(value: Any, kind: str, defaults: dict[str, Any]) -> 
     only a dict with at least one written field keeps the new keys at all.
 
     ``defaults`` maps field name to its *exact* unwritten value, compared by
-    identity (``is``) rather than ``==`` -- evaluate's is ``None``/``False``,
-    and ``0 == False`` would wrongly match a future int-typed field whose
-    real default is ``0`` under equality. Every field in ``defaults`` must
-    match for the dict's keys to be dropped: a partially-written modifier
-    (e.g. only one of several flags set) keeps every key, so the digest
-    still reflects what was actually written. Reuse this for the next such
-    field -- README's "Four operators still discard a modifier" list
-    (``mv-apply``, ``parse-kv``, ``getschema``, ``consume``) is the same
-    problem shape -- rather than writing a new one-off dict walk.
+    identity (``is``) for a scalar -- evaluate's is ``None``/``False``, and
+    ``0 == False`` would wrongly match a future int-typed field whose real
+    default is ``0`` under equality. A ``list``/``dict`` default (e.g.
+    ``ParseKvOp.properties``'s ``[]``) is compared by ``==`` instead: a
+    freshly dumped empty list is never the *same object* as a literal ``[]``
+    written at a call site, so ``is`` could never match one and the field
+    would never strip -- exactly the corpus-movement bug this call exists to
+    prevent, just moved from "wrong" to "silently does nothing". Equality
+    carries none of the ``0 == False`` risk here, because that risk is a
+    cross-type collision between scalars and no ``list``/``dict`` value
+    equals a bool, an int or ``None``. Every field in ``defaults`` must match
+    for the dict's keys to be dropped: a partially-written modifier (e.g.
+    only one of several flags set) keeps every key, so the digest still
+    reflects what was actually written. This is the reuse path
+    :class:`~kustology.ir.query.MvApplyOp`, :class:`~kustology.ir.query.ParseKvOp`,
+    :class:`~kustology.ir.query.GetSchemaOp` and :class:`~kustology.ir.query.ConsumeOp`
+    were built against when their last unmodelled modifiers were added in
+    0.2.0 -- reuse it again for the next such field rather than writing a
+    new one-off dict walk.
 
     The gate also requires ``field in value`` for every field, not merely
     ``value.get(field) is default``: a dict that lacks the keys entirely
@@ -555,9 +565,14 @@ def _strip_unwritten_fields(value: Any, kind: str, defaults: dict[str, Any]) -> 
     -- which is the correct read: a dict with nothing to strip is left alone,
     not silently matched and then no-opped.
     """
+    def _at_default(actual: Any, default: Any) -> bool:
+        if isinstance(default, (list, dict)):
+            return actual == default
+        return actual is default
+
     if isinstance(value, dict):
         if value.get("kind") == kind and all(
-            field in value and value.get(field) is default
+            field in value and _at_default(value.get(field), default)
             for field, default in defaults.items()
         ):
             for field in defaults:
@@ -649,12 +664,6 @@ def compute_semantic_hash(node: BaseModel) -> str:
     * **Deliberate**, in literals — typed nulls and obfuscated strings; see
       :class:`~kustology.ir.expr.LiteralExpr` for why neither is a
       difference in what a query returns.
-    * **Operator modifiers the builder drops.** Where an operator's IR node
-      has no field for a modifier, the modifier cannot reach the digest, so
-      two queries differing only there collide — ``mv-apply``'s
-      ``to typeof(…)``, ``limit`` and ``with_itemindex=``, ``parse-kv``'s
-      ``with (…)`` properties, ``getschema kind=csl``, ``consume
-      decodeblocks=`` as of 0.2.0.
     * **Statements that are neither ``let`` nor tabular.** The builder
       collects ``let`` statements and pipelines; a statement of any other
       kind contributes nothing of its own, so whatever it said is absent
@@ -741,6 +750,17 @@ def compute_semantic_hash(node: BaseModel) -> str:
     _strip_unwritten_fields(
         payload, "evaluate", {"declared_schema": None, "declared_schema_star": False},
     )
+    # Same mechanism, for the operators that gained fields for their last
+    # unmodelled modifiers in 0.2.0: an unwritten one must dump exactly as
+    # it did before those fields existed, so the mv-apply corpus fixtures
+    # (none of which write a modifier) move nothing.
+    _strip_unwritten_fields(
+        payload, "mv_apply",
+        {"to_typeof": None, "row_limit": None, "item_index": None},
+    )
+    _strip_unwritten_fields(payload, "parse_kv", {"properties": []})
+    _strip_unwritten_fields(payload, "getschema", {"output_kind": None})
+    _strip_unwritten_fields(payload, "consume", {"decodeblocks": None})
     digest = hashlib.sha256(
         json.dumps(payload, sort_keys=True).encode()
     ).hexdigest()

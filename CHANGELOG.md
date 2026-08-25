@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The remaining operator-modifier collisions are closed.** `MvApplyOp` gains `to_typeof`, `row_limit` and `item_index`; `ParseKvOp` gains `properties` (its `with (...)` clause, a list since `quote` legally repeats); `GetSchemaOp` gains `output_kind`; `ConsumeOp` gains `decodeblocks`. The 0.2.0 Known-limitations entry naming these is gone — every modifier-pair the sweep found is now modelled.
+
 ### Internal
 
 - Bumped bundled `Kusto.Language.dll` 12.3.2 → 12.4.1 (latest stable on nuget.org); `[tool.kustology] kusto_language_version` and `bin/VERSION.txt`'s SHA-256 re-pinned, provenance chain re-verified via `scripts/verify_dll.py`. No corpus digest movement across all 49 fixtures; the pattern-arity binder crash (`IndexOutOfRangeException` from `VisitPatternDeclaration`) is unchanged.
@@ -129,7 +133,6 @@ First release since 0.1.0. Two themes: values the library reported wrongly (cult
 
 ### Known limitations
 
-- A handful of operator modifiers remain unmodelled and still collide: `mv-apply`'s `to typeof`/`limit`/`with_itemindex`, `parse-kv`'s `with (...)` properties, `getschema`'s `kind=csl`, and `consume`'s `decodeblocks=`.
 - Five statement kinds are not modelled at all (`SetOptionStatement`, `QueryParametersStatement`, `PatternStatement`, `AliasStatement`, `RestrictStatement`) and hash as though absent — `set query_now=...; T | take 1` collides with a bare `T | take 1`.
 - `semantic_hash` can differ between a bound and an unbound parse of a query whose `let` aliases a table — accepted rather than papered over, since proving it needs the binder.
 - **`ColumnN` default names are a deliberate divergence** (grouping keys and unnamed `extend`/`project` columns alike): Microsoft's ``ColumnN`` counter is query-global and scope-sensitive, unreproducible bind-stably; first-bare-column naming is deterministic and stable. See ``_auto_name``'s grouping mode for the full list and design rationale.

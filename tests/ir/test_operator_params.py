@@ -151,6 +151,55 @@ def test_mv_expand_still_binds_the_expanded_column():
     assert "a" in ir.main_pipeline.result_schema.columns
 
 
+# -- mv-apply ---------------------------------------------------------------
+
+_MV_APPLY_ALL = (
+    "T | mv-apply with_itemindex=i x=d to typeof(long) limit 3 "
+    "on (summarize count())"
+)
+
+
+def test_mv_apply_records_the_declared_element_type():
+    (op,) = _ops(_MV_APPLY_ALL)
+    assert op.to_typeof == "long"
+
+
+def test_mv_apply_records_the_row_limit():
+    (op,) = _ops(_MV_APPLY_ALL)
+    assert op.row_limit == 3
+
+
+def test_mv_apply_records_the_item_index():
+    """``with_itemindex=`` precedes the expansion column here -- the postfix
+    spelling is a parse error, see :class:`~kustology.ir.query.MvApplyOp`."""
+    (op,) = _ops(_MV_APPLY_ALL)
+    assert op.item_index == "i"
+
+
+def test_bare_mv_apply_has_no_modifiers():
+    (op,) = _ops("T | mv-apply x=d on (summarize count())")
+    assert op.to_typeof is None
+    assert op.row_limit is None
+    assert op.item_index is None
+
+
+def test_mv_apply_modifiers_all_reach_the_hash():
+    """Each modifier alone must move the digest, and off a common base --
+    mirrors mv-expand's pairwise check just above."""
+    variants = {
+        "bare": _hash("T | mv-apply x=d on (summarize count())"),
+        "typed": _hash("T | mv-apply x=d to typeof(long) on (summarize count())"),
+        "limited": _hash("T | mv-apply x=d limit 3 on (summarize count())"),
+        "indexed": _hash("T | mv-apply with_itemindex=i x=d on (summarize count())"),
+    }
+    assert len(set(variants.values())) == len(variants), variants
+
+
+def test_mv_apply_still_builds_the_subquery_pipeline():
+    (op,) = _ops(_MV_APPLY_ALL)
+    assert op.right.operators[0].kind == "summarize"
+
+
 # -- parse / parse-where --------------------------------------------------
 
 def test_parse_records_a_written_kind():
@@ -500,3 +549,74 @@ def test_evaluate_bare_star_is_empty_with_the_flag():
     (op,) = _ir("T | evaluate bag_unpack(d) : (*)").main_pipeline.operators
     assert op.declared_schema == []
     assert op.declared_schema_star is True
+
+
+# -- parse-kv properties ----------------------------------------------------
+
+def test_parse_kv_records_with_clause_properties():
+    (op,) = _ops(
+        "T | parse-kv x as (b:string) with (pair_delimiter=';', kv_delimiter='=')"
+    )
+    assert op.properties == [("pair_delimiter", ";"), ("kv_delimiter", "=")]
+
+
+def test_parse_kv_keeps_a_repeated_property_name():
+    """``quote`` legally repeats -- a dict would silently drop one spelling,
+    which is why ``properties`` is a list, not a dict."""
+    (op,) = _ops("T | parse-kv x as (b:string) with (quote='|', quote='~')")
+    assert op.properties == [("quote", "|"), ("quote", "~")]
+
+
+def test_bare_parse_kv_has_no_properties():
+    (op,) = _ops("T | parse-kv x as (b:string)")
+    assert op.properties == []
+
+
+def test_parse_kv_properties_reach_the_hash():
+    assert _hash("T | parse-kv x as (b:string) with (pair_delimiter=',')") != _hash(
+        "T | parse-kv x as (b:string)"
+    )
+
+
+# -- getschema kind -----------------------------------------------------------
+
+def test_getschema_records_a_written_kind():
+    (op,) = _ops("T | getschema kind=full")
+    assert op.output_kind == "full"
+
+
+def test_bare_getschema_has_no_kind():
+    (op,) = _ops("T | getschema")
+    assert op.output_kind is None
+
+
+def test_getschema_kind_reaches_the_hash():
+    assert _hash("T | getschema kind=csl") != _hash("T | getschema")
+
+
+def test_getschema_two_written_kinds_hash_apart():
+    assert _hash("T | getschema kind=csl") != _hash("T | getschema kind=full")
+
+
+# -- consume decodeblocks -----------------------------------------------------
+
+def test_consume_records_decodeblocks_as_the_dlls_own_text():
+    """The DLL's own literal rendering -- ``true`` arrives as the text
+    ``'True'``, not a Python bool. Recorded as written, not normalized."""
+    (op,) = _ops("T | consume decodeblocks=true")
+    assert op.decodeblocks == "True"
+
+
+def test_bare_consume_has_no_decodeblocks():
+    (op,) = _ops("T | consume")
+    assert op.decodeblocks is None
+
+
+def test_consume_decodeblocks_reaches_the_hash():
+    assert _hash("T | consume decodeblocks=true") != _hash("T | consume")
+
+
+def test_consume_two_written_decodeblocks_hash_apart():
+    assert _hash("T | consume decodeblocks=true") != _hash(
+        "T | consume decodeblocks=false"
+    )

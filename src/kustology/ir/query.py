@@ -665,8 +665,42 @@ class ProjectByNamesOp(Operator):
 
 
 class MvApplyOp(Operator):
+    """``mv-apply`` — expand a dynamic column and run a subquery per row.
+
+    Every modifier here changes the rows the operator returns, the same
+    register as :class:`MvExpandOp`'s modifiers, and until 0.2.0 none of them
+    were read: ``mv-apply x=d on (...)``, ``mv-apply x=d to typeof(long) on
+    (...)`` and ``mv-apply x=d limit 3 on (...)`` were one node.
+
+    ``to_typeof`` is **one field**, unlike :class:`MvExpandColumn`'s
+    per-column version. Syntactically the ``to typeof(...)`` clause attaches
+    to whichever comma-separated ``MvApplyExpression`` immediately precedes
+    it -- probed on a real parse, it can land on the first, the last, or
+    (with one column, the common case) the only element -- but ``mv-apply``
+    has no per-column type story the way ``mv-expand`` does, so the reader
+    takes the first written occurrence across ``assignments`` rather than
+    adding a wrapper type this operator does not need.
+
+    ``row_limit`` and ``item_index`` (``with_itemindex=``) stay optional for
+    the same reason ``MvExpandOp``'s do: KQL substitutes an *effective*
+    value for neither an unwritten ``limit`` nor an unwritten index column,
+    so ``None`` is the honest record rather than a guessed default (D8 does
+    not apply here). ``item_index`` must **precede** the expansion column --
+    ``mv-apply x=d with_itemindex=i on (...)`` is a parse error, unlike
+    ``mv-expand``'s postfix-tolerant spelling.
+
+    Not modelled: an undocumented ``id <expr>`` clause (``MvApplyContextIdClause``
+    in the grammar) parses cleanly between ``limit`` and ``on`` but is
+    `.Hide()`-marked in the parser, meaning it carries no public completion
+    entry -- the same "nothing reaches it as documented surface" register as
+    :class:`FindOp`'s excluded ``project-away``.
+    """
+
     kind: Literal["mv_apply"] = "mv_apply"
     assignments: list[Assignment]
+    to_typeof: str | None = None
+    row_limit: int | AnyExpr | None = None
+    item_index: str | None = None
     right: "Pipeline"
 
 
@@ -787,7 +821,22 @@ class FacetOp(Operator):
 
 
 class GetSchemaOp(Operator):
+    """``getschema`` — report a table's column schema as rows.
+
+    ``output_kind`` is the ``kind=`` modifier (``csl``/``full`` in current
+    Kusto docs); read from the operator's own singular ``KindParameter``
+    member -- unlike every other named-parameter reader in this file,
+    ``GetSchemaOperator`` has no ``.Parameters`` list to walk, only this one
+    optional slot. The DLL does not validate the value set the way it does
+    for e.g. ``mv-expand kind=``: an unrecognized spelling still parses
+    clean, so ``output_kind`` records whatever text was written rather than
+    a value drawn from a known set. ``None`` means the clause was absent,
+    not that KQL substitutes a default -- there is nothing else this
+    operator models.
+    """
+
     kind: Literal["getschema"] = "getschema"
+    output_kind: str | None = None
 
 
 class InvokeOp(Operator):
@@ -919,7 +968,19 @@ class SerializeOp(Operator):
 
 
 class ConsumeOp(Operator):
+    """``consume`` — read and discard rows, for benchmarking a pipeline.
+
+    ``decodeblocks`` is the operator's only named parameter, read unchanged
+    through the shared :func:`~kustology.ir._builder_helpers.extract_named_param`.
+    ``None`` means unwritten -- KQL substitutes no effective value, so there
+    is nothing to guess. A written boolean literal is not normalized: the
+    DLL's own ``true``/``false`` render as the text ``"True"``/``"False"``
+    (Python's ``str(bool)`` spelling, not KQL's), and this field records
+    that text as written rather than parsing it into a real ``bool``.
+    """
+
     kind: Literal["consume"] = "consume"
+    decodeblocks: str | None = None
 
 
 class AssertSchemaOp(Operator):
@@ -932,12 +993,27 @@ class ExecuteAndCacheOp(Operator):
 
 
 class ParseKvOp(Operator):
+    """``parse-kv`` — split a string into key/value columns.
+
+    ``properties`` is the ``with (...)`` clause (``pair_delimiter``,
+    ``kv_delimiter``, ``quote``, …), read from ``WithClause.Properties`` --
+    a different member than every other operator's named parameters, which
+    is why ``extract_named_param`` (built against ``.Parameters``) does not
+    reach it and this reader walks the list directly. It is a **list of
+    pairs, not a dict**: ``quote`` legally repeats (probed clean on a real
+    parse), and a dict would silently keep only the last spelling. ``[]``
+    means the clause was absent, same convention as :class:`RenderOp`'s
+    ``properties`` for "nothing written" -- except that one folds a
+    duplicate name onto its last value by design, and this one must not.
+    """
+
     kind: Literal["parse_kv"] = "parse_kv"
     target: AnyExpr
     # ``as (b:string, c:long)`` -- a name:type schema, modeled the same way
     # as :class:`AssertSchemaOp`. It was ``list[Assignment]``, which had no
     # expression to hold: a declared key has a type, not a value.
     columns: dict[str, str] = {}
+    properties: list[tuple[str, str]] = []
 
 
 class SampleDistinctOp(Operator):

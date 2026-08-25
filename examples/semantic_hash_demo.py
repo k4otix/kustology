@@ -23,11 +23,11 @@ shared a digest. ``SetMembership.op`` is what separates them now, and
 ``Exists.op`` does the same for ``isnotnull`` / ``isnotempty``.
 
 **Merges you may not want.** Two of them are deliberate collapses in
-literals; the rest are known gaps, in operator modifiers and in statement
-kinds. There is no tally in this sentence on purpose. Every case is a row
-in ``KNOWN_MERGES`` below and every row is hashed when this file runs, so
-the list *is* the claim — a number quoted about the list is one more thing
-that can drift away from it, and in this file it twice did.
+literals; the rest are known gaps in statement kinds. There is no tally in
+this sentence on purpose. Every case is a row in ``KNOWN_MERGES`` below and
+every row is hashed when this file runs, so the list *is* the claim — a
+number quoted about the list is one more thing that can drift away from it,
+and in this file it twice did.
 
 A consumer deduplicating on the digest acts on that third group, so the
 rows are load-bearing rather than illustrative: if any of them stops
@@ -115,6 +115,29 @@ SPLITS = [
     ("a parameter's default splits",
      "let S = (w:int) { A | where x > w }; S(5)",
      "let S = (w:int=3) { A | where x > w }; S(5)"),
+    # The remaining operator-modifier gaps, closed in 0.2.0: mv-apply's
+    # `to typeof(...)`, `limit` and `with_itemindex=`, parse-kv's `with (...)`
+    # properties, getschema's `kind=`, consume's `decodeblocks=`.
+    ("mv-apply's `to typeof(...)` splits",
+     "T | mv-apply d to typeof(long) on (take 1)",
+     "T | mv-apply d on (take 1)"),
+    ("mv-apply's `limit` splits",
+     "T | mv-apply d limit 5 on (take 1)",
+     "T | mv-apply d on (take 1)"),
+    # The modifier precedes the column name; `mv-apply d with_itemindex=i`
+    # is a parse error whose error recovery moves the hash for the wrong
+    # reason, which reads as "no collision here" if you do not check
+    # diagnostics.
+    ("mv-apply's `with_itemindex=` splits",
+     "T | mv-apply with_itemindex=i d on (take 1)",
+     "T | mv-apply d on (take 1)"),
+    ("parse-kv's `with (...)` properties split",
+     "T | parse-kv a as (b:string) with (pair_delimiter=',')",
+     "T | parse-kv a as (b:string)"),
+    ("getschema's `kind=` splits",
+     "T | getschema kind=csl", "T | getschema"),
+    ("consume's `decodeblocks=` splits",
+     "T | consume decodeblocks=true", "T | consume"),
 ]
 
 KNOWN_MERGES = [
@@ -122,31 +145,6 @@ KNOWN_MERGES = [
      "T | where a > real(null)", "T | where a > datetime(null)"),
     ('obfuscated strings: h"x" == "x" — deliberate',
      'T | where a == h"x"', 'T | where a == "x"'),
-    # One row per operator modifier the builder has no IR field for, so the
-    # modifier cannot reach the digest. That is what qualifies a case for
-    # this group; the rows below are the ones that qualify today. Summarizing
-    # them would defeat the point — `parse-kv with (...)` and `consume
-    # decodeblocks=` are exactly the two a reader would not guess.
-    ("mv-apply drops `to typeof(...)` — known gap",
-     "T | mv-apply d to typeof(long) on (take 1)",
-     "T | mv-apply d on (take 1)"),
-    ("mv-apply drops `limit` — known gap",
-     "T | mv-apply d limit 5 on (take 1)",
-     "T | mv-apply d on (take 1)"),
-    # The modifier precedes the column name; `mv-apply d with_itemindex=i`
-    # is a parse error whose error recovery moves the hash for the wrong
-    # reason, which reads as "no collision here" if you do not check
-    # diagnostics.
-    ("mv-apply drops `with_itemindex=` — known gap",
-     "T | mv-apply with_itemindex=i d on (take 1)",
-     "T | mv-apply d on (take 1)"),
-    ("parse-kv drops its `with (...)` properties — known gap",
-     "T | parse-kv a as (b:string) with (pair_delimiter=',')",
-     "T | parse-kv a as (b:string)"),
-    ("getschema drops `kind=csl` — known gap",
-     "T | getschema kind=csl", "T | getschema"),
-    ("consume drops `decodeblocks=` — known gap",
-     "T | consume decodeblocks=true", "T | consume"),
     # A statement that is neither `let` nor tabular contributes nothing of
     # its own to the digest, so its content hashes as though absent. Every
     # kind that behaves that way gets a row, and each uses the variant that

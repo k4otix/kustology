@@ -39,6 +39,8 @@ from ._builder_helpers import (
     literal_kind_for,
     literal_value_and_ticks,
     map_semantic_info,
+    named_param_name,
+    named_param_value,
     percentile_token,
     read_external_data,
     read_named_params,
@@ -1351,15 +1353,32 @@ class IRBuilder:
             )
 
         if kind == "MvApplyOperator":
+            # Each element is an ``MvApplyExpression``, the same shape
+            # mv-expand's ``Expressions`` carries, but the operator's own
+            # ``to typeof(...)`` is one field, not one per column -- see
+            # MvApplyOp. It can attach to any element in the comma list
+            # (verified on a real parse), so the first one written is taken.
             assigns = []
+            to_typeof: str | None = None
             if hasattr(n, "Expressions"):
                 for mve in _iter_elements(n.Expressions):
                     assigns.append(self._visit_assignment(mve.Expression))
+                    if to_typeof is None:
+                        to_typeof = read_to_typeof(mve)
+            row_limit_clause = getattr(n, "RowLimitClause", None)
+            limit_node = (
+                getattr(row_limit_clause, "RowLimit", None)
+                if row_limit_clause is not None else None
+            )
             # n.Subquery wraps the real pipe/operator at .Expression.
             sub = getattr(n, "Subquery", None)
             inner = getattr(sub, "Expression", sub) if sub is not None else None
             return MvApplyOp(
                 assignments=assigns,
+                to_typeof=to_typeof,
+                row_limit=self._visit_count(limit_node) if limit_node is not None else None,
+                # Must precede the expression list to parse -- see MvApplyOp.
+                item_index=extract_named_param(n, "with_itemindex"),
                 right=self._visit_pipeline(inner) if inner is not None else Pipeline(
                     source=UnknownSource(raw_text="?", span=span), operators=[],
                 ),
@@ -1468,10 +1487,16 @@ class IRBuilder:
             return PrintOp(columns=cols, span=span)
 
         if kind == "GetSchemaOperator":
-            return GetSchemaOp(span=span)
+            # No `.Parameters` list here -- `KindParameter` is the operator's
+            # one named-parameter slot, singular. See GetSchemaOp.
+            kind_param = getattr(n, "KindParameter", None)
+            return GetSchemaOp(
+                output_kind=named_param_value(kind_param) if kind_param is not None else None,
+                span=span,
+            )
 
         if kind == "ConsumeOperator":
-            return ConsumeOp(span=span)
+            return ConsumeOp(decodeblocks=extract_named_param(n, "decodeblocks"), span=span)
 
         if kind == "ExecuteAndCacheOperator":
             return ExecuteAndCacheOp(span=span)
@@ -1582,9 +1607,24 @@ class IRBuilder:
             # schema. A previous guard tested ``Keys`` for a ``Count``
             # member, which RowSchema does not have, so the loop body never
             # ran and the field was always empty.
+            # ``WithClause.Properties`` -- a different member than every other
+            # operator's ``.Parameters``, so ``extract_named_param`` does not
+            # reach it. A list, not a dict: ``quote`` legally repeats and a
+            # dict would silently drop one spelling. See ParseKvOp.
+            properties: list[tuple[str, str]] = []
+            with_clause = getattr(n, "WithClause", None)
+            if with_clause is not None:
+                props = getattr(with_clause, "Properties", None)
+                if props is not None:
+                    for prop in _iter_elements(props):
+                        prop_name = named_param_name(prop)
+                        prop_value = named_param_value(prop)
+                        if prop_name is not None and prop_value is not None:
+                            properties.append((prop_name, prop_value))
             return ParseKvOp(
                 target=target,
                 columns=dict(read_row_schema(getattr(n, "Keys", None))),
+                properties=properties,
                 span=span,
             )
 

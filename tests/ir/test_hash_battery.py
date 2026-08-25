@@ -399,6 +399,30 @@ MUST_DIFFER = [
     # "indexed" vs "bare") among five mutually-distinct variants, which is a
     # stronger guarantee than this single pair.
     ("mv-expand-kind", "T | mv-expand kind=array a", "T | mv-expand kind=bag a"),
+    (
+        "mv-apply-to-typeof",
+        "T | mv-apply x=d to typeof(long) on (summarize count())",
+        "T | mv-apply x=d on (summarize count())",
+    ),
+    (
+        "mv-apply-limit",
+        "T | mv-apply x=d limit 3 on (summarize count())",
+        "T | mv-apply x=d on (summarize count())",
+    ),
+    # The modifier precedes the column name; the postfix spelling is a parse
+    # error (see MvApplyOp), so the bare-vs-modifier pair is the only shape.
+    (
+        "mv-apply-with-itemindex",
+        "T | mv-apply with_itemindex=i x=d on (summarize count())",
+        "T | mv-apply x=d on (summarize count())",
+    ),
+    (
+        "parse-kv-with-properties",
+        "T | parse-kv a as (b:string) with (pair_delimiter=',')",
+        "T | parse-kv a as (b:string)",
+    ),
+    ("getschema-kind", "T | getschema kind=csl", "T | getschema"),
+    ("consume-decodeblocks", "T | consume decodeblocks=true", "T | consume"),
     ("parse-kind", "T | parse x with 'a' y", "T | parse kind=regex x with 'a' y"),
     ("parse-flags", "T | parse kind=regex flags='i' x with 'a' y", "T | parse kind=regex x with 'a' y"),
     ("parse-where-kind", "T | parse-where x with 'a' y", "T | parse-where kind=regex x with 'a' y"),
@@ -663,6 +687,14 @@ MUST_EQUAL = [
         "evaluate-schema-whitespace",
         "T | evaluate bag_unpack(d) : (x:string)",
         "T | evaluate bag_unpack(d) :  ( x : string )",
+    ),
+    # `named_param_name`/`named_param_value` already strip trivia (used by
+    # every other named-parameter reader in this release), so spacing inside
+    # `parse-kv`'s `with (...)` clause does not reach the digest either.
+    (
+        "parse-kv-with-properties-whitespace",
+        "T | parse-kv a as (b:string) with (pair_delimiter=',')",
+        "T | parse-kv a as (b:string) with ( pair_delimiter = ',' )",
     ),
     # A `let` function's body is built out of the same nodes as any other
     # pipeline, so every canonicalization rule that already held for a

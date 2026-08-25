@@ -511,15 +511,9 @@ Two caveats, both deliberate rather than accidental:
   *shape* rather than a field's value, and no amount of stripping hides
   that. The alternative is treating every bare name as a table without
   proof.
-- Equal digests are **not** a proof of equivalence. The known gaps below all
-  remain in 0.2.0, and if you deduplicate a rule library by hash every one of
-  them merges queries you may not want merged.
-
-  **Four operators still discard a modifier** that changes what a query
-  returns: `mv-apply`'s `to typeof(…)`, `limit` and `with_itemindex=`;
-  `parse-kv`'s `with (…)` properties; `getschema kind=csl`; and `consume
-  decodeblocks=`. That list is what a modifier-pair sweep turned up, not a
-  proof that nothing else remains.
+- Equal digests are **not** a proof of equivalence. The known gap below
+  remains in 0.2.0, and if you deduplicate a rule library by hash it merges
+  queries you may not want merged.
 
   **Statement-level constructs other than `let` are dropped entirely** and
   hash as if they were absent — `set`, `declare query_parameters`,

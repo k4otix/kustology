@@ -380,11 +380,12 @@ def table_symbol_columns(sym: Any) -> dict[str, str] | None:
 def read_to_typeof(node: Any) -> str | None:
     """The type named by an expression's ``to typeof(T)`` clause, if any.
 
-    Called on an ``MvExpandExpression``. ``MvApplyExpression`` carries the
-    same ``ToTypeOf`` member and is *not* read yet -- ``mv-apply a to
-    typeof(long) on (…)`` still builds the same IR as ``mv-apply a on (…)``
-    -- so the reader is written against the member rather than the node
-    class, and wiring the second caller is a model change away.
+    Called on an ``MvExpandExpression`` or an ``MvApplyExpression`` -- both
+    carry the same ``ToTypeOf`` member, which is why the reader is written
+    against the member rather than either node class. ``MvExpandOp`` stores
+    one result per column (``MvExpandColumn.to_typeof``); ``MvApplyOp``
+    folds every column's clause into a single field, since the operator has
+    no per-column type story of its own -- see ``MvApplyOp`` for why.
 
     ``MvExpandExpression.ToTypeOf`` is a ``ToTypeOfClause`` whose ``TypeOf``
     is the whole ``typeof(string)`` literal expression -- rendering *that*
@@ -426,6 +427,11 @@ def named_param_name(param: Any) -> str | None:
 
 def named_param_value(param: Any) -> str | None:
     """The value a ``NamedParameter`` carries, rendered as a string.
+
+    Also called on ``GetSchemaOperator.KindParameter``, which is not a
+    ``NamedParameter`` -- it is the operator's one singular slot rather than
+    a list element -- but carries the same ``Name``/``Expression`` shape, so
+    nothing here has to change to read it.
 
     Three shapes, in the order they have to be tried. A bare name
     (``withsource=S``, ``kind=inner``) is a ``NameReference`` and the
