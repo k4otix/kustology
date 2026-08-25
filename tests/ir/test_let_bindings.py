@@ -7,9 +7,12 @@ import pytest
 
 from kustology import parse
 from kustology.ir import (
+    BinOp,
     ColumnRef,
     LetBinding,
     LetFunction,
+    LetRef,
+    LetValueRef,
     LiteralExpr,
     Pipeline,
     TableRef,
@@ -253,27 +256,29 @@ def test_toscalar_binding_populates_rhs_expr():
 def test_function_binding_populates_rhs_function():
     lb = _binding("let f = (x:int, y:string) { x + 1 }; T | extend Z = f(1, 'a')", "f")
     assert lb.rhs_function is not None
-    assert lb.rhs_function.parameters == ["x", "y"]
+    assert [p.decl.name for p in lb.rhs_function.parameters] == ["x", "y"]
+    assert [p.decl.declared_type for p in lb.rhs_function.parameters] == ["int", "string"]
+    assert isinstance(lb.rhs_function.body_expr, BinOp)
     assert lb.rhs_function.body_span.width > 0
     assert lb.rhs_expr is None
     assert lb.rhs_pipeline is None
 
 
-def test_a_function_body_is_reachable_from_tier_1_and_not_from_tier_2():
-    """The one query shape where the two tiers disagree about the same query.
+def test_a_function_body_is_reachable_from_both_tiers():
+    """The query shape where the two tiers used to disagree about the same
+    query, pinned now that they agree.
 
-    `LetFunction` holds the parameter names and a `body_span`; the body is
-    not built. Tier 1 walks Microsoft's tree, which *does* contain the body,
-    so `get_referenced_tables()` and `get_referenced_columns()` see inside
-    it while `find_all(ir, TableRef)` and `find_all(ir, ColumnRef)` see
-    nothing at all. A caller doing lineage on Tier 2 gets an empty answer
-    for a query that plainly reads a table, with no diagnostic to signal it.
+    `LetFunction` held the parameter names and a `body_span` and nothing
+    else, so Tier 1 -- which walks Microsoft's tree, body included -- reported
+    the body's tables and columns while `find_all(ir, TableRef)` and
+    `find_all(ir, ColumnRef)` came back empty. A caller doing lineage on Tier
+    2 got an empty answer for a query that plainly reads a table, with no
+    diagnostic to signal it.
 
-    Pinned rather than fixed: modelling the body is post-0.2.0 work, and the
-    divergence is disclosed in README's "Where Tier 2 stops", in
-    `compute_semantic_hash`'s docstring and in CHANGELOG 0.2.0. This test is
-    what stops those three going stale -- if the body ever *is* modelled,
-    this fails and the docs get corrected with it.
+    The body is built now, so both tiers answer the same question the same
+    way. What survives is narrower and stated on the model: call sites are not
+    expanded, so the body is reachable *once*, through the declaration, rather
+    than at each call.
     """
     query = 'let f = () { SecurityEvent | where Account=="root" | project Computer }; f()'
     parsed = parse(query)
@@ -285,13 +290,174 @@ def test_a_function_body_is_reachable_from_tier_1_and_not_from_tier_2():
     assert parsed.get_referenced_tables() == {"SecurityEvent"}
     assert parsed.get_referenced_columns() == {"Account", "Computer"}
 
-    # Tier 2 does not.
+    # ...and so does Tier 2, through the declaration rather than the call.
     ir = parsed.to_ir()
-    assert list(find_all(ir, TableRef)) == []
-    assert list(find_all(ir, ColumnRef)) == []
-    # ...and the reason is visible on the node: parameters and a span, no body.
+    assert [t.name for t in find_all(ir, TableRef)] == ["SecurityEvent"]
+    assert {c.name for c in find_all(ir, ColumnRef)} == {"Account", "Computer"}
+    # The binding's lineage index answers for the function too, not just for a
+    # tabular right-hand side.
+    assert ir.let_bindings[0].inner_tables == ["SecurityEvent"]
+    # The node carries the whole declaration: signature, body, and the span.
     (fn,) = find_all(ir, LetFunction)
-    assert set(type(fn).model_fields) == {"kind", "parameters", "body_span"}
+    assert set(type(fn).model_fields) == {
+        "kind", "is_view", "parameters", "body_lets", "body_pipeline",
+        "body_expr", "body_span",
+    }
+
+
+# --- let-function bodies, parameters, defaults and `view` ------------------
+
+
+def _function(query: str, name: str) -> LetFunction:
+    fn = _binding(query, name).rhs_function
+    assert fn is not None, f"no rhs_function on {name!r} in {query!r}"
+    return fn
+
+
+def test_a_tabular_function_body_becomes_a_pipeline():
+    """The headline: an entire function body used to be invisible to the IR.
+
+    The tail dispatches by the same rule a ``let`` right-hand side does, so a
+    pipe chain lands on ``body_pipeline`` and the tables it reads are ordinary
+    ``TableRef``s reachable by generic traversal.
+    """
+    fn = _function(
+        "let S = (w:int) { A | where EventID == 4625 | summarize c=count() by Account }; S(5)",
+        "S",
+    )
+    assert fn.body_pipeline is not None
+    assert fn.body_expr is None
+    assert [t.name for t in find_all(fn.body_pipeline, TableRef)] == ["A"]
+
+
+def test_a_scalar_function_body_becomes_an_expression():
+    """The other half of the dispatch, and the exclusivity between the two:
+    a scalar tail is an expression, never a one-source pipeline."""
+    fn = _function("let S = (w:int) { w + 1 }; T | extend y = S(1)", "S")
+    assert isinstance(fn.body_expr, BinOp)
+    assert fn.body_expr.op == "+"
+    assert fn.body_pipeline is None
+
+
+def test_a_body_nested_let_is_scoped_to_the_body():
+    """A ``let`` inside a function body used to be hoisted to top level.
+
+    ``GetDescendants[LetStatement]`` is recursive, so the body's own binding
+    arrived in ``QueryIR.let_bindings`` as though the query had declared it —
+    twice over once the body itself is built. It belongs to the body, and the
+    body's reference to it resolves there.
+    """
+    ir = parse("let f = (w:int) { let z = 5; T | take z }; T | where a > 1").to_ir()
+    assert [lb.name for lb in ir.let_bindings] == ["f"]
+
+    fn = ir.let_bindings[0].rhs_function
+    assert fn is not None
+    assert [lb.name for lb in fn.body_lets] == ["z"]
+    assert isinstance(fn.body_lets[0].rhs_expr, LiteralExpr)
+    # The body's own use site resolves against the body's binding.
+    (take_op,) = fn.body_pipeline.operators
+    assert isinstance(take_op.count, LetValueRef)
+    assert take_op.count.name == "z"
+
+
+def test_a_body_nested_let_does_not_leak_past_the_declaration():
+    """The shadow set is restored when the declaration is done, so the name
+    is a plain column again for everything written after it."""
+    ir = parse("let f = (w:int) { let z = 5; T | take z }; T | where a > z").to_ir()
+    (predicate,) = [
+        op.predicate for op in ir.main_pipeline.operators if hasattr(op, "predicate")
+    ]
+    assert isinstance(predicate.right, ColumnRef)
+    assert predicate.right.name == "z"
+
+
+def test_a_parameter_shadows_an_outer_let_in_expression_position():
+    """A parameter is bound by the declaration, not by the enclosing query, so
+    a body reference to a shadowed name is *not* a ``LetValueRef``."""
+    ir = parse("let n = 5; let f = (n:int) { T | where a > n }; T | where b > n").to_ir()
+
+    fn = ir.let_bindings[1].rhs_function
+    (body_filter,) = fn.body_pipeline.operators
+    assert isinstance(body_filter.predicate.right, ColumnRef)
+
+    # ...and the shadow is lifted again once the declaration closes.
+    (outer_filter,) = ir.main_pipeline.operators
+    assert isinstance(outer_filter.predicate.right, LetValueRef)
+
+
+def test_a_parameter_shadows_an_outer_let_in_source_position():
+    """The same rule at the other reading site: a tabular parameter naming an
+    earlier ``let`` reads the parameter, so the body's source is a
+    ``TableRef``, not the ``LetRef`` the same text produces outside."""
+    ir = parse(
+        "let A = T | take 1; let f = (A:(x:long)) { A | count }; A | count"
+    ).to_ir()
+
+    fn = ir.let_bindings[1].rhs_function
+    assert isinstance(fn.body_pipeline.source, TableRef)
+    assert isinstance(ir.main_pipeline.source, LetRef)
+
+
+def test_a_parameter_carries_its_declared_type_and_default():
+    fn = _function("let S = (w:int=3) { A | where x > w }; S(5)", "S")
+    (param,) = fn.parameters
+    assert param.decl.name == "w"
+    assert param.decl.declared_type == "int"
+    assert isinstance(param.default, LiteralExpr)
+    assert param.default.value == 3
+
+
+def test_a_parameter_without_a_default_records_none():
+    fn = _function("let S = (w:int) { A | where x > w }; S(5)", "S")
+    assert fn.parameters[0].default is None
+
+
+@pytest.mark.parametrize(
+    "query,expected",
+    [
+        ("let S = view (w:int) { A | where x > w }; S(5)", True),
+        ("let S = (w:int) { A | where x > w }; S(5)", False),
+    ],
+)
+def test_the_view_keyword_is_recorded(query, expected):
+    """``view`` decides whether ``union *`` picks the function up, so it is a
+    difference in which rows a query returns, not a spelling."""
+    assert _function(query, "S").is_view is expected
+
+
+def test_a_call_site_is_still_not_expanded():
+    """Modelling the body does not inline it: ``S(5)`` stays a call.
+
+    The body is reachable through the declaration, once, rather than copied
+    into every call site — so a two-call query does not report its tables
+    twice and the digest does not grow with the call count.
+    """
+    from kustology.ir import FuncCallSource
+
+    ir = parse("let S = (w:int) { A | where x > w }; S(5)").to_ir()
+    assert isinstance(ir.main_pipeline.source, FuncCallSource)
+    assert ir.main_pipeline.source.name == "S"
+
+
+def test_invoke_of_a_let_function_is_unaffected():
+    """``invoke`` names the function as an operator argument; that reading is
+    unchanged by the declaration now carrying a body."""
+    from kustology.ir import InvokeOp
+
+    ir = parse("let f = (x:int) { T | take 1 }; T | invoke f(1)").to_ir()
+    (invoke,) = [op for op in ir.main_pipeline.operators if isinstance(op, InvokeOp)]
+    assert invoke.func.name == "f"
+
+
+def test_an_empty_function_body_builds_with_neither_tail():
+    """``let f = (x:long);`` — the parser recovers a ``FunctionBody`` with no
+    statements and no expression. Both tail fields stay ``None`` rather than
+    one of them being populated with a placeholder."""
+    fn = _function("let f = (x:long); T | count", "f")
+    assert fn.body_pipeline is None
+    assert fn.body_expr is None
+    assert fn.body_lets == []
+    assert [p.decl.name for p in fn.parameters] == ["x"]
 
 
 def test_bare_name_alias_is_not_silently_empty():

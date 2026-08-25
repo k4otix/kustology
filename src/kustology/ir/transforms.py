@@ -19,6 +19,7 @@ join/lookup/union/fork branches.
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import re
 from typing import Any
@@ -28,10 +29,10 @@ from pydantic_core import PydanticUndefined
 
 from ._normalize import normalize_in_place
 from .expr import And, Expr, LetValueRef, Or, SetMembership
-from .query import FilterOp, LetBinding, LetRef, Pipeline, QueryIR
+from .query import FilterOp, LetBinding, LetFunction, LetRef, Pipeline, QueryIR
 from .spans import Span
 from .types import KustoType
-from .walk import find_all, walk
+from .walk import _models_in, find_all, walk
 
 
 def merge_consecutive_filters(root: Pipeline | QueryIR) -> None:
@@ -315,12 +316,19 @@ def _clear_volatile(root: BaseModel) -> None:
 # ``LetValueRef`` is the reason the tuple was written to be extended.
 # ``ColumnRef`` deliberately is not a member and must not become one: a real
 # column named ``n`` is a different query from a ``let``-bound ``n``, so
-# renaming one would collapse the two.
+# renaming one would collapse the two. That distinction is what makes a
+# *function parameter* nothing to do with this tuple either: a parameter
+# shadows a same-named ``let`` inside the body, and the builder lowers the
+# shadowed reference as a ``ColumnRef``/``TableRef`` precisely so no rename
+# here can reach it.
+#
+# ``LetBinding`` is a member as the declaration, but it is renamed only by the
+# scope walker below, never through the reference map -- see the docstring.
 _LET_NAME_MODELS: tuple[type[BaseModel], ...] = (LetBinding, LetRef, LetValueRef)
 
 
 def _canonicalize_let_names(ir: QueryIR) -> None:
-    """Rename every ``let`` binding to ``$let<i>`` by declaration index.
+    """Rename every ``let`` binding to ``$let<i>`` in scope-walk order.
 
     A ``let`` name is a local label with no meaning outside the query, so
     ``let X = …; X | take 1`` and ``let Y = …; Y | take 1`` are the same
@@ -339,31 +347,78 @@ def _canonicalize_let_names(ir: QueryIR) -> None:
     loop at all. A name-keyed map gives two same-named bindings one canonical
     name, and ``$letN`` stops meaning "the Nth declaration".
 
-    References resolve against the bindings **visible where they are
-    written** -- a binding's own right-hand side sees only the bindings
-    declared before it, the main pipeline sees them all. That is what keeps a
-    shadowed reference pointing at the binding it actually reads, instead of
-    at the one currently being defined.
+    **Scope.** References resolve against the bindings *visible where they are
+    written*: a binding's own right-hand side sees only the bindings declared
+    before it, the main pipeline sees them all. That is what keeps a shadowed
+    reference pointing at the binding it actually reads, instead of at the one
+    currently being defined. A ``let``-declared function body opens a **child
+    scope**, seeded from what is visible at the declaration site -- so a body
+    reference to an outer binding renames through it, a ``let`` written inside
+    the body extends the child scope only, and neither is visible to the query
+    outside the braces. Function parameters never enter any of these maps: the
+    builder has already lowered a parameter reference to a ``ColumnRef`` /
+    ``TableRef``, which this function does not touch.
+
+    The ``$let<i>`` counter is **query-global**, not per scope. Numbering each
+    scope from zero would let a body's own first binding and its encloser's
+    first binding both be ``$let0``, so a body reading its own ``z`` and a body
+    reading the outer ``n`` would render identically -- two different queries,
+    one digest. One counter over a deterministic walk order keeps every
+    binding in the query distinctly numbered.
+
+    A single ``seen`` id-set spans the whole traversal, which is what handles
+    the index-field aliasing: ``LetBinding.inner_time_exprs`` holds the *same*
+    objects as the ``rhs_pipeline`` / ``rhs_function`` beside it, and the
+    owning field is declared first, so the aliases are reached (and renamed)
+    through the owner and skipped on the second approach. That is the same
+    field-declaration-order dependency :func:`_sort_commutative` documents,
+    for the same reason.
     """
     if not ir.let_bindings:
         return
-    # Name -> canonical name, rebuilt as each declaration comes into scope.
+    counter = itertools.count()
+    seen: set[int] = set()
+
+    def rename(node: BaseModel, visible: dict[str, str]) -> None:
+        """Rewrite every reference under ``node`` against ``visible``."""
+        if id(node) in seen:
+            return
+        seen.add(id(node))
+        if isinstance(node, LetFunction):
+            # The body is a child scope. Parameters and their defaults are
+            # written at the declaration site, so they resolve in the parent.
+            for parameter in node.parameters:
+                rename(parameter, visible)
+            body_visible = dict(visible)
+            canon_scope(node.body_lets, body_visible)
+            for sub in (node.body_pipeline, node.body_expr):
+                if sub is not None:
+                    rename(sub, body_visible)
+            return
+        if isinstance(node, _LET_NAME_MODELS) and not isinstance(node, LetBinding):
+            object.__setattr__(node, "name", visible.get(node.name, node.name))
+        for field_name in type(node).model_fields:
+            for item in _models_in(getattr(node, field_name)):
+                rename(item, visible)
+
+    def canon_scope(bindings: list[LetBinding], visible: dict[str, str]) -> None:
+        """Number one scope's declarations in order, extending ``visible``."""
+        for binding in bindings:
+            written = binding.name
+            # The right-hand side is resolved *before* this binding enters
+            # scope, so a self-reference names whatever it named to the parser.
+            rename(binding, visible)
+            canonical = f"$let{next(counter)}"
+            visible[written] = canonical
+            object.__setattr__(binding, "name", canonical)
+
     visible: dict[str, str] = {}
-    for i, binding in enumerate(ir.let_bindings):
-        canonical = f"$let{i}"
-        # The right-hand side is resolved *before* this binding enters scope.
-        for node in walk(binding):
-            if node is not binding and isinstance(node, _LET_NAME_MODELS):
-                object.__setattr__(node, "name", visible.get(node.name, node.name))
-        visible[binding.name] = canonical
-        object.__setattr__(binding, "name", canonical)
+    canon_scope(ir.let_bindings, visible)
     # Every tabular statement, not just the first: a ``let`` declared once is
     # in scope for all of them, so a reference written after the second
     # semicolon has to be renamed too or the rename stops being one.
     for pipeline in (ir.main_pipeline, *ir.additional_pipelines):
-        for node in walk(pipeline):
-            if isinstance(node, _LET_NAME_MODELS):
-                object.__setattr__(node, "name", visible.get(node.name, node.name))
+        rename(pipeline, visible)
 
 
 def _sort_commutative(root: BaseModel) -> None:
@@ -393,14 +448,20 @@ def _sort_commutative(root: BaseModel) -> None:
 
     One caveat on that second point, since ``walk`` yields a shared object
     only at the *first* path that reaches it. A node an index field aliases
-    (``LetBinding.inner_time_exprs`` holds the same objects as
-    ``rhs_pipeline``) is positioned by whichever field is declared first, and
-    if the index came first the node would be yielded above its real parent
-    and sorted after it. Nothing hits that today: the only aliasing fields
-    hold ``FuncCall`` and ``TableRef``, which this function never sorts, and
-    they are declared after ``rhs_pipeline`` anyway. A new index field over
-    ``And``/``Or``/``SetMembership`` would need a genuinely post-order
-    traversal here rather than a reversed pre-order.
+    (``LetBinding.inner_time_exprs`` holds the same objects as the
+    ``rhs_pipeline`` / ``rhs_function`` beside it) is positioned by whichever
+    field is declared first, and if the index came first the node would be
+    yielded above its real parent and sorted after it. Nothing hits that
+    today: the only aliasing fields hold ``FuncCall`` and ``TableRef``, which
+    this function never sorts, and they are declared after both right-hand-side
+    fields anyway. A new index field over ``And``/``Or``/``SetMembership``
+    would need a genuinely post-order traversal here rather than a reversed
+    pre-order.
+
+    ``walk`` iterates ``model_fields``, so this reaches a ``let`` function's
+    body as readily as a top-level pipeline: ``let f = () { T | where a and b
+    }`` and the same body written ``b and a`` are one digest, with no case
+    here for the body at all.
 
     Runs on the hash's deep copy only -- the public ``normalize_expressions``
     leaves the query's own order alone.
@@ -507,7 +568,8 @@ def compute_semantic_hash(node: BaseModel) -> str:
     * ``X in ("a", "b")`` vs ``X in ("b", "a")`` — a set test, so the order
       the values were written in carries no meaning
     * ``let X = …; X | take 1`` vs ``let Y = …; Y | take 1`` — a ``let`` name
-      is a local label, replaced by its declaration index (``$let0``, …)
+      is a local label, replaced by its position in a scope-ordered walk
+      (``$let0``, …). Holds for a ``let`` written inside a function body too
     * ``| where A | where B`` vs ``| where B | where A``, and either against
       ``| where B and A`` — the merge and the sort *compose*: consecutive
       filters become one ``And`` and that ``And``'s operands are then sorted,
@@ -533,9 +595,12 @@ def compute_semantic_hash(node: BaseModel) -> str:
       in the IR is reordered; ``Expr.canonical_form`` sorts the same three
       places by *rendered string*, which is a different key for the same
       set, and ``normalize_expressions`` sorts nothing at all.
-    * **``let`` renaming** is positional. Each visible binding name is
-      replaced by its declaration index, so the names are labels and the
-      wiring is not (:func:`_canonicalize_let_names`).
+    * **``let`` renaming** is positional and scope-ordered. Each binding is
+      replaced by its position in one query-global sequence, taken in scope
+      order — top-level declarations, and a function body's own declarations
+      as the body is reached — and each reference by whatever was visible
+      where it was written. The names are labels and the wiring is not
+      (:func:`_canonicalize_let_names`).
     * **Datetime literals are UTC.** The builder Kind-normalizes every
       ``datetime`` literal before recording ``value`` and ``ticks``
       (``_builder_helpers.literal_value_and_ticks``), and numeric and timespan
@@ -550,9 +615,12 @@ def compute_semantic_hash(node: BaseModel) -> str:
     *shape* rather than of a field's value: a ``let`` whose right-hand
     side aliases a table records ``rhs_expr`` unbound and ``rhs_pipeline``
     once the binder has proved the name is a table, and no field-clearing
-    can make two different nodes into one. Queries with no table-aliasing
-    ``let`` are unaffected. See the note above :data:`_VOLATILE_FIELDS`
-    for why that is preferred to guessing.
+    can make two different nodes into one. The tail of a ``let``-function
+    body is the same grammatical position read by the same predicate
+    (``builder._is_tabular_rhs``), so ``let f = () { OtherTable }`` diverges
+    the same way, on ``body_expr`` vs ``body_pipeline``. Queries that do not
+    alias a bare table name in either position are unaffected. See the note
+    above :data:`_VOLATILE_FIELDS` for why that is preferred to guessing.
 
     **Equal digests are not a proof of equivalence.** Several kinds of thing
     still merge, and they differ in whether that is a decision or a gap:
@@ -566,29 +634,6 @@ def compute_semantic_hash(node: BaseModel) -> str:
       ``to typeof(…)``, ``limit`` and ``with_itemindex=``, ``parse-kv``'s
       ``with (…)`` properties, ``getschema kind=csl``, ``consume
       decodeblocks=`` as of 0.2.0.
-    * **A ``let``-declared function's body.** ``let f = (x:int) { … }``
-      records a :class:`~kustology.ir.query.LetFunction` holding the
-      parameter *names* and a ``body_span``; the body is not built and
-      ``body_span`` is volatile, so nothing inside the braces reaches the
-      digest. Two functions with the same name and parameter names but
-      entirely different bodies collide, as do two that differ only in a
-      parameter's declared type or default (neither is recorded). Parameter
-      names and their count *do* split. The gap predates ``body_span``
-      becoming volatile — before that the digest keyed on a source offset,
-      which split two identical bodies over one extra space — so clearing
-      it removed a wrong discriminator rather than creating this one.
-      Modelling the body is post-0.2.0 work.
-
-      This is also the one gap that makes the two tiers disagree about the
-      *same* query rather than merely hashing it coarsely: on
-      ``let f = () { SecurityEvent | where Account=="root" | project
-      Computer }; f()`` (zero diagnostics), Tier 1's
-      ``get_referenced_tables()`` reports ``{'SecurityEvent'}`` and
-      ``get_referenced_columns()`` reports ``{'Account', 'Computer'}``,
-      while Tier 2's ``find_all(ir, TableRef)`` and
-      ``find_all(ir, ColumnRef)`` both return empty. Tier 1 walks
-      Microsoft's tree, which has the body in it. Do not read a Tier 2
-      lineage walk as exhaustive over a query that declares functions.
     * **Statements that are neither ``let`` nor tabular.** The builder
       collects ``let`` statements and pipelines; a statement of any other
       kind contributes nothing of its own, so whatever it said is absent
@@ -597,6 +642,9 @@ def compute_semantic_hash(node: BaseModel) -> str:
       it, and they parse with zero diagnostics so nothing signals the loss.
       ``set``, ``declare query_parameters``, ``declare pattern``,
       ``alias database`` and ``restrict access`` all behave this way today.
+      That includes a ``declare query_parameters`` written *inside* a
+      ``let``-function body, which is the only statement kind besides ``let``
+      the body grammar admits.
 
       **It is "contributes nothing of its own", not "is skipped".** The
       ``let`` collection walks ``GetDescendants[LetStatement]``, which is
@@ -607,7 +655,17 @@ def compute_semantic_hash(node: BaseModel) -> str:
       pattern with ``z = 9``. That is a split where the paragraph above
       promises a merge, which is the safe direction (a dedup consumer fails
       to merge rather than merging wrongly), but it means the enclosing
-      statement is not an opaque blank: only its own syntax is.
+      statement is not an opaque blank: only its own syntax is. A
+      ``declare pattern`` body is a ``FunctionBody`` owned by a
+      ``PatternMatch`` rather than by a ``FunctionDeclaration``, which is why
+      the hoist still reaches it while a ``let``-*function* body's own
+      bindings stay scoped to that body.
+    * **A ``let``-declared function's call sites.** ``let f = () { … }; f();
+      f()`` records the body once, on the declaration, and leaves each ``f()``
+      a call. So a query that calls a function twice does not hash as one that
+      inlines the body twice — which is the right answer for dedup (the two
+      queries *are* the same query) but means a caller counting a table's
+      occurrences in the digest is counting declarations, not reads.
 
     A dedup consumer that must not merge across any of these has to compare
     more than the hash. Rather than trusting the lists above,

@@ -39,7 +39,7 @@ two apart from real columns and real tables:
 | --- | --- | --- |
 | `let Base = SecurityEvent \| …;` … `Base \| project X` | `LetRef` | pipeline source, `find in (…)`, `search in (…)` |
 | `let threshold = 5;` … `where Count > threshold` | `LetValueRef` | expression position |
-| `let f = (x:int) { … };` | `LetBinding.rhs_function` (a `LetFunction`) | — |
+| `let f = (x:int) { … };` | `LetBinding.rhs_function` (a `LetFunction`) | signature on `.parameters`, body on `.body_lets` / `.body_pipeline` / `.body_expr` |
 
 So `find_all(ir, TableRef)` answers "which tables does this query read" and
 `find_all(ir, ColumnRef)` answers "which columns does it touch" — neither
@@ -73,15 +73,16 @@ fields, on `raw_text`: `scan`, `top-nested`, `make-graph`, `graph-match`,
 they hash, but there is nothing typed inside them to walk. `graph-where-edges`
 and `graph-where-nodes` are modeled, with a real predicate.
 
-A `let`-declared **function body** is the other boundary: `let f = (x:int)
-{ … }` records a `LetFunction` with the parameter names and a `body_span`
-locating the body in the source. The body itself is not built, call sites are
-not expanded, and parameter types and defaults are not recorded.
+A `let`-declared **function call site** is the other boundary, and it is a
+narrow one: `let f = (x:int) { … }` records a `LetFunction` carrying the
+parameters (declared types and defaults included), the `view` keyword, and the
+body — `body_lets` for a `let` written inside the braces, then `body_pipeline`
+or `body_expr` for the tail. What is *not* done is inlining: `f(1)` stays a
+call, so the body is reachable once, through the declaration, rather than
+copied into every call site.
 
-**This is the one place the two tiers disagree about the same query**, and it
-is worth knowing before you use a Tier 2 walk for lineage. Tier 1 walks
-Microsoft's tree, which contains the body; Tier 2 walks the IR, which does
-not. On a query with zero diagnostics:
+Both tiers therefore see through the body, and a Tier 2 lineage walk over a
+function-declaring query is no longer empty. On a query with zero diagnostics:
 
 ```python
 q = 'let f = () { SecurityEvent | where Account=="root" | project Computer }; f()'
@@ -89,16 +90,19 @@ parse(q).get_referenced_tables()          # {'SecurityEvent'}
 parse(q).get_referenced_columns()         # {'Account', 'Computer'}
 
 ir = parse(q).to_ir()
-list(find_all(ir, TableRef))              # []
-list(find_all(ir, ColumnRef))             # []
+[t.name for t in find_all(ir, TableRef)]  # ['SecurityEvent']
+{c.name for c in find_all(ir, ColumnRef)} # {'Account', 'Computer'}
 ```
 
-So `find_all(ir, TableRef)` is exhaustive over the query's *pipelines*, not
-over the query. If you need every table a query can touch and the query
-declares functions, use Tier 1's `get_referenced_tables()`, or slice the body
-out with `body_span` and parse it separately. The same gap is why two `let`
-functions with different bodies share a `semantic_hash` — see [What
-`semantic_hash` deliberately ignores](#what-semantic_hash-deliberately-ignores).
+What the non-expansion costs you is a *count*, not a name: a query calling one
+function three times reports its tables once, because the declaration is the
+one place they are written. `body_span` still locates the body in the source if
+you want the text.
+
+A parameter shadows a same-named `let` from the enclosing query for the length
+of the body, decided from the declaration text alone so it cannot depend on
+whether you passed a schema — so inside `let n = 5; let f = (n:int) { T | where
+a > n }`, the body's `n` is a `ColumnRef`, not a `LetValueRef`.
 
 ## Choosing a tier
 
@@ -476,8 +480,9 @@ returns. Within `kustology-sem-v2` these are ignored:
   Consecutive `| where`s merge into one `and` first, so
   `| where A | where B` joins them — but only *consecutive* ones, so
   `| where A | take 5` and `| take 5 | where A` still differ.
-- **`let` names.** Each is replaced by its declaration index, so
-  `let n = 5; T | where a > n` and `let m = 5; T | where a > m` collide.
+- **`let` names.** Each is replaced by its position in a scope-ordered walk,
+  so `let n = 5; T | where a > n` and `let m = 5; T | where a > m` collide —
+  and so do the same two spellings of a `let` written inside a function body.
   Which binding a reference points at is still hashed, and a `let`-bound `n`
   never collides with a real column `n`.
 - **The host's timezone and locale.** A `datetime` literal is normalized to
@@ -509,15 +514,6 @@ Two caveats, both deliberate rather than accidental:
   `parse-kv`'s `with (…)` properties; `getschema kind=csl`; and `consume
   decodeblocks=`. That list is what a modifier-pair sweep turned up, not a
   proof that nothing else remains.
-
-  **A `let` function's body is invisible to the digest.** `LetFunction`
-  records the parameter names and a volatile `body_span`, so two functions
-  with the same name and parameters and completely different bodies collide —
-  and so do two that differ only in a parameter's declared type or default,
-  neither of which is recorded. Parameter names and their count do split. This
-  is the same boundary described under [Where Tier 2
-  stops](#where-tier-2-stops); it is the largest of these gaps, because what
-  collides is an arbitrary amount of query rather than one modifier.
 
   **Statement-level constructs other than `let` are dropped entirely** and
   hash as if they were absent — `set`, `declare query_parameters`,

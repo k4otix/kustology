@@ -33,15 +33,17 @@ doubles the cost of each case for no discriminating power (see
 ``test_semantic_hash_bind_invariance.py`` for the bind-state axis).
 
 A third list, ``KNOWN_COLLISIONS``, holds pairs that mean different things
-and hash alike *today* -- open gaps in the 0.2.0 model rather than
-regressions. They cannot go in ``MUST_DIFFER``, which they would keep red,
-and they must not go in ``MUST_EQUAL``, whose contract is "same meaning": a
-real collision filed as a desired merge would make the paragraph above
-false, and a documented survivor list that has quietly stopped being true is
-the exact failure this file exists to prevent. Its assertion is equality, so
-closing a gap turns the list red on purpose -- a consumer works around the
-collisions kustology discloses, so one silently disappearing from the
-disclosure is a defect even though the behaviour improved.
+and hash alike *today* -- open gaps in the model rather than regressions.
+They cannot go in ``MUST_DIFFER``, which they would keep red, and they must
+not go in ``MUST_EQUAL``, whose contract is "same meaning": a real collision
+filed as a desired merge would make the paragraph above false, and a
+documented survivor list that has quietly stopped being true is the exact
+failure this file exists to prevent. Its assertion is equality, so closing a
+gap turns the list red on purpose -- a consumer works around the collisions
+kustology discloses, so one silently disappearing from the disclosure is a
+defect even though the behaviour improved. **It is empty as of 0.2.0**: the
+last three rows were the ``let``-function ones, closed when the body was
+modelled. The list stays for the next gap; see the comment above it.
 
 One category needs a caveat rather than a claim of coverage. WS2 fix #1
 (datetime literals UTC-normalized in ``literal_value_and_ticks`` so
@@ -222,10 +224,13 @@ MUST_DIFFER = [
         'T | where tolower(x) == "Y"',
         'T | where x =~ "Y"',
     ),
-    # The half of `LetFunction` that *is* recorded. Without these, the
-    # `let-function-*` entries in KNOWN_COLLISIONS would read as "let
-    # functions never split", when what is actually missing is the body, the
-    # parameter types and the parameter defaults.
+    # `LetFunction`, whole. Every part of a `let`-declared function now
+    # reaches the digest -- the signature (names, count, declared types,
+    # defaults, `view`) and the body, statements and tail alike. Three of the
+    # rows below (`-parameter-type`, `-parameter-default`, `-body`) were
+    # KNOWN_COLLISIONS until the body was built; the body one was the largest
+    # gap in the release, because what collided was an arbitrary amount of
+    # query rather than one modifier.
     (
         "let-function-parameter-name",
         "let S = (w:int) { A | where x > 1 }; S(5)",
@@ -235,6 +240,53 @@ MUST_DIFFER = [
         "let-function-parameter-count",
         "let S = (w:int) { A | where x > 1 }; S(5)",
         "let S = (w:int, y:int) { A | where x > 1 }; S(5, 1)",
+    ),
+    (
+        "let-function-parameter-type",
+        "let S = (w:int) { A | where x > w }; S(5)",
+        "let S = (w:long) { A | where x > w }; S(5)",
+    ),
+    # Presence of a default, then its value: a parameter that may be omitted
+    # is a different signature from one that may not, and two defaults are two
+    # different functions for every call that omits the argument.
+    (
+        "let-function-parameter-default",
+        "let S = (w:int) { A | where x > w }; S(5)",
+        "let S = (w:int=3) { A | where x > w }; S(5)",
+    ),
+    (
+        "let-function-default-value",
+        "let S = (w:int=3) { A | where x > w }; S(5)",
+        "let S = (w:int=4) { A | where x > w }; S(5)",
+    ),
+    # `view` decides whether a wildcard `union *` picks the function up, so
+    # the two spellings return different rows from the same data.
+    (
+        "let-function-view-vs-plain",
+        "let S = (w:int) { A | where x > w }; S(5)",
+        "let S = view (w:int) { A | where x > w }; S(5)",
+    ),
+    (
+        "let-function-body",
+        "let S = (w:int) { A | where EventID == 4625 | summarize c=count() by Account | where c > w }; S(5)",
+        "let S = (w:int) { A | where EventID == 4624 | summarize c=count() by Computer | where c > w }; S(5)",
+    ),
+    # The body's other half of the tail dispatch. A scalar body lands on
+    # `body_expr` rather than `body_pipeline`, and a pair over a tabular body
+    # alone would stay green if that field stopped being hashed.
+    (
+        "let-function-scalar-body",
+        "let S = (w:int) { w + 1 }; T | extend y = S(1)",
+        "let S = (w:int) { w + 2 }; T | extend y = S(1)",
+    ),
+    # A `let` written inside the body used to be hoisted into top-level
+    # `let_bindings`, which is where its value reached the digest from. It is
+    # scoped to `body_lets` now, so this pair pins that the value still splits
+    # -- the route changed and the answer must not have.
+    (
+        "let-function-body-nested-let-value",
+        "let S = (w:int) { let z = 5; A | take z }; S(1)",
+        "let S = (w:int) { let z = 9; A | take z }; S(1)",
     ),
     # -----------------------------------------------------------------------
     # WS4 -- one pair per collision the IR-model workstream closed. Each was
@@ -605,6 +657,48 @@ MUST_EQUAL = [
         "T | evaluate bag_unpack(d) : (x:string)",
         "T | evaluate bag_unpack(d) :  ( x : string )",
     ),
+    # A `let` function's body is built out of the same nodes as any other
+    # pipeline, so every canonicalization rule that already held for a
+    # top-level query now holds inside the braces -- with no case for the body
+    # anywhere in `transforms.py`. Formatting and comments first, then the
+    # signature's own formatting.
+    (
+        "let-function-body-whitespace",
+        "let S = (w:int) { A | where x > w }; S(5)",
+        "let S = (w:int) {\nA\n|   where x>w\n}; S(5)",
+    ),
+    (
+        "let-function-body-comment",
+        "let S = (w:int) { A | where x > w }; S(5)",
+        "let S = (w:int) { A | where x > w // note\n}; S(5)",
+    ),
+    (
+        "let-function-param-whitespace",
+        "let S = (w:int) { A | take 1 }; S(5)",
+        "let S = ( w : int ) { A | take 1 }; S(5)",
+    ),
+    # The composition claim, stated as a pair rather than asserted in prose:
+    # `_sort_commutative` walks `model_fields`, so it reaches a function body
+    # the same way it reaches `main_pipeline`.
+    (
+        "let-function-body-commutative",
+        "let S = () { A | where a == 1 and b == 2 }; S()",
+        "let S = () { A | where b == 2 and a == 1 }; S()",
+    ),
+    # The `let` rename is scope-ordered, and both directions of that matter.
+    # An outer binding renames *through* the body, which reads it...
+    (
+        "let-function-outer-let-rename-through-body",
+        "let n = 5; let S = () { A | where x > n }; S()",
+        "let m = 5; let S = () { A | where x > m }; S()",
+    ),
+    # ...and a binding declared *inside* the body is a local label there, so
+    # renaming it is no more a change than renaming a top-level one.
+    (
+        "let-function-inner-let-rename",
+        "let S = () { let z = 5; A | take z }; S()",
+        "let S = () { let y = 5; A | take y }; S()",
+    ),
 ]
 
 
@@ -621,58 +715,42 @@ def test_must_equal(case_id, query_a, query_b):
 # ---------------------------------------------------------------------------
 # KNOWN_COLLISIONS: (case_id, query_a, query_b) -- pairs that mean *different*
 # things and hash alike anyway. These are the failure MUST_DIFFER exists to
-# catch; they are filed here rather than there because they are open gaps in
-# the 0.2.0 model, not regressions, and a permanently red MUST_DIFFER entry
-# would be deleted by the first person to run the suite.
+# catch; they are filed here rather than there because a gap is an open
+# boundary in the model, not a regression, and a permanently red MUST_DIFFER
+# entry would be deleted by the first person to run the suite.
 #
 # They are not in MUST_EQUAL either, and that distinction is the point of the
 # third list. MUST_EQUAL means "same meaning, different spelling" -- putting a
 # real collision there would make this module's own docstring false, which is
-# exactly the drift between what we say and what the code does that the
-# collisions below are being disclosed to prevent.
+# exactly the drift between what we say and what the code does that a
+# disclosure exists to prevent.
+#
+# **The list is empty.** Every pair it held has been closed and moved to
+# MUST_DIFFER: `evaluate`'s output-schema clause, then the three
+# `let`-function rows (body, parameter type, parameter default). The list, the
+# parametrization and the test stay, because the shape of the disclosure is
+# what has value and it will be needed again -- and because pytest's own
+# "skipped: got empty parameter set" line is the standing signal that there is
+# nothing currently filed here. An emptied list quietly deleted would leave
+# the next gap with nowhere to go and no convention to follow.
+#
+# What qualifies a pair for this list: the two queries mean different things,
+# they hash alike *today*, and the reason is a construct the IR does not model
+# rather than a canonicalization rule that is too aggressive. (A rule that
+# over-merges is a bug -- it goes to MUST_DIFFER red and gets fixed.) A pair
+# filed here must also be disclosed everywhere the failure message below
+# names, and mirrored as a row in `examples/semantic_hash_demo.py`'s
+# KNOWN_MERGES, which the suite runs -- that file prints the verdict for a
+# reader, this one fails the build.
 #
 # The assertion is the same equality MUST_EQUAL uses, so a gap that later
 # *closes* turns this list red. That is intended: the digest's documented
 # survivor list is the safety mechanism a consumer works around, so a survivor
 # silently ceasing to be one is a documentation defect even though the
-# behaviour improved. The failure message says to move the pair to
-# MUST_DIFFER and describes what else has to change with it. It names no
-# count, because the disclosure sites differ per row -- every row remaining
-# here is a `let`-function gap, also described on `LetFunction` and in
-# README's Tier 2 boundary section.
-#
-# Every case here is also a row in `examples/semantic_hash_demo.py`'s
-# KNOWN_MERGES, which the suite runs -- that file prints the verdict for a
-# reader, this one fails the build.
+# behaviour improved.
 # ---------------------------------------------------------------------------
 
-KNOWN_COLLISIONS = [
-    # A `let` function's body is not built and `body_span` is volatile, so
-    # nothing between the braces reaches the digest. The largest gap in the
-    # release: what collides is an arbitrary amount of query rather than one
-    # modifier, and two of the 49 corpus fixtures already have this shape.
-    # Clearing `body_span` did not cause this -- before that the digest keyed
-    # on a source offset, so two identical bodies split over one extra space.
-    (
-        "let-function-body",
-        "let S = (w:int) { A | where EventID == 4625 | summarize c=count() by Account | where c > w }; S(5)",
-        "let S = (w:int) { A | where EventID == 4624 | summarize c=count() by Computer | where c > w }; S(5)",
-    ),
-    # `LetFunction.parameters` is a list of names only. Names and their count
-    # do split (pinned in MUST_DIFFER below via the same shape being absent
-    # here); the declared type and the default do not, because neither is
-    # recorded on the model at all.
-    (
-        "let-function-parameter-type",
-        "let S = (w:int) { A | where x > w }; S(5)",
-        "let S = (w:long) { A | where x > w }; S(5)",
-    ),
-    (
-        "let-function-parameter-default",
-        "let S = (w:int) { A | where x > w }; S(5)",
-        "let S = (w:int=3) { A | where x > w }; S(5)",
-    ),
-]
+KNOWN_COLLISIONS: list[tuple[str, str, str]] = []
 
 
 @pytest.mark.parametrize(
@@ -687,10 +765,11 @@ def test_known_collision(case_id, query_a, query_b):
         f"everything that still discloses it -- not a fixed list, so find "
         f"them: compute_semantic_hash's docstring, the docstring of the IR "
         f"node that drops the construct, README (its `semantic_hash` section, "
-        f"plus the Tier 2 boundary section for the let-function rows), "
+        f"plus any boundary section that describes the construct), "
         f"CHANGELOG 0.2.0's survivor list, and the matching KNOWN_MERGES row "
         f"in examples/semantic_hash_demo.py, which is failing beside this."
     )
+
 
 def test_no_battery_pair_discriminates_on_an_unmodelled_blob():
     """Every query in this file must build IR that carries no source text.

@@ -108,6 +108,7 @@ from .query import (
     JoinOp,
     LetBinding,
     LetFunction,
+    LetFunctionParameter,
     LetRef,
     LookupOp,
     MacroExpandOp,
@@ -167,6 +168,7 @@ logger = logging.getLogger(__name__)
 # source: no leading trivia, interior comments dropped to a line break.
 from Kusto.Language.Syntax import (
     ExpressionStatement,
+    FunctionDeclaration,
     IncludeTrivia,
     LetStatement,
 )
@@ -195,12 +197,12 @@ def _is_time_func_name(name: str) -> bool:
         return "time" in lower or "ago" in lower or "now" in lower
 
 
-# Non-operator .NET node kinds that put a ``let`` right-hand side in tabular
-# position. Every *other* tabular RHS is a query-operator node, matched
-# structurally by the ``…Operator`` suffix in ``_is_tabular_let_rhs`` — the
+# Non-operator .NET node kinds that put an expression in tabular position.
+# Every *other* tabular right-hand side is a query-operator node, matched
+# structurally by the ``…Operator`` suffix in ``_is_tabular_rhs`` — the
 # suffix is the .NET class hierarchy's own marker for "this is a query
 # operator", and query operators only ever appear in tabular position.
-_TABULAR_LET_RHS_KINDS = frozenset({
+_TABULAR_RHS_KINDS = frozenset({
     "PipeExpression",         # let A = T | where …
     "MaterializeExpression",  # let A = materialize(T | where …)
     "DataTableExpression",    # let A = datatable(a:int)[1, 2]
@@ -288,14 +290,22 @@ def _as_bool(value: str | None) -> bool:
     return value is not None and value.strip().lower() in ("true", "1")
 
 
-def _is_tabular_let_rhs(net_kind: str) -> bool:
-    """True when a ``let`` RHS of this .NET node kind is a tabular expression.
+def _is_tabular_rhs(expr: Any) -> bool:
+    """True when ``expr`` stands in tabular position rather than scalar.
+
+    Two positions ask this question and must answer it the same way: a
+    ``let`` right-hand side (``let A = T | where …``) and the tail expression
+    of a function body (``let f = () { T | where … }``). The grammar puts the
+    same expression there, so one predicate serves both -- reading it twice
+    is how the two positions drift apart.
 
     Covers the operator-rooted forms (``union``/``range``/``search``/``print``/
-    ``find``, plus any operator Microsoft adds later) as well as the four
-    non-operator tabular kinds. Does *not* cover a bare ``NameReference`` —
-    that is only tabular when the binder proves it, which the caller checks
-    separately.
+    ``find``, plus any operator Microsoft adds later), the four non-operator
+    tabular kinds, and a bare ``NameReference`` the *binder* resolved to a
+    table. That last arm is why this takes the node rather than its class
+    name: unbound there is nothing to prove ``OtherTable`` is a table, and
+    the builder does not guess one into existence — the documented bind-state
+    divergence in :func:`~kustology.ir.transforms.compute_semantic_hash`.
 
     ``ExternalDataExpression`` is one of the four. It used to be excluded,
     because there was no source class to build a pipeline around and routing
@@ -306,36 +316,48 @@ def _is_tabular_let_rhs(net_kind: str) -> bool:
     ``rhs_pipeline is not None`` is a reliable "is this binding tabular"
     test again.
     """
-    return net_kind.endswith("Operator") or net_kind in _TABULAR_LET_RHS_KINDS
+    net_kind = str(type(expr).__name__)
+    if net_kind.endswith("Operator") or net_kind in _TABULAR_RHS_KINDS:
+        return True
+    return net_kind == "NameReference" and is_table_symbol(
+        getattr(expr, "ReferencedSymbol", None)
+    )
 
 
-def _collect_inner_tables(pipeline: Any) -> list[str]:
-    """Distinct table names inside a let binding's pipeline, in first-seen order.
+def _collect_inner_tables(node: Any) -> list[str]:
+    """Distinct table names inside a let binding's right-hand side, in
+    first-seen order.
+
+    ``node`` is whichever of the binding's ``rhs_pipeline`` /
+    ``rhs_function`` is populated -- the walk is ``find_all``-based, so it
+    accepts any model and reaches a function's body the same way it reaches a
+    pipeline's operators.
 
     ``TableRef`` only, so a hop to an earlier binding does not appear here --
-    that is a ``LetRef``. Use ``find_all(pipeline, LetRef)`` for the aliases.
+    that is a ``LetRef``. Use ``find_all(node, LetRef)`` for the aliases.
     """
     from .query import TableRef
     from .walk import find_all
 
     seen: list[str] = []
-    for ref in find_all(pipeline, TableRef):
+    for ref in find_all(node, TableRef):
         if ref.name not in seen:
             seen.append(ref.name)
     return seen
 
 
-def _collect_inner_time_exprs(pipeline: Any) -> list[Any]:
-    """Time-function calls inside a let binding's pipeline, in walk order.
+def _collect_inner_time_exprs(node: Any) -> list[Any]:
+    """Time-function calls inside a let binding's right-hand side, in walk
+    order. ``node`` is read as in :func:`_collect_inner_tables`.
 
-    Time *literals* are reachable through ``rhs_pipeline`` already; this
-    surfaces the calls (``ago``, ``now``, ``bin``, ...) that a lookback
-    analyzer needs to find without re-walking the tree.
+    Time *literals* are reachable through ``rhs_pipeline`` / ``rhs_function``
+    already; this surfaces the calls (``ago``, ``now``, ``bin``, ...) that a
+    lookback analyzer needs to find without re-walking the tree.
     """
     from .expr import FuncCall
     from .walk import find_all
 
-    return [fc for fc in find_all(pipeline, FuncCall) if fc.is_time_func]
+    return [fc for fc in find_all(node, FuncCall) if fc.is_time_func]
 
 
 class IRBuilder:
@@ -406,7 +428,7 @@ class IRBuilder:
         "BetweenExpression", "FunctionCallExpression", "MaterializeExpression",
         # MaterializeExpression is handled, but by ``_visit_pipeline`` --
         # ``materialize`` is a keyword the grammar admits only as a ``let``
-        # right-hand side, where ``_TABULAR_LET_RHS_KINDS`` routes it to a
+        # right-hand side, where ``_TABULAR_RHS_KINDS`` routes it to a
         # nested ``Pipeline``. It stays listed because the kind *is* modelled;
         # dropping it would make the coverage audit report a fully-handled
         # shape as unhandled.
@@ -437,6 +459,12 @@ class IRBuilder:
         # build. Reset per build so a reused builder cannot leak names
         # between queries. See ``_visit_pipeline``'s source-position branch.
         self._let_names: set[str] = set()
+        # Names bound by the parameters of the function declaration currently
+        # being visited, empty everywhere else. A parameter shadows a
+        # same-named ``let`` for the length of the body, so both reading sites
+        # subtract this set from ``_let_names`` -- see
+        # :meth:`_visit_function_declaration`, which saves and restores both.
+        self._param_names: set[str] = set()
 
     # -- entry points ----------------------------------------------------
 
@@ -517,8 +545,23 @@ class IRBuilder:
 
         root = code.Syntax
         self._let_names = set()
+        self._param_names = set()
         let_bindings: list[LetBinding] = []
+        # ``GetDescendants`` is recursive, so both statement sweeps below have
+        # to say which statements are the *query's* own. A statement inside a
+        # ``FunctionDeclaration`` is not: it belongs to the body, is in scope
+        # only there, and is built by ``_visit_function_declaration`` into
+        # ``LetFunction.body_lets``. Hoisting it here declared it twice, and
+        # declared it in a scope the query never wrote it in.
+        #
+        # ``declare pattern`` bodies are deliberately *not* caught by this
+        # filter: their braces hold a ``FunctionBody`` owned by a
+        # ``PatternMatch``, not by a ``FunctionDeclaration``, so a ``let``
+        # written inside one is still hoisted -- the disclosed behaviour
+        # ``compute_semantic_hash``'s docstring describes.
         for ls in root.GetDescendants[LetStatement]():
+            if ls.GetFirstAncestor[FunctionDeclaration]() is not None:
+                continue
             binding = self._visit_let_statement(ls)
             let_bindings.append(binding)
             # Registered only *after* its own right-hand side is visited, so
@@ -531,18 +574,22 @@ class IRBuilder:
         # Every tabular statement, not just the first. ``T | count; U | count``
         # used to build exactly the IR of ``T | count`` -- same nodes, same
         # ``semantic_hash`` -- with the second statement unreachable through
-        # ``walk``/``find_all``. A function body is not in this list: its
-        # tabular expression hangs off the ``FunctionBody`` rather than being
-        # an ``ExpressionStatement``, so ``let f = (x:long) { T | where a > x
-        # }; T | count`` still reports exactly one.
+        # ``walk``/``find_all``. A function body's tabular tail is not in this
+        # list: it hangs off the ``FunctionBody`` rather than being an
+        # ``ExpressionStatement``, so ``let f = (x:long) { T | where a > x };
+        # T | count`` reports exactly one. The ancestor filter is belt to that
+        # braces -- if a future grammar puts a real statement in a body, it
+        # lands in the body rather than silently becoming a second top-level
+        # pipeline.
         additional_pipelines: list[Pipeline] = []
-        expr_stmts = root.GetDescendants[ExpressionStatement]()
-        if expr_stmts is not None and expr_stmts.Count > 0:
+        expr_stmts = [
+            st for st in root.GetDescendants[ExpressionStatement]()
+            if st.GetFirstAncestor[FunctionDeclaration]() is None
+        ]
+        if expr_stmts:
             main_pipeline = self._visit_pipeline(expr_stmts[0].Expression)
-            for i in range(1, expr_stmts.Count):
-                additional_pipelines.append(
-                    self._visit_pipeline(expr_stmts[i].Expression)
-                )
+            for st in expr_stmts[1:]:
+                additional_pipelines.append(self._visit_pipeline(st.Expression))
         if not main_pipeline:
             main_pipeline = self._visit_pipeline(root)
 
@@ -566,8 +613,8 @@ class IRBuilder:
         which shape it is:
 
         * ``FunctionDeclaration``  -> ``rhs_function``
-        * any tabular kind (see :func:`_is_tabular_let_rhs`) -> ``rhs_pipeline``
-        * a ``NameReference`` the binder resolved to a table -> ``rhs_pipeline``
+        * anything tabular (see :func:`_is_tabular_rhs`, which includes a
+          ``NameReference`` the binder resolved to a table) -> ``rhs_pipeline``
         * anything else            -> ``rhs_expr``
 
         Parentheses are unwrapped first. ``let A = (T | where …)`` is the
@@ -590,19 +637,17 @@ class IRBuilder:
         if expr is None:  # pragma: no cover — defensive
             return LetBinding(name=name, span=span)
 
-        net_kind = str(type(expr).__name__)
-
-        if net_kind == "FunctionDeclaration":
+        if str(type(expr).__name__) == "FunctionDeclaration":
+            function = self._visit_function_declaration(expr)
             return LetBinding(
                 name=name,
                 span=span,
-                rhs_function=self._visit_function_declaration(expr),
+                rhs_function=function,
+                inner_tables=_collect_inner_tables(function),
+                inner_time_exprs=_collect_inner_time_exprs(function),
             )
 
-        if _is_tabular_let_rhs(net_kind) or (
-            net_kind == "NameReference"
-            and is_table_symbol(getattr(expr, "ReferencedSymbol", None))
-        ):
+        if _is_tabular_rhs(expr):
             pipeline = self._visit_pipeline(expr)
             return LetBinding(
                 name=name,
@@ -615,21 +660,108 @@ class IRBuilder:
         return LetBinding(name=name, span=span, rhs_expr=self._visit_expr(expr))
 
     def _visit_function_declaration(self, node: Any) -> LetFunction:
-        """Extract parameter names and the body's span from a FunctionDeclaration.
+        """Build a :class:`LetFunction` -- signature and body -- from a .NET
+        ``FunctionDeclaration``.
 
         ``node.Parameters`` is a ``FunctionParameters`` wrapper whose own
         ``.Parameters`` is a ``SyntaxList[SeparatedElement[FunctionParameter]]``
-        — hence the unwrap.
+        — hence the unwrap. Each ``FunctionParameter`` carries a
+        ``NameAndType`` (the ``w:int``, read through ``_visit_expr``'s existing
+        ``NameAndTypeDeclaration`` branch so a parameter's declared type is
+        read exactly as a ``parse`` capture's is) and an optional
+        ``DefaultValue`` whose ``.Value`` is the literal.
+
+        ``node.Body`` is a ``FunctionBody``: a statement list that the grammar
+        restricts to ``let`` and ``declare query_parameters``, then an optional
+        tail expression. The ``let``s are built in order and registered as they
+        go, so each is visible to the ones after it and to the tail; the tail
+        dispatches through :func:`_is_tabular_rhs`, the same predicate a
+        ``let`` right-hand side uses.
+
+        The body is visited under a **parameter shadow**: the parameter names
+        are added to ``_param_names`` and both that set and ``_let_names`` are
+        restored in ``finally``, so nothing the body declares and no name it
+        shadows survives the declaration. The shadow is textual, which is what
+        keeps it -- and therefore ``semantic_hash`` -- independent of whether a
+        schema was supplied.
         """
-        params: list[str] = []
+        params: list[LetFunctionParameter] = []
         outer = getattr(node, "Parameters", None)
         inner = getattr(outer, "Parameters", None) if outer is not None else None
         if inner is not None:
             for param in _iter_elements(inner):
                 name_and_type = getattr(param, "NameAndType", None)
-                if name_and_type is not None:
-                    params.append(visit_name(name_and_type.Name))
-        return LetFunction(parameters=params, body_span=to_span(node.Body))
+                if name_and_type is None:  # pragma: no cover — defensive
+                    continue
+                decl = self._visit_expr(name_and_type)
+                if not isinstance(decl, TypedNameDecl):  # pragma: no cover — defensive
+                    decl = TypedNameDecl(
+                        name=visit_name(name_and_type),
+                        declared_type="unknown",
+                        span=to_span(name_and_type),
+                    )
+                default_clause = getattr(param, "DefaultValue", None)
+                default_value = (
+                    getattr(default_clause, "Value", None)
+                    if default_clause is not None else None
+                )
+                params.append(LetFunctionParameter(
+                    decl=decl,
+                    default=self._visit_expr(default_value)
+                    if default_value is not None else None,
+                ))
+
+        # A missing keyword is a null reference across the pythonnet boundary;
+        # a *recovered* one is a zero-width token, which is the parser saying
+        # the query did not write it either.
+        view_kw = getattr(node, "ViewKeyword", None)
+        is_view = view_kw is not None and getattr(view_kw, "Width", 0) > 0
+
+        body = getattr(node, "Body", None)
+        if body is None:  # pragma: no cover — defensive
+            return LetFunction(
+                is_view=is_view, parameters=params, body_span=to_span(node),
+            )
+
+        body_lets: list[LetBinding] = []
+        body_pipeline: Pipeline | None = None
+        body_expr: AnyExpr | None = None
+
+        saved_params = self._param_names
+        saved_lets = set(self._let_names)
+        self._param_names = saved_params | {p.decl.name for p in params}
+        try:
+            stmts = getattr(body, "Statements", None)
+            if stmts is not None:
+                for st in _iter_elements(stmts):
+                    if str(type(st).__name__) == "LetStatement":
+                        binding = self._visit_let_statement(st)
+                        body_lets.append(binding)
+                        self._let_names.add(binding.name)
+                    # ``QueryParametersStatement`` -- the only other kind the
+                    # grammar admits here -- and the parser's error-recovery
+                    # placeholders are dropped, the same silence every
+                    # non-``let`` statement kind gets at top level.
+            tail = getattr(body, "Expression", None)
+            while tail is not None and str(type(tail).__name__) == "ParenthesizedExpression":
+                tail = getattr(tail, "Expression", None)
+            if tail is not None:
+                if _is_tabular_rhs(tail):
+                    body_pipeline = self._visit_pipeline(tail)
+                else:
+                    body_expr = self._visit_expr(tail)
+        finally:
+            self._param_names = saved_params
+            self._let_names = saved_lets
+
+        return LetFunction(
+            is_view=is_view,
+            parameters=params,
+            body_lets=body_lets,
+            body_pipeline=body_pipeline,
+            body_expr=body_expr,
+            body_span=to_span(body),
+        )
 
     # -- pipeline / operator dispatch ------------------------------------
 
@@ -793,7 +925,10 @@ class IRBuilder:
             # leading trivia, which puts a preceding comment in the table
             # name and from there into ``semantic_hash``.
             name = _node_text(node).strip()
-        if name in self._let_names:
+        # A function parameter shadows a same-named ``let`` for the length of
+        # the body, so inside one this reads the parameter -- a table handed
+        # in, not the query's alias. See ``_visit_function_declaration``.
+        if name in self._let_names and name not in self._param_names:
             return LetRef(name=name, span=span)
         return TableRef(
             name=name, is_wildcard=is_wildcarded_name(name_node), span=span,
@@ -1682,7 +1817,12 @@ class IRBuilder:
             # from the statement text alone so it does not depend on whether a
             # schema was supplied. Lowering it to a ``ColumnRef`` made
             # ``find_all(ir, ColumnRef)`` report a column that does not exist.
-            elif name in self._let_names:
+            #
+            # ...unless a function parameter of the same name shadows it, in
+            # which case the body is naming the parameter and there is no
+            # binding to point at. Same rule, same set, as
+            # ``_visit_table_ref``'s source-position check.
+            elif name in self._let_names and name not in self._param_names:
                 res = LetValueRef(name=name, span=span)
             else:
                 res = ColumnRef(name=name, span=span)

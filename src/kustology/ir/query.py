@@ -1138,35 +1138,90 @@ class JoinOp(Operator):
     on: list[AnyExpr]
 
 
+class LetFunctionParameter(BaseModel):
+    """One declared parameter of a ``let``-bound function.
+
+    ``decl`` reuses :class:`~kustology.ir.expr.TypedNameDecl`, the node the
+    builder already produces for every other ``name:type`` shape in the
+    grammar (a ``parse`` capture, a typed ``find … project`` column), so a
+    parameter's declared type is read by the same code path that reads those
+    and cannot drift from them. That is also why this class is a plain
+    ``BaseModel`` rather than a new ``Expr`` subclass: it is a *slot* holding a
+    declaration and its default, not an expression anything evaluates.
+
+    ``default`` is the ``=3`` of ``(w:int=3)``. The grammar restricts it to a
+    literal, so it is an ``AnyExpr`` for uniformity rather than because a call
+    can appear there. Both its presence and its value reach ``semantic_hash``:
+    a parameter that may be omitted is a different signature from one that may
+    not, and two different defaults are two different functions for every call
+    that omits the argument.
+
+    A parameter name is *not* a ``let`` name. It is bound by the declaration,
+    so inside the body it shadows any same-named ``let`` from the enclosing
+    query and a reference to it lowers as a ``ColumnRef``/``TableRef``, never
+    a ``LetValueRef``/``LetRef`` — see :class:`LetFunction`.
+    """
+
+    model_config = {"extra": "forbid"}
+    kind: Literal["let_function_parameter"] = "let_function_parameter"
+    decl: TypedNameDecl
+    default: AnyExpr | None = None
+
+
 class LetFunction(BaseModel):
-    """A ``let``-declared function's shape. The body is not modeled.
+    """A ``let``-declared function: its signature and its body.
 
     ``let f = (x:int) { ... }`` yields a .NET ``FunctionDeclaration``, which is
     neither an expression nor a pipeline and so cannot ride on ``rhs_expr`` or
-    ``rhs_pipeline``. Recording it explicitly keeps the unmodeled boundary
-    legible instead of leaving three silent ``None``s that read as a bug.
+    ``rhs_pipeline``. It gets its own field on :class:`LetBinding` for that
+    reason, and its own class here.
 
-    Parameter types, defaults, tabular-vs-scalar bodies and call-site expansion
-    are out of scope; ``body_span`` locates the body in the source for callers
-    that want the text.
+    The body is built. Its tail dispatches by the same rule a ``let``
+    right-hand side does — a tabular expression becomes ``body_pipeline``, a
+    scalar one ``body_expr``, and at most one of the two is ever set. A ``let``
+    written *inside* the body lands in ``body_lets``, scoped there rather than
+    hoisted into :attr:`QueryIR.let_bindings`, since it is not in scope for the
+    query that declared the function. ``body_span`` still locates the body in
+    the source for callers that want the text; it stays volatile, so it does
+    not reach ``semantic_hash``.
 
-    Two consequences a caller has to know about, both documented at length in
-    :func:`~kustology.ir.transforms.compute_semantic_hash`. ``body_span`` is
-    volatile, so nothing here except the parameter names reaches
-    ``semantic_hash``: two functions with matching names whose bodies do
-    entirely different things collide, as do two differing only in a
-    parameter's type or default. And the body's tables and columns are
-    reachable from Tier 1 (``get_referenced_tables`` walks Microsoft's tree,
-    which has the body in it) but not from Tier 2 — ``find_all(ir, TableRef)``
-    over a query whose only source is a ``let`` function call comes back
-    empty.
+    ``is_view`` records the ``view`` keyword, which decides whether a
+    wildcard ``union *`` picks the function up — a difference in which rows a
+    query returns, not a spelling.
+
+    Three boundaries remain, and are boundaries rather than omissions:
+
+    * **Call sites are not expanded.** ``f(1)`` stays a
+      :class:`FuncCallSource` (or a ``FuncCall``); the body is reachable once,
+      through the declaration. Inlining it would report the body's tables once
+      per call and make the digest grow with the call count.
+    * **``declare query_parameters`` inside a body is dropped.** A
+      ``FunctionBody``'s statement list admits only ``let`` and
+      ``QueryParametersStatement``, and the second is the statement kind the
+      builder does not model anywhere — see
+      :func:`~kustology.ir.transforms.compute_semantic_hash`.
+    * **Parameter references are textual.** A parameter shadows a same-named
+      ``let`` from the enclosing query for the length of the body, decided
+      from the declaration text alone so it cannot depend on whether a schema
+      was supplied. A shadowed name therefore lowers as a ``ColumnRef`` /
+      ``TableRef``, which is what the parameter is from the body's point of
+      view, rather than as a ``LetValueRef`` / ``LetRef`` pointing at a binding
+      the body cannot see.
     """
 
     model_config = {"extra": "forbid"}
     kind: Literal["let_function"] = "let_function"
-    # Parameter names in declaration order. The function's own name is on the
+    is_view: bool = False
+    # Declaration order, which is call order -- `parameters[0]` is the
+    # parameter `f(1, 2)` passes `1` to. The function's own name is on the
     # owning LetBinding.
-    parameters: list[str] = []
+    parameters: list[LetFunctionParameter] = []
+    # ``let``s written inside the body, in declaration order. Scoped here:
+    # each is visible to the ones after it and to the tail, and to nothing
+    # outside the braces.
+    body_lets: list["LetBinding"] = []
+    body_pipeline: Pipeline | None = None
+    body_expr: AnyExpr | None = None
     body_span: Span
 
 
@@ -1199,7 +1254,12 @@ class LetBinding(BaseModel):
     # does not acquire the body's schema.
     rhs_pipeline: Pipeline | None = None
     rhs_function: LetFunction | None = None
-    # Tables and time expressions found inside rhs_pipeline; empty otherwise.
+    # Tables and time expressions found inside whichever of ``rhs_pipeline``
+    # and ``rhs_function`` is populated; empty for a scalar binding. A
+    # function's body is one of the places a query reads a table from, so
+    # leaving it out made the field answer "which tables does this binding
+    # read, unless it is a function" -- a qualification no lineage consumer
+    # could see.
     # ``inner_tables`` is real tables only -- a hop to an earlier binding
     # (``let B = A | …``) is a ``LetRef``, reachable via
     # ``find_all(rhs_pipeline, LetRef)``. Keeping aliases out means the field
@@ -1265,6 +1325,7 @@ for _expr_cls in REBUILT_BY_QUERY_MODULE:
 
 Pipeline.model_rebuild()
 LetBinding.model_rebuild()
+LetFunctionParameter.model_rebuild()
 LetFunction.model_rebuild()
 UnionOp.model_rebuild()
 MvApplyOp.model_rebuild()

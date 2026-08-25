@@ -78,14 +78,25 @@ def walk(node, depth: int = 0) -> None:
         # A binding's right-hand side is exactly one of three things, and
         # they are separate fields rather than one polymorphic one.
         if node.rhs_function is not None:
-            # `let f = (x:int) { ... }`. The body is NOT built — the IR
-            # records the parameter names and a span locating the body in
-            # the source, and stops there. Call sites are not expanded, so
-            # nothing inside those braces reaches this walk.
-            params = ", ".join(node.rhs_function.parameters)
-            body = node.rhs_function.body_span
-            print(f"{indent}LetFunction: {node.name}({params})"
-                  f"  body at [{body.text_start}, {body.text_start + body.width})")
+            # `let f = (x:int) { ... }`. The body *is* built, so this walk
+            # descends into it — one more scope, with its own `let`s, rather
+            # than a leaf. What is still not expanded is the call site: the
+            # body is reachable here, through the declaration, and not again
+            # at each `f(...)`.
+            fn = node.rhs_function
+            params = ", ".join(
+                p.decl.name + ":" + p.decl.declared_type
+                + (f"={p.default.canonical_form}" if p.default is not None else "")
+                for p in fn.parameters
+            )
+            view = "view " if fn.is_view else ""
+            print(f"{indent}LetFunction: {view}{node.name}({params})")
+            for body_let in fn.body_lets:
+                walk(body_let, depth + 1)
+            if fn.body_pipeline is not None:
+                walk(fn.body_pipeline, depth + 1)
+            elif fn.body_expr is not None:
+                print(f"{indent}  Body: {fn.body_expr.canonical_form}")
         elif node.rhs_expr is not None:
             print(f"{indent}Let: {node.name} = {node.rhs_expr.canonical_form}")
         else:

@@ -102,6 +102,19 @@ SPLITS = [
     ("declared schema vs none splits",
      "T | evaluate bag_unpack(d) : (x:string)",
      "T | evaluate bag_unpack(d)"),
+    # A `let` function's body was the largest known gap in 0.2.0: what
+    # collided was an arbitrary amount of query rather than one modifier.
+    # `LetFunction` now carries the body, the parameters' declared types and
+    # defaults, and the `view` keyword.
+    ("`let` function bodies split",
+     "let S = (w:int) { A | where EventID == 4625 | summarize c=count() by Account | where c > w }; S(5)",
+     "let S = (w:int) { A | where EventID == 4624 | summarize c=count() by Computer | where c > w }; S(5)"),
+    ("a parameter's declared type splits",
+     "let S = (w:int) { A | where x > w }; S(5)",
+     "let S = (w:long) { A | where x > w }; S(5)"),
+    ("a parameter's default splits",
+     "let S = (w:int) { A | where x > w }; S(5)",
+     "let S = (w:int=3) { A | where x > w }; S(5)"),
 ]
 
 KNOWN_MERGES = [
@@ -134,20 +147,6 @@ KNOWN_MERGES = [
      "T | getschema kind=csl", "T | getschema"),
     ("consume drops `decodeblocks=` — known gap",
      "T | consume decodeblocks=true", "T | consume"),
-    # A `let` function's body is not built, and `body_span` is volatile, so
-    # nothing between the braces reaches the digest. This is the largest gap
-    # in the list: what collides is an arbitrary amount of query rather than
-    # one modifier. Parameter *names* and their count do split; types and
-    # defaults do not, because neither is recorded.
-    ("`let` function bodies are invisible: different bodies — known gap",
-     "let S = (w:int) { A | where EventID == 4625 | summarize c=count() by Account | where c > w }; S(5)",
-     "let S = (w:int) { A | where EventID == 4624 | summarize c=count() by Computer | where c > w }; S(5)"),
-    ("`let` function bodies: a parameter's declared type — known gap",
-     "let S = (w:int) { A | where x > w }; S(5)",
-     "let S = (w:long) { A | where x > w }; S(5)"),
-    ("`let` function bodies: a parameter's default — known gap",
-     "let S = (w:int) { A | where x > w }; S(5)",
-     "let S = (w:int=3) { A | where x > w }; S(5)"),
     # A statement that is neither `let` nor tabular contributes nothing of
     # its own to the digest, so its content hashes as though absent. Every
     # kind that behaves that way gets a row, and each uses the variant that

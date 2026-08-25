@@ -422,6 +422,11 @@ def test_body_span_is_omitted_from_a_let_function():
     """``_OMIT_FIELDS`` matched the name ``span`` exactly, so ``LetFunction``
     -- the one model whose span field is called ``body_span`` -- shipped a
     raw character offset into the LLM view that every other node was spared.
+
+    The body itself is rendered: it is the query a reader has to see to know
+    what the function does. Parameters render as their own dicts rather than
+    as bare name strings, since the declared type and any default are part of
+    the signature.
     """
     ir = IRBuilder().build("let f = (x:int){x+1}; T | extend y = f(a)")
     fn = to_llm_dict(ir)["let_bindings"][0]["rhs_function"]
@@ -429,7 +434,11 @@ def test_body_span_is_omitted_from_a_let_function():
     # The node is really there, so the missing key below is a strip and not
     # an absent function.
     assert fn["kind"] == "let_function"
-    assert fn["parameters"] == ["x"]
+    assert fn["parameters"][0]["decl"]["name"] == "x"
+    assert fn["parameters"][0]["decl"]["declared_type"] == "int"
+    # The scalar tail reaches the view, canonical form and all.
+    assert fn["body_expr"]["kind"] == "bin_op"
+    assert fn["body_expr"]["canonical_form"] == "x + 1"
 
     assert "body_span" not in fn
 

@@ -52,6 +52,17 @@ QUERIES = [
     # let-bindings.
     "let cutoff = ago(1h); DeviceProcessEvents | where TimeGenerated > cutoff",
     "let allowlist = dynamic(['svc_a','svc_b']); DeviceProcessEvents | where AccountName !in (allowlist)",
+    # let-declared functions. `LetFunction` holds a whole second IR --
+    # parameters with their declared types and defaults, body-scoped bindings,
+    # and a tail that is either a nested `Pipeline` or an `AnyExpr`. Each of
+    # those is a recursive field reached only through this node, so a missing
+    # `model_rebuild()` on any of them surfaces here and nowhere else.
+    (
+        "let Recent = (win:timespan=1h) { let cutoff = ago(win); "
+        "DeviceProcessEvents | where TimeGenerated > cutoff }; Recent(2h)"
+    ),
+    "let Doubled = (n:long) { n * 2 }; DeviceProcessEvents | extend P = Doubled(ProcessId)",
+    "let AllDevices = view () { DeviceProcessEvents | project DeviceId }; AllDevices()",
     # Union / sub-pipelines.
     "union DeviceProcessEvents, DeviceFileEvents | where FileName == 'cmd.exe'",
     # take / top / sort / search.
