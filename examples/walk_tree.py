@@ -29,6 +29,8 @@ three or four of them depending on where you put the check. The second demo
 below shows one of them costing real information.
 """
 
+from _display import banner, kql, note, section, takeaway
+
 from kustology import parse
 
 # Wrappers that have no logical weight — descend through them silently.
@@ -134,18 +136,55 @@ JOIN_QUERY = "StormEvents | join kind=inner (StormEvents) on State"
 
 
 def main() -> None:
-    print("Input query:")
-    for line in QUERY.splitlines():
-        print(f"  {line}")
-    print()
-    print("AST walk (logical nodes only):")
-    walk_node(parse(QUERY).syntax)
+    banner(
+        "Walking Microsoft's syntax tree",
+        "One walk over a two-statement query prints the logical nodes and "
+        "drops the tokens and wrappers. A second walk over a join shows what "
+        "a substring test for \"Token\" throws away.",
+        "how much of this tree is grammar rather than meaning, and how many "
+        "different things arrive as a bare Name line.",
+    )
 
+    section("The query")
+    kql(QUERY)
+
+    section(
+        "AST walk, logical nodes only",
+        "Wrappers recurse without indenting and tokens never print, so the "
+        "depth below tracks the query's structure rather than the grammar's.",
+    )
+    walk_node(parse(QUERY).syntax)
+    note(
+        "The source table, the `let` alias that reads it, the function "
+        "callee, and the `by` key all print as Name. The AST does not "
+        "separate them. Sorting them into TableRef, LetRef, LetValueRef, "
+        "and ColumnRef is what tier 2 adds, and it is the clearest single "
+        "reason to walk the IR instead."
+    )
+
+    section(
+        "What a substring test hides",
+        "`kind=inner` parses as a TokenLiteralExpression: a kind name that "
+        "contains \"Token\" on a node that is not one.",
+    )
+    kql(JOIN_QUERY)
     print()
-    print(f"Input query: {JOIN_QUERY}")
-    print()
-    print("AST walk — the `inner` line is what `\"Token\" in kind` would hide:")
     walk_node(parse(JOIN_QUERY).syntax)
+    note(
+        "The `Literal: inner` line is the join kind. A walker that filters "
+        "on `\"Token\" in kind` reports the join and never reports which "
+        "kind of join it is."
+    )
+
+    takeaway(
+        "Walk the AST when you need token positions, comments, or an "
+        "operator the IR does not model yet. The switch above is the "
+        "pattern to copy: match a closed set of kind strings, recurse "
+        "through wrappers, and stop at nodes that already summarize "
+        "themselves.",
+        more="docs/tier1-syntax-tree.md, and examples/walk_ir.py for this "
+             "same query through the typed IR",
+    )
 
 
 if __name__ == "__main__":

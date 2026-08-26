@@ -32,6 +32,8 @@ join-bearing query:
                                      Microsoft's ``KustoCodeService``.
 """
 
+from _display import banner, kql, note, paint, section, table, takeaway
+
 from kustology import format_query, parse, validate
 
 QUERY = """\
@@ -49,36 +51,38 @@ StormEvents
 | project State, EventType, EventCount, TotalDamage"""
 
 
-def banner(title: str) -> None:
-    print(f"\n=== {title} ===")
-
-
-def show_query(label: str, query: str) -> None:
-    print(f"{label}:")
-    for line in query.splitlines():
-        print(f"  {line}")
-
-
 def analyze(query_text: str) -> None:
     """Run every ``KustoQuery`` analyzer over ``query_text`` and print each result."""
-    show_query("Input query", query_text)
+    banner(
+        "Every tier 1 analyzer, over one query",
+        "A query with two `let` statements, a join, and a summarize, put "
+        "through each analyzer on KustoQuery in turn. Everything here runs "
+        "on the base install, with no schema and no IR.",
+        "how much of this is syntax and nothing more. The notes below say "
+        "where that runs out and what tier 2 adds.",
+    )
+
+    section("The query")
+    kql(query_text)
 
     result = parse(query_text)
     diagnostics = validate(query_text)
 
-    banner("validate()")
+    section("validate()", "Microsoft's parser diagnostics, as dicts.")
     print(f"  {len(diagnostics)} diagnostic(s)"
           + (" — query is syntactically valid" if not diagnostics else ""))
     for d in diagnostics:
-        print(f"    [{d['severity']} {d['code']}] at char {d['start']}: {d['message']}")
+        level = paint(d["severity"], d["severity"].lower())
+        print(f"    [{level} {d['code']}] at char {d['start']}: {d['message']}")
 
-    banner("get_structural_hash()")
+    section(
+        "get_structural_hash()",
+        "SHA-256 over the AST skeleton: node kinds and shape, nothing else. "
+        "Each row below is hashed here and compared, rather than claimed.",
+    )
     baseline = result.get_structural_hash()
     print(f"  {baseline}")
-    # Demonstrated rather than asserted: each variant is hashed here, and
-    # the verdict is computed. The hash is over the AST *skeleton* — node
-    # kinds and shape — so it is blind to literal values and to identifiers,
-    # and sensitive to the sequence of operators.
+    print()
     variants = {
         "literals changed (5 -> 500, 0 -> 3)":
             query_text.replace("Casualties > 5", "Casualties > 500")
@@ -92,43 +96,65 @@ def analyze(query_text: str) -> None:
         "one more operator (| take 10)":
             query_text + "\n| take 10",
     }
-    for label, variant in variants.items():
-        same = parse(variant).get_structural_hash() == baseline
-        print(f"  {'same' if same else 'DIFF'}  {label}")
-    print("  → Identifiers do not move it either, which is the part that")
-    print("    surprises people: `where State == 'x'` and `where Region == 'x'`")
-    print("    are one structural hash. For a digest that separates those,")
-    print("    use tier 2's `semantic_hash` (see examples/semantic_hash_demo.py).")
+    table(
+        ["Change to the query", "Hash"],
+        [
+            [label, "same" if parse(v).get_structural_hash() == baseline else "differs"]
+            for label, v in variants.items()
+        ],
+    )
+    note(
+        "Identifiers do not move it either, which is the part that catches "
+        "people off guard: `where State == 'x'` and `where Region == 'x'` "
+        "share one structural hash. Tier 2's `semantic_hash` is the digest "
+        "that separates them."
+    )
 
-    banner("get_referenced_tables()")
+    section(
+        "get_referenced_tables()",
+        "Every table source, including joined, union'd, and "
+        "database()-qualified references.",
+    )
     tables = sorted(result.get_referenced_tables())
     print(f"  {tables}")
-    print("  → `high_impact_states` is a `let` alias, not a table, and is")
-    print("    correctly absent. So is the join's right-hand side, because")
-    print("    that side reads the alias too.")
+    note(
+        "`high_impact_states` is a `let` alias rather than a table, so it is "
+        "absent. So is the join's right-hand side, which reads that alias."
+    )
 
-    banner("get_referenced_columns()")
-    columns = sorted(result.get_referenced_columns())
-    for col in columns:
+    section(
+        "get_referenced_columns()",
+        "Every name in a column position, with function callees and "
+        "$-prefixed join sides filtered out.",
+    )
+    for col in sorted(result.get_referenced_columns()):
         print(f"  {col}")
-    print("  → Every name in a column position, which includes the ones this")
-    print("    query *creates*: Casualties, TotalLoss, EventCount, TotalDamage")
-    print("    are summarize/extend outputs, not columns of StormEvents. This")
-    print("    is a syntactic answer; bind a schema and use tier 2's")
-    print("    `find_all(ir, ColumnRef)` to get provenance per reference.")
+    note(
+        "This list includes the names the query creates: Casualties, "
+        "TotalLoss, EventCount, and TotalDamage are summarize and extend "
+        "outputs, not columns of StormEvents. Bind a schema and use tier "
+        "2's `find_all(ir, ColumnRef)` for provenance per reference."
+    )
 
-    banner("get_referenced_functions()")
-    functions = sorted(result.get_referenced_functions())
-    print(f"  {functions}")
+    section("get_referenced_functions()", "Callees, built-in and user-defined.")
+    print(f"  {sorted(result.get_referenced_functions())}")
 
-    banner("find_time_expressions()")
+    section(
+        "find_time_expressions()",
+        "Temporal expressions with their offsets into the source text.",
+    )
     time_windows = result.find_time_expressions()
     if not time_windows:
         print("  (no temporal expressions)")
     for text, start, length in time_windows:
         print(f"  {text!r:25s}  start={start:4d}  length={length}")
+    note(
+        "`ago(lookback)` appears twice, at two offsets, because the `let` "
+        "value is read in two places. The offsets are what a linter needs "
+        "to point at the text."
+    )
 
-    banner("get_operator_chain()")
+    section("get_operator_chain()", "The main pipeline, in order.")
     # Operators only: the source table the pipeline reads from is not one,
     # so print it separately rather than expecting it at the head of the list.
     chain = result.get_operator_chain()
@@ -138,21 +164,46 @@ def analyze(query_text: str) -> None:
     print(f"  {len(chain)} operators{reading}:")
     print("  " + (" -> ".join(flow) if flow else "(none)"))
 
-    banner("get_operator_stats()")
+    section(
+        "get_operator_stats()",
+        "Counts across the whole AST, sub-pipelines included, which is why "
+        "the totals here exceed the chain above.",
+    )
     stats = result.get_operator_stats()
-    for op, count in sorted(stats.items(), key=lambda x: x[1], reverse=True):
-        print(f"  {op.replace('Operator', ''):16s} {count}")
+    table(
+        ["Operator", "Count"],
+        [[op.replace("Operator", ""), str(count)]
+         for op, count in sorted(stats.items(), key=lambda x: x[1], reverse=True)],
+    )
 
-    banner('replace_table("StormEvents", "StormEvents_v2")')
-    rewritten = result.replace_table("StormEvents", "StormEvents_v2")
-    show_query("Output", rewritten)
-    print()
-    print("  Every occurrence (let-bound sub-pipeline AND outer source) is renamed.")
-    print("  A naïve string replace would also (incorrectly) rewrite a column or")
-    print("  literal containing 'StormEvents'.")
+    section(
+        'replace_table("StormEvents", "StormEvents_v2")',
+        "An AST-aware rename across every reference position.",
+    )
+    kql(result.replace_table("StormEvents", "StormEvents_v2"))
+    note(
+        "Both occurrences change: the one inside the `let` body and the "
+        "outer source. A string replace would also rewrite any column or "
+        "literal that happens to contain 'StormEvents'."
+    )
 
-    banner("format_query() — canonical formatting")
-    show_query("Output", format_query(query_text))
+    section(
+        "format_query()",
+        "Canonical formatting through Microsoft's KustoCodeService.",
+    )
+    kql(format_query(query_text))
+    note("The formatter ships in the same Kusto.Language library as the "
+         "parser, so the layout follows Microsoft's conventions rather than "
+         "this project's. Note `kind = inner`, which the formatter spaces "
+         "out.")
+
+    takeaway(
+        "Tier 1 answers syntactic questions about a query without a schema "
+        "and without .NET knowledge on your side. Reach for tier 2 when you "
+        "need types, column provenance, or a digest that separates two "
+        "queries by meaning.",
+        more="docs/tier1-syntax-tree.md and docs/semantic-hash.md",
+    )
 
 
 def main() -> None:

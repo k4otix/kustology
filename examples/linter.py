@@ -15,7 +15,8 @@ Each rule is a different shape of question:
 * **no-time-filter** — a *whole-query* question, answered with tier 1's
   ``find_time_expressions()``. There is no single node to point at, so the
   finding carries no span, which is exactly why ``Finding.span`` is
-  optional.
+  optional. What that absence costs depends on where the query runs; see
+  ``no_time_filter`` below.
 * **contains-vs-has** — a *node* question: ``BinOp`` with ``op="contains"``
   against a string literal. ``has`` matches whole terms and can use the
   term index; ``contains`` is a substring scan and cannot. Found with
@@ -33,6 +34,8 @@ Requires the ``[ir]`` extras: ``pip install 'kustology[ir]'``.
 """
 
 from collections.abc import Iterable
+
+from _display import banner, kql, note, section, severity, table, takeaway
 
 from kustology import parse, validate
 from kustology.ir import (
@@ -54,16 +57,28 @@ SCHEMA = {
     }
 }
 
+# Title, query, and the point the query makes. The commentary sits in the
+# data so the run explains itself.
 QUERIES = [
-    # All three IR rules fire. The semantic one does not — the query binds
-    # cleanly, which is the point: our rules and the binder's answer are
-    # independent, and a query can be fine by one and not the other.
-    'SigninLogs | where UserPrincipalName contains "admin" | project-keep *',
-    # A typo the parser cannot see and only the binder can.
-    'SigninLogs | where TimeGenerated > ago(1d) | where ResultTypo == "0"',
-    # Clean.
-    ('SigninLogs | where TimeGenerated > ago(1d) '
-     '| where UserPrincipalName has "admin" | project UserPrincipalName'),
+    (
+        "Three IR rules fire, the binder stays quiet",
+        'SigninLogs | where UserPrincipalName contains "admin" | project-keep *',
+        ("The query binds cleanly, so the semantic rule finds nothing. The "
+         "rules in this file and the binder's answer are independent, and a "
+         "query can pass one while failing the other."),
+    ),
+    (
+        "A typo only the binder can see",
+        'SigninLogs | where TimeGenerated > ago(1d) | where ResultTypo == "0"',
+        ("`ResultTypo` is a valid identifier, so the parser accepts it. "
+         "Resolving it against the schema is what turns it into an error."),
+    ),
+    (
+        "Clean under all four rules",
+        ('SigninLogs | where TimeGenerated > ago(1d) '
+         '| where UserPrincipalName has "admin" | project UserPrincipalName'),
+        "A time filter, an indexed string match, and a named projection.",
+    ),
 ]
 
 # `has` matches whole terms against the term index; `contains` is an
@@ -74,21 +89,42 @@ QUERIES = [
 # replacement to suggest.
 _UNINDEXED_STRING_OPS = {"contains", "contains_cs"}
 
+# What supplies the time bound when the query text does not.
+_TIME_BOUND_BY_CONTEXT = [
+    ["Azure Data Explorer", "Nothing. The query reads the table's full retention."],
+    ["Log Analytics and Sentinel logs",
+     ("The time picker, which starts at the last 24 hours and reads "
+      "'Set in query' once you filter the standard time column.")],
+    ["Sentinel hunting",
+     ("The range the analyst selects, injected at run time. Microsoft's "
+      "guidance is to leave the filter out of a hunting query.")],
+    ["azure-monitor-query for Python",
+     ("The `timespan` argument, which is required. Passing None runs the "
+      "query unbounded.")],
+]
+
 
 def no_time_filter(ir: QueryIR) -> Iterable[Finding]:
     """Flag a query with no temporal expression anywhere.
 
     Whole-query, so it reparses the recorded source rather than walking
-    nodes — ``QueryIR.raw_text`` is the query as the builder saw it. A
+    nodes. ``QueryIR.raw_text`` is the query as the builder saw it. A
     finding with no span is the honest shape: the defect is the *absence*
     of something, which has no location.
+
+    The message stops at the absence because that is all the text can
+    prove. A time bound can arrive from outside it, and whether one does
+    depends on the caller. ``_TIME_BOUND_BY_CONTEXT`` above lists what
+    common callers supply. Rank or drop this rule for the context you lint
+    for.
     """
     if parse(ir.raw_text).find_time_expressions():
         return
     yield Finding(
         rule_id="example.no_time_filter",
         severity="warning",
-        message="No time filter — this scans the table's full retention.",
+        message="No time filter in the query text; any time bound comes "
+                "from the caller.",
     )
 
 
@@ -162,19 +198,57 @@ def lint(query: str, schema: dict) -> list[Finding]:
     return findings
 
 
+def report(query: str, findings: list[Finding]) -> None:
+    """Print one query's findings, one line each plus the text they cover."""
+    if not findings:
+        print("  clean")
+        return
+    for f in findings:
+        where = f"@{f.span.text_start}" if f.span else "@query"
+        print(f"  [{severity(f.severity)}] {f.rule_id:<28} {where:<6} {f.message}")
+        if f.span:
+            print(f"             <- {f.span.text(query)!r}")
+
+
 def main() -> None:
-    for query in QUERIES:
-        print(f"\n=== {query}")
-        findings = lint(query, SCHEMA)
-        if not findings:
-            print("  clean")
-            continue
-        for f in findings:
-            where = f"@{f.span.text_start}" if f.span else "@query"
-            excerpt = f"  <- {f.span.text(query)!r}" if f.span else ""
-            print(f"  [{f.severity:<7}] {f.rule_id:<28} {where:<6} {f.message}")
-            if excerpt:
-                print(f"           {excerpt.strip()}")
+    banner(
+        "A KQL linter built on the IR",
+        "Three analyzers read the typed IR and a fourth lifts Microsoft's "
+        "binder diagnostics into the same Finding vocabulary. All four run "
+        "over three queries.",
+        "one merged list per query, holding findings from two very "
+        "different sources. Some carry a span into the query text and one "
+        "cannot, because it reports something that isn't there.",
+    )
+
+    for index, (title, query, why) in enumerate(QUERIES, start=1):
+        section(f"Query {index}: {title}", why)
+        kql(query)
+        print()
+        report(query, lint(query, SCHEMA))
+
+    section(
+        "Where a missing time filter costs you",
+        "`example.no_time_filter` reads the query text, which is the only "
+        "thing an analyzer has. The bound it reports missing often arrives "
+        "from the caller instead.",
+    )
+    table(["Caller", "Time bound it supplies"], _TIME_BOUND_BY_CONTEXT)
+    note(
+        "So the same finding is a real cost in Azure Data Explorer and "
+        "noise in a Sentinel hunting query. Severity is a plain Literal "
+        "and analyzers are plain functions, so ranking this rule, or "
+        "leaving it out of ANALYZERS, is a decision you make per context."
+    )
+
+    takeaway(
+        "Every rule above is a function from QueryIR to Findings. Composing "
+        "them is concatenation, and the binder's diagnostics join the same "
+        "list once you map their severities. Nothing here registers a rule "
+        "or subclasses a base class.",
+        more="docs/tier2-ir.md, and examples/analyzer_demo.py for the "
+             "Finding model itself",
+    )
 
 
 if __name__ == "__main__":

@@ -45,6 +45,12 @@ kustology = "kustology.cli:main"
 ir = [
     "pydantic>=2.6.0",
 ]
+# Colour and syntax highlighting for the scripts in examples/. The library
+# never imports rich; examples/_display.py falls back to plain text when it
+# is missing, so this extra changes how the examples read, nothing else.
+examples = [
+    "rich>=13.0.0",
+]
 # Base test extras — NO pydantic. The CI matrix uses these to prove
 # `pip install kustology` still works without the IR extras.
 # pyyaml is here, not only under `dev`, because the sample_sentinel_corpus
@@ -62,6 +68,7 @@ dev = [
     "pytest>=8.0.0",
     "pytest-cov>=4.1.0",
     "pydantic>=2.6.0",
+    "rich>=13.0.0",
     "build>=1.0.0",
     "twine>=5.0.0",
     "ruff>=0.16.3",

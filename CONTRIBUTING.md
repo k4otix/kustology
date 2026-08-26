@@ -142,6 +142,11 @@ let it fall through to `UnknownOp` / `UnknownExpr` / `UnknownStmt`, and commit
   an SPDX/copyright header, and one that imports `kustology.ir` must be
   added to `IR_EXAMPLES` in `tests/test_examples.py` so it skips cleanly on
   a base install. `tests/test_examples.py` runs every one of them.
+- Examples print through `examples/_display.py`, which uses `rich` when the
+  `[examples]` extra is installed and plain text when it is not. Call
+  `banner`, `section`, `note`, `kql`, `data`, `table`, and `takeaway`
+  rather than formatting output by hand, and never import `rich` in an
+  example. The smoke test runs each example both ways.
 - Do not declare a model field you cannot populate in the same change.
   A declared-but-unfilled field reads as implemented and is invisible to
   tests, so a downstream consumer can design against it before discovering

@@ -6,9 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- New `[examples]` extra (`pip install 'kustology[examples]'`) adds `rich`, which gives the scripts in `examples/` colour and syntax highlighting. The library never imports it, and the examples fall back to plain text without it.
+
 ### Changed
 
 - README is now a short front page. The reference material moves to `docs/`: syntax-tree behavior, the Tier 2 IR, the CLI, and the `semantic_hash` contract.
+- Every example narrates its own output: what it demonstrates, what to look for, and what each section's result means.
+- `examples/linter.py`'s `example.no_time_filter` no longer claims a missing time filter scans full retention. It reports the absence, and the run prints what supplies a time bound in Azure Data Explorer, the Log Analytics and Sentinel logs blades, Sentinel hunting, and the Azure Monitor Query SDK.
 
 ## [0.2.0] — 2026-08-25
 

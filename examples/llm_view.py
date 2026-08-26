@@ -47,6 +47,8 @@ Requires the ``[ir]`` extras: ``pip install 'kustology[ir]'``.
 import json
 import typing
 
+from _display import banner, data, kql, note, section, table, takeaway
+
 from kustology import parse
 from kustology.ir import LiteralExpr
 
@@ -136,16 +138,36 @@ def main() -> None:
     canonical = ir.model_dump_json(indent=2)
     llm = json.dumps(ir.to_llm_dict(), indent=2)
 
-    print("Input query:")
-    for line in QUERY.splitlines():
-        print(f"  {line}")
-    print()
-    print(f"Canonical model_dump_json: {len(canonical):>6,} bytes  "
-          f"({canonical.count(chr(10)) + 1} lines)")
-    print(f"LLM view (to_llm_dict):    {len(llm):>6,} bytes  "
-          f"({llm.count(chr(10)) + 1} lines)")
-    print(f"Reduction:                 {(1 - len(llm) / len(canonical)) * 100:.0f}%")
-    print()
+    banner(
+        "Two serializations of one query",
+        "The same bound IR dumped twice: once through model_dump_json, "
+        "which round-trips, and once through to_llm_dict, which is smaller "
+        "and lossy.",
+        "what the smaller view leaves out, and the one absence that reads "
+        "as a bug until you know the rule behind it.",
+    )
+
+    section("The query", "A `let`, a time window, two negations, and a join.")
+    kql(QUERY)
+
+    section(
+        "Size, on this query",
+        "Measured here rather than quoted, so the numbers cannot go stale.",
+    )
+    table(
+        ["Serialization", "Bytes", "Lines"],
+        [
+            ["model_dump_json", f"{len(canonical):,}",
+             str(canonical.count(chr(10)) + 1)],
+            ["to_llm_dict", f"{len(llm):,}", str(llm.count(chr(10)) + 1)],
+        ],
+    )
+    print(f"  Reduction: {(1 - len(llm) / len(canonical)) * 100:.0f}%")
+    note(
+        "Most of the difference is result_schema, which the canonical dump "
+        "repeats on every operator and the LLM view keeps only on Pipeline. "
+        "\"What columns does this return\" is one answer per pipeline."
+    )
 
     # The same query without a schema, to show what binding buys — and one
     # consequence of the "drop defaults" rule that surprises people.
@@ -157,18 +179,35 @@ def main() -> None:
     # LLM view drops it: an unbound column carries no `result_type` key at
     # all. Absent means unresolved here — do not read a missing key as an
     # error.
+    section(
+        "What binding adds, and what the view then drops",
+        "The same query parsed without a schema, next to the bound parse "
+        "above.",
+    )
     unbound_ir = parse(QUERY).to_ir()
-    print(f"model_dump_json, unbound: "
+    print(f"  model_dump_json, unbound: "
           f'{unbound_ir.model_dump_json().count(chr(34) + "unresolved" + chr(34))} '
           f'nodes say "unresolved".')
-    print(f"to_llm_dict, unbound:     "
+    print(f"  to_llm_dict, unbound:     "
           f"{_typed_columns(unbound_ir.to_llm_dict())} of "
           f"{_all_columns(unbound_ir.to_llm_dict())} column_ref nodes carry a "
           f"result_type key.")
-    print(f"to_llm_dict, bound:       "
+    print(f"  to_llm_dict, bound:       "
           f"{_typed_columns(ir.to_llm_dict())} of "
           f"{_all_columns(ir.to_llm_dict())}.")
-    print()
+    note(
+        "An unplaced column reads `result_type: \"unresolved\"` in the "
+        "canonical dump. That string is also the field's default, so the "
+        "LLM view drops it and an unbound column carries no result_type key "
+        "at all. Absent means unresolved here. Do not read a missing key as "
+        "an error."
+    )
+
+    section(
+        "Which literal kinds keep canonical_form",
+        "The kinds come from the model and each verdict comes from a real "
+        "parse, so this split is derived at run time.",
+    )
     # Which literal kinds keep a canonical_form identical to their value.
     # Derived, not written down: the kinds come from the model, the verdict
     # from a real parse of each.
@@ -189,18 +228,37 @@ def main() -> None:
             kept.append(kind)
         else:
             dropped.append(kind)
-    print(f"canonical_form dropped ({len(dropped)} of {len(kinds)} literal kinds): "
+    print(f"  dropped ({len(dropped)} of {len(kinds)} literal kinds): "
           f"{', '.join(dropped)}")
-    print(f"canonical_form kept    ({len(kept)} of {len(kinds)}): {', '.join(kept)}")
+    print(f"  kept    ({len(kept)} of {len(kinds)}): {', '.join(kept)}")
     if unprobed:
-        print(f"no probe for: {', '.join(unprobed)}  <-- add one to _LITERAL_PROBES")
-    print("  → The kept ones are exactly the kinds whose `value` is a")
-    print("    non-string stored as a string, so re-rendering it as KQL adds")
-    print("    quotes the canonical form does not have and the equality fails.")
-    print()
+        print(f"  no probe for: {', '.join(unprobed)}  <-- add one to _LITERAL_PROBES")
+    note(
+        "The kept ones are the kinds whose `value` is a non-string stored "
+        "as a string. Re-rendering one as KQL adds quotes the canonical "
+        "form does not have, the equality test fails, and the field stays."
+    )
 
-    print("LLM view:")
-    print(llm)
+    section(
+        "The LLM view",
+        "Every node carries a `kind` discriminator. Spans, default values, "
+        "and per-operator schemas are gone.",
+    )
+    data(llm)
+    note(
+        "Pass this to a model to ask what a query does, where a bug is, or "
+        "how to add a filter. Keep model_dump_json for anything that has to "
+        "validate back through QueryIR.model_validate_json, which this view "
+        "does not."
+    )
+
+    takeaway(
+        "to_llm_dict trades round-tripping for a payload a model can read "
+        "without wading through offsets and repeated schemas. The rules it "
+        "drops by are fixed, so a consumer can rely on absence meaning the "
+        "default.",
+        more="docs/tier2-ir.md",
+    )
 
 
 if __name__ == "__main__":

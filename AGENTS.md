@@ -533,3 +533,22 @@ must expose a zero-arg `main()` and an SPDX/copyright header to match
 the existing convention. Tier 2 examples are listed in the harness's
 `IR_EXAMPLES` set so they `importorskip("pydantic")` cleanly on a
 base install.
+
+### `examples/_display.py` is presentation, not API
+
+Examples narrate their own output through `_display.py`: `banner`,
+`section`, `note`, `kql`, `data`, `table`, `takeaway`, plus `paint` and
+`severity` for inline colour. The module picks `rich` when the
+`[examples]` extra is installed and plain text when it is not, so no
+example carries a rendering branch and none of them imports `rich`.
+
+Two constraints on that file. Its name starts with `_`, which is what
+keeps the harness's `*.py` glob from importing it as an example. And
+the harness has to put `examples/` on `sys.path` before loading a
+module by file path, because a direct `python examples/linter.py` gets
+that for free and `spec_from_file_location` does not.
+
+Both rendering paths run in CI: the harness parameterizes each example
+over the default path and `KUSTOLOGY_EXAMPLES_PLAIN=1`, and the
+ubuntu / py3.10 matrix cell installs neither `[ir]` nor `[examples]`,
+so the plain path is exercised there for real.
