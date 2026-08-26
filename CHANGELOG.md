@@ -6,17 +6,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Added
-
-- New `[examples]` extra (`pip install 'kustology[examples]'`) adds `rich`, which gives the scripts in `examples/` colour and syntax highlighting. The library never imports it, and the examples fall back to plain text without it.
-
-### Changed
-
-- README is now a short front page. The reference material moves to `docs/`: syntax-tree behavior, the Tier 2 IR, the CLI, and the `semantic_hash` contract.
-- Every example narrates its own output: what it demonstrates, what to look for, and what each section's result means.
-- `examples/linter.py`'s `example.no_time_filter` no longer claims a missing time filter scans full retention. It reports the absence, and the run prints what supplies a time bound in Azure Data Explorer, the Log Analytics and Sentinel logs blades, Sentinel hunting, and the Azure Monitor Query SDK.
-
-## [0.2.0] — 2026-08-25
+## [0.2.0] — 2026-08-26
 
 First release since 0.1.0. Two themes: values the library reported wrongly (culture-corrupted literals, mis-assigned column provenance, conflated operators), and public surface that never worked (`LetBinding`'s fields, `LetRef`, `ExternalDataExpr`'s contents). Tier 2 breaks in several places, as its pre-1.0 policy permits — see **Upgrading from 0.1.0** and **Breaking** below.
 
@@ -68,6 +58,7 @@ First release since 0.1.0. Two themes: values the library reported wrongly (cult
 - `SEMANTIC_HASH_SCHEME` is now exported from `kustology.ir`. README gains "Versioning and stability" and syntax-tree-traps sections; ARCHITECTURE.md's checklists gain the steps this release proved load-bearing.
 - `examples/walk_ir.py`/`walk_tree.py` now demonstrate `let`; two new examples (`semantic_hash_demo.py`, `analyzer_demo.py`) and a rewritten `linter.py` (now an actual linter) bring the set to nine, all exercised by `tests/test_examples.py`.
 - `kustology parse --schema PATH` (tier 1), a versioned `{ir_schema_version, semantic_hash_scheme, ir}` envelope for `parse --ir --json`, and `KustoQuery.diagnostics` reading off an already-parsed `KustoCode` — unfiltered (no `ignore_unknown_tables` on a property; filter the list yourself).
+- New `[examples]` extra (`pip install 'kustology[examples]'`) adds `rich`, which gives the scripts in `examples/` colour and syntax highlighting. The library never imports it, and the examples print plain text without it.
 
 ### Changed
 
@@ -84,6 +75,10 @@ First release since 0.1.0. Two themes: values the library reported wrongly (cult
 - `to_llm_dict` drops `Operator.result_schema` and keeps `Pipeline.result_schema` (tier 2): per-operator copies were 35% of the whole LLM view across the 49-query fixture corpus (295,156 of 851,224 bytes); without them the view is a median 45% smaller than `model_dump_json`, up from 28%.
 - `ColumnRef.table` never carries the `$left`/`$right` sentinel — an unresolvable join side is `None` and `join_side` carries the side; `find` now seeds its tables for provenance like `search`. Where a `let` alias is not a table the walk could close (a scalar or function binding), both operators seed an empty scope instead of writing the alias name into `table` regardless.
 - **Provenance walks a `let`-function's and a `declare pattern` arm's body as its own scope** (tier 2), masking every parameter name so a same-named real table cannot leak its columns into a reference that is really the parameter. A call site still acquires nothing from the body. Digest-silent, like the rest of this pass: every field it writes is stripped before hashing.
+- README is now a short front page. The reference material moves to `docs/`: syntax-tree behavior, the Tier 2 IR, the CLI, and the `semantic_hash` contract.
+- Prose, docstrings, and comments across the repository follow the Microsoft Writing Style Guide.
+- Every example narrates its own run: what it demonstrates, what to look for, a sentence framing each section, and a closing pointer into `docs/`.
+- `examples/linter.py`'s `example.no_time_filter` no longer claims a missing time filter scans full retention. It reports the absence, and the run prints what supplies a time bound in Azure Data Explorer, the Log Analytics and Microsoft Sentinel logs blades, Sentinel hunting, and the Azure Monitor Query SDK for Python, where `timespan` is required and `None` means unbounded.
 
 ### Fixed
 
@@ -137,6 +132,7 @@ The digest boundaries above — bind state, the textual shadow, and the conserva
 
 - `tests/test_reflection_audit.py` asserts every reflected .NET member name actually exists.
 - Corpus coverage gates now walk the whole `QueryIR` via `find_all` (including `let` right-hand sides) instead of hand-maintained attribute lists; `tests/ir/test_binder_oracle.py` is a new gate comparing our `result_schema` against Microsoft's own `ResultType`, column-by-column and in order, across an operator matrix and the fixture corpus, on both the bound and dict-path entry points.
+- Examples render through `examples/_display.py`, which picks `rich` or plain text once so no example carries a formatting branch. `tests/test_examples.py` runs every example under both paths, and the one matrix cell that installs no extras exercises the plain one for real.
 - CI lints `examples/` and every job installs from `uv.lock`. The IR test matrix now runs the full suite on every cell (previously one) and adds Python 3.13, with `fail-fast: false`; a locale/timezone leg (`de_DE`, `fr_FR`, `en_US` + `TZ=Asia/Tokyo`) guards the culture pin and the datetime-`Kind` fix.
 - A weekly upstream canary (`.github/workflows/canary.yml`) resolves `pyproject.toml`'s dependency ranges fresh, catching what the pinned `uv.lock` hides. `.github/dependabot.yml` declares the update cadence and grouping that previously lived only in repository settings. `release.yml` now hard-gates on the offline DLL pin.
 - The test suite was deduplicated against the hash battery as the single pair registry, and mechanically-parametrized guards were collapsed to looped equivalents; behavioral coverage is unchanged.
