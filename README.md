@@ -146,7 +146,7 @@ The IR examples need the `[ir]` extra. The rest run on the base install.
 
 | | |
 | --- | --- |
-| [Working with the syntax tree](https://github.com/k4otix/kustology/blob/main/docs/tier1-syntax-tree.md) | Tier 1 in depth, and the pythonnet behavior that catches people out |
+| [Working with the syntax tree](https://github.com/k4otix/kustology/blob/main/docs/tier1-syntax-tree.md) | Tier 1 in depth, and the pythonnet behavior that catches people off guard |
 | [The Tier 2 IR](https://github.com/k4otix/kustology/blob/main/docs/tier2-ir.md) | How `let` names, operators, and function bodies lower into IR nodes |
 | [CLI reference](https://github.com/k4otix/kustology/blob/main/docs/cli.md) | Subcommands, flags, JSON output, exit codes |
 | [Versioning and `semantic_hash`](https://github.com/k4otix/kustology/blob/main/docs/semantic-hash.md) | Compatibility tags, and what the digest ignores |

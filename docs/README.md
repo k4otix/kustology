@@ -6,7 +6,7 @@ quickstart. These pages cover the rest.
 
 | Page | Read it when |
 | --- | --- |
-| [Working with the syntax tree](tier1-syntax-tree.md) | You use Tier 1 and want the full picture of Microsoft's syntax tree, including the pythonnet behavior that catches people out. |
+| [Working with the syntax tree](tier1-syntax-tree.md) | You use Tier 1 and want the full picture of Microsoft's syntax tree, including the pythonnet behavior that catches people off guard. |
 | [The Tier 2 IR](tier2-ir.md) | You write analyzers against the IR and need to know how `let` names, operators, and function bodies lower into nodes. |
 | [CLI reference](cli.md) | You run `kustology` from a shell or wire it into CI, and need the flags, the JSON output, or the exit codes. |
 | [Versioning and `semantic_hash`](semantic-hash.md) | You store IR JSON or hashes, deduplicate queries, or need to know what the digest treats as equal. |
