@@ -7,296 +7,54 @@
 > **Not affiliated with Microsoft.** This is an independent open-source project
 > that wraps Microsoft's publicly distributed Apache 2.0–licensed library.
 
-Kustology is a Python library that exposes Microsoft's KQL parser — the
-same one Azure Data Explorer, Azure Monitor, and Microsoft Sentinel use
-internally — through `pythonnet`. It has two tiers you can adopt
-independently: a thin wrapper around Microsoft's syntax tree, and an
-opt-in intermediate representation (IR) built from Pydantic.
+Kustology gives Python programs Microsoft's own KQL parser, the one behind
+Azure Data Explorer, Azure Monitor, and Microsoft Sentinel. It loads the
+official `Kusto.Language` library through `pythonnet`, so queries parse exactly
+as the service parses them.
 
-## Tier 1 — thin wrapper
+The library comes in two tiers. Either one works on its own.
 
-The thin tier exposes Microsoft's parser, formatter, and validator, and
-adds AST analyzers for the questions a KQL author asks most often:
-which tables a query touches, which columns it reads, which operators
-chain through it, where time filters live, and how to rename a table
-everywhere it appears. You work with Microsoft's syntax tree directly.
+## The two tiers
 
-## Tier 2 — semantic IR
+### Tier 1: thin wrapper
 
-The IR tier gives you a typed Pydantic model of the parsed query —
-`FilterOp`, `BinOp`, `ColumnRef` — for the questions an *analyzer*
-asks: which source table a column came from after joins, renames, and
-`let` aliases, what schema the pipeline produces at the end, whether two
-queries are the same modulo formatting, and how to serialize the whole
-graph for a UI, a service, or a language model.
+Tier 1 exposes Microsoft's parser, formatter, and validator, and adds analyzers
+for the questions a KQL author asks most: which tables a query reads, which
+columns it touches, which operators it chains, where its time filters sit, and
+how to rename a table everywhere it appears. You work with Microsoft's syntax
+tree directly.
 
-### `let` names are their own nodes
+### Tier 2: semantic IR
 
-A `let` binds either a table-shaped thing or a scalar, and the IR keeps the
-two apart from real columns and real tables:
-
-| in the query | in the IR | where it appears |
-| --- | --- | --- |
-| `let Base = SecurityEvent \| …;` … `Base \| project X` | `LetRef` | pipeline source, `find in (…)`, `search in (…)` |
-| `let threshold = 5;` … `where Count > threshold` | `LetValueRef` | expression position |
-| `let f = (x:int) { … };` | `LetBinding.rhs_function` (a `LetFunction`) | signature on `.parameters`, body on `.body_lets` / `.body_pipeline` / `.body_expr` |
-
-So `find_all(ir, TableRef)` answers "which tables does this query read" and
-`find_all(ir, ColumnRef)` answers "which columns does it touch" — neither
-list is polluted by `let` names. Use `find_all(ir, LetRef)` for the tabular
-aliases and `find_all(ir, LetValueRef)` for the scalars. One exception: a
-tabular function parameter (`(T:(*))`) shadows the same way any other
-parameter does, so a reference to it inside the body lowers as a `TableRef`
-too, indistinguishable there from a real table name.
-
-A bound parse resolves columns *through* a tabular alias: in
-`let Base = SecurityEvent | …; Base | project Account`, `Account` carries the
-type from `SecurityEvent` and the provenance `Base`. An alias can shadow a
-real table name (`let SecurityEvent = SecurityEvent | …` is a common Sentinel
-idiom), so `ColumnRef.table` is a scope name rather than a guaranteed table
-name — read `result_type` rather than re-deriving types from it, and see the
-`enrich` docstring in `kustology/ir/binder.py` for telling the two apart when
-you must.
-
-**Known limitation.** Which of `LetRef` / `LetValueRef` / `ColumnRef` a name
-becomes is decided from the `let` statements alone, without the binder, so
-that the classification — and therefore `semantic_hash` — cannot depend on
-whether you passed a schema. KQL resolves the other way round: an unqualified
-name is a row-scope column first and a `let`-bound variable second. Where a
-`let` name shadows a real column (`let Count = 5; T | where Count > 1` over a
-`T` that has a `Count`), the reference is recorded as a `LetValueRef` and
-`find_all(ir, ColumnRef)` does not report it.
-
-### Where Tier 2 stops
-
-Eight operators are recorded as their own source text rather than structured
-fields, on `raw_text`: `scan`, `top-nested`, `make-graph`, `graph-match`,
-`graph-mark-components`, `graph-shortest-paths`, `graph-to-table`, and
-`macro-expand` (which also keeps its inner pipeline). They round-trip and
-they hash, but there is nothing typed inside them to walk. `graph-where-edges`
-and `graph-where-nodes` are modeled, with a real predicate.
-
-A `let`-declared **function call site** is the other boundary, and it is a
-narrow one: `let f = (x:int) { … }` records a `LetFunction` carrying the
-parameters (declared types and defaults included), the `view` keyword, and the
-body — `body_lets` for a `let` written inside the braces, then `body_pipeline`
-or `body_expr` for the tail. What is *not* done is inlining: `f(1)` stays a
-call, so the body is reachable once, through the declaration, rather than
-copied into every call site.
-
-Both tiers therefore see through the body, so a lineage walk over a
-function-declaring query reports the tables and columns the body reads. On a
-query with zero diagnostics:
-
-```python
-q = 'let f = () { SecurityEvent | where Account=="root" | project Computer }; f()'
-parse(q).get_referenced_tables()          # {'SecurityEvent'}
-parse(q).get_referenced_columns()         # {'Account', 'Computer'}
-
-ir = parse(q).to_ir()
-[t.name for t in find_all(ir, TableRef)]  # ['SecurityEvent']
-{c.name for c in find_all(ir, ColumnRef)} # {'Account', 'Computer'}
-```
-
-What the non-expansion costs you is a *count*, not a name: a query calling one
-function three times reports its tables once, because the declaration is the
-one place they are written. `body_span` still locates the body in the source if
-you want the text.
-
-A parameter shadows a same-named `let` from the enclosing query for the length
-of the body, decided from the declaration text alone so it cannot depend on
-whether you passed a schema — so inside `let n = 5; let f = (n:int) { T | where
-a > n }`, the body's `n` is a `ColumnRef`, not a `LetValueRef`.
+Tier 2 builds a typed Pydantic model of the parsed query, with classes like
+`FilterOp`, `BinOp`, and `ColumnRef`. It suits the questions an analyzer asks:
+which source table a column came from after joins, renames, and `let` aliases;
+what schema the pipeline produces; whether two queries mean the same thing
+despite formatting; and how to serialize the whole graph for a UI, a service,
+or a language model.
 
 ## Choosing a tier
 
-Both tiers share the same parser; pick based on what shape of data your
-code wants to work with.
+Both tiers use the same parser. Pick based on the shape of data your code wants.
 
 | | Tier 1 — thin wrapper | Tier 2 — semantic IR |
 |---|---|---|
 | **Install** | `pip install kustology` | `pip install 'kustology[ir]'` |
 | **Dependencies** | `pythonnet` + .NET 8 runtime | adds `pydantic` |
 | **Returns** | `KustoQuery` wrapping Microsoft's syntax tree | `QueryIR` — Pydantic models |
-| **Traversal** | Microsoft AST (`node.Kind` dispatch via `pythonnet`) | Typed pipeline (`isinstance` dispatch) |
-| **Serialization** | `KustoQuery.to_dict()` / `to_json()` | `model_dump_json` (round-trips through `QueryIR.model_validate_json`) + `to_llm_dict` (LLM-tailored, lossy) |
-| **Schema binding** | `parse(query, schema=...)` runs Microsoft's binder — semantic diagnostics plus symbol resolution accessible via AST methods | `to_ir()` on a bound parse already carries Microsoft's per-operator `result_schema` and column `result_type` — the builder stamps both at construction, independent of `attach_schema`. The attach pass adds table provenance (`ColumnRef.table`) and sets `schema_attached`. Without a schema, `to_ir()` still types literals and built-in calls — see below |
-| **Best for** | Formatting / linting, IDE integrations, extracting referenced tables/columns/functions/operators, surgical table renames | Lineage and anti-pattern analyzers, JSON-serializable query representations for APIs and UIs, schema-aware column flow, LLM-fed query graphs |
-
-### Three names for the same operator
-
-Each tier has its own vocabulary, and a third appears on the wire. One `where`
-is a `FilterOperator` node in Microsoft's tree, a `FilterOp` model in the IR,
-and `"kind": "filter"` in the IR's JSON:
-
-| KQL | Tier 1 — `str(node.Kind)`, `parse --ast` | Tier 2 — class / `kind` |
-| --- | --- | --- |
-| `where` | `FilterOperator` | `FilterOp` / `"filter"` |
-| `project` | `ProjectOperator` | `ProjectOp` / `"project"` |
-| `extend` | `ExtendOperator` | `ExtendOp` / `"extend"` |
-| `summarize` | `SummarizeOperator` | `SummarizeOp` / `"summarize"` |
-| `join` | `JoinOperator` | `JoinOp` / `"join"` |
-| `sort by`, `order by` | `SortOperator` | `SortOp` / `"sort"` |
-| `take`, `limit` | `TakeOperator` | `TakeOp` / `"take"` |
-| `mv-expand` | `MvExpandOperator` | `MvExpandOp` / `"mv_expand"` |
-
-Two spellings that share a parser node share an IR node too — `order by`
-really is `sort`, `limit` really is `take` — so an analyzer written against
-one spelling sees both.
-
-The mapping is mostly mechanical (Microsoft's `<Name>Operator`, our
-`<Name>Op`, hyphens becoming underscores in `kind`) but not always: `where`
-is a `FilterOperator`, so its `kind` is `filter`, not `where`. Read
-`SomeOp.model_fields["kind"].default` rather than deriving the string.
-These are the discriminators `to_llm_dict` and `model_dump_json` emit, so
-they are part of the IR's versioned shape.
-
-## Working with Microsoft's syntax tree
-
-Tier 1 is a thin projection: you get Microsoft's nodes, with Microsoft's
-shapes. These are the places where that shape surprises people.
-
-**Member lookup is exact, case-sensitive, and silent.** pythonnet resolves
-.NET members by exact name and returns nothing when one is absent, so a
-typo'd or mis-cased probe fails quietly into your fallback:
-
-```python
-getattr(node, "Uris", None)   # None -- the member is URIs
-getattr(node, "URIs", None)   # the SyntaxList you wanted
-```
-
-Nothing raises and nothing logs — the guard declines, the fallback value
-stands, and the surface reads as implemented. Before relying on a probe,
-confirm the member exists:
-
-```python
-[m for m in dir(node) if m[:1].isupper()]
-```
-
-**An empty .NET collection is truthy in Python.** `IReadOnlyList` does not
-implement `__bool__`, so the natural check never fires — use `.Count`:
-
-```python
-if not code.GetSyntaxDiagnostics():      # never true, even with 0 diagnostics
-if code.GetSyntaxDiagnostics().Count == 0:   # correct
-```
-
-**`node.Kind` is a .NET enum, not a string.** It has no `__format__`, so any
-f-string format spec raises `TypeError`. Call `str()` on it — always:
-
-```python
-f"{node.Kind:<30}"       # TypeError: unsupported format string
-f"{str(node.Kind):<30}"  # fine
-```
-
-**List-valued properties yield `SeparatedElement` wrappers.**
-`ProjectOperator.Expressions`, `QueryBlock.Statements` and
-`FunctionParameters.Parameters` return `SyntaxList[SeparatedElement[T]]`; the
-wrapper carries the trailing comma alongside the expression. Its `str()` reads
-almost like the expression's, so a missing unwrap looks correct in printed
-output while every `.Kind` check silently fails to match — the wrapper's
-`Kind` is `SeparatedElement`, never the expression's. Use `iter_elements`,
-which also passes through plain `SyntaxList[T]` such as
-`SummarizeOperator.Parameters`:
-
-```python
-from kustology import iter_elements, parse
-
-for expr in iter_elements(project_operator.Expressions):
-    print(str(expr.Kind))   # NameReference, not SeparatedElement
-```
-
-**`BinaryExpression` is one generic class; the operator lives in `Kind`.**
-All six comparisons share the class, so branching on type will not separate
-them. Branch on `str(node.Kind)` (`GreaterThanExpression`, `EqualExpression`,
-`NotEqualExpression`, ...) or read `node.Operator.ToString().strip()`.
-
-**`!between` shares `BetweenExpression` with `between`.** The negation exists
-only in `Kind` (`NotBetweenExpression`), so branching on class silently
-inverts the predicate. Both put the column in `.Left` and the bounds in
-`.Right` as an `ExpressionCouple` with `.First` / `.Second`.
-
-**Tier 1 symbols require a schema — there is no partial binding.** `parse(q)`
-calls `KustoCode.Parse`, which does no semantic analysis: `has_semantics` is
-`False` and every `ReferencedSymbol` is `None`, built-in functions included.
-`parse(q, schema=...)` binds, and they all resolve. It is all-or-nothing.
-
-**Tier 2 is not all-or-nothing.** `to_ir()` on an unbound parse runs
-`KustoCode.Analyze(GlobalState.Default)` over the tree already in hand — no
-second parse — purely to acquire types, so a schemaless IR carries real ones
-for everything that does not need a table:
-
-```python
-ir = parse("StormEvents | where StartTime > ago(7d) and CpuPct > 1.5").to_ir()
-# 1.5      -> result_type real,     literal_kind "real"
-# 7d       -> result_type timespan, literal_kind "timespan"
-# ago(...) -> result_type datetime, is_time_func True
-# StartTime, CpuPct -> result_type unresolved, table None
-```
-
-`GlobalState.Default` resolves everything built into the language — that is
-why `ago(1h)` types — but its **database is empty**: no tables, user-defined
-functions, external tables, materialized views, entity groups, or stored
-query results. So columns and tables stay `unresolved`
-until you supply a schema, and the "unknown name" diagnostics that binding
-raises are an artifact of how the types were obtained rather than anything
-you wrote. `to_ir()` filters that family out; a parse *you* bound keeps every
-one of them, because there an undescribed name is a real error.
-
-The Tier 1 object is untouched by any of this: `has_semantics` stays `False`
-and every Tier 1 accessor keeps taking its syntactic path.
-
-**Read `TimeSpan.Ticks`, not `TotalSeconds`.** `TotalSeconds` is a float and
-loses sub-second exactness. A tick is 100ns, so `ticks // 10` converts to exact
-microseconds — enough to round-trip `1microsecond` (10 ticks → 1µs) through a
-`datetime.timedelta`. It does **not** round-trip anything finer: `2tick` is 2
-ticks, `2 // 10 == 0`, and `timedelta`'s resolution is one microsecond, so 200ns
-cannot be represented at all. Read `ticks` itself to preserve sub-microsecond
-literals. On Tier 2, `LiteralExpr.ticks` carries the raw tick count directly.
-
-**Unary minus wraps a positive literal.** `-1h` parses as a
-`UnaryMinusExpression` over a `TimespanLiteralExpression` whose value is
-`+01:00:00` — correct KQL grammar, the same way every language parses `-1`.
-Read the sign from the parent. Tier 2 models this as
-`UnaryOp(op="-", operand=LiteralExpr(...))`.
-
-**Importing kustology pins .NET's culture to invariant, process-wide.** This
-is deliberate and has no opt-out. Microsoft's parser evaluates `LiteralValue`
-lazily on property access, using the culture live at that moment, so under a
-comma-decimal locale the decimal point is read as a group separator and the
-fractional part is swallowed. This is **not** limited to durations — every
-fractional numeric literal kind is affected the same way:
-
-| literal | written | read back under `de-DE` without the pin |
-| --- | --- | --- |
-| `timespan` | `1.5h` | `15:00:00` (fifteen hours) |
-| `real` | `1.5` | `15.0` — a `where CpuPct > 1.5` filter becomes 10x too strict |
-| `decimal` | `decimal(1.5)` | `15` |
-
-Under `fr-FR` a duration parses to zero instead. Because the corruption
-happens in caller code, arbitrarily far from any kustology call, only a
-process-global pin closes it. `CurrentUICulture` is left untouched.
-
-**Residual risk:** the pin runs once, at import. A host that assigns
-`CultureInfo.DefaultThreadCurrentCulture` or
-`Thread.CurrentThread.CurrentCulture` *afterwards* — directly, or through
-another .NET-interop library sharing the process — re-opens the corruption for
-every `LiteralValue` not yet read, including literals in a tree parsed while
-the pin was still in force (the value is computed on first access and cached,
-so only already-read literals keep their correct value). Nothing at this layer
-can detect or prevent that; restore invariant culture before reading parsed
-values.
+| **Traversal** | Microsoft AST, dispatching on `node.Kind` | Typed pipeline, dispatching on `isinstance` |
+| **Serialization** | `to_dict()` / `to_json()` | `model_dump_json()`, which round-trips, plus `to_llm_dict()` for language models |
+| **Schema binding** | `parse(query, schema=...)` runs Microsoft's binder for semantic diagnostics and symbol resolution | `to_ir()` on a bound parse carries per-operator schemas and column types; without a schema it still types literals and built-in calls |
+| **Best for** | Formatting, linting, IDE integrations, extracting tables and columns, surgical table renames | Lineage and anti-pattern analyzers, JSON for APIs and UIs, schema-aware column flow, query graphs for language models |
 
 ## Prerequisites
 
-- **Python 3.10 – 3.13** (`requires-python = ">=3.10,<3.14"`)
+- **Python 3.10 – 3.13**
 - **[.NET 8.0+ runtime](https://dotnet.microsoft.com/download/dotnet/8.0)**
 
-### macOS / Homebrew
-
-If you installed `dotnet` via Homebrew, the runtime layout differs from
-Microsoft's installer (`libhostfxr.dylib` lives under `libexec/`, not `bin/`).
-The bridge auto-detects this. If detection fails, set `DOTNET_ROOT` explicitly:
+If you installed `dotnet` through Homebrew, its runtime layout differs from
+Microsoft's installer and `libhostfxr.dylib` sits under `libexec/` instead of
+`bin/`. Kustology detects this. If detection fails, set `DOTNET_ROOT` yourself:
 
 ```bash
 export DOTNET_ROOT=/opt/homebrew/opt/dotnet/libexec   # Apple Silicon
@@ -306,8 +64,8 @@ export DOTNET_ROOT=/usr/local/opt/dotnet/libexec      # Intel
 ## Installation
 
 ```bash
-pip install kustology           # tier 1: thin .NET wrapper
-pip install 'kustology[ir]'     # tier 1 + tier 2: semantic IR (adds pydantic)
+pip install kustology           # Tier 1: thin .NET wrapper
+pip install 'kustology[ir]'     # Tier 1 + Tier 2: semantic IR (adds pydantic)
 ```
 
 ## Quick start
@@ -323,247 +81,91 @@ query = (
 print(format_query(query))
 
 result = parse(query)
-print(result.get_referenced_tables())          # {'StormEvents'}
-print(result.get_referenced_columns())         # {'StartTime', 'DeathsDirect', 'State', 'EventType'}
-print(result.get_referenced_functions())       # {'ago'}
-print(result.get_structural_hash()[:16])
+result.get_referenced_tables()      # {'StormEvents'}
+result.get_referenced_columns()     # {'StartTime', 'DeathsDirect', 'State', 'EventType'}
+result.get_referenced_functions()   # {'ago'}
 
-# Semantic binding via a schema enables column-aware analysis:
-schema = {"StormEvents": {"StartTime": "datetime", "DeathsDirect": "int", "State": "string", "EventType": "string"}}
+# Pass a schema to bind the query and get semantic diagnostics.
+schema = {"StormEvents": {"StartTime": "datetime", "DeathsDirect": "int",
+                          "State": "string", "EventType": "string"}}
 bound = parse(query, schema=schema)
-assert bound.has_semantics
-print(bound.diagnostics)                       # [] — validate()'s dicts, read
-                                               # off the parse you already have
+bound.has_semantics                 # True
+bound.diagnostics                   # []
 ```
 
-With the `[ir]` extra installed, the same `KustoQuery` builds a Pydantic IR:
+With the `[ir]` extra installed, the same parse builds a Pydantic IR:
 
 ```python
 from kustology import parse
 from kustology.ir import FilterOp
 
-schema = {"StormEvents": {"DeathsDirect": "int", "State": "string", "EventType": "string"}}
+schema = {"StormEvents": {"DeathsDirect": "int", "State": "string"}}
 ir = parse("StormEvents | where DeathsDirect > 0", schema=schema).to_ir()
-# A bound parse already carries Microsoft's result_schema and column
-# result_type -- the builder stamps both at construction, independent of
-# attach_schema. attach_schema instead controls table provenance
-# (ColumnRef.table, schema_attached): False skips it, {...} rebinds
-# against a schema after the fact -- output schemas, types and IR shape
-# then match having parsed with schema= exactly. Diagnostics do not:
-# they still follow this call's own receiver, so an unbound receiver
-# stays lenient about unknown names where a bound one would not.
 
 for op in ir.main_pipeline.operators:
     if isinstance(op, FilterOp):
-        print(op.predicate.canonical_form)     # StormEvents.DeathsDirect > 0
-        print(op.predicate.left.table)         # StormEvents
-        print(op.predicate.left.result_type)   # int  (KustoType.INT)
+        op.predicate.canonical_form   # StormEvents.DeathsDirect > 0
+        op.predicate.left.table       # StormEvents
+        op.predicate.left.result_type # int  (KustoType.INT)
 ```
-
-## Runnable examples
-
-Everything above, as scripts you can run rather than snippets you have to
-assemble. Each one runs standalone (`python examples/walk_tree.py`) and every
-one is executed by `tests/test_examples.py`, so none of them can drift away
-from the library without CI noticing.
-
-| | |
-| --- | --- |
-| [`examples/walk_tree.py`](examples/walk_tree.py) | Direct AST traversal via `KustoQuery.syntax` |
-| [`examples/query_analysis.py`](examples/query_analysis.py) | End-to-end analysis of a non-trivial query |
-| [`examples/binding_comparison.py`](examples/binding_comparison.py) | What a schema adds: `parse(query, schema=…)` side by side with an unbound parse |
-| [`examples/walk_ir.py`](examples/walk_ir.py) | The same walk over the typed IR, on a bound parse |
-| [`examples/find_all_demo.py`](examples/find_all_demo.py) | Generic IR traversal with `find_all` |
-| [`examples/analyzer_demo.py`](examples/analyzer_demo.py) | Composing analyzers and consuming `Finding`s |
-| [`examples/linter.py`](examples/linter.py) | A working KQL linter in ~100 lines, built on the IR |
-| [`examples/llm_view.py`](examples/llm_view.py) | LLM-friendly IR serialization via `to_llm_dict` |
-| [`examples/semantic_hash_demo.py`](examples/semantic_hash_demo.py) | What `semantic_hash` merges, what it splits, and where it lies — every verdict computed at run time, including the known collisions listed under [Versioning and stability](#versioning-and-stability) |
-
-The IR ones (`walk_ir`, `find_all_demo`, `analyzer_demo`, `linter`,
-`llm_view`, `semantic_hash_demo`) need the `[ir]` extra; the rest run on the
-base install.
 
 ## CLI
 
 The `kustology` console script ships with the base install:
 
 ```bash
-kustology version                              # print package version
-kustology format query.kql                     # reformat to canonical form
-
-kustology validate query.kql                   # print parser diagnostics
-kustology validate --json query.kql            # diagnostics as JSON
-kustology validate --schema s.json query.kql   # bind first: semantic diagnostics too
-kustology validate --schema s.json \
-                   --ignore-unknown-tables query.kql   # waive KS204 only
-
-kustology parse query.kql                      # print the .NET AST
-kustology parse --json query.kql               # the AST as JSON
-kustology parse --ir query.kql                 # print the Pydantic IR (needs [ir])
-kustology parse --ir --json query.kql          # the IR as JSON, in an envelope
-kustology parse --ir --schema s.json query.kql # enriched IR: types + provenance
+kustology format query.kql        # reformat to canonical form
+kustology validate query.kql      # print parser diagnostics
+kustology parse --ir query.kql    # print the Pydantic IR (needs [ir])
 ```
 
-A `--schema` file is JSON in the same `{"Table": {"column": "type"}}` shape
-`parse(query, schema=...)` takes. On `parse` it binds the parse, and `to_ir()`
-auto-attaches on a bound parse, so `parse --ir --schema` emits column types,
-table provenance, and `"schema_attached": true` rather than a skeleton.
-`--ast` accepts it too, though binding does not change the syntax tree.
+Every subcommand, the `--schema` and `--json` flags, and the exit codes CI
+branches on are in the
+[CLI reference](https://github.com/k4otix/kustology/blob/main/docs/cli.md).
 
-`parse --ir --json` emits a versioned envelope, not a bare dump — both tags
-are your compatibility contract, and a stored payload naming neither cannot
-be checked against the IR shape that produced it:
+## Examples
 
-```json
-{
-  "ir_schema_version": "0.2",
-  "semantic_hash_scheme": "kustology-sem-v2",
-  "ir": { "kind": "query", "...": "..." }
-}
-```
+Each script runs standalone, and `tests/test_examples.py` runs all of them, so
+none can drift away from the library without CI noticing.
 
-`format`, `validate` and `parse` read from stdin when `file` is `-` or
-omitted (`version` takes no file), and input is capped at 10 MB
-(`KUSTOLOGY_MAX_INPUT_BYTES` overrides, counted in bytes).
+| | |
+| --- | --- |
+| [examples/walk_tree.py](https://github.com/k4otix/kustology/blob/main/examples/walk_tree.py) | Direct AST traversal |
+| [examples/query_analysis.py](https://github.com/k4otix/kustology/blob/main/examples/query_analysis.py) | End-to-end analysis of a non-trivial query |
+| [examples/binding_comparison.py](https://github.com/k4otix/kustology/blob/main/examples/binding_comparison.py) | What passing a schema adds |
+| [examples/walk_ir.py](https://github.com/k4otix/kustology/blob/main/examples/walk_ir.py) | The same walk over the typed IR |
+| [examples/find_all_demo.py](https://github.com/k4otix/kustology/blob/main/examples/find_all_demo.py) | Generic IR traversal with `find_all` |
+| [examples/analyzer_demo.py](https://github.com/k4otix/kustology/blob/main/examples/analyzer_demo.py) | Composing analyzers and reading `Finding`s |
+| [examples/linter.py](https://github.com/k4otix/kustology/blob/main/examples/linter.py) | A working KQL linter built on the IR |
+| [examples/llm_view.py](https://github.com/k4otix/kustology/blob/main/examples/llm_view.py) | IR serialization for language models |
+| [examples/semantic_hash_demo.py](https://github.com/k4otix/kustology/blob/main/examples/semantic_hash_demo.py) | What `semantic_hash` merges and what it splits |
 
-**Exit codes.** `0` success; `1` the input had Error-severity diagnostics, or
-the command failed at runtime; `2` the *invocation* was wrong — bad flags, a
-file that cannot be read, a `--schema` that is not JSON, input over the byte
-cap, or `parse --ir` without the `[ir]` extra. The line between 1 and 2 is
-"your query is wrong" against "your command is wrong", which is what a CI job
-branches on: an unreadable path says nothing about the KQL. `format` and
-`parse` both run the validator before they emit anything, so neither writes
-output derived from a query the parser rejected — the diagnostics go to
-stderr and stdout stays empty.
+The IR examples need the `[ir]` extra. The rest run on the base install.
 
-A broken pipe is neither. `kustology validate q.kql | head` still exits `1`
-on a query that fails validation: each subcommand decides its code before it
-writes, so a reader hanging up stops the output and nothing else. Only a pipe
-that breaks before any code was decided exits `0`, and either way the
-interpreter's shutdown flush is silenced, so no `Exception ignored … Broken
-pipe` follows the command that already returned.
+## Documentation
 
-## Versioning and stability
+| | |
+| --- | --- |
+| [Working with the syntax tree](https://github.com/k4otix/kustology/blob/main/docs/tier1-syntax-tree.md) | Tier 1 in depth, and the pythonnet behavior that catches people out |
+| [The Tier 2 IR](https://github.com/k4otix/kustology/blob/main/docs/tier2-ir.md) | How `let` names, operators, and function bodies lower into IR nodes |
+| [CLI reference](https://github.com/k4otix/kustology/blob/main/docs/cli.md) | Subcommands, flags, JSON output, exit codes |
+| [Versioning and `semantic_hash`](https://github.com/k4otix/kustology/blob/main/docs/semantic-hash.md) | Compatibility tags, and what the digest ignores |
+| [Architecture](https://github.com/k4otix/kustology/blob/main/ARCHITECTURE.md) | Code layout, for contributors |
+| [Contributing](https://github.com/k4otix/kustology/blob/main/CONTRIBUTING.md) | Setup and the development loop |
 
-This is a `0.y` release — per SemVer §4, the public API is not yet stable.
-Tier 1 is on a stabilization track and the package reaches 1.0 once it
-survives external use without correctness breaks; Tier 2 is expected to keep
-evolving at minor cadence.
+## Versioning
 
-Three numbers describe compatibility, and they are deliberately independent:
+This is a `0.y` release, so the public API can still change at a minor version
+(SemVer §4). Tier 1 is on a stabilization track and reaches 1.0 once it survives
+external use without correctness breaks. Tier 2 keeps evolving at minor cadence.
 
-| | What it tags | When it moves |
-| --- | --- | --- |
-| `kustology.__version__` | the library | SemVer; pre-1.0, either tier may break at a minor |
-| `kustology.ir.IR_SCHEMA_VERSION` | the IR's *field shape* | any breaking field-shape change |
-| `kustology.ir.SEMANTIC_HASH_SCHEME` | the `semantic_hash` *canonicalization rules* | in lockstep with the above |
-
-Both IR tags move **once per release**, not once per change — so they mark
-what a consumer can observe, not the project's internal history.
-
-Tag stored IR JSON with `IR_SCHEMA_VERSION` and refuse a payload whose tag you
-do not recognize: every IR model sets `extra="forbid"`, so a dump from an
-older release fails to load rather than silently deserializing into a shape
-that does not match the one that wrote it. IR JSON written before 0.2.0 does
-not load into 0.2.0.
-
-`semantic_hash` carries its scheme as a prefix (`kustology-sem-v2:…`) for the
-same reason — a stored hash from a different scheme will not collide with a
-freshly computed one, instead of comparing unequal with no signal that the
-rules moved. **Note for anyone deduplicating queries by stored hash:**
-schemes differ in which queries they merge — `kustology-sem-v2` distinguishes
-`in` / `in~` / `has_any` / `has_all` and `isnotnull` / `isnotempty`, where
-`kustology-sem-v1` does not. Rehash from source rather than comparing across
-schemes.
-
-### What `semantic_hash` deliberately ignores
-
-The digest is meant to survive differences that do not change what a query
-returns. Within `kustology-sem-v2` these are ignored:
-
-- **Operand order in commutative positions.** `where A and B` and
-  `where B and A` are one digest, as are `in ("x", "y")` and `in ("y", "x")`.
-  Consecutive `| where`s merge into one `and` first, so
-  `| where A | where B` joins them — but only *consecutive* ones, so
-  `| where A | take 5` and `| take 5 | where A` still differ.
-- **`let` names.** Each is replaced by its position in a scope-ordered walk,
-  so `let n = 5; T | where a > n` and `let m = 5; T | where a > m` collide —
-  and so do the same two spellings of a `let` written inside a function body
-  or a `declare pattern` arm. Which binding a reference points at is still
-  hashed, and a `let`-bound `n` never collides with a real column `n`. A
-  function's own name **at its call site** is part of the same rename, so
-  `let f = () {…}; f()` and `let g = () {…}; g()` collide too — but only when
-  the visible `let` bound a *function*. KQL resolves values and functions in
-  separate namespaces (`let abs = 5; T | extend y = abs(x)` binds a value and
-  calls the built-in, both cleanly), so any other call — a built-in, a
-  server-side function, or one sharing a scalar binding's name — is left
-  exactly as written and two queries calling two different functions still
-  hash apart. A `let` bound to a function by *alias* (`let g = f; g()`) is not
-  renamed either; the caveats below say what that costs.
-- **Function parameter names.** A parameter is a local label as much as a
-  `let` is: each is replaced by its position in the signature (`$param0`, …)
-  and every reference to it inside that body follows, so
-  `let f = (w:int) { T | where a > w }` and `let f = (z:int) { T | where a > z
-  }` are one digest. Which parameter a body reads is still hashed, and the
-  rename reaches inside that one body only. `declare pattern`'s own
-  parameters are **not** renamed — they name an arm's match slots rather than
-  values an arm's body reads. Neither is a `declare query_parameters` name,
-  and that one is a decision rather than a side effect: it is the
-  caller-facing API of a saved query, so `declare query_parameters(p:long)`
-  and `declare query_parameters(q:long)` accept different requests and must
-  not merge.
-- **The host's timezone and locale.** A `datetime` literal is normalized to
-  UTC before it is hashed, and numeric literals render invariant, so the same
-  query digests identically in Tokyo and in New York, under `de-DE` and
-  under `C`.
-- **Everything the binder supplied.** Column types, table provenance, and
-  result schemas are stripped, so passing a schema does not move the digest.
-  Source offsets and `hint.*` go the same way — a hint changes how the engine
-  executes a query, not the rows it returns.
-
-Your own IR keeps every one of these as written; the canonicalization runs on
-a private copy. `normalize_expressions` is a separate, opt-in transform and
-still leaves your operand order alone.
-
-The caveats, all deliberate rather than accidental:
-
-- The digest is **not** invariant across bind state for a query whose `let`
-  aliases a table. The binder proves it is a table, which changes the IR's
-  *shape* rather than a field's value, and no amount of stripping hides
-  that. The alternative is treating every bare name as a table without
-  proof.
-- A local name is matched **by text**, where KQL resolves a column first. A
-  `let` name or a function parameter that shadows a same-named real column is
-  classified as the local one anyway, so the two rename rules above reach it
-  and two queries reading different things share a digest — as they do when
-  the shadowing column is one an earlier `extend` created. Deciding by symbol
-  instead needs a bound parse, which would put the digest back under bind
-  state; the invariant above is worth more than the shadow case is. See
-  `LetValueRef`'s docstring for the full trade.
-- The call-site rename is conservative in the other direction. Only a `let`
-  whose right-hand side *is* a function renames its call sites, so a binding
-  that merely aliases one (`let g = f; g()`) keeps the name as written and
-  splits from `let f = …; f()`. That is the direction to err in — a split
-  costs a deduplicating consumer a duplicate entry, where the merge the
-  narrow gate prevents would cost it a rule — but it is a boundary of the
-  rename, not an exception the digest hides.
-- Equal digests are **not** a proof of equivalence. What remains is narrow:
-  literal-level merges the library makes on purpose (typed nulls, obfuscated
-  strings) and a `let` function's call sites, which record the body once at
-  the declaration rather than per call.
-
-  **Every statement kind is modeled.** `set`, `declare query_parameters`,
-  `declare pattern`, `alias database`, and `restrict access to` live on
-  `QueryIR.statements` in source order — order included in the digest, since
-  `set` scopes the query that follows it — so
-  `set query_now=datetime(2020-01-01); T | take 1` hashes apart from a bare
-  `T | take 1` *and* from the same query pinned to a different `query_now`.
-
-  `examples/semantic_hash_demo.py` hashes every merge it files when it runs
-  and raises if one stops behaving as filed — the literal-level pair; the
-  call-site one is pinned by `tests/ir/test_let_bindings.py` instead. See
-  also the CHANGELOG's **Fixed** section for the collisions that were
-  closed, and its **Known limitations** for the boundaries that remain.
+Three numbers describe compatibility: `kustology.__version__` tags the library,
+`kustology.ir.IR_SCHEMA_VERSION` tags the IR's field shape, and
+`kustology.ir.SEMANTIC_HASH_SCHEME` tags the hash canonicalization rules. Tag
+any IR JSON or hash you store with the value that produced it, and refuse a
+payload whose tag you do not recognize. See
+[Versioning and `semantic_hash`](https://github.com/k4otix/kustology/blob/main/docs/semantic-hash.md)
+for the full contract.
 
 ## Development
 
@@ -577,15 +179,18 @@ ruff check src tests scripts examples
 mypy src
 ```
 
-See [CONTRIBUTING.md](https://github.com/k4otix/kustology/blob/main/CONTRIBUTING.md) for the full workflow.
+See [CONTRIBUTING.md](https://github.com/k4otix/kustology/blob/main/CONTRIBUTING.md)
+for the full workflow.
 
 ## License
 
-Apache License 2.0. See [LICENSE](https://github.com/k4otix/kustology/blob/main/LICENSE), [NOTICE.md](https://github.com/k4otix/kustology/blob/main/NOTICE.md), and
-[THIRD-PARTY-NOTICES.md](https://github.com/k4otix/kustology/blob/main/THIRD-PARTY-NOTICES.md). The bundled
-`Kusto.Language.dll` is owned by Microsoft Corporation and redistributed
-unmodified under Apache 2.0; it is pinned by SHA-256 and verified in CI —
-see [SECURITY.md](https://github.com/k4otix/kustology/blob/main/SECURITY.md).
+Apache License 2.0. See
+[LICENSE](https://github.com/k4otix/kustology/blob/main/LICENSE),
+[NOTICE.md](https://github.com/k4otix/kustology/blob/main/NOTICE.md), and
+[THIRD-PARTY-NOTICES.md](https://github.com/k4otix/kustology/blob/main/THIRD-PARTY-NOTICES.md).
+The bundled `Kusto.Language.dll` is owned by Microsoft Corporation and
+redistributed unmodified under Apache 2.0. It is pinned by SHA-256 and verified
+in CI. See [SECURITY.md](https://github.com/k4otix/kustology/blob/main/SECURITY.md).
 
 ## Trademark notice
 

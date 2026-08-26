@@ -34,7 +34,7 @@ Homepage = "https://github.com/k4otix/kustology"
 Repository = "https://github.com/k4otix/kustology"
 Changelog = "https://github.com/k4otix/kustology/blob/main/CHANGELOG.md"
 Issues = "https://github.com/k4otix/kustology/issues"
-Documentation = "https://github.com/k4otix/kustology/blob/main/README.md"
+Documentation = "https://github.com/k4otix/kustology/blob/main/docs/README.md"
 
 [project.scripts]
 kustology = "kustology.cli:main"

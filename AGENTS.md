@@ -38,6 +38,38 @@ Two standing rules elsewhere in this file are part of the same discipline:
 never write a count you did not derive, and keep changelog entries to one
 to three lines.
 
+### Write plainly; the style guide alone will not do it
+
+The Microsoft guide governs voice, tense, and terminology. It says nothing
+about rhetoric, so prose can satisfy every rule above and still read as
+machine-written. These are the patterns that produce that effect. Remove
+them on sight:
+
+- **Antithesis as a closer.** "X, not Y", "X rather than Y" used to land a
+  point: "emits a versioned envelope, not a bare dump". State the fact and
+  stop. If a contrast genuinely helps, make it two plain sentences.
+- **Aphorisms.** A sentence-final judgment that sounds quotable — "that is
+  the direction to err in", "the invariant is worth more than the shadow
+  case". Give the concrete consequence or cut the sentence.
+- **Triadic rhythm.** Three clauses in a row for cadence: "the guard
+  declines, the fallback value stands, and the surface reads as
+  implemented". Say what happens once.
+- **Em-dash density.** At most one per paragraph, preferably none. A
+  period, a comma, or parentheses nearly always works.
+- **Self-justification.** "deliberate", "deliberately", "on purpose",
+  "intentionally". Give the reason or say nothing; the adjective adds no
+  information.
+- **Personification.** Code does not decline, admit, lie, or want. Describe
+  what it does.
+- **Portentous framing.** "These are the places where that shape surprises
+  people." Delete and start with the content.
+- **Bold lead-in chains.** Consecutive paragraphs each opening with a bold
+  sentence. Use real headings, which are also linkable, or a table.
+
+Aim for short sentences carrying one idea each, second person for
+instructions, and the fact first with the reason after it only when a
+reader needs the reason to act.
+
 ## .NET runtime and pythonnet interop
 
 ### Use the public `KustoCodeService` for formatting
