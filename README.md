@@ -64,8 +64,9 @@ export DOTNET_ROOT=/usr/local/opt/dotnet/libexec      # Intel
 ## Installation
 
 ```bash
-pip install kustology           # Tier 1: thin .NET wrapper
-pip install 'kustology[ir]'     # Tier 1 + Tier 2: semantic IR (adds pydantic)
+pip install kustology             # Tier 1: thin .NET wrapper
+pip install 'kustology[ir]'       # Tier 1 + Tier 2: semantic IR (adds pydantic)
+pip install 'kustology[examples]' # Colour output in examples/ (adds rich)
 ```
 
 ## Quick start
@@ -125,8 +126,9 @@ branches on are in the
 
 ## Examples
 
-Each script runs standalone, and `tests/test_examples.py` runs all of them, so
-none can drift away from the library without CI noticing.
+Each script runs standalone and explains its own output as it goes, and
+`tests/test_examples.py` runs all of them, so none can drift away from the
+library without CI noticing.
 
 | | |
 | --- | --- |
@@ -140,7 +142,9 @@ none can drift away from the library without CI noticing.
 | [examples/llm_view.py](https://github.com/k4otix/kustology/blob/main/examples/llm_view.py) | IR serialization for language models |
 | [examples/semantic_hash_demo.py](https://github.com/k4otix/kustology/blob/main/examples/semantic_hash_demo.py) | What `semantic_hash` merges and what it splits |
 
-The IR examples need the `[ir]` extra. The rest run on the base install.
+The IR examples need the `[ir]` extra. The rest run on the base install. Add
+the `[examples]` extra for colour and syntax highlighting; without it the same
+output prints as plain text.
 
 ## Documentation
 

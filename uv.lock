@@ -667,8 +667,12 @@ dev = [
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pyyaml" },
+    { name = "rich" },
     { name = "ruff" },
     { name = "twine" },
+]
+examples = [
+    { name = "rich" },
 ]
 ir = [
     { name = "pydantic" },
@@ -693,10 +697,12 @@ requires-dist = [
     { name = "pythonnet", specifier = ">=3.0.0" },
     { name = "pyyaml", marker = "extra == 'dev'", specifier = ">=6.0" },
     { name = "pyyaml", marker = "extra == 'test'", specifier = ">=6.0" },
+    { name = "rich", marker = "extra == 'dev'", specifier = ">=13.0.0" },
+    { name = "rich", marker = "extra == 'examples'", specifier = ">=13.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.16.3" },
     { name = "twine", marker = "extra == 'dev'", specifier = ">=5.0.0" },
 ]
-provides-extras = ["ir", "test", "dev"]
+provides-extras = ["ir", "examples", "test", "dev"]
 
 [[package]]
 name = "lark"

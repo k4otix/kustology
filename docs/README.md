@@ -17,4 +17,5 @@ For the code layout and how to extend the library, see
 
 Every example referenced in these pages lives in [`examples/`](../examples) and
 runs standalone. `tests/test_examples.py` runs all of them, so they stay in step
-with the library.
+with the library. Install `kustology[examples]` for colour and syntax
+highlighting in their output; without it they print plain text.

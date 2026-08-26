@@ -36,6 +36,8 @@ Requires the ``[ir]`` extras: ``pip install 'kustology[ir]'``.
 import json
 from collections.abc import Iterable
 
+from _display import banner, data, kql, note, section, severity, takeaway
+
 from kustology import parse, validate
 from kustology.ir import (
     AnalyzerFn,
@@ -137,42 +139,77 @@ def run_all(ir: QueryIR, analyzers: list[AnalyzerFn]) -> list[Finding]:
 
 
 def main() -> None:
-    print("Input query:")
-    for line in QUERY.splitlines():
-        print(f"  {line}")
+    banner(
+        "The Finding vocabulary",
+        "Two analyzers run over one query and their findings merge into a "
+        "single list. Then the same join defect arrives from Microsoft's "
+        "binder, so you can compare the two answers side by side.",
+        "the span on each finding. The rule that holds the node can point "
+        "at the comparison; the binder, which returns a message, cannot.",
+    )
+
+    section("The query", "The join compares a string key against an int one.")
+    kql(QUERY)
 
     ir = parse(QUERY, schema=SCHEMA).to_ir()
     findings = sorted(run_all(ir, ANALYZERS), key=lambda f: RANK[f.severity])
 
-    print("\n=== Findings, ranked by the caller's severity order")
+    section(
+        "Findings, ranked by the caller's severity order",
+        "Severity is a plain Literal of three strings, so RANK above is the "
+        "caller's policy and not the model's.",
+    )
     for f in findings:
         at = f"{f.span.text_start}..{f.span.text_end}" if f.span else "query"
         excerpt = f.span.text(QUERY) if f.span else ""
-        print(f"  [{f.severity:<7}] {f.rule_id}")
+        print(f"  [{severity(f.severity)}] {f.rule_id}")
         print(f"            at {at}: {excerpt!r}")
         print(f"            {f.message}")
 
-    print("\n=== The same join defect, as Microsoft reports it")
+    section(
+        "The same join defect, as Microsoft reports it",
+        "KS242 is the binder's name for the type mismatch above.",
+    )
     for d in validate(QUERY, schema=SCHEMA):
         if d["code"] == "KS242":
             print(f"  [{d['severity']}] {d['code']} at "
                   f"{d['start']}..{d['start'] + d['length']}: {d['message']}")
-            print("  → Correct, and unlocatable: a zero-width span at offset 0.")
-            print("    The IR rule above points at the comparison, because it")
-            print("    is holding the node rather than reading a message.")
+    note(
+        "Correct, and unlocatable: a zero-width span at offset 0. The IR "
+        "rule above points at the comparison because it is holding the "
+        "node rather than reading a message."
+    )
 
-    print("\n=== extra: the per-rule side channel")
+    section(
+        "extra: the per-rule side channel",
+        "A dashboard can group on these fields without re-parsing the "
+        "message, and no other rule has to know they exist.",
+    )
     for f in findings:
         if f.extra:
-            print(f"  {f.rule_id}: {json.dumps(f.extra)}")
+            print(f"  {f.rule_id}:")
+            data(json.dumps(f.extra), indent=4)
 
-    print("\n=== A CI gate")
-    # Findings are pydantic models, so the payload needs no bespoke encoder.
+    section(
+        "A CI gate",
+        "Findings are pydantic models, so the payload needs no bespoke "
+        "encoder.",
+    )
     payload = [f.model_dump(mode="json", exclude_none=True) for f in findings]
     print(f"  {len(payload)} finding(s); "
           f"{sum(1 for f in findings if f.severity == 'error')} at error level")
     print(f"  exit code would be {1 if any(f.severity == 'error' for f in findings) else 0}")
-    print(f"  first payload row: {json.dumps(payload[0])}")
+    print("  first payload row:")
+    data(json.dumps(payload[0], indent=2), indent=4)
+
+    takeaway(
+        "An analyzer is a function from QueryIR to Findings, so composing "
+        "two of them is a list comprehension. The Finding model carries the "
+        "span when a rule knows it, the structured extra when a rule needs "
+        "it, and a severity the caller ranks.",
+        more="docs/tier2-ir.md, and examples/linter.py for four rules built "
+             "this way",
+    )
 
 
 if __name__ == "__main__":

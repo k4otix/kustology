@@ -28,6 +28,8 @@ $right.b``.
 Requires the ``[ir]`` extras: ``pip install 'kustology[ir]'``.
 """
 
+from _display import banner, kql, note, section, takeaway
+
 from kustology import parse
 from kustology.ir import ColumnRef, FilterOp, JoinOp, LetRef, TableRef, find_all
 
@@ -50,54 +52,87 @@ powershell_procs
 
 
 def main() -> None:
+    banner(
+        "Every node of a type, wherever it sits",
+        "find_all(ir, SomeType) returns every node of that type anywhere in "
+        "the IR: the main pipeline, a join's right-hand sub-pipeline, a let "
+        "body, or a predicate tree.",
+        "the answers that come from binding and the ones that do not. "
+        "join_side is filled from the query text and is right on an unbound "
+        "parse; result_type and table are the binder's work.",
+    )
+
+    section("The query")
+    kql(QUERY.strip())
+
     ir = parse(QUERY, schema=SCHEMA).to_ir()
 
-    # Every *table* referenced anywhere in the query — including inside
-    # join right-side sub-pipelines and let-binding bodies. Note what is
-    # absent: `powershell_procs` is a let alias, not a table, so it is a
-    # LetRef and never shows up here.
-    tables = {n.name for n in find_all(ir, TableRef)}
-    print(f"Tables: {tables}")
+    section(
+        "find_all(ir, TableRef) and find_all(ir, LetRef)",
+        "Real tables and `let` aliases are separate node types, so one call "
+        "answers each question without filtering the other out by hand.",
+    )
+    print(f"  Tables      : {sorted(n.name for n in find_all(ir, TableRef))}")
+    print(f"  Let aliases : {sorted(n.name for n in find_all(ir, LetRef))}")
+    note(
+        "`powershell_procs` is missing from the table list because it names "
+        "a `let` binding. A single node type for both would report it as a "
+        "table your query never reads."
+    )
 
-    # The aliases, found the same way. Keeping the two node types distinct
-    # is what stops a `let` name from being reported as a real table.
-    aliases = {n.name for n in find_all(ir, LetRef)}
-    print(f"Let aliases: {aliases}")
-
-    # Every column reference, regardless of role (filter, project, join
-    # key), with three fields — and only two of them come from binding.
-    #
-    # `result_type` is Microsoft's binder's answer; unbound it reads
-    # `unresolved`. `table` is the scope the column resolved against, and
-    # names the *immediate* source: columns downstream of the alias resolve
-    # to `powershell_procs`, not to the DeviceProcessEvents behind it.
-    #
-    # `join_side` is **not** binder-filled — it is read off the `$left.` /
-    # `$right.` the query wrote, so it is already correct on an unbound
-    # parse. What binding changes is `table`, which goes from `None`
-    # (`table` never carries the `$left`/`$right` syntax itself) to the
-    # resolved `'powershell_procs'`. That is exactly why `join_side` has to
-    # be its own field: it is the only place the side is ever recorded.
-    print("Columns:")
+    section(
+        "find_all(ir, ColumnRef)",
+        "Every column reference whatever its role: filter, projection, or "
+        "join key.",
+    )
     print(f"  {'name':<12} {'result_type':<12} {'table':<20} join_side")
     for col in find_all(ir, ColumnRef):
         side = col.join_side or "-"
         print(f"  {col.name:<12} {col.result_type!s:<12} {col.table!s:<20} {side}")
+    note(
+        "`table` is the scope the column resolved against, and it names the "
+        "immediate source. Columns downstream of the alias resolve to "
+        "`powershell_procs`, not to the DeviceProcessEvents behind it."
+    )
+    note(
+        "`join_side` comes from the `$left.` and `$right.` the query wrote, "
+        "so it survives an unbound parse. `table` never carries that syntax, "
+        "which is why the side needs a field of its own: `$left.a == "
+        "$left.b` is not the join `$left.a == $right.b`."
+    )
 
-    # The join itself. This query writes no `kind=`, and `join_kind` reads
-    # `innerunique` — KQL's effective default, which is *not* `inner`:
-    # innerunique deduplicates the left side's join keys first, so a bare
-    # join and `join kind=inner` return different row counts from the same
-    # data. The field is never None, so an analyzer can compare it directly.
+    section(
+        "find_all(ir, JoinOp)",
+        "The query writes no `kind=`, so this reads KQL's effective default.",
+    )
     for op in find_all(ir, JoinOp):
-        print(f"Join: kind={op.join_kind}  on {op.on[0].canonical_form}")
+        print(f"  kind={op.join_kind}  on {op.on[0].canonical_form}")
+    note(
+        "The default is `innerunique`, not `inner`. It deduplicates the left "
+        "side's join keys first, so a bare join and `join kind=inner` return "
+        "different row counts from the same data. `join_kind` is never None, "
+        "so an analyzer can compare it directly."
+    )
 
-    # A five-line "analyzer": every filter in the query, with its
-    # canonical predicate form. `find_all` reaches the one inside the
-    # join's right-hand sub-pipeline as well as the one in the let body.
-    print("Filters:")
+    section(
+        "find_all(ir, FilterOp)",
+        "A five-line analyzer: every filter in the query, in canonical form.",
+    )
     for op in find_all(ir, FilterOp):
         print(f"  {op.predicate.canonical_form}")
+    note(
+        "One filter sits in the `let` body and one inside the join's "
+        "right-hand sub-pipeline. Neither is on the main pipeline, and "
+        "find_all reaches both."
+    )
+
+    takeaway(
+        "Most custom analyzers are a find_all call and an isinstance check. "
+        "Walk the pipeline by hand, as examples/walk_ir.py does, when you "
+        "care about the order operators run in or want to stop early.",
+        more="docs/tier2-ir.md, and examples/linter.py for rules built this "
+             "way",
+    )
 
 
 if __name__ == "__main__":

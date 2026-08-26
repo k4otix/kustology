@@ -42,6 +42,8 @@ against a fresh one. Rehash from source rather than across schemes.
 Requires the ``[ir]`` extras: ``pip install 'kustology[ir]'``.
 """
 
+from _display import banner, note, paint, section, takeaway
+
 from kustology import parse
 from kustology.ir import (
     SEMANTIC_HASH_SCHEME,
@@ -206,14 +208,19 @@ def errors(query: str) -> list[str]:
     return [d["code"] for d in parse(query).diagnostics if d["severity"] == "Error"]
 
 
-def report(title: str, pairs, expect_equal: bool) -> int:
+def verdict(same: bool) -> str:
+    """Return a coloured ``merge`` or ``split`` label."""
+    return paint("merge", "info") if same else paint("split", "accent")
+
+
+def report(title: str, lede: str, pairs, expect_equal: bool) -> int:
     """Hash every pair, print the measured verdict, return how many ran.
 
     Raises rather than printing a wrong table. ``tests/test_examples.py``
     calls ``main()``, so every row here is a claim the suite enforces —
     the only thing that stops this file drifting away from the library.
     """
-    print(f"\n=== {title}")
+    section(title, lede)
     for label, left, right in pairs:
         # A pair that does not parse is the trap here, not a result. KQL's
         # error recovery happily builds *something* for invalid text, and
@@ -232,52 +239,105 @@ def report(title: str, pairs, expect_equal: bool) -> int:
                 f"{label}: filed under {want}, measured {got} — this file's "
                 f"claim has drifted from the library"
             )
-        print(f"  {'merge ' if same else 'split '} {label}")
+        print(f"  {verdict(same)}  {label}")
     return len(pairs)
 
 
 def main() -> None:
-    print(f"Scheme: {SEMANTIC_HASH_SCHEME}")
-    print(f"Example digest: {digest('T | take 1')}")
+    banner(
+        "What semantic_hash merges and what it splits",
+        "Pairs of queries, hashed and compared at run time. Every verdict "
+        "below is measured, and a row filed under the wrong group raises "
+        "instead of printing.",
+        "the third group. Those merges are the ones that cost you a rule if "
+        "you deduplicate a detection library on this digest.",
+    )
 
-    measured = report("Merges the contract promises", MERGES, expect_equal=True)
-    measured += report("Splits the contract promises", SPLITS, expect_equal=False)
-    measured += report("Merges to know about before deduplicating",
-                       KNOWN_MERGES, expect_equal=True)
+    section("The digest itself", "The scheme rides in the string.")
+    print(f"  Scheme         : {SEMANTIC_HASH_SCHEME}")
+    print(f"  Example digest : {digest('T | take 1')}")
+    note(
+        "A stored digest from an older scheme cannot compare equal to a "
+        "fresh one by accident, because the prefix differs. Rehash from "
+        "source rather than across schemes."
+    )
+
+    measured = report(
+        "Merges the contract promises",
+        "Two queries that differ only in these ways are one query as far as "
+        "the digest is concerned.",
+        MERGES, expect_equal=True,
+    )
+    measured += report(
+        "Splits the contract promises",
+        "These differences change results, so each one moves the digest. "
+        "Near-synonyms that lower to a single node type are here too.",
+        SPLITS, expect_equal=False,
+    )
+    measured += report(
+        "Merges to know about before deduplicating",
+        "Cases where two queries you would call different share a digest. "
+        "The list is the claim; there is no tally of it in the prose.",
+        KNOWN_MERGES, expect_equal=True,
+    )
     # Derived, never written down: the only count in this file's output is
     # one it just computed.
     print(f"\n  {measured} pairs measured, every verdict computed at run time.")
 
-    print("\n=== Bind state")
-    # Every binder-written field is stripped, so a schema does not move the
-    # digest — except for one shape difference no stripping can hide.
+    section(
+        "Bind state",
+        "Every binder-written field is stripped before hashing, so passing "
+        "a schema does not move the digest.",
+    )
     plain = "T | where a > 1"
     aliased = "let A = T; A | take 1"
-    print(f"  {'merge ' if digest(plain) == digest(plain, SCHEMA) else 'split '}"
-          f" schema does not move the digest: {plain!r}")
-    print(f"  {'merge ' if digest(aliased) == digest(aliased, SCHEMA) else 'split '}"
-          f" a `let` aliasing a table does: {aliased!r}")
-    print("         Unbound the RHS is an expression; bound, the binder has")
-    print("         proved it is a table and it becomes a pipeline. Different")
-    print("         nodes, not different field values.")
+    print(f"  {verdict(digest(plain) == digest(plain, SCHEMA))}"
+          f"  schema does not move the digest: {plain!r}")
+    print(f"  {verdict(digest(aliased) == digest(aliased, SCHEMA))}"
+          f"  a `let` aliasing a table does: {aliased!r}")
+    note(
+        "Unbound, the right-hand side is an expression. Bound, the binder "
+        "has proved it is a table and it becomes a pipeline. That is "
+        "different nodes rather than different field values, so no amount "
+        "of stripping hides it."
+    )
 
-    print("\n=== The fields that carry the 0.2.0 splits")
+    section(
+        "The fields that carry the near-synonym splits",
+        "`in~`, `has_any`, and `has_all` all build a SetMembership. The op "
+        "field is what keeps them apart.",
+    )
     for query in ('T | where a in~ ("x")', 'T | where a has_any ("x")'):
         node = next(iter(find_all(parse(query).to_ir(), SetMembership)))
         print(f"  {query:<26} op={node.op:<8} "
               f"polarity={node.polarity} case_sensitive={node.case_sensitive}")
-    print("         `op` is the source of truth; the other two are derived")
-    print("         from it and kept because they are what a caller filters on.")
+    note(
+        "`op` is the source of truth. `polarity` and `case_sensitive` are "
+        "derived from it and kept because they are what a caller filters on."
+    )
 
-    print("\n=== Literals: what is hashed")
+    section(
+        "Literals: what is hashed",
+        "A timespan and a datetime, with the fields the digest reads.",
+    )
     for query in ("T | where d > 1500ms", "T | where t > datetime(2024-01-01Z)"):
         node = next(iter(find_all(parse(query).to_ir(), LiteralExpr)))
         print(f"  {query:<38} literal_kind={node.literal_kind:<9} "
               f"value={node.value!r} ticks={node.ticks}")
-    print("         `ticks` is the lossless form — 100ns units. A timedelta")
-    print("         rebuilt as ticks // 10 is exact only to a microsecond,")
-    print("         so `2tick` does not survive the round trip and `ticks` is")
-    print("         what to read when sub-microsecond precision matters.")
+    note(
+        "`ticks` is the lossless form, in 100-nanosecond units. A timedelta "
+        "rebuilt as ticks // 10 is exact only to a microsecond, so `2tick` "
+        "does not survive the round trip. Read `ticks` when sub-microsecond "
+        "precision matters."
+    )
+
+    takeaway(
+        "Use the digest to answer \"have I seen this query before?\" across "
+        "formatting, comments, `let` names, and operand order. Check the "
+        "third group above against your data before you delete anything on "
+        "the strength of a match.",
+        more="docs/semantic-hash.md",
+    )
 
 
 if __name__ == "__main__":

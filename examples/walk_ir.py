@@ -23,6 +23,8 @@ same walk still runs; every column just prints ``unresolved <- None``.
 Requires the ``[ir]`` extras: ``pip install 'kustology[ir]'``.
 """
 
+from _display import banner, kql, note, section, takeaway
+
 from kustology import parse
 from kustology.ir import (
     Assignment,
@@ -141,12 +143,44 @@ QUERY = (
 
 
 def main() -> None:
-    print("Input query:")
-    for line in QUERY.splitlines():
-        print(f"  {line}")
-    print()
-    print("IR walk (typed pipeline, bound against SCHEMA):")
+    banner(
+        "Walking the typed IR",
+        "The same query as examples/walk_tree.py, walked over the pydantic "
+        "IR instead of Microsoft's syntax tree. Dispatch is isinstance on "
+        "typed classes.",
+        "the depth of this tree against the AST walk of the same query. No "
+        "QueryBlock, no ExpressionStatement, no nested Pipe chain.",
+    )
+
+    section("The query")
+    kql(QUERY)
+
+    section(
+        "IR walk, bound against SCHEMA",
+        "Two statements and two let bindings, one of them a function. Every "
+        "column prints as name:type <- scope, and the type and scope are "
+        "what binding adds.",
+    )
     walk(parse(QUERY, schema=SCHEMA).to_ir())
+    note(
+        "Three fields hold parts of the query that main_pipeline alone does "
+        "not reach: let_bindings, additional_pipelines for the second and "
+        "later statements, and a let function's own body. Walk only "
+        "main_pipeline and all three go missing without an error."
+    )
+    note(
+        "A column read through a `let` alias resolves to the alias, since "
+        "`table` names the immediate scope. Drop schema=SCHEMA and the walk "
+        "still runs; every column then prints `unresolved <- None`."
+    )
+
+    takeaway(
+        "The IR is flatter than the AST and its nodes are classes, so a "
+        "walk over it is isinstance dispatch and little else. Reach for "
+        "examples/find_all_demo.py when you want every node of one type "
+        "wherever it sits, rather than the pipeline's exact shape.",
+        more="docs/tier2-ir.md",
+    )
 
 
 if __name__ == "__main__":

@@ -96,7 +96,9 @@ jobs:
       # had five other cells to hide behind. Every cell now installs the [ir]
       # extra and runs the whole suite except one -- ubuntu-latest / py3.10 --
       # which stays on --extra test alone so `pip install kustology` without
-      # [ir] is still proven to work on every push.
+      # [ir] is still proven to work on every push. That cell also proves the
+      # plain-text rendering in examples/_display.py, since [examples] rides
+      # along with [ir] on every other cell and brings rich with it.
       - name: Determine extras for this cell
         id: extras
         shell: bash
@@ -104,7 +106,7 @@ jobs:
           if [ "${{ matrix.os }}" = "ubuntu-latest" ] && [ "${{ matrix.python }}" = "3.10" ]; then
             echo "flags=--extra test" >> "$GITHUB_OUTPUT"
           else
-            echo "flags=--extra test --extra ir" >> "$GITHUB_OUTPUT"
+            echo "flags=--extra test --extra ir --extra examples" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Install package (${{ steps.extras.outputs.flags }})
