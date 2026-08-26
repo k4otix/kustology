@@ -1,0 +1,51 @@
+name: Dependency Review
+
+# Split out of test.yml rather than living beside the test matrix. test.yml is
+# a reusable workflow that release.yml calls with `permissions: contents:
+# read`, and a called workflow's job cannot request more than its caller
+# grants. This job needs `pull-requests: write` to post its summary comment,
+# which made every tag-triggered release run fail at startup -- before any job,
+# because permission validation happens while the run graph is built and does
+# not evaluate `if:` first. Keeping the job here keeps release.yml at least
+# privilege.
+#
+# The job name below is the required-status-check context on main. Renaming it
+# takes the ruleset's required check with it.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Job-level permissions replace (not merge with) the workflow-level block
+    # above, so contents: read is restated here alongside the write scope
+    # actions/dependency-review-action needs to post its
+    # comment-summary-in-pr: on-failure PR comment.
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
+        with:
+          persist-credentials: false
+      - name: Review for vulnerable dependencies
+        # Dependabot will automatically update this to the latest v4 SHA
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
