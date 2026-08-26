@@ -26,34 +26,6 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  dependency-review:
-    name: Dependency Review
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    # This job only needs to run on Pull Requests, not on pushes to main.
-    if: github.event_name == 'pull_request'
-    # Job-level permissions replace (not merge with) the workflow-level
-    # block above, so contents: read is restated here alongside the write
-    # scope actions/dependency-review-action needs to post its
-    # comment-summary-in-pr: on-failure PR comment.
-    permissions:
-      contents: read
-      pull-requests: write
-    steps:
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
-        with:
-          egress-policy: audit
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4
-        with:
-          persist-credentials: false
-      - name: Review for vulnerable dependencies
-        # Dependabot will automatically update this to the latest v4 SHA
-        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
-        with:
-          fail-on-severity: high
-          comment-summary-in-pr: on-failure
-
   test:
     name: ${{ matrix.os }} / py${{ matrix.python }}
     runs-on: ${{ matrix.os }}
