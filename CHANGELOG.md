@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- README is now a short front page. The reference material moves to `docs/`: syntax-tree behavior, the Tier 2 IR, the CLI, and the `semantic_hash` contract.
+
 ## [0.2.0] — 2026-08-25
 
 First release since 0.1.0. Two themes: values the library reported wrongly (culture-corrupted literals, mis-assigned column provenance, conflated operators), and public surface that never worked (`LetBinding`'s fields, `LetRef`, `ExternalDataExpr`'s contents). Tier 2 breaks in several places, as its pre-1.0 policy permits — see **Upgrading from 0.1.0** and **Breaking** below.

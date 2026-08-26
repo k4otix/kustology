@@ -66,8 +66,8 @@ deprecated alias, the way `get_time_range()` aliases `find_time_expressions()`.
 track until the IR survives one Kusto.Language.dll upgrade cycle without breaking.
 Breaking changes are possible at minor versions; each is called out in CHANGELOG.md.
 
-See README.md "Versioning and stability" for what counts as breaking, and for the
-three independent version tags (`__version__`, `IR_SCHEMA_VERSION`,
+See `docs/semantic-hash.md` for what counts as breaking, and for the three
+independent version tags (`__version__`, `IR_SCHEMA_VERSION`,
 `SEMANTIC_HASH_SCHEME`).
 
 ## Where to add things
@@ -201,7 +201,8 @@ a downstream consumer can design against it before discovering it never fills.
 1. Add the subparser + handler in `src/kustology/cli.py`.
 2. Add subprocess-based tests in `tests/test_cli.py` covering happy path,
    error path, and `--json` output shape if applicable.
-3. Document the subcommand in the README's CLI section.
+3. Document the subcommand in `docs/cli.md`, and add it to the README's short
+   command list if a first-time reader would look for it there.
 
 ## The invariants, and what enforces each one
 
@@ -239,7 +240,12 @@ version). CI verifies the hash on every push via `scripts/verify_dll.py`.
 
 ## See also
 
-- `README.md` — quickstart, install, examples, versioning and stability.
+- `README.md` — what the library is, the two tiers, install, and a quickstart.
+  It is also the PyPI long description, so every link in it must be absolute.
+- `docs/` — the user-facing manual: `tier1-syntax-tree.md` for the syntax tree
+  and pythonnet behavior, `tier2-ir.md` for how KQL lowers into IR nodes,
+  `cli.md` for the command-line reference, and `semantic-hash.md` for the
+  version tags and the digest's contract.
 - `CONTRIBUTING.md` — workflow, coding conventions, the local check loop.
 - `AGENTS.md` — the non-obvious interop and traversal traps. Read it before
   touching `bridge.py`, `IRBuilder`, or anything that walks the IR; every
