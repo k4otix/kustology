@@ -5,7 +5,7 @@
 
 Two entry points: :meth:`IRBuilder.build` (string in, IR out, parses+binds)
 and :meth:`IRBuilder.build_from_code` (use when the caller already has a
-``KustoCode``, e.g. via :meth:`kustology.KustoQuery.to_ir`).
+``KustoCode``, for example via :meth:`kustology.KustoQuery.to_ir`).
 
 The handled-SyntaxKind sets are exposed as :attr:`HANDLED_OPERATOR_KINDS`,
 :attr:`HANDLED_EXPR_KINDS` and :attr:`HANDLED_STATEMENT_KINDS` for the
@@ -20,12 +20,12 @@ from typing import Any, Literal
 from ..bridge import GlobalState, KustoCode  # re-export-friendly; also triggers CLR init
 
 # The diagnostic codes live in one module. Two spellings of "KS204" is
-# exactly the drift a DLL refresh turns into a silent behaviour split -- and
+# exactly the drift a DLL refresh turns into a silent behavior split -- and
 # the two sets are deliberately different sizes; ``services`` documents why.
 from ..services import _UNKNOWN_NAME_CODES, _analyze_guarded
 
-# Moved to Tier 1 so consumers walking the .NET tree can reach it without the
-# [ir] extra. The private alias keeps this module's call sites untouched.
+# The walker helpers live in Tier 1 so consumers walking the .NET tree can
+# reach them without the [ir] extra; the private aliases keep call sites terse.
 from ..utils.walker import iter_elements as _iter_elements
 from ..utils.walker import node_text as _node_text
 from ._builder_helpers import (
@@ -190,7 +190,7 @@ from Kusto.Language.Syntax import (
 
 
 def _is_time_func_name(name: str) -> bool:
-    """True when ``name`` is a known KQL time function.
+    """Return True when ``name`` is a known KQL time function.
 
     Reflects ``Kusto.Language.Functions`` for the answer, then subtracts
     ``_NON_TEMPORAL_ARITHMETIC``. That subtraction is the same one
@@ -245,20 +245,18 @@ _NULL_TEST_POLARITY: dict[str, Literal["inclusion", "exclusion"]] = {
 
 
 def _is_case_sensitive_op(op: str) -> bool | None:
-    """Whether a KQL binary operator compares case-sensitively.
+    """Return whether a KQL binary operator compares case-sensitively.
 
     ``None`` means the question does not apply: an arithmetic operator does
-    not compare text at all, and reporting ``True`` for ``a + 1`` -- which is
-    what the comparison fall-through did -- states a fact about a query that
-    is not one.
+    not compare text at all, and reporting ``True`` for ``a + 1`` would
+    state a fact about the query that is not one.
 
     Derived from the operator's own suffix rather than an allow-list of
-    members. The allow-list this replaced named six operators and let
-    everything else fall through to ``True``, so it was already wrong for
-    ``hasprefix`` and ``hassuffix`` before anyone negated anything, and every
-    negated string operator (``!has``, ``!contains``, ``!startswith``,
-    ``!endswith``, ``!hasprefix``, ``!hassuffix``) was reported backwards.
-    A new operator from a DLL refresh would land wrong the same way.
+    members. An allow-list falls through to a wrong answer for every
+    spelling it misses -- each negated string operator (``!has``,
+    ``!contains``, ``!startswith``, ``!endswith``, ``!hasprefix``,
+    ``!hassuffix``), and any new operator a DLL refresh brings -- where the
+    suffix rule classifies them all by the grammar's own naming convention.
 
     KQL's rule, in the order it has to be applied:
 
@@ -267,11 +265,11 @@ def _is_case_sensitive_op(op: str) -> bool | None:
     * ``~`` suffix -> insensitive (``=~``, ``!~``)
     * ``:`` -> insensitive. ``search Col:'x'`` is Microsoft's documented
       shorthand for ``Col has 'x'``, a term match, and term matches fold
-      case. It is spelled as none of the stems below, so it fell through to
-      the comparison default and reported the two equivalent spellings as
-      comparing differently.
+      case. It is spelled as none of the stems below, so without its own
+      arm it would fall through to the comparison default and report the
+      two equivalent spellings as comparing differently.
     * string operators -> insensitive by default, negation included
-    * everything else, i.e. the comparisons -> sensitive
+    * everything else, that is the comparisons -> sensitive
     """
     if op in ARITHMETIC_OPS:
         return None
@@ -299,14 +297,14 @@ def _as_bool(value: str | None) -> bool:
     a boolean literal that is .NET's ``"True"`` / ``"False"`` rather than
     KQL's own lowercase spelling. Both are accepted, along with the ``1`` /
     ``0`` form the grammar also admits; anything else -- including an
-    unwritten parameter -- is ``False``, which is the operator's behaviour
+    unwritten parameter -- is ``False``, which is the operator's behavior
     when the flag is absent.
     """
     return value is not None and value.strip().lower() in ("true", "1")
 
 
 def _is_tabular_rhs(expr: Any) -> bool:
-    """True when ``expr`` stands in tabular position rather than scalar.
+    """Return True when ``expr`` stands in tabular position rather than scalar.
 
     Two positions ask this question and must answer it the same way: a
     ``let`` right-hand side (``let A = T | where …``) and the tail expression
@@ -322,14 +320,12 @@ def _is_tabular_rhs(expr: Any) -> bool:
     the builder does not guess one into existence — the documented bind-state
     divergence in :func:`~kustology.ir.transforms.compute_semantic_hash`.
 
-    ``ExternalDataExpression`` is one of the four. It used to be excluded,
-    because there was no source class to build a pipeline around and routing
-    it through ``_visit_pipeline`` would have manufactured an
-    ``UnknownSource``. :class:`~kustology.ir.query.ExternalDataSource` is
-    that class, so ``let X = externaldata(...)`` now lands on
-    ``rhs_pipeline`` like every other tabular binding — and
+    ``ExternalDataExpression`` is one of the four:
+    :class:`~kustology.ir.query.ExternalDataSource` gives ``_visit_pipeline``
+    a source class to build around, so ``let X = externaldata(...)`` lands
+    on ``rhs_pipeline`` like every other tabular binding — and
     ``rhs_pipeline is not None`` is a reliable "is this binding tabular"
-    test again.
+    test.
     """
     net_kind = str(type(expr).__name__)
     if net_kind.endswith("Operator") or net_kind in _TABULAR_RHS_KINDS:
@@ -340,8 +336,7 @@ def _is_tabular_rhs(expr: Any) -> bool:
 
 
 def _collect_inner_tables(node: Any) -> list[str]:
-    """Distinct table names inside a let binding's right-hand side, in
-    first-seen order.
+    """Collect a let binding's distinct table names, in first-seen order.
 
     ``node`` is whichever of the binding's ``rhs_pipeline`` /
     ``rhs_function`` is populated -- the walk is ``find_all``-based, so it
@@ -362,8 +357,9 @@ def _collect_inner_tables(node: Any) -> list[str]:
 
 
 def _collect_inner_time_exprs(node: Any) -> list[Any]:
-    """Time-function calls inside a let binding's right-hand side, in walk
-    order. ``node`` is read as in :func:`_collect_inner_tables`.
+    """Collect a let binding's time-function calls, in walk order.
+
+    ``node`` is read as in :func:`_collect_inner_tables`.
 
     Time *literals* are reachable through ``rhs_pipeline`` / ``rhs_function``
     already; this surfaces the calls (``ago``, ``now``, ``bin``, ...) that a
@@ -376,7 +372,7 @@ def _collect_inner_time_exprs(node: Any) -> list[Any]:
 
 
 class IRBuilder:
-    """Builds a :class:`QueryIR` from a Microsoft Kusto syntax tree.
+    """Build a :class:`QueryIR` from a Microsoft Kusto syntax tree.
 
     Dispatch tables are explicit (sets, not method-ref dicts) so the audit
     script can read them statically without instantiating the builder.
@@ -415,16 +411,16 @@ class IRBuilder:
         "OrderedExpression",
         # OrderedExpression is handled, but not by ``_visit_expr``: it is an
         # ordering key, not an expression, and lowering it to its bare inner
-        # expression is what threw away ``asc``/``desc`` and ``nulls
+        # expression would throw away ``asc``/``desc`` and ``nulls
         # first``/``last``. It stays listed for the same reason
-        # MaterializeExpression below does -- the kind *is* modelled, and
+        # MaterializeExpression below does -- the kind *is* modeled, and
         # dropping it would make the coverage audit report a fully-handled
         # shape as unhandled.
         #
-        # It has FOUR owners, and the count matters: deleting the
-        # ``_visit_expr`` branch for the sake of the first two silently
-        # regressed the third to ``UnknownExpr``, losing the column identity
-        # a bare ``project-reorder x`` keeps. Enumerated by parsing each
+        # It has FOUR owners, and the count matters: a change made with only
+        # the first two in mind can silently regress the third to
+        # ``UnknownExpr``, losing the column identity a bare
+        # ``project-reorder x`` keeps. Enumerated by parsing each
         # construct and walking to the nearest ``*Operator`` ancestor of every
         # ``OrderedExpression`` in the tree:
         #
@@ -444,7 +440,7 @@ class IRBuilder:
         # MaterializeExpression is handled, but by ``_visit_pipeline`` --
         # ``materialize`` is a keyword the grammar admits only as a ``let``
         # right-hand side, where ``_TABULAR_RHS_KINDS`` routes it to a
-        # nested ``Pipeline``. It stays listed because the kind *is* modelled;
+        # nested ``Pipeline``. It stays listed because the kind *is* modeled;
         # dropping it would make the coverage audit report a fully-handled
         # shape as unhandled.
         "ToScalarExpression", "PipeExpression", "ExternalDataExpression",
@@ -453,19 +449,17 @@ class IRBuilder:
         # position via ``_visit_pipeline`` (its own or a ``let``
         # right-hand side's) and expression position via ``_visit_expr``,
         # the value set of a membership test --
-        # `in ((datatable(x:string)["v", "w"]))`. It used to be listed here
-        # as source-only, which was wrong: the expression-position shape
-        # parsed clean and fell through to ``UnknownExpr`` while this list
-        # claimed the kind was fully covered, so the coverage audit was
-        # blind to the miss. Both branches share ``_read_datatable`` so the
-        # two readings cannot drift.
+        # `in ((datatable(x:string)["v", "w"]))`. Covering only the source
+        # position would let the expression-position shape parse clean and
+        # fall through to ``UnknownExpr`` while this list claims full
+        # coverage -- a miss the coverage audit cannot see. Both branches
+        # share ``_read_datatable`` so the two readings cannot drift.
         "MakeSeriesExpression",
         "ForkExpression",
         # ForkExpression joins the same two: handled, but by the
         # ``ForkOperator`` branch of ``_visit_operator``, which reads its
         # ``NameEquals`` into ``ForkBranch.name`` and its ``Expression`` into
-        # a nested ``Pipeline``. It was listed as *unhandled* for as long as
-        # the branches were empty, which was accurate then and is not now.
+        # a nested ``Pipeline``.
     })
 
     # The statement kinds that are neither ``let`` nor a tabular expression,
@@ -486,9 +480,9 @@ class IRBuilder:
     #
     # ``FunctionParameter`` / ``DefaultValueDeclaration`` /
     # ``PrimitiveTypeExpression`` are likewise absent, and consistently so:
-    # ``LetFunction`` has read all three since 0.2.0 without listing them,
-    # because the kind the audit tracks for that shape is
-    # ``NameAndTypeDeclaration``, which ``HANDLED_EXPR_KINDS`` already carries.
+    # ``LetFunction`` reads all three without listing them, because the kind
+    # the audit tracks for that shape is ``NameAndTypeDeclaration``, which
+    # ``HANDLED_EXPR_KINDS`` already carries.
     HANDLED_STATEMENT_KINDS = frozenset({
         "SetOptionStatement", "OptionValueClause",
         "QueryParametersStatement",
@@ -514,8 +508,10 @@ class IRBuilder:
     # -- entry points ----------------------------------------------------
 
     def build(self, query: str) -> QueryIR:
-        """Parse, bind, build. Use ``build_from_code`` when the caller already
-        has a ``KustoCode``.
+        """Parse and bind ``query``, then build its IR.
+
+        Use :meth:`build_from_code` when the caller already has a
+        ``KustoCode``.
 
         Binding happens against ``self.global_state``, which defaults to
         ``GlobalState.Default`` — the state that carries Kusto's own
@@ -571,13 +567,12 @@ class IRBuilder:
         construction.
 
         The parameter is named for the table case because that is the one
-        callers reach for, but filtering only that code left three families
-        behind across the fixture corpus — ``KS205`` on `union isfuzzy=true`,
-        ``KS207`` on a `cluster(...)` qualifier, ``KS211`` on an ASIM parser
-        function, ``KS142`` on a `T*` wildcard — two of them ``Error``
-        severity, so a consumer gating on
-        ``any(d.severity == "Error" for d in ir.diagnostics)`` flipped on a
-        call where the caller had asked for no schema at all.
+        callers reach for, but the filter covers the whole family — ``KS205``
+        on `union isfuzzy=true`, ``KS207`` on a `cluster(...)` qualifier,
+        ``KS211`` on an ASIM parser function, ``KS142`` on a `T*` wildcard —
+        because some of those carry ``Error`` severity, and a consumer gating
+        on ``any(d.severity == "Error" for d in ir.diagnostics)`` would
+        otherwise flip on a call where the caller asked for no schema at all.
 
         A parse the caller bound with their own schema keeps every one of
         them: there, a name the schema does not describe is a real error.
@@ -617,17 +612,16 @@ class IRBuilder:
         # ``FunctionDeclaration`` is not: it belongs to the body, is in scope
         # only there, and is built by ``_visit_function_declaration`` into
         # ``LetFunction.body_lets`` / ``.body_query_parameters``. Hoisting it
-        # here declared it twice, and declared it in a scope the query never
-        # wrote it in.
+        # here would declare it twice, in a scope the query never wrote it
+        # in.
         #
         # A ``declare pattern`` body is the same case reached by a different
         # route: its braces hold a ``FunctionBody`` owned by a
-        # ``PatternMatch`` rather than by a ``FunctionDeclaration``, so the
-        # ``FunctionDeclaration`` filter alone did not catch it and a ``let``
-        # written inside a pattern arm was hoisted to top level. That was the
-        # disclosed behaviour for as long as nothing modelled the pattern;
-        # ``PatternMatch.body_lets`` owns it now, so hoisting it as well
-        # would be the double declaration this filter exists to prevent.
+        # ``PatternMatch`` rather than by a ``FunctionDeclaration``, so a
+        # ``FunctionDeclaration`` filter alone would not catch it.
+        # ``PatternMatch.body_lets`` owns a ``let`` written inside a pattern
+        # arm, so hoisting it as well would be the double declaration this
+        # filter exists to prevent.
         for ls in root.GetDescendants[LetStatement]():
             if not self._is_a_top_level_statement(ls):
                 continue
@@ -648,14 +642,15 @@ class IRBuilder:
         statements = self._visit_statements(root)
 
         main_pipeline: Pipeline | None = None
-        # Every tabular statement, not just the first. ``T | count; U | count``
-        # used to build exactly the IR of ``T | count`` -- same nodes, same
-        # ``semantic_hash`` -- with the second statement unreachable through
-        # ``walk``/``find_all``. A function body's tabular tail is not in this
+        # Every tabular statement, not only the first: dropping the rest
+        # would give ``T | count; U | count`` exactly the IR of ``T | count``
+        # -- same nodes, same ``semantic_hash`` -- with the second statement
+        # unreachable through ``walk``/``find_all``. A function body's tabular
+        # tail is not in this
         # list: it hangs off the ``FunctionBody`` rather than being an
         # ``ExpressionStatement``, so ``let f = (x:long) { T | where a > x };
-        # T | count`` reports exactly one. The ancestor filter is belt to that
-        # braces -- if a future grammar puts a real statement in a body, it
+        # T | count`` reports exactly one. The ancestor filter is the belt to
+        # those braces -- if a future grammar puts a real statement in a body, it
         # lands in the body rather than silently becoming a second top-level
         # pipeline.
         additional_pipelines: list[Pipeline] = []
@@ -700,7 +695,7 @@ class IRBuilder:
 
     @staticmethod
     def _is_a_top_level_statement(node: Any) -> bool:
-        """True when ``node`` is one of the *query's* own statements.
+        """Return True when ``node`` is one of the *query's* own statements.
 
         ``GetDescendants`` is recursive, so every statement sweep needs this:
         a statement inside a ``let``-function body or a ``declare pattern``
@@ -727,7 +722,8 @@ class IRBuilder:
         ``FunctionBody`` admits, and it lands on
         ``LetFunction.body_query_parameters`` instead. The other four cannot
         legally appear inside a body (probed: each is a parse error there),
-        so the filter is belt to that braces rather than a live case.
+        so for them the filter is the belt to those braces rather than a live
+        case.
         """
         found: list[tuple[int, Any]] = []
         for net_cls, visit in (
@@ -1022,8 +1018,7 @@ class IRBuilder:
         return body_lets, body_query_parameters, body_pipeline, body_expr
 
     def _visit_function_declaration(self, node: Any) -> LetFunction:
-        """Build a :class:`LetFunction` -- signature and body -- from a .NET
-        ``FunctionDeclaration``.
+        """Build a :class:`LetFunction` from a .NET ``FunctionDeclaration``.
 
         ``node.Parameters`` is a ``FunctionParameters`` wrapper whose own
         ``.Parameters`` is the list :meth:`_read_function_parameters` reads;
@@ -1066,12 +1061,13 @@ class IRBuilder:
     # -- pipeline / operator dispatch ------------------------------------
 
     def _visit_pipeline(self, node: Any) -> Pipeline:
+        """Fold a pipe chain into a :class:`Pipeline` -- one source, then its operators in order."""
         operators: list[Any] = []
         # The placeholder records the node's own text rather than the literal
         # string "unknown". A shape the builder cannot model is exactly the
-        # one whose provenance a consumer needs, and a constant made every
-        # unmodelled source hash the same -- the reason ``UnknownExpr`` and
-        # ``UnknownOp`` have carried their text all along.
+        # one whose provenance a consumer needs, and a constant would make
+        # every unmodeled source hash the same -- the rule ``UnknownExpr``
+        # and ``UnknownOp`` follow too.
         source: (
             TableRef | LetRef | FuncCallSource | DataTableSource
             | ExternalDataSource | ImplicitSource | UnknownSource | Pipeline
@@ -1096,10 +1092,10 @@ class IRBuilder:
 
             if kind == "ForkExpression":
                 # `fork`'s own branch handling descends to `.Expression`
-                # before calling here, so this is the belt to that braces:
-                # falling through on a `ForkExpression` is precisely the bug
-                # that left every fork branch empty, and any future caller
-                # that reaches one by another route gets the operators rather
+                # before calling here, so this is the belt to those braces:
+                # falling through on a `ForkExpression` would leave a fork
+                # branch empty, and any future caller that reaches one by
+                # another route gets the operators rather
                 # than silence. The `a=` name is not readable from here --
                 # a `Pipeline` has nowhere to put it -- so it is recorded by
                 # `_visit_operator`'s `ForkOperator` branch, which is why
@@ -1125,11 +1121,11 @@ class IRBuilder:
 
             if kind == "FunctionCallExpression":
                 # User-defined table-valued function at source position
-                # (e.g. `findAnomalies(field) | summarize ...`).
+                # (for example `findAnomalies(field) | summarize ...`).
                 if isinstance(source, UnknownSource):
                     # Syntactic only: a table-valued source name is not
-                    # looked up through the binder here, so this matches the
-                    # reading this position has always used.
+                    # looked up through the binder here. See
+                    # ``_read_func_call`` for the per-position choice.
                     name, args = self._read_func_call(n, prefer_symbol=False)
                     source = FuncCallSource(name=name, args=args, span=to_span(n))
                 return
@@ -1188,13 +1184,15 @@ class IRBuilder:
     def _visit_table_ref(self, node: Any) -> TableRef | LetRef:
         """A table named in a *naming* position, wherever the grammar puts one.
 
-        Three positions share this reading and used to read it three ways:
-        the pipeline's own source, ``search in (A, B)`` and
-        ``find in (T, U)``. The last two recorded a bare string -- ``find``
-        with ``el.ToString().strip()``, which is ``IncludeTrivia.All``, so
-        ``find in (// note`` ↵ ``T)`` hashed differently from ``find in (T)``
-        -- and neither could express a qualifier, a wildcard or a ``let``
-        alias, all three of which change what the query reads.
+        Three positions share this reading, and reading them apart would
+        treat them three different ways: the pipeline's own source,
+        ``search in (A, B)`` and ``find in (T, U)``. The last two, read
+        apart, would only capture a bare string -- ``find`` via
+        ``el.ToString().strip()``, which is ``IncludeTrivia.All``, so
+        ``find in (// note`` ↵ ``T)`` would hash differently from
+        ``find in (T)`` -- and neither could express a qualifier, a
+        wildcard or a ``let`` alias, all three of which change what the
+        query reads.
 
         The three distinctions this preserves are the ones
         :class:`~kustology.ir.query.TableRef` documents: ``database('d').T``
@@ -1551,10 +1549,9 @@ class IRBuilder:
                 for el in _iter_elements(n.Aggregates):
                     # Aggregates arrive as MakeSeriesExpression wrapping the
                     # actual SimpleNamedExpression (Count = count()) plus the
-                    # `default=` clause. Unwrapping to `.Expression` -- what
-                    # this branch used to do -- dropped the default, so a
-                    # series gap-filled with 0 and one gap-filled with 1
-                    # built the same node.
+                    # `default=` clause. Unwrapping to `.Expression` alone
+                    # drops the default, so a series gap-filled with 0 and
+                    # one gap-filled with 1 would build the same node.
                     inner = getattr(el, "Expression", el)
                     assign = self._visit_assignment(inner, mode="aggregation")
                     default_clause = getattr(el, "DefaultExpression", None)
@@ -1617,11 +1614,11 @@ class IRBuilder:
 
         if kind == "MvExpandOperator":
             # Each element is an ``MvExpandExpression``: the column plus its
-            # optional ``to typeof(...)``. Unwrapping to ``.Expression`` --
-            # what this branch used to do -- discarded the declared element
-            # type, and the operator's own modifiers (``limit``,
-            # ``with_itemindex``, ``bagexpansion``, ``kind``) were never read
-            # at all, so six different queries built one node.
+            # optional ``to typeof(...)``. Unwrapping to ``.Expression``
+            # alone discards the declared element type, and the operator's
+            # own modifiers (``limit``, ``with_itemindex``, ``bagexpansion``,
+            # ``kind``) go unread entirely, so six different queries would
+            # build one node.
             mv_cols: list[Any] = []
             if hasattr(n, "Expressions"):
                 for mve in _iter_elements(n.Expressions):
@@ -1987,15 +1984,14 @@ class IRBuilder:
         )
 
     def _visit_count(self, node: Any) -> int | AnyExpr:
-        """Take/sample/top/top-hitters/sample-distinct count operand.
+        """Return the count operand of a take, sample, or top operator.
 
-        KQL allows any scalar expression here, not just an integer literal
-        -- the previous ``safe_int`` helper called ``int(node.ToString())``
-        and raised ``ValueError`` on ordinary, valid queries like
-        ``let n = 10; T | take n`` or ``take toscalar(U | count)``. The
-        literal case still returns a plain ``int`` so existing
-        ``op.count == 5`` assertions (and downstream consumers) keep
-        working; anything else becomes the visited expression.
+        KQL allows any scalar expression here, not only an integer literal:
+        ``let n = 10; T | take n`` and ``take toscalar(U | count)`` are both
+        valid, so parsing the operand's text as an ``int`` rejects ordinary
+        queries. An integer literal returns a plain ``int``, which keeps
+        ``op.count == 5`` comparisons working for consumers; every other
+        shape becomes the visited expression.
         """
         if str(node.Kind) in ("LongLiteralExpression", "IntLiteralExpression"):
             return int(node.LiteralValue)
@@ -2594,7 +2590,7 @@ class IRBuilder:
             # ``take_any(a)`` is ``a`` and ``arg_max(t, *)`` starts with ``t``
             # -- the column keeps its own name, prefixed with the symbol's
             # own ``ResultNamePrefix`` when it has one (``argmin(s)`` ->
-            # ``min_s``: the same multi-output shape as ``arg_min``, just a
+            # ``min_s``: the same multi-output shape as ``arg_min``, only a
             # different prefix -- ``AddFunctionTupleResultColumn`` applies it
             # per member column, not ``GetFunctionResultName``). With no
             # named column (``take_any(*)``) there is nothing to borrow and
@@ -2639,7 +2635,7 @@ class IRBuilder:
         exactly). What this port cannot recover is a *non-bare* argument
         name Microsoft itself derives from richer expression shapes
         (``GetExpressionResultName``'s ``PathExpression``/``ElementExpression``
-        cases) -- e.g. ``treepath(D[0])`` is Microsoft's ``tree_D_0`` but
+        cases) -- for example, ``treepath(D[0])`` is Microsoft's ``tree_D_0`` but
         this port's ``tree_`` (no ``NameReference`` to read), since only the
         bare-column walk is ported here, by design (see the module's callers).
 

@@ -1,6 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
+"""Python bindings over Microsoft's ``Kusto.Language`` library.
+
+Importing this package starts the .NET runtime, loads the bundled
+``Kusto.Language.dll``, and pins .NET's invariant culture process-wide —
+see :mod:`kustology.bridge` for what that means for the host process.
+"""
+
 # Underscored: both names are machinery for computing `__version__`, and a
 # plain import binds them into `kustology`'s namespace, where
 # `kustology.PackageNotFoundError` reads as part of this library's API.

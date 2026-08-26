@@ -3,12 +3,13 @@
 
 """Ordering keys: ``sort by`` / ``order by`` / ``top … by`` / ``project-reorder``.
 
-``SortOp.expressions`` and ``TopOp.by`` used to hold bare expressions, so
-``sort by x asc`` and ``sort by x desc`` — which return rows in opposite
-orders — built byte-identical IR and collided under ``semantic_hash``. The
-direction and the ``nulls first`` / ``nulls last`` clause were read off the
-AST's ``OrderedExpression`` wrapper and thrown away when the builder unwrapped
-it.
+``SortOp.expressions`` and ``TopOp.by`` hold :class:`SortKey` elements, not
+bare expressions, because a bare expression cannot carry the direction or
+the ``nulls first`` / ``nulls last`` clause. The AST's ``OrderedExpression``
+wrapper carries both, and a builder that unwraps it and keeps only the
+inner expression throws them away — collapsing ``sort by x asc`` and
+``sort by x desc``, which return rows in opposite orders, onto
+byte-identical IR that collides under ``semantic_hash``.
 
 Two properties are pinned here that are easy to conflate:
 
@@ -162,14 +163,13 @@ def test_binder_reaches_expressions_through_the_new_wrapper():
 
 # -- hashing --------------------------------------------------------------
 #
-# Every pair that used to be pinned here lives in tests/ir/test_hash_battery.py
-# now: sort-asc-vs-desc/sort-per-key-direction/top-asc-vs-desc/bare-sort-is-desc/
+# Every ordering hash pair lives in tests/ir/test_hash_battery.py:
+# sort-asc-vs-desc/sort-per-key-direction/top-asc-vs-desc/bare-sort-is-desc/
 # bare-top-is-desc as sort-direction/sort-per-key-direction/top-by-direction/
 # sort-bare-is-desc/top-bare-is-desc; sort-nulls-first-vs-last as
 # sort-nulls-placement; sort-bare-vs-asc, top-bare-vs-asc,
-# sort-nulls-first-vs-default (as sort-nulls-clause-vs-absent),
-# order-by-is-sort-by and order-by-desc-is-sort-by-desc were moved there by
-# this task since the battery lacked them.
+# sort-nulls-first-vs-default as sort-nulls-clause-vs-absent; and
+# order-by-is-sort-by and order-by-desc-is-sort-by-desc.
 
 # -- serialization --------------------------------------------------------
 
@@ -238,8 +238,8 @@ def test_a_malformed_nulls_clause_degrades_instead_of_raising(case_id, query, di
     and only one of them is ``None``. ``sort by x nulls`` builds an
     ``OrderingNullsClause`` that *exists*, holding a ``FirstOrLastKeyword``
     that also exists but is a missing token whose ``Text`` is ``""``. A
-    presence check alone let that empty string reach
-    ``Literal["first", "last"]`` and turned a typo into a ``ValidationError``
+    presence check alone would let that empty string reach
+    ``Literal["first", "last"]`` and turn a typo into a ``ValidationError``
     out of ``to_ir()`` -- a hard crash where ``T | take``, ``T | where``,
     ``T | summarize by`` and ``T | sort by`` all build a degraded operator
     and leave the complaint to the diagnostics.
@@ -277,10 +277,11 @@ def _reorder_keys(query: str) -> list[ReorderKey]:
 
 
 def test_project_reorder_keeps_the_column_and_records_the_direction():
-    """The regression this exists for. Deleting the ``OrderedExpression``
-    branch of ``_visit_expr`` fixed ``sort``/``top`` and broke this third
-    site: ``project-reorder x asc`` fell through to ``UnknownExpr`` and the
-    column identity was gone -- unbindable, invisible to ``find_all``, an
+    """Guards the regression this exists for: handling the
+    ``OrderedExpression`` branch of ``_visit_expr`` for ``sort``/``top``
+    does not cover this third site on its own. Left unhandled,
+    ``project-reorder x asc`` falls through to ``UnknownExpr`` and the
+    column identity is gone -- unbindable, invisible to ``find_all``, an
     opaque blob in the LLM view."""
     (key,) = _reorder_keys("T | project-reorder x asc")
     assert isinstance(key, ReorderKey), type(key).__name__
@@ -314,12 +315,12 @@ def test_project_reorder_wildcard_terms_survive_with_their_direction():
 
     A bare ``*`` is *every remaining column*, not a column named ``*``. Kusto
     parses it as a ``NameReference`` (with a ``WildcardedName`` inside), the
-    same class it uses for an ordinary column, so the builder lowered it to
-    ``ColumnRef(name="*")`` -- and ``find_all(ir, ColumnRef)``, the documented
-    way to ask which columns a query names, answered with a column that does
-    not exist. It is a :class:`~kustology.ir.StarExpr`, the node the IR
-    already has for exactly this, and the one ``distinct *`` has always
-    produced.
+    same class it uses for an ordinary column, so a builder that lowers it
+    the same way produces ``ColumnRef(name="*")`` -- and
+    ``find_all(ir, ColumnRef)``, the documented way to ask which columns a
+    query names, would answer with a column that does not exist. It is
+    instead a :class:`~kustology.ir.StarExpr`, the node the IR already has
+    for exactly this, and the one ``distinct *`` has always produced.
 
     A *prefix* wildcard stays a ``ColumnRef``: ``a*`` names a set of real
     columns by pattern, and the pattern text is the only record of which
@@ -343,15 +344,15 @@ def test_project_reorder_wildcard_terms_survive_with_their_direction():
 
 
 def test_a_bare_wildcard_is_not_reported_as_a_column():
-    """The consequence the node change exists for: ``find_all(ir, ColumnRef)``
-    must not name ``*``.
+    """The rule this guards: ``find_all(ir, ColumnRef)`` must not name ``*``.
 
     The rule lives in ``_visit_expr``'s ``NameReference`` branch, which every
     operator that puts an expression in that position shares, so the reach is
-    wider than ``project-reorder``: ``search *``, ``summarize arg_max(*, x)``
-    and ``evaluate bag_unpack(*)`` all wrote a phantom column into the IR
-    too. Enumerated here rather than described, because the shared branch is
-    exactly what makes the blast radius easy to under-report.
+    wider than ``project-reorder``: without it, ``search *``,
+    ``summarize arg_max(*, x)`` and ``evaluate bag_unpack(*)`` would all
+    write a phantom column into the IR too. Enumerated here rather than
+    described, because the shared branch is exactly what makes the blast
+    radius easy to under-report.
     """
     from kustology.ir import StarExpr, find_all
 
@@ -395,10 +396,11 @@ REORDER_MUST_DIFFER = [
     "case_id, a, b", REORDER_MUST_DIFFER, ids=[c[0] for c in REORDER_MUST_DIFFER],
 )
 def test_project_reorder_directions_hash_apart(case_id, a, b):
-    """All three forms hashed distinctly *before* this fix too -- but only
-    because the direction survived inside an ``UnknownExpr``'s raw text.
-    Restoring the column identity must not buy it back at the cost of a
-    collision."""
+    """Guards against a regression the column-identity fix could introduce:
+    a builder where ``project-reorder`` falls through to ``UnknownExpr``
+    still hashes these three forms apart, because the direction survives
+    inside the raw text. Restoring the column identity must not lose that
+    and collapse them together."""
     assert _hash(a) != _hash(b), f"{case_id}: {a!r} and {b!r} order columns differently"
 
 

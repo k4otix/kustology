@@ -1,8 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-"""Core IR builder behaviour: structural hash stability, JSON serialization,
-binder enrichment with an inline schema."""
+"""Test core IR builder behavior.
+
+Structural hash stability, JSON serialization, and binder enrichment with an
+inline schema.
+"""
 
 import logging
 
@@ -42,8 +45,9 @@ def binder(sample_schema):
 
 def test_semantic_hash_carries_scheme_prefix(ir_builder):
     """The hash is prefixed with ``kustology-sem-v2:`` so the
-    canonicalization rules themselves are versionable. Tests pin the
-    exact prefix so a future rename can't slip through silently."""
+    canonicalization rules themselves are versionable. Pinning the exact
+    prefix keeps a future rename from slipping through silently.
+    """
     ir = ir_builder.build("DeviceProcessEvents | where FileName == 'cmd.exe'")
     assert ir.semantic_hash.startswith("kustology-sem-v2:"), ir.semantic_hash
     # Digest portion is 64 hex chars — full SHA-256.
@@ -55,7 +59,8 @@ def test_semantic_hash_carries_scheme_prefix(ir_builder):
 def test_compute_semantic_hash_accepts_subtree(ir_builder):
     """``compute_semantic_hash`` must work on any IR ``BaseModel`` subtree,
     not only the root ``QueryIR``. That lets analyzers dedupe sub-shapes
-    (e.g. "have I seen this predicate before?")."""
+    (for example, "have I seen this predicate before?").
+    """
     from kustology.ir import BinOp, compute_semantic_hash, find_all
     ir = ir_builder.build("DeviceProcessEvents | where FileName == 'cmd.exe'")
     binops = list(find_all(ir, BinOp))
@@ -73,7 +78,8 @@ def test_semantic_hash_stability(ir_builder):
     queries cosmetically all the time; a semantic hash that flipped on
     whitespace would be useless for de-duplication. Different literal values,
     by contrast, must produce different hashes — they are not semantically
-    equivalent."""
+    equivalent.
+    """
     pairs = [
         (
             "DeviceProcessEvents | where FileName == 'cmd.exe'",
@@ -256,7 +262,8 @@ def test_regex_match_carries_the_pattern_text(ir_builder, spelling, expected):
 def test_two_different_regexes_differ_in_the_pattern_field(ir_builder):
     """Not merely in the digest. A field that always held ``""`` would still
     let the two queries hash apart -- ``raw_text`` and the spans differ --
-    so the digest is not evidence that ``pattern`` carries anything."""
+    so the digest is not evidence that ``pattern`` carries anything.
+    """
     from kustology.ir import RegexMatch, find_all
 
     (a,) = find_all(ir_builder.build(r'T | where C matches regex @"\d+"'), RegexMatch)
@@ -328,9 +335,9 @@ def test_database_qualified_source(ir_builder):
 def test_dynamic_element_type_is_populated_on_a_real_parse(ir_builder):
     """``result_type_inner`` on a bound parse, not merely its default.
 
-    The previous test asserted ``e.result_type_inner is None`` on a
-    hand-built LiteralExpr, which passed identically whether the populating
-    code worked or -- as it did -- probed a .NET member that does not exist.
+    Asserting ``e.result_type_inner is None`` on a hand-built LiteralExpr
+    passes identically whether the populating code works or probes a .NET
+    member that does not exist; only a populated value is evidence.
     """
     from kustology.ir import KustoType, find_all
     from kustology.ir.expr import Expr
@@ -392,11 +399,12 @@ def test_misc_operators_dispatch_to_specific_classes(ir_builder):
 
 
 def test_tabular_subquery_in_membership_test_is_modeled(ir_builder):
-    """`in ((P))` used to collapse the whole inner query into an UnknownExpr.
+    """Guards that `in ((P))` models the inner query as a real subtree
+    rather than collapsing it into an UnknownExpr.
 
-    Surfaced when the corpus gate started walking `let` right-hand sides —
-    the only corpus occurrence sits inside one. Asserted here rather than
-    only via the corpus so a fixture change can't retire the coverage.
+    The only corpus occurrence sits inside a `let` right-hand side, which
+    the corpus gate walks. Asserted here rather than only via the corpus so
+    a fixture change can't retire the coverage.
     """
     from kustology.ir import SetMembership, SubqueryExpr, UnknownExpr, find_all
 
@@ -428,17 +436,15 @@ def _external(query):
 
 
 def test_externaldata_populates_uris_columns_and_format():
-    """All three fields were placeholders.
+    """All three fields carry real values from the node, not placeholders.
 
-    ``uri`` kept the hardcoded string "url" because the guard read
-    ``node.Uris`` and the real member is ``URIs`` -- pythonnet is
-    case-sensitive and silent about the miss. ``columns`` was bound to a
-    literal ``[]`` and never appended to. ``format`` was hardcoded
-    "unknown". The data for all three is on the node.
-
-    ``uris`` is plural because the singular field held whichever URI came
-    first; see ``tests/ir/test_sources.py`` for the source-position form of
-    the same construct, which shares the builder's reader with this one.
+    The data for all three is on the node, but the member is ``URIs`` --
+    pythonnet member lookup is case-sensitive and silent about a miss, so a
+    read of ``node.Uris`` returns None and leaves a placeholder in place
+    without a warning. ``uris`` is plural because a singular field can hold
+    only whichever URI comes first; see ``tests/ir/test_sources.py`` for the
+    source-position form of the same construct, which shares the builder's
+    reader with this one.
     """
     e = _external(
         'T | where C !in ((externaldata(id:string, n:long) '
@@ -450,8 +456,9 @@ def test_externaldata_populates_uris_columns_and_format():
 
 
 def test_externaldata_without_a_with_clause_reports_no_format():
-    """``format`` is None when the query does not state one -- not the
-    string "unknown", which read as a real value."""
+    """``format`` is None when the query does not state one -- never a
+    placeholder string that reads as a real value.
+    """
     e = _external('T | where C in ((externaldata(id:string) [@"https://example.test/x"]))')
     assert e.format is None
     assert e.columns == [("id", "string")]
@@ -480,11 +487,11 @@ def test_externaldata_in_the_corpus_is_modeled():
 
 
 def test_parse_kv_populates_its_declared_columns(ir_builder):
-    """``ParseKvOp.columns`` was always empty.
+    """``ParseKvOp.columns`` holds the declared keys.
 
-    The guard read ``keys is not None and hasattr(keys, "Count")``; ``Keys``
-    is a ``RowSchema``, which exposes ``Columns`` and has no ``Count``, so
-    the loop body never ran.
+    ``Keys`` is a ``RowSchema``, which exposes ``Columns`` and has no
+    ``Count`` -- so a guard probing ``keys is not None and hasattr(keys,
+    "Count")`` never runs its loop body and leaves the field empty.
     """
     from kustology.ir import ParseKvOp, find_all
 
@@ -502,8 +509,10 @@ def test_parse_kv_without_declared_keys_has_no_columns(ir_builder):
 
 
 def test_macro_expand_models_its_inner_pipeline(ir_builder):
-    """``MacroExpandOp.pipeline`` was always None -- it probed ``Subquery``
-    and ``Body``; the member is ``StatementList``."""
+    """``MacroExpandOp.pipeline`` holds the inner pipeline. The member that
+    carries it is ``StatementList``; probing ``Subquery`` or ``Body`` finds
+    nothing and leaves the field None.
+    """
     from kustology.ir import MacroExpandOp, Pipeline, TableRef, find_all
 
     ir = ir_builder.build("macro-expand EG as X (T | count)")
@@ -531,9 +540,9 @@ def test_set_membership_records_its_operator(
 ):
     """``op`` is the source of truth; polarity and case_sensitive are derived.
 
-    Without it, ``polarity`` and ``case_sensitive`` were the only
-    discriminators -- four states for six operators -- so ``in~``,
-    ``has_any`` and ``has_all`` were one indistinguishable node.
+    Without it, ``polarity`` and ``case_sensitive`` are the only
+    discriminators -- four states for six operators -- leaving ``in~``,
+    ``has_any`` and ``has_all`` one indistinguishable node.
     """
     from kustology.ir import SetMembership, find_all
 
@@ -556,17 +565,19 @@ def test_set_membership_records_its_operator(
 def test_distinct_membership_operators_do_not_collide(ir_builder, left, right):
     """``semantic_hash``'s contract is that different operators do not collide.
 
-    These pairs did, because nothing on the node recorded which operator
-    produced it. ``has_any`` and ``has_all`` are semantically opposite.
+    These pairs collide unless the node records which operator produced it.
+    ``has_any`` and ``has_all`` are semantically opposite.
     """
     a, b = ir_builder.build(left), ir_builder.build(right)
     assert a.semantic_hash != b.semantic_hash
 
 
 def test_membership_canonical_form_names_the_real_operator(ir_builder):
-    """``canonical()`` rebuilt the operator from polarity + case_sensitive, so
-    it could only ever emit one of four strings; ``has_any`` and ``has_all``
-    both rendered as ``in~`` -- a different predicate."""
+    """``canonical()`` must spell the operator from ``op``. Rebuilding it
+    from polarity + case_sensitive can only ever emit one of four strings,
+    rendering ``has_any`` and ``has_all`` alike as ``in~`` -- a different
+    predicate.
+    """
     from kustology.ir import SetMembership, find_all
 
     for op in ("in", "!in", "in~", "!in~", "has_any", "has_all"):
@@ -604,9 +615,9 @@ def test_membership_operator_is_read_without_semantic_analysis(ir_builder):
     ],
 )
 def test_canonical_form_covers_every_expr_shape(ir_builder, query, expected):
-    """``canonical()`` handled 12 of 23 Expr types; the rest fell through to
-    a bare ``"?"``, so ``-X > 1``, ``D.a == 1`` and ``toscalar(...) > 1``
-    were all indistinguishable as ``"? > 1"``.
+    """``canonical()`` must render every Expr type concretely. A shape it
+    does not handle falls through to a bare ``"?"``, making ``-X > 1``,
+    ``D.a == 1`` and ``toscalar(...) > 1`` indistinguishable as ``"? > 1"``.
     """
     from kustology.ir import Expr, FilterOp, find_all
 
@@ -636,8 +647,10 @@ def test_canonical_form_distinguishes_shapes_that_used_to_collide(ir_builder):
 
 
 def _form(query: str) -> str:
-    """The canonical form of the one expression ``query``'s single operator
-    holds -- a ``where``'s predicate or an ``extend``'s right-hand side."""
+    """Return the canonical form of the one expression ``query``'s single
+    operator holds -- a ``where``'s predicate or an ``extend``'s right-hand
+    side.
+    """
     from kustology.ir import ExtendOp, FilterOp, IRBuilder
 
     op = IRBuilder().build(query).main_pipeline.operators[0]
@@ -649,22 +662,24 @@ def _form(query: str) -> str:
 
 def test_a_disjunction_inside_a_conjunction_is_parenthesized():
     """``a and (b or c)`` and ``a and b or c`` are different predicates --
-    ``or`` binds looser than ``and`` -- and both rendered as
-    ``"a and b or c"``. Anyone diffing two rules by canonical form, or
-    reading one out of the LLM view, was shown a predicate the query does
-    not express."""
+    ``or`` binds looser than ``and`` -- so rendering both as
+    ``"a and b or c"`` shows anyone diffing two rules by canonical form, or
+    reading one out of the LLM view, a predicate the query does not
+    express.
+    """
     assert _form("T | where a and (b or c)") == "a and (b or c)"
 
 
 def test_a_conjunction_inside_a_disjunction_needs_no_parentheses():
-    """The other direction, and the reason the fix is a precedence table
-    rather than "keep the parentheses the source wrote". ``and`` already
-    binds tighter than ``or``, so the parentheses in ``(a and b) or c`` are
-    redundant: it is the *same* predicate as ``a and b or c``. The .NET tree
-    does hold a ``ParenthesizedExpression`` for the first spelling, but
-    ``_visit_expr`` unwraps it, so both build byte-identical IR and have to
-    render one way. What matters is that it no longer renders the same as
-    the conjunction-of-a-disjunction above."""
+    """The other direction, and the reason the renderer is a precedence
+    table rather than "keep the parentheses the source wrote". ``and``
+    already binds tighter than ``or``, so the parentheses in ``(a and b) or
+    c`` are redundant: it is the *same* predicate as ``a and b or c``. The
+    .NET tree does hold a ``ParenthesizedExpression`` for the first
+    spelling, but ``_visit_expr`` unwraps it, so both build byte-identical
+    IR and have to render one way. What matters is that it renders
+    differently from the conjunction-of-a-disjunction above.
+    """
     redundant = _form("T | where (a and b) or c")
     assert redundant == "a and b or c"
     assert redundant == _form("T | where a and b or c")
@@ -697,16 +712,16 @@ def test_a_right_operand_of_equal_precedence_is_parenthesized(outer, inner):
     """``x * (y / z)`` is not ``x * y / z``, and neither is ``x - (y - z)``
     ``x - y - z``.
 
-    The first version of this rule asked whether the *parent* operator was
-    one of ``-``, ``/``, ``%`` -- "non-associative" in the sense that
-    ``a - (b - c)`` differs from ``(a - b) - c``. That is the right
-    observation attached to the wrong operator. What makes the brackets
-    load-bearing is that KQL's arithmetic is **left**-associative, so a
-    right operand of equal precedence can only exist because the source
-    wrote brackets; dropping them re-parses as the left-nested tree, which is
-    a different tree. ``x * (y / z)`` and ``x * y / z`` both rendered
-    ``'x * y / z'`` while hashing apart -- and under integer division they
-    are different numbers: ``2 * (7 / 2)`` is 6, ``2 * 7 / 2`` is 7.
+    A rule keyed on the *parent* operator being one of ``-``, ``/``, ``%``
+    -- "non-associative" in the sense that ``a - (b - c)`` differs from
+    ``(a - b) - c`` -- is the right observation attached to the wrong
+    operator. What makes the brackets load-bearing is that KQL's arithmetic
+    is **left**-associative, so a right operand of equal precedence can only
+    exist because the source wrote brackets; dropping them re-parses as the
+    left-nested tree, which is a different tree. Rendering ``x * (y / z)``
+    and ``x * y / z`` as one string while they hash apart misstates both --
+    and under integer division they are different numbers: ``2 * (7 / 2)``
+    is 6, ``2 * 7 / 2`` is 7.
 
     Parametrized over every ordered pair within each precedence group,
     including ``+``/``+`` and ``*``/``*``, whose brackets are redundant for
@@ -723,7 +738,8 @@ def test_a_right_operand_of_equal_precedence_is_parenthesized(outer, inner):
 def test_a_left_operand_of_equal_precedence_keeps_no_parentheses():
     """The other half of left-associativity: ``(x - y) - z`` *is* how
     ``x - y - z`` parses, so the brackets carry nothing and stay dropped.
-    Bracketing both sides would be safe and unreadable."""
+    Bracketing both sides would be safe and unreadable.
+    """
     assert _form("T | extend r = (x - y) - z") == "x - y - z"
     assert _form("T | extend r = (x / y) / z") == "x / y / z"
 
@@ -731,23 +747,26 @@ def test_a_left_operand_of_equal_precedence_keeps_no_parentheses():
 def test_a_higher_precedence_right_operand_still_needs_no_parentheses():
     """The boundary: only *equal* precedence forces the brackets. ``y * z``
     binds tighter than ``+``, so it can and did come from an unbracketed
-    parse."""
+    parse.
+    """
     assert _form("T | extend r = x + y * z") == "x + y * z"
     assert _form("T | extend r = x - y * z") == "x - y * z"
 
 
 def test_not_still_renders_its_own_parentheses():
     """``not`` renders as a call, so its operand never needs precedence
-    parentheses on top of the ones already there."""
+    parentheses on top of the ones already there.
+    """
     assert _form("T | where not(a and b)") == "not(a and b)"
 
 
 def test_a_quote_inside_a_string_literal_is_escaped():
     r"""``f("a\", \"b")`` is a call with ONE argument whose value contains
-    quotes and a comma. Rendered without escaping it read as
+    quotes and a comma. Rendered without escaping it reads as
     ``f("a", "b")`` -- a call with two arguments, a different call. The
     canonical form is meant to be an unambiguous rendering of the tree, and
-    this one described a tree that does not exist."""
+    that one describes a tree that does not exist.
+    """
     assert _form(r'T | extend y = f("a\", \"b")') == r'f("a\", \"b")'
 
 
@@ -757,7 +776,8 @@ def test_a_backslash_in_a_string_literal_is_escaped():
 
 def test_a_bool_literal_renders_as_kql_not_python():
     """``True`` is Python's spelling. KQL's is ``true``, and the canonical
-    form is supposed to be KQL."""
+    form is supposed to be KQL.
+    """
     assert _form("T | where x == true") == "x == true"
     assert _form("T | where x == false") == "x == false"
 
@@ -768,10 +788,11 @@ def test_a_null_literal_renders_as_null():
 
 def test_the_llm_view_drops_a_bool_literal_canonical_form_as_redundant():
     """The redundant-form drop compares ``canonical_form`` against a
-    reconstruction of the literal, and the reconstruction has always spelled
-    a bool the KQL way. They disagreed, so every bool literal in the LLM view
-    carried a ``canonical_form: "True"`` restating a ``value: true`` two
-    lines above it."""
+    reconstruction of the literal, and the reconstruction spells a bool the
+    KQL way. If ``canonical()`` spells it the Python way the two disagree,
+    and every bool literal in the LLM view carries a ``canonical_form:
+    "True"`` restating a ``value: true`` two lines above it.
+    """
     from kustology.ir import IRBuilder, LiteralExpr, find_all, to_llm_dict
 
     ir = IRBuilder().build("T | where e == true")
@@ -784,7 +805,8 @@ def test_the_llm_view_drops_a_bool_literal_canonical_form_as_redundant():
 def test_the_llm_view_drops_an_escaped_string_canonical_form_as_redundant():
     """The redundant-form check has to spell a string exactly the way
     ``canonical()`` does, or it stops firing for the strings that need
-    escaping. It is now the same function on both sides."""
+    escaping. One function serves both sides.
+    """
     from kustology.ir import IRBuilder, LiteralExpr, find_all, to_llm_dict
 
     ir = IRBuilder().build(r'T | where p == "C:\\Windows"')
@@ -797,7 +819,8 @@ def test_the_llm_view_drops_an_escaped_string_canonical_form_as_redundant():
 def test_a_redundant_bracket_still_renders_identically():
     """The boundary the precedence table must not cross. Parentheses that
     carry no grouping information are still dropped -- ``(X) > 1`` and
-    ``X > 1`` are one predicate and must be one string."""
+    ``X > 1`` are one predicate and must be one string.
+    """
     assert _form("T | where (x) > 1") == _form("T | where x > 1") == "x > 1"
 
 
@@ -812,10 +835,12 @@ def test_a_redundant_bracket_still_renders_identically():
     ],
 )
 def test_exists_records_its_source_function_and_polarity(ir_builder, fn, polarity):
-    """``Exists`` had only ``target``, so both positive functions lowered to
-    the same node with the same hash -- though ``isnotempty`` also rejects
-    ``""``. ``op`` closed that; ``polarity`` closes the asymmetry that only
-    the positive pair was lowered at all."""
+    """``op`` records which function produced the node; ``polarity`` its
+    direction. With only ``target``, both positive functions lower to the
+    same node with the same hash -- though ``isnotempty`` also rejects
+    ``""`` -- and ``polarity`` is what lets the negative pair lower to
+    ``Exists`` at all.
+    """
     from kustology.ir import Exists, find_all
 
     ir = ir_builder.build(f"T | where {fn}(C)")
@@ -827,7 +852,8 @@ def test_exists_records_its_source_function_and_polarity(ir_builder, fn, polarit
 def test_all_four_null_tests_hash_distinctly(ir_builder):
     """The four are four different predicates: ``isnotempty`` also rejects
     ``""`` where ``isnotnull`` does not, and each pair is the other's
-    negation. None of them may share a digest."""
+    negation. None of them may share a digest.
+    """
     seen = {
         fn: ir_builder.build(f"T | where {fn}(C)").semantic_hash
         for fn in ("isnull", "isnotnull", "isempty", "isnotempty")
@@ -836,12 +862,14 @@ def test_all_four_null_tests_hash_distinctly(ir_builder):
 
 
 def test_the_negative_null_tests_are_lowered_too(ir_builder):
-    """``isnull`` / ``isempty`` used to stay ``FuncCall`` while their
-    negations became ``Exists``, so the IR modelled one half of a symmetric
-    pair. A consumer asking "which columns does this query null-check"
-    through ``find_all(ir, Exists)`` saw the positive tests and missed the
-    negative ones -- and the shape it had to fall back on, a ``FuncCall``
-    named by string, is the shape ``Exists`` exists to replace."""
+    """``isnull`` / ``isempty`` lower to ``Exists`` alongside their
+    negations. Lowering only the positive pair models one half of a
+    symmetric family: a consumer asking "which columns does this query
+    null-check" through ``find_all(ir, Exists)`` sees the positive tests and
+    misses the negative ones -- and the shape it falls back on, a
+    ``FuncCall`` named by string, is the shape ``Exists`` exists to
+    replace.
+    """
     from kustology.ir import Exists, FuncCall, find_all
 
     for fn in ("isnull", "isempty"):
@@ -854,7 +882,8 @@ def test_the_negative_null_tests_are_lowered_too(ir_builder):
 
 def test_exists_polarity_is_dropped_from_the_llm_view(ir_builder):
     """Same rule as ``BinOp`` and ``SetMembership``: ``op`` already spells
-    the negation, so ``polarity`` restates it."""
+    the negation, so ``polarity`` restates it.
+    """
     from kustology.ir import Exists, find_all, to_llm_dict
 
     dumped = to_llm_dict(next(iter(find_all(ir_builder.build("T | where isnull(C)"), Exists))))
@@ -869,7 +898,8 @@ def test_tolower_equality_against_mismatched_case_literal_is_not_rewritten(ir_bu
     """``tolower(X) == "Y"`` (capital Y) is always false -- ``tolower`` never
     returns anything but lowercase. ``X =~ "Y"`` is a case-insensitive match
     that is often true. Folding the first into the second would make
-    hash-based dedup merge two predicates with different truth values."""
+    hash-based dedup merge two predicates with different truth values.
+    """
     from kustology.ir import BinOp, FuncCall, find_all
 
     always_false = ir_builder.build('T | where tolower(X) == "Y"')
@@ -884,7 +914,8 @@ def test_tolower_equality_against_mismatched_case_literal_is_not_rewritten(ir_bu
 
 def test_tolower_equality_against_matching_case_literal_still_rewrites(ir_builder):
     """The genuinely-equivalent case: the literal is already lowercase, so
-    ``tolower(X) == "y"`` and ``X =~ "y"`` agree for every value of X."""
+    ``tolower(X) == "y"`` and ``X =~ "y"`` agree for every value of X.
+    """
     a = ir_builder.build('T | where tolower(X) == "y"')
     b = ir_builder.build('T | where X =~ "y"')
     assert a.semantic_hash == b.semantic_hash
@@ -906,7 +937,8 @@ def test_tolower_equality_against_a_non_literal_is_not_rewritten(ir_builder):
     """``tolower(X) == Col`` is not equivalent to ``X =~ Col`` -- ``Col`` is
     not a literal, so there is no fixed case to know the rewrite is sound
     for. Whatever value ``Col`` holds, some X that fails the exact-lowercase
-    comparison would pass the case-insensitive one."""
+    comparison would pass the case-insensitive one.
+    """
     from kustology.ir import BinOp, FuncCall, find_all
 
     a = ir_builder.build("T | where tolower(X) == Col")
@@ -943,10 +975,11 @@ def test_tolower_equality_against_a_non_literal_is_not_rewritten(ir_builder):
 def test_binop_case_sensitivity_follows_the_operator_suffix(
     ir_builder, op, case_sensitive
 ):
-    """Derived from a hand-maintained allow-list, so anything absent fell
-    through to True. It was already missing ``hasprefix``/``hassuffix``
-    before anyone negated anything, and every negated string operator was
-    reported backwards."""
+    """The flag derives from a hand-maintained allow-list, so anything
+    absent falls through to True -- the failure shape this battery guards:
+    an unlisted ``hasprefix``/``hassuffix`` or a missing negated form
+    reports its case sensitivity backwards.
+    """
     from kustology.ir import BinOp, find_all
 
     ir = ir_builder.build(f'T | where C {op} "a"')
@@ -959,13 +992,13 @@ def test_arithmetic_binops_carry_no_case_or_polarity(ir_builder, op):
     """``a + 1`` is not case-sensitive and it is not an inclusion -- both
     fields are categories of *comparison*, and arithmetic is not one.
 
-    They were populated anyway, from rules with no arithmetic case in them:
-    ``polarity`` came from ``"!" in op`` and ``case_sensitive`` from the
-    string-operator suffix check, so every ``+`` in every query reported
+    Populating them anyway from comparison rules -- ``polarity`` from
+    ``"!" in op`` and ``case_sensitive`` from the string-operator suffix
+    check -- makes every ``+`` in every query report
     ``polarity="inclusion", case_sensitive=True``. Both readings are
     meaningless rather than merely uninteresting, and a consumer filtering
     ``walk(ir, lambda n: n.case_sensitive)`` -- the example in ``walk``'s own
-    docstring -- had arithmetic answering it. ``None`` says "does not apply",
+    docstring -- has arithmetic answering it. ``None`` says "does not apply",
     which is the only true answer.
     """
     from kustology.ir import BinOp, find_all
@@ -979,7 +1012,8 @@ def test_arithmetic_binops_carry_no_case_or_polarity(ir_builder, op):
 def test_comparisons_and_string_operators_keep_their_flags(ir_builder):
     """The other side of the boundary: only arithmetic loses the fields.
     A comparison compares exactly and a string operator folds case, and both
-    are real answers that must survive."""
+    are real answers that must survive.
+    """
     from kustology.ir import BinOp, find_all
 
     eq = next(iter(find_all(ir_builder.build('T | where C == "a"'), BinOp)))
@@ -991,7 +1025,8 @@ def test_comparisons_and_string_operators_keep_their_flags(ir_builder):
 
 def test_the_llm_view_omits_the_inapplicable_flags(ir_builder):
     """A ``null`` field is worse than an absent one for a model reading the
-    dump: it invites the question of what a null case-sensitivity means."""
+    dump: it invites the question of what a null case-sensitivity means.
+    """
     from kustology.ir import BinOp, find_all, to_llm_dict
 
     ir = ir_builder.build("T | extend y = a + 2")
@@ -1005,11 +1040,11 @@ def test_search_colon_folds_case_like_has(ir_builder):
     """``search Col:'x'`` is KQL's shorthand for ``Col has 'x'`` -- a
     term match, and term matches fold case.
 
-    ``:`` matched none of ``_is_case_sensitive_op``'s rules, so it fell
-    through to the "everything else is a comparison" default and reported
-    ``case_sensitive=True``. Rules that read the flag would have called
-    ``search Col:'x'`` an exact match and ``Col has 'x'`` a folded one,
-    though Kusto runs both the same way.
+    ``:`` needs its own entry in ``_is_case_sensitive_op``'s rules;
+    unlisted, it falls through to the "everything else is a comparison"
+    default and reports ``case_sensitive=True``. Rules reading that flag
+    would call ``search Col:'x'`` an exact match and ``Col has 'x'`` a
+    folded one, though Kusto runs both the same way.
     """
     from kustology.ir import BinOp, SearchOp, find_all
 
@@ -1022,8 +1057,9 @@ def test_search_colon_folds_case_like_has(ir_builder):
 
 def test_case_folding_variants_do_not_collide(ir_builder):
     """``has`` and ``has_cs`` are different predicates and must not share a
-    hash. They did not before -- ``op`` already differed -- but the flag
-    they carried disagreed with the operator they named."""
+    hash. ``op`` alone already keeps the digests apart; the flag each node
+    carries must also agree with the operator it names.
+    """
     seen = {
         op: ir_builder.build(f'T | where C {op} "a"').semantic_hash
         for op in ("has", "has_cs", "!has", "!has_cs", "contains", "contains_cs")
@@ -1032,8 +1068,9 @@ def test_case_folding_variants_do_not_collide(ir_builder):
 
 
 def test_exists_canonical_form_names_the_real_function(ir_builder):
-    """``canonical()`` emitted a literal ``exists(...)`` -- a spelling that
-    appears in no KQL query -- for both source functions."""
+    """``canonical()`` must spell the source function; a generic
+    ``exists(...)`` is a spelling that appears in no KQL query.
+    """
     from kustology.ir import Exists, find_all
 
     for fn in ("isnotnull", "isnotempty"):
@@ -1050,9 +1087,9 @@ def test_materialize_appears_only_on_a_let_right_hand_side():
     ``_visit_pipeline`` turns it into a nested ``Pipeline``. It is never an
     expression, so the IR has no expression node for it.
 
-    Written against the .NET tree rather than the IR so it survives the
-    removal, and so a DLL refresh that widens the grammar turns this red
-    instead of silently reintroducing an unmodelled shape.
+    Written against the .NET tree rather than the IR, so a DLL refresh that
+    widens the grammar turns this red instead of silently introducing an
+    unmodeled shape.
     """
     from Kusto.Language import KustoCode
 
@@ -1113,8 +1150,10 @@ def test_semantic_info_probe_fallthrough_logs_debug(caplog):
     from kustology.ir._builder_helpers import map_semantic_info
 
     class _Boom:
-        """Stands in for an ElementType symbol whose Name access raises --
-        e.g. a .NET member lookup failure that isn't an AttributeError."""
+        """Stand in for an ElementType symbol whose Name access raises --
+        for example, a .NET member lookup failure that isn't an
+        AttributeError.
+        """
 
         @property
         def Name(self):
@@ -1133,8 +1172,7 @@ def test_semantic_info_probe_fallthrough_logs_debug(caplog):
     # declared default, so this line would fail if the outer assignment
     # were accidentally guarded by the same try/except.
     assert expr.result_type == KustoType.DYNAMIC
-    # Verified against the real message in _builder_helpers.py rather than
-    # the brief's proposed text, which matches here (the two agree).
+    # Substring of the real message _builder_helpers.py emits.
     assert "inner result-type probe fell through" in caplog.text
 
 
@@ -1143,68 +1181,59 @@ def test_semantic_info_probe_fallthrough_logs_debug(caplog):
     "T | take toscalar(U | count)",
     "let n = 5; T | top n by x",
     "let n = 3; T | sample n",
-    # SampleDistinctOp.count and TopHittersOp.count are the last two of the
-    # five widened fields to get non-literal coverage. TopHittersOp.count
-    # could not be covered when the widening landed -- `top-hitters n of a
-    # by b` raised AttributeError on `.ValueExpression` before K02 was
-    # fixed, so the widening was untestable there until this branch read
-    # real members.
     "let n = 3; T | sample-distinct n of a",
     "let n = 3; T | top-hitters n of a by b",
 ])
 def test_non_literal_counts_build(q):
-    """K01: ``safe_int`` used to call ``int(node.ToString())`` on the take /
-    sample / top count and raise ``ValueError`` on anything that wasn't a
-    bare integer literal. But KQL allows any scalar expression there, and
-    ``let n = 10; T | take n`` / ``take toscalar(...)`` are both ordinary,
-    valid queries (the latter is common in real Sentinel hunting queries).
-    Building the IR must not raise, and the count must come through as the
-    visited expression rather than being coerced/defaulted to a number."""
+    """K01: KQL allows any scalar expression as a take / sample / top
+    count, and ``let n = 10; T | take n`` / ``take toscalar(...)`` are both
+    ordinary, valid queries (the latter is common in real Sentinel hunting
+    queries). Coercing the count with ``int(node.ToString())`` raises
+    ``ValueError`` on anything that isn't a bare integer literal. Building
+    the IR must not raise, and the count must come through as the visited
+    expression rather than being coerced or defaulted to a number.
+    """
     ir = parse(q).to_ir()                       # must not raise
     op = ir.main_pipeline.operators[-1]
     assert not isinstance(op.count, int)        # an expression, not a number
 
 
 def test_literal_take_count_is_int():
-    """The common case -- a literal count -- must keep returning a plain
-    ``int`` so existing ``op.count == 5`` assertions (and downstream
-    consumers keyed on the field being a number) keep working verbatim;
-    only the non-literal case widens to an expression."""
+    """The common case -- a literal count -- returns a plain ``int`` so
+    ``op.count == 5`` assertions (and downstream consumers keyed on the
+    field being a number) work verbatim; only the non-literal case widens
+    to an expression.
+    """
     op = parse("T | take 5").to_ir().main_pipeline.operators[0]
     assert op.count == 5 and isinstance(op.count, int)
 
 
 def test_count_field_round_trips_correct_shape_through_json():
     """``count: int | AnyExpr`` lists ``int`` first per the repo's
-    union-ordering convention. (``Pipeline.operators`` used to be the other
-    example of that convention under explicit ``union_mode="left_to_right"``;
-    it is now discriminated on ``kind`` instead, so declaration order there
-    is likewise no longer load-bearing.) This test has two parts.
+    union-ordering convention. This test has two parts.
 
     The first round-trips both shapes through the wire format end to end
     -- ``QueryIR.model_validate_json(ir.model_dump_json())`` on real
     builder output -- and confirms each survives as the class it started
-    as. That covers the pipeline this repo actually runs, but says nothing
-    about *why* it works, and an earlier investigation showed the "why" is
-    not declaration order: reordering the union to ``AnyExpr | int`` and
-    rerunning this same round trip left it passing, because every
-    ``AnyExpr`` member is a dict-shaped, ``extra="forbid"`` ``BaseModel``
-    keyed by a ``kind`` discriminator, and a bare JSON integer can never
-    satisfy one -- Pydantic's smart union mode already picks correctly
-    regardless of declared order for *this* type combination. So
-    declaration order is not a behavioural surface worth pinning (asserting
-    it via ``__annotations__``/``get_type_hints`` would just encode an
-    implementation detail that provably doesn't affect outcomes).
+    as. That covers the pipeline this repo actually runs, but the "why" is
+    not declaration order: every ``AnyExpr`` member is a dict-shaped,
+    ``extra="forbid"`` ``BaseModel`` keyed by a ``kind`` discriminator, and
+    a bare JSON integer can never satisfy one -- Pydantic's smart union
+    mode picks correctly regardless of declared order for *this* type
+    combination. So declaration order is not a behavioral surface worth
+    pinning (asserting it via ``__annotations__``/``get_type_hints`` would
+    just encode an implementation detail that provably doesn't affect
+    outcomes).
 
     The second part is the actual tripwire for the union surface: it
     hand-writes both payload shapes -- independent of anything the IR
     builder produces -- and validates them directly against ``TakeOp``. A
-    bare integer must resolve to ``int``, not get wrapped/coerced into an
-    expression model; a ``kind``-tagged object must resolve to that
+    bare integer must resolve to ``int``, not get wrapped or coerced into
+    an expression model; a ``kind``-tagged object must resolve to that
     expression class, not get flattened to a number or silently dropped.
-    This is what would fail if a future Pydantic version, or a
-    ``model_config`` change, started coercing in either direction -- the
-    risk that actually matters here, as opposed to declaration order.
+    This is what fails if a future Pydantic version, or a ``model_config``
+    change, starts coercing in either direction -- the risk that actually
+    matters here, as opposed to declaration order.
     """
     literal_ir = parse("T | take 5").to_ir()
     rebuilt_op = QueryIR.model_validate_json(
@@ -1243,15 +1272,14 @@ def test_count_field_round_trips_correct_shape_through_json():
 
 
 def test_top_hitters_reads_of_and_by():
-    """K02: the ``TopHittersOperator`` branch read ``n.ValueExpression``, a
-    member that exists on no node in the assembly, so every ``top-hitters``
-    query raised ``AttributeError`` out of ``to_ir()``. The real shape is
-    three separate members -- ``Expression`` (the count), ``OfExpression``
-    (the ``of C`` column being counted) and ``ByClause.Expression`` (the
-    ``by C`` column) -- and the operand the old code was reaching for is
-    the ``of`` column, which ``TopHittersOp`` had no field for at all.
-    Asserting all three distinct operands is what proves the branch reads
-    the node it was handed rather than any one member twice."""
+    """K02: ``TopHittersOperator``'s shape is three separate members --
+    ``Expression`` (the count), ``OfExpression`` (the ``of C`` column being
+    counted) and ``ByClause.Expression`` (the ``by C`` column).
+    ``ValueExpression`` exists on no node in the assembly, and reading it
+    raises ``AttributeError`` out of ``to_ir()`` for every ``top-hitters``
+    query. Asserting all three distinct operands is what proves the branch
+    reads the node it was handed rather than any one member twice.
+    """
     op = parse("T | top-hitters 5 of a by b").to_ir().main_pipeline.operators[0]
     assert op.of.canonical_form == "a"
     assert op.by.canonical_form == "b"
@@ -1263,7 +1291,8 @@ def test_top_hitters_without_a_by_clause_builds():
     ``ByClause`` as a plain ``None`` (verified on a real parse), so the
     branch must guard it rather than dereference ``.Expression``. ``of``
     still has to come through -- a null-guard that dropped both operands
-    would pass a weaker test."""
+    would pass a weaker test.
+    """
     op = parse("T | top-hitters 5 of a").to_ir().main_pipeline.operators[0]
     assert op.by is None
     assert op.of.canonical_form == "a"
@@ -1271,13 +1300,12 @@ def test_top_hitters_without_a_by_clause_builds():
 
 
 def test_partitionby_builds():
-    """K02, same class of bug: the ``PartitionByOperator`` branch read
-    ``n.Expression``. That operator's partition key is ``Entity``; there is
-    no ``Expression`` member, so ``__partitionby`` raised ``AttributeError``
-    too. The subquery pipeline was already read correctly from
-    ``Subquery``, which is why the crash lands on the key rather than the
-    body -- assert both, so a fix that reaches the key by breaking the body
-    does not pass."""
+    """K02, same class of trap: ``PartitionByOperator``'s partition key is
+    ``Entity``. There is no ``Expression`` member, so reading one raises
+    ``AttributeError`` out of every ``__partitionby`` query. The subquery
+    pipeline comes from ``Subquery`` -- assert both key and body, so
+    reaching the key by breaking the body does not pass.
+    """
     op = parse("T | __partitionby a (take 1)").to_ir().main_pipeline.operators[0]
     assert op.by.canonical_form == "a"
     assert [o.kind for o in op.right.operators] == ["take"]
@@ -1290,7 +1318,8 @@ def test_top_hitters_of_is_required_in_the_wire_format():
     unknown keys, not absent ones -- so the only thing standing between a
     truncated payload and a silently half-built ``top-hitters`` is the
     field's requiredness. Assert it directly, and assert the complete
-    payload still validates so this cannot pass by rejecting everything."""
+    payload still validates so this cannot pass by rejecting everything.
+    """
     from pydantic import ValidationError
 
     complete = {
@@ -1315,9 +1344,10 @@ def test_top_hitters_of_is_required_in_the_wire_format():
 def test_a_comment_before_a_let_function_does_not_change_the_hash(ir_builder):
     """``LetFunction.body_span`` is a character offset into the source, so a
     comment anywhere ahead of the body shifts it. The volatile-field strip
-    dropped keys named ``span`` from the dumped payload, and ``body_span`` is
-    not one of them -- so the same declaration hashed two ways depending on
-    what preceded it in the file."""
+    must drop it along with the keys named ``span`` -- otherwise the same
+    declaration hashes two ways depending on what precedes it in the
+    file.
+    """
     plain = ir_builder.build("let f = (x:int){x+1}; T | extend y = f(a)")
     commented = ir_builder.build("// c\nlet f = (x:int){x+1}; T | extend y = f(a)")
 
@@ -1331,10 +1361,11 @@ def test_a_comment_before_a_let_function_does_not_change_the_hash(ir_builder):
 
 def test_reformatting_a_raw_text_operator_does_not_change_the_hash(ir_builder):
     """The handful of operators the IR keeps as source text (``scan``,
-    ``top-nested``, the ``graph-*`` family) recorded ``node.ToString()``,
-    which includes the node's *leading trivia* -- every space, newline and
-    comment between the previous token and this one. Two spellings of one
-    operator therefore hashed differently."""
+    ``top-nested``, the ``graph-*`` family) must not record the node's
+    *leading trivia* -- every space, newline and comment between the
+    previous token and this one, which a bare ``node.ToString()`` includes.
+    Recording it hashes two spellings of one operator differently.
+    """
     plain = ir_builder.build("T | top-nested 3 of a by max(b)")
     spaced = ir_builder.build("T\n|   top-nested 3 of a by max(b)")
     commented = ir_builder.build("T | top-nested 3 // c\n of a by max(b)")
@@ -1352,7 +1383,8 @@ def test_a_url_inside_raw_text_still_separates_two_scan_operators(ir_builder):
     detection rule ever matches on. Comments are already gone by this point
     (the builder records ``IncludeTrivia.Minimal``), so the normalizer must
     not go looking for them again -- stripping from ``//`` to end-of-line
-    would truncate both operators to ``Url == "http:`` and collide them."""
+    would truncate both operators to ``Url == "http:`` and collide them.
+    """
     a = ir_builder.build(
         "T | scan declare (x:string='') with (step s: Url == \"http://a\" => x = \"y\")"
     )
@@ -1370,7 +1402,7 @@ def test_interior_spacing_in_a_raw_text_string_literal_is_not_collapsed(ir_build
     Collapsing *every* whitespace run flattens the run that sits **inside a
     string literal**, where it is data rather than formatting -- so a rule
     matching ``"error  occurred"`` and one matching ``"error occurred"``
-    became the same query. Only a newline-and-its-surrounding-indent may be
+    become the same query. Only a newline-and-its-surrounding-indent may be
     collapsed: KQL string literals cannot contain a raw newline, so that rule
     can never reach inside one. Interior spacing outside a literal needs no
     handling at all, because ``IncludeTrivia.Minimal`` has already normalized
@@ -1391,10 +1423,12 @@ def test_interior_spacing_in_a_raw_text_string_literal_is_not_collapsed(ir_build
 
 def test_double_negation_collapses_at_the_root_of_a_bare_expr(ir_builder):
     """``normalize_expressions`` collapses ``not(not(X))`` by *returning* the
-    replacement, and only a parent field assignment installed it. At the root
-    of the tree there is no parent, so ``compute_semantic_hash`` threw the
-    replacement away and hashed the un-collapsed shape -- the collapse worked
-    for a whole ``QueryIR`` and not for the predicate on its own."""
+    replacement, and only a parent field assignment installs it. At the root
+    of the tree there is no parent, so ``compute_semantic_hash`` must adopt
+    the returned root itself -- discarding it hashes the un-collapsed shape,
+    making the collapse work for a whole ``QueryIR`` and not for the
+    predicate on its own.
+    """
     from kustology.ir import Not, compute_semantic_hash
 
     negated = ir_builder.build("T | where not(not(A > 1))")
@@ -1414,9 +1448,10 @@ def test_double_negation_collapses_at_the_root_of_a_bare_expr(ir_builder):
 
 def test_and_operand_order_does_not_change_the_hash(ir_builder):
     """``and`` is commutative, so ``a == 1 and b == 2`` and its mirror are the
-    same predicate. The hash dumped the operand list in source order, so a
-    rule author who reordered a conjunction got a new digest for a query that
-    had not changed meaning."""
+    same predicate. Hashing the operand list in source order hands a rule
+    author who reorders a conjunction a new digest for a query that has not
+    changed meaning.
+    """
     a = ir_builder.build("T | where a == 1 and b == 2")
     b = ir_builder.build("T | where b == 2 and a == 1")
 
@@ -1457,7 +1492,8 @@ def test_nested_or_inside_an_and_sorts_bottom_up(ir_builder):
 
 def test_in_list_value_order_does_not_change_the_hash(ir_builder):
     """``x in ("a", "b")`` is a set test; the order the set was written in
-    carries no meaning."""
+    carries no meaning.
+    """
     a = ir_builder.build('T | where x in ("a", "b")')
     b = ir_builder.build('T | where x in ("b", "a")')
 
@@ -1470,7 +1506,8 @@ def test_in_list_value_order_does_not_change_the_hash(ir_builder):
 def test_a_non_commutative_operator_is_not_sorted(ir_builder):
     """The boundary on the sort: only ``and`` / ``or`` operands and ``in``
     values commute. ``a < b`` and ``b < a`` are opposite predicates, and a
-    sort applied to ``BinOp`` operands would have merged them."""
+    sort applied to ``BinOp`` operands would have merged them.
+    """
     a = ir_builder.build("T | where a < b")
     b = ir_builder.build("T | where b < a")
 
@@ -1481,7 +1518,8 @@ def test_normalize_expressions_does_not_reorder_operands(ir_builder):
     """The public transform stays faithful to the query as written. It is
     documented as semantic-preserving *rewrites*, and callers use it on their
     own IR alongside spans that still have to line up with the source; the
-    canonical ordering belongs to the hash's private copy."""
+    canonical ordering belongs to the hash's private copy.
+    """
     from kustology.ir import normalize_expressions
 
     ir = ir_builder.build("T | where b == 2 and a == 1")
@@ -1493,7 +1531,8 @@ def test_normalize_expressions_does_not_reorder_operands(ir_builder):
 def test_renaming_a_tabular_let_binding_does_not_change_the_hash(ir_builder):
     """A ``let`` name is a local label. Two rules that differ only in whether
     the analyst called the intermediate result ``X`` or ``Y`` are the same
-    query, and a dedup keyed on the hash has to see that."""
+    query, and a dedup keyed on the hash has to see that.
+    """
     a = ir_builder.build("let X = T | where a == 1; X | take 1")
     b = ir_builder.build("let Y = T | where a == 1; Y | take 1")
 
@@ -1511,7 +1550,8 @@ def test_let_canonicalization_is_positional_not_a_blanket_erasure(ir_builder):
     """Names are replaced by their *declaration index*, so which binding a
     reference points at is preserved. Erasing the names outright -- or
     mapping them all to one token -- would collapse these two queries, which
-    select different rows."""
+    select different rows.
+    """
     first = ir_builder.build(
         "let X = T | where a == 1; let Y = T | where b == 2; X | take 1"
     )
@@ -1565,15 +1605,14 @@ def test_a_shadowed_let_name_still_canonicalizes_by_declaration_index(ir_builder
 
 
 def test_renaming_a_scalar_let_binding_does_not_change_the_hash(ir_builder):
-    """The gap this used to record, now closed.
+    """A scalar binding's name is as local a label as a tabular one's.
 
-    ``n`` in ``where a > n`` built a ``ColumnRef``, so the binding's name was
-    canonicalized at the declaration and left alone at the use site --
+    ``n`` in ``where a > n`` builds a ``LetValueRef``, which is renamed with
+    the declaration. A ``ColumnRef`` at the use site could not be:
     ``_canonicalize_let_names`` cannot rename a ``ColumnRef``, since a real
-    column of that name is a different query -- and the two spellings hashed
-    apart. The use site now builds a ``LetValueRef``, which is renamed with
-    the declaration. See ``test_let_value_ref.py`` for the node itself and
-    for the near-miss that must still hash apart.
+    column of that name is a different query, and the two spellings would
+    hash apart. See ``test_let_value_ref.py`` for the node itself and for
+    the near-miss that must still hash apart.
     """
     a = ir_builder.build("let n = 5; T | where a > n")
     b = ir_builder.build("let m = 5; T | where a > m")
@@ -1582,7 +1621,7 @@ def test_renaming_a_scalar_let_binding_does_not_change_the_hash(ir_builder):
 
 
 def _time_flags(query: str) -> dict[str, bool]:
-    """``{func name: is_time_func}`` for every FuncCall in an unbound build."""
+    """Return ``{func name: is_time_func}`` for every FuncCall in an unbound build."""
     from kustology.ir import FuncCall, find_all
 
     ir = parse(query).to_ir(attach_schema=False)
@@ -1592,9 +1631,10 @@ def _time_flags(query: str) -> dict[str, bool]:
 def test_is_time_func_marks_bin_and_bin_at():
     """``bin`` is how a real query buckets time, and the field must say so.
 
-    Reflection reported ``bin`` / ``bin_at`` as plain scalars until the
-    return-type scan learned to read every overload, so this published field
-    was ``False`` on the single most common temporal construct in KQL.
+    The temporal return type shows up on only some of ``bin`` /
+    ``bin_at``'s overloads, so a return-type scan that reads fewer than all
+    of them reports both as plain scalars -- leaving this published field
+    ``False`` on the single most common temporal construct in KQL.
     """
     assert _time_flags("T | summarize count() by bin(TimeGenerated, 1h)") == {
         "count": False,
@@ -1609,7 +1649,7 @@ def test_is_time_func_is_false_for_arithmetic_abs():
     """``abs`` is in ``time_functions()`` and must not be flagged here.
 
     Its overload list is ``['long', None, 'timespan']``, so the "any overload
-    declares datetime/timespan" rule that rescued ``bin`` catches ``abs`` as
+    declares datetime/timespan" rule that flags ``bin`` catches ``abs`` as
     well. That rule is right for a return-type question and wrong for "is
     this call about time": ``abs(x)`` on a number is not, in any usage.
     """
@@ -1649,7 +1689,7 @@ _SCHEMALESS_Q = "T | where a > ago(1h) and b == 1.5"
 
 
 def _typed(ir):
-    """{(node kind, discriminating text): result_type} for the K27 probes."""
+    """Return ``{probe label: result_type}`` for the K27 probes."""
     from kustology.ir import FuncCall, find_all
 
     out: dict[str, KustoType] = {}
@@ -1665,7 +1705,7 @@ def test_schemaless_to_ir_types_literals_and_builtins():
 
     Microsoft's binder resolves ``1h``, ``1.5`` and ``ago()`` against
     ``GlobalState.Default`` without needing a single table, so leaving them
-    ``UNRESOLVED`` was our omission rather than a limit of the parser.
+    ``UNRESOLVED`` would be our omission rather than a limit of the parser.
     """
     ir = parse(_SCHEMALESS_Q).to_ir()
     types = _typed(ir)
@@ -1687,9 +1727,9 @@ def test_schemaless_to_ir_reports_no_unknown_table_diagnostic():
 def test_ir_builder_build_agrees_with_the_schemaless_to_ir_path():
     """The two schemaless entry points must annotate and diagnose alike.
 
-    ``IRBuilder().build`` already bound against default globals and so
-    already had the types; what it also had was 191 false KS204s across the
-    corpus, which is the half of the disagreement that lands here.
+    ``IRBuilder().build`` binds against default globals and so gets the
+    types for free; what that bind also yields, unfiltered, is a false
+    KS204 for every table -- the half of the agreement that lands here.
     """
     ir = IRBuilder().build(_SCHEMALESS_Q)
     types = _typed(ir)
@@ -1756,12 +1796,12 @@ def test_operator_result_schema_is_none_when_microsoft_declines():
 def test_operator_result_schema_is_stripped_from_the_semantic_hash():
     """Supplying a schema must not move the digest.
 
-    ``result_schema`` was already in ``_VOLATILE_FIELDS`` for ``Pipeline``,
-    and the set is keyed by model *field name* rather than by owning class,
-    so the new declaration on ``Operator`` is covered by the same entry.
-    That is worth an assertion rather than an assumption: without it every
-    operator's schema would enter the digest and the same query would hash
-    two ways depending on whether the caller had a schema.
+    ``_VOLATILE_FIELDS`` is keyed by model *field name* rather than by
+    owning class, so one ``result_schema`` entry covers ``Pipeline`` and
+    ``Operator`` alike. That is worth an assertion rather than an
+    assumption: without the strip every operator's schema enters the digest
+    and the same query hashes two ways depending on whether the caller had
+    a schema.
     """
     query = "T | where a > 1 | summarize n = count() by s"
     bound = parse(query, schema=_BINDER_SCHEMA).to_ir()
@@ -1826,19 +1866,19 @@ _SCHEMALESS_ARTIFACTS = [
     "code,query,label", _SCHEMALESS_ARTIFACTS, ids=[c[0] for c in _SCHEMALESS_ARTIFACTS],
 )
 def test_no_schemaless_path_reports_an_unknown_name_artifact(code, query, label):
-    """All four families are artifacts of default globals, not of the query.
+    """Every family here is an artifact of default globals, not of the query.
 
-    Filtering only ``KS204`` left three of them, and two are ``Error``
-    severity — so a consumer gating on ``any(d.severity == "Error" ...)``
-    flipped for `union Security*` and for every ASIM-parser query, on a call
-    where the caller had asked for no schema at all.
+    A filter naming only ``KS204`` leaves the rest through, and some carry
+    ``Error`` severity — so a consumer gating on ``any(d.severity ==
+    "Error" ...)`` flips for `union Security*` and for every ASIM-parser
+    query, on a call where the caller asked for no schema at all.
     """
     assert [d.code for d in parse(query).to_ir().diagnostics] == []
     assert [d.code for d in IRBuilder().build(query).diagnostics] == []
 
 
 def test_the_fixture_corpus_is_clean_on_both_schemaless_paths():
-    """The measurement that found this: 26 diagnostics across 49 queries."""
+    """Both schemaless paths come back clean across the whole fixture corpus."""
     from pathlib import Path
 
     corpus = sorted(
@@ -1874,24 +1914,23 @@ def test_a_bound_parse_still_reports_every_unknown_name():
 
 
 def test_both_schemaless_docstrings_describe_the_family_they_actually_filter():
-    """``KustoQuery.to_ir`` still promised a one-code filter.
+    """The entry-point docstrings must describe the family the code filters.
 
-    Its docstring was written when ``build_from_code`` filtered ``KS204``
-    alone and was left behind when the filter widened to
-    ``services._UNKNOWN_NAME_CODES``. A reader taking it at its word would
-    expect `union isfuzzy=true Foo, Bar` or an ASIM parser call to surface an
-    ``Error`` diagnostic from a schemaless ``to_ir()``, and would build the
-    gate that the widening exists to keep from flipping.
+    A docstring promising a one-code (``KS204``-only) filter misleads: a
+    reader taking it at its word would expect `union isfuzzy=true Foo, Bar`
+    or an ASIM parser call to surface an ``Error`` diagnostic from a
+    schemaless ``to_ir()``, and would build exactly the gate the filter
+    exists to keep from flipping.
 
     The live set lives in ``services._UNKNOWN_NAME_CODES``;
     ``tests/test_reflection_audit.py`` re-derives it from
     ``Kusto.Language.DiagnosticFacts``, so a DLL refresh that adds a code
-    fails there first. This test pins the behaviour the docstrings
+    fails there first. This test pins the behavior the docstrings
     promise, not their wording.
     """
     from kustology.services import _UNKNOWN_NAME_CODES
 
-    # The behaviour the corrected sentence describes: a query whose only
+    # The behavior the corrected sentence describes: a query whose only
     # schemaless artifact is *not* KS204 also comes back clean.
     assert parse("_Im_WebSession(starttime=ago(1d)) | take 1").to_ir().diagnostics == []
     assert "KS211" in _UNKNOWN_NAME_CODES
@@ -1937,15 +1976,15 @@ def test_table_symbol_columns_declines_a_tuple_symbol():
 def test_the_schemaless_docstrings_do_not_claim_built_ins_fail_to_resolve():
     """Default globals are not empty, and the whole feature depends on that.
 
-    Correcting the KS204 claim overshot into a new false one: that default
-    globals "describe no tables — and no functions, clusters, databases,
-    external tables, materialized views, entity groups or stored query
-    results either — so *every* name the query brings with it fails to
-    resolve there". `GlobalState.Default` carries 428 functions, 61
-    aggregates and 46 plug-ins, `ago` among them, which is precisely why the
-    three sentences above that one can promise `ago(1h)` a `datetime`. A
-    docstring that contradicts itself three lines apart leaves the reader no
-    way to decide what a clean schemaless `to_ir()` actually means.
+    A claim that default globals describe nothing — no tables, functions,
+    clusters, databases, external tables, materialized views, entity groups
+    or stored query results, so *every* name the query brings with it fails
+    to resolve — is false: `GlobalState.Default` carries hundreds of
+    built-in functions plus the aggregates and plug-ins, `ago` among them,
+    which is precisely why a schemaless parse can promise `ago(1h)` a
+    `datetime`. A docstring claiming otherwise contradicts that promise
+    three lines away and leaves the reader no way to decide what a clean
+    schemaless `to_ir()` actually means.
 
     What *is* empty is the default **database** — and the cluster list. That
     is the accurate scope, and it is the scope that explains the filter: the
@@ -1962,7 +2001,7 @@ def test_the_schemaless_docstrings_do_not_claim_built_ins_fail_to_resolve():
     assert globals_.Database.Tables.Count == 0
     assert globals_.Clusters.Count == 0
 
-    # …and the behaviour they produce: a built-in resolves, with no
+    # …and the behavior they produce: a built-in resolves, with no
     # diagnostic to suppress.
     ir = parse("print x = ago(1h)").to_ir()
     assert ir.diagnostics == []
@@ -1980,12 +2019,13 @@ def test_the_schemaless_docstrings_do_not_claim_built_ins_fail_to_resolve():
 
 
 def test_buildschema_takes_microsofts_name_even_beside_a_multi_output_aggregate():
-    """`arg_max(t, *)` reports six columns bound and one unbound, so the old
-    operator-level alignment read had to give up on the whole summarize --
-    and `buildschema(d)` fell to the hand rule's `buildschema_d` where the
+    """`arg_max(t, *)` reports six columns bound and one unbound, so an
+    operator-level alignment read has to give up on the whole summarize --
+    dropping `buildschema(d)` to a hand rule's `buildschema_d` where the
     engine says `schema_d` (Aggregates.cs declares PrefixAndFirstArgument +
     prefix "schema"). Reading ResultNameKind off the resolved symbol is
-    per-expression, so the alignment problem does not exist."""
+    per-expression, so the alignment problem does not exist.
+    """
     ir = parse("T | summarize arg_max(t, *), buildschema(d)").to_ir()
     names = [a.name for a in ir.main_pipeline.operators[0].aggregations]
     assert names == ["t", "schema_d"]
@@ -1995,8 +2035,8 @@ def test_auto_names_are_bind_invariant_under_the_symbol_read():
     """``binary_all_and`` is ``ResultNameKind.FirstArgument`` (probed against
     the DLL directly, and cross-checked against ``SummarizeOperator.
     ResultType.Columns``): the name is the first argument's own name, ``a``
-    -- not ``binary_all_and_a``, which is what the old hand-written fallback
-    produced. Aggregates live in ``GlobalState.Default``, so the symbol
+    -- not ``binary_all_and_a``, the generic prefix-plus-argument spelling.
+    Aggregates live in ``GlobalState.Default``, so the symbol
     (and therefore its ``ResultNameKind``) resolves identically whether or
     not the table has a schema.
     """
@@ -2015,7 +2055,8 @@ def test_aggregate_auto_names_match_microsofts_for_the_whole_library():
     but the bare-column probe cannot see a divergence that only shows up for
     a *non*-bare first argument (an expression, not a `NameReference`); see
     `test_auto_names_hold_a_prefix_even_without_a_bare_column_argument` for
-    that battery."""
+    that battery.
+    """
     from Kusto.Language import Aggregates
 
     from kustology.bridge import KustoCode

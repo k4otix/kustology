@@ -30,12 +30,11 @@ BASELINE = Path(__file__).resolve().parent / "fixtures" / "syntax_kinds_baseline
 
 
 def _handled_classes() -> set[str]:
-    """Every Python class name the builder claims to dispatch on.
+    """Return every Python class name the builder claims to dispatch on.
 
     Three sets, and all three have to be here: a kind missing from this
     union is reported as unhandled however completely the builder models it,
-    which is how the statement kinds looked before they were modelled and how
-    they would look again if a future set were added and not wired in.
+    which is exactly what a handled set that isn't wired in looks like.
     """
     return set(
         IRBuilder.HANDLED_EXPR_KINDS

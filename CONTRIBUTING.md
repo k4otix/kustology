@@ -41,7 +41,7 @@ runtime is not on a standard path.
    history — several branches can land between releases and still share one
    increment.
 7. Open a PR. CI runs the same checks on Linux across Python 3.10–3.13,
-   with macOS and Windows sanity cells on 3.12. `test`, `test-ir` and `lint`
+   with macOS and Windows sanity cells on 3.12. `test`, `test-ir`, and `lint`
    in `.github/workflows/test.yml` are the loop above; every other job in
    that workflow has no local counterpart and is listed below:
 
@@ -79,8 +79,8 @@ plus every fixture in `tests/fixtures/complex_queries/`.
 
 It has two legs, and both compare Microsoft's own capture against Microsoft's
 own direct answer — the dict-schema path re-binds through Microsoft's binder
-now, rather than only decorating the IR by hand, so there is no leg left that
-compares our guess against Microsoft's. The **bound** leg parses with a
+rather than decorating the IR by hand, so neither leg compares a hand-rolled
+guess against Microsoft's. The **bound** leg parses with a
 schema up front (`parse(q, schema=...).to_ir()`); most of the matrix then
 compares Microsoft's answer with itself and can only fail where a symbol is
 open, so its operator-shape run samples one representative id per construct
@@ -96,14 +96,14 @@ is documented to treat `{}` as a no-op, the same as `attach_schema=False`, so
 it never re-binds at all. The dict leg's corpus test skips a fixture whose
 derived schema comes out empty rather than comparing against a re-bind that
 never happened, so the two legs' corpus coverage isn't quite identical.
-There are no xfail lists any more. Where Microsoft's `ResultType.IsOpen` is
+There are no xfail lists. Where Microsoft's `ResultType.IsOpen` is
 true — it named the columns it could work out and declined to say the list is
 complete — `microsoft_columns` returns the `OPEN` sentinel and the assertion
 becomes `ours is None`. That is the same requirement as an exact match,
 stated for the case where there is no exact answer to match: we decline where
-the binder declined. Every case that used to sit in an xfail list was an open
-symbol whose hand-rolled guess happened to line up with the partial list, or
-happened not to.
+the binder declined. An xfail list would only ever hold an open symbol whose
+hand-rolled guess happened to line up with the partial list, or happened not
+to.
 
 So a divergence here is a real defect in the plumbing — the per-operator
 capture, the column ordering, or the `Analyze` seam — and not a rule to be
@@ -125,7 +125,8 @@ fresh `refreshed=` timestamp. `--pin` adds the second write, to
 `pyproject.toml`'s `[tool.kustology]`. So an unpinned run can still leave the
 two files disagreeing about the version; pass `--pin` whenever `--version`
 changes it. Always run the test suite after a refresh; upstream parser
-changes can shift diagnostic codes or AST kinds. The coverage audit is the one that catches a *new*
+changes can shift diagnostic codes or AST kinds. The coverage audit is the
+one that catches a *new*
 `SyntaxKind` the builder has never seen — regenerate its baseline with
 `--update-baseline` once you have decided whether to model the new kind or
 let it fall through to `UnknownOp` / `UnknownExpr` / `UnknownStmt`, and commit
@@ -143,8 +144,8 @@ let it fall through to `UnknownOp` / `UnknownExpr` / `UnknownStmt`, and commit
   a base install. `tests/test_examples.py` runs every one of them.
 - Do not declare a model field you cannot populate in the same change.
   A declared-but-unfilled field reads as implemented and is invisible to
-  tests; 0.1.0 shipped several — one blocked a downstream consumer's design
-  entirely.
+  tests, so a downstream consumer can design against it before discovering
+  it never fills.
 
 ## Further reading
 

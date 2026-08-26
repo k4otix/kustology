@@ -81,13 +81,13 @@ def test_database_qualified_table_replaces_only_table_name():
     assert out == 'database("d").U | count'
 
 
-# --- operators whose table positions were never collected ------------------
+# --- operators whose table positions are easy to leave uncollected ---------
 #
-# `_collect_table_refs` enumerated table-source positions by node kind and
-# omitted the `find in (...)` / `search in (...)` clauses. The consequence
-# for get_referenced_tables is a missing name; the consequence for
-# replace_table is worse -- it returns the query *unchanged*, with no error,
-# so a consumer migrating a table ships one still pointing at the old name.
+# `_collect_table_refs` enumerates table-source positions by node kind, so a
+# kind left out of the enumeration -- the `find in (...)` / `search in (...)`
+# clauses here -- costs get_referenced_tables a name and costs replace_table
+# more: it returns the query *unchanged*, with no error, so a consumer
+# migrating a table ships one still pointing at the old name.
 #
 # A partition subquery has no table position at all: `partition by K (B | …)`
 # is a parse error ("Query operator expected"), since the subquery runs on
@@ -127,15 +127,15 @@ def test_let_bound_names_are_still_excluded_in_those_positions():
     assert parse(q).get_referenced_tables() == {"A", "B"}
 
 
-# --- names that occupy a table position but are not tables (K16, K29) ------
+# --- names that occupy a table position but are not tables ------------------
 #
-# The syntactic walk reported four kinds of non-table as tables: the name a
-# `let` binds, the name an `as` operator binds, a user-defined function's
-# table-typed parameter, and a `union T*` wildcard pattern. It also got
-# shadowing backwards -- with `let T = T | ...`, the *right-hand side* T is
-# the real table (a binding's RHS is evaluated outside its own name, so KQL
-# has no recursion here) while every later use is the alias, and the flat
-# name-based filter dropped both.
+# Four kinds of non-table occupy a table position: the name a `let` binds,
+# the name an `as` operator binds, a user-defined function's table-typed
+# parameter, and a `union T*` wildcard pattern. Shadowing also runs against
+# intuition -- with `let T = T | ...`, the *right-hand side* T is the real
+# table (a binding's RHS is evaluated outside its own name, so KQL has no
+# recursion here) while every later use is the alias; a flat name-based
+# filter drops both.
 
 SHADOW_QUERY = "let SecurityEvent = SecurityEvent | where a; SecurityEvent | take 1"
 
@@ -186,8 +186,8 @@ def test_function_parameter_exclusion_does_not_cross_a_nested_declaration():
     """An inner declaration's parameter is not in scope in the outer body.
 
     Collecting parameters from the whole `FunctionDeclaration` subtree
-    registered a nested declaration's parameter against the *outer* body,
-    so the `U` of `union T, U` -- which is outside `g` entirely -- was
+    registers a nested declaration's parameter against the *outer* body,
+    so the `U` of `union T, U` -- which is outside `g` entirely -- is
     dropped as if it were `g`'s parameter.
     """
     q = (
@@ -207,10 +207,9 @@ def test_as_alias_is_not_a_table():
 def test_let_alias_does_not_hide_a_real_table_of_the_same_name_before_it():
     """A `let` binds its name from that statement onward, exactly like `as`.
 
-    Found while fixing the `as` case, and confirmed against the binder
-    rather than assumed: parsed with a schema, the leading `X` resolves to a
-    `TableSymbol`, so a bound parse always reported it and only the
-    syntactic walk lost it.
+    Confirmed against the binder rather than assumed: parsed with a schema,
+    the leading `X` resolves to a `TableSymbol`, so the syntactic walk must
+    report the same table the bound parse does.
     """
     q = "X | count; let X = T | take 1"
     assert parse(q).get_referenced_tables() == {"T", "X"}
@@ -223,7 +222,7 @@ def test_as_alias_does_not_hide_a_real_table_of_the_same_name_before_it():
     """`| as X` binds X from the `as` onward, not for the whole query.
 
     The leading `X` here is read before anything rebinds the name, so it is
-    a genuine table; a name-keyed exclusion dropped it.
+    a genuine table; a name-keyed exclusion drops it.
     """
     q = "union X, (T | as X) | count"
     assert parse(q).get_referenced_tables() == {"T", "X"}
@@ -246,8 +245,8 @@ def test_replace_bracketed_table_name():
 
 # A bracketed *alias* is the other half of that pair. The declaration side of
 # a `let` is a NameDeclaration and the use side is a NameReference wrapping a
-# BracketedName; until NameDeclaration also read back unquoted, the two
-# spellings did not match and the alias escaped the let filter as a table.
+# BracketedName; both must read back unquoted, or the two spellings never
+# match and the alias escapes the let filter as a table.
 
 BRACKETED_ALIAS_QUERY = "let ['weird-name'] = SecurityEvent;\n['weird-name'] | take 1"
 
@@ -264,12 +263,11 @@ def test_replace_table_leaves_a_bracketed_let_alias_alone():
 def test_table_references_are_one_per_occurrence_in_source_order():
     """Several walker branches see the same node; callers see it once.
 
-    The unbound walk reports a pipe source from both the `ExpressionStatement`
+    The unbound walk reaches a pipe source from both the `ExpressionStatement`
     and the `PipeExpression` branch, and a shadowed `let` RHS from the
-    `LetStatement` branch as well -- so the same span came back two or three
-    times, while the bound path (whose semantic half visits each node once)
-    returned it once. `find_table_references` documents one entry per
-    occurrence for both, so both now dedupe by span and sort by it.
+    `LetStatement` branch as well, while the bound path (whose semantic half
+    visits each node once) reaches it once. `find_table_references` documents
+    one entry per occurrence for both, so both dedupe by span and sort by it.
     """
     unbound = parse(SHADOW_QUERY).find_table_references()
     bound = parse(
@@ -285,13 +283,13 @@ def test_table_references_are_one_per_occurrence_in_source_order():
     assert starts == sorted(starts)
 
 
-# --- a bound parse keeps tables the schema does not know (K17) -------------
+# --- a bound parse keeps tables the schema does not know --------------------
 #
-# Semantic mode reported only what Microsoft's binder resolved, so any table
-# absent from the supplied schema vanished silently -- the opposite failure
-# to the false positives above, and the more dangerous one: a partial schema
-# is the normal case for a SOC engineer, and the analyzer answered as if the
-# missing tables were not in the query at all.
+# Semantic mode that reports only what Microsoft's binder resolves makes any
+# table absent from the supplied schema vanish silently -- the opposite
+# failure to the false positives above, and the more dangerous one: a partial
+# schema is the normal case for a SOC engineer, and the analyzer answers as
+# if the missing tables were not in the query at all.
 
 PARTIAL_SCHEMA = {"SecurityEvent": {"Account": "string", "EventID": "long"}}
 PARTIAL_UNION = "union SecurityEvent, SigninLogs"
@@ -332,8 +330,8 @@ def test_bound_parse_does_not_reintroduce_an_unmatched_wildcard():
 
     A wildcard matching nothing in the schema gets *no* symbol from the
     binder, so ``ReferencedSymbol is None`` admits it and only the
-    pattern exclusion keeps it out — the reason table extraction had to be
-    cleaned up before the union was built on it.
+    pattern exclusion keeps it out — the union over the two walks is only
+    as clean as its syntactic half.
     """
     q = parse("union withsource=S Unknown*", schema={"Other": {"a": "string"}})
     assert q.get_referenced_tables() == set()

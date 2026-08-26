@@ -138,7 +138,7 @@ _DIAGNOSTIC_SEVERITY: dict[str, Severity] = {
 
 
 def semantic_findings(query: str, schema: dict) -> list[Finding]:
-    """Microsoft's binder, in the same ``Finding`` vocabulary.
+    """Lift Microsoft's binder diagnostics into the ``Finding`` vocabulary.
 
     A schema is required: without one, ``validate`` checks syntax only and
     a typo'd column name is a perfectly valid identifier.
@@ -155,6 +155,7 @@ def semantic_findings(query: str, schema: dict) -> list[Finding]:
 
 
 def lint(query: str, schema: dict) -> list[Finding]:
+    """Run every analyzer plus the binder over one query and merge the findings."""
     ir = parse(query, schema=schema).to_ir()
     findings = [f for analyzer in ANALYZERS for f in analyzer(ir)]
     findings.extend(semantic_findings(query, schema))

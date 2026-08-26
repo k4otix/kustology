@@ -121,7 +121,7 @@ _TOKEN_KINDS = frozenset(k for k in _syntax_kinds() if k.endswith("Token"))
 
 
 def _is_token_kind(kind: str) -> bool:
-    """True when ``kind`` names a token rather than a node.
+    """Return True when ``kind`` names a token rather than a node.
 
     ``syntax_kinds()`` returns empty rather than raising if enum reflection
     fails; falling back to the suffix test keeps the hash's meaning stable
@@ -138,8 +138,12 @@ _TIME_LITERAL_KINDS = frozenset({
 
 
 def _path_expression_table(node):
-    """Yield the trailing NameReference of a PathExpression source
-    (``database("d").T``, ``cluster("c").database("d").T``)."""
+    """Yield the trailing NameReference of a PathExpression source.
+
+    ``database("d").T`` and ``cluster("c").database("d").T`` name the table
+    in the rightmost child, so extraction and replacement target ``T``
+    alone, never the ``database(...)`` / ``cluster(...)`` calls.
+    """
     right = node.GetChild(2)
     if right is None:
         return
@@ -172,7 +176,7 @@ def _unwrap_table_expr(node):
 
 
 def _is_function_callee(node) -> bool:
-    """True when this NameReference is the callee of a FunctionCallExpression.
+    """Return True when this NameReference is the callee of a FunctionCallExpression.
 
     Uses positional equality (TextStart/Width) because pythonnet returns fresh
     wrapper objects on each .NET property access, making `is` unreliable.
@@ -189,7 +193,7 @@ def _is_function_callee(node) -> bool:
 
 
 def _is_wildcard_name(node) -> bool:
-    """True when this NameReference spells a wildcard pattern (``T*``).
+    """Return True when this NameReference spells a wildcard pattern (``T*``).
 
     ``union T*`` names a *set* of tables by pattern, and a pattern is not a
     table name: it cannot be looked up, and rewriting it would silently
@@ -203,9 +207,10 @@ def _is_wildcard_name(node) -> bool:
 
 
 def _collect_table_refs(syntax) -> list:
-    """Return every (name, NameReference node) that occupies a table-source
-    position: one entry per occurrence, deduplicated by source span and
-    sorted by it, since several of the branches below see the same node.
+    """Return every (name, NameReference node) in a table-source position.
+
+    One entry per occurrence, deduplicated by source span and sorted by it —
+    several of the branches below see the same node.
 
     Four kinds of name occupy a table-source position without being a table,
     and each is excluded here:
@@ -315,8 +320,9 @@ def _collect_table_refs(syntax) -> list:
 
             if kind in ("FindOperator", "SearchOperator"):
                 # `find in (T1, T2) …` / `search in (T1, T2) …`. Without
-                # this, `find in (S1, S2)` reported *no* tables at all, and
-                # replace_table returned the query unchanged with no error.
+                # this branch, `find in (S1, S2)` reports *no* tables at
+                # all, and replace_table returns the query unchanged with
+                # no error.
                 in_clause = getattr(node, "InClause", None)
                 if in_clause is not None:
                     for el in iter_elements(in_clause.Expressions):
@@ -368,7 +374,7 @@ def _collect_semantic_table_refs(syntax) -> list:
 
 
 def _merge_unresolved_table_refs(syntax) -> list:
-    """Semantic table refs, plus the syntactic ones the binder left unresolved.
+    """Return semantic table refs plus the syntactic ones the binder left unresolved.
 
     A schema is almost always partial — a detection rule joins tables from
     workspaces the caller did not describe — and the binder resolves only
@@ -398,9 +404,10 @@ def _merge_unresolved_table_refs(syntax) -> list:
 
 
 def find_table_references(kusto_code, force_syntactic: bool = False) -> list:
-    """Return [(name, node), ...] for every table reference: one entry per
-    occurrence, in source order, in both modes. Use ``get_referenced_tables``
-    for a deduplicated set of names.
+    """Return ``[(name, node), ...]`` for every table reference.
+
+    One entry per occurrence, in source order, in both modes. Use
+    ``get_referenced_tables`` for a deduplicated set of names.
 
     On a bound parse the binder's own references are used, and the syntactic
     walk fills in the tables the supplied schema did not describe — those
@@ -418,9 +425,10 @@ def get_tables_syntactic(kusto_code) -> set[str]:
 
 
 def get_tables_semantic(kusto_code) -> set[str]:
-    """Return tables resolved by the binder. Requires a bound KustoCode.
+    """Return tables resolved by the binder.
 
-    Strictly the binder's answer: a table the supplied schema does not
+    Requires a bound ``KustoCode``. Strictly the binder's answer: a table
+    the supplied schema does not
     describe is *not* in this set. ``get_referenced_tables`` /
     :func:`find_table_references` add those back — prefer them unless you
     specifically want to know what resolved.
@@ -434,6 +442,12 @@ def get_tables_semantic(kusto_code) -> set[str]:
 
 
 def get_operator_stats(kusto_code) -> dict[str, int]:
+    """Count nodes whose ``Kind`` contains ``"Operator"``, keyed by kind.
+
+    Covers the whole tree — nested pipelines, ``let`` bodies, and join
+    subqueries included — unlike :func:`get_operator_chain`, which follows
+    only the main pipeline.
+    """
     counts: dict[str, int] = {}
     for node in collect_nodes(kusto_code.Syntax, lambda n: "Operator" in str(n.Kind)):
         kind = str(node.Kind)
@@ -446,10 +460,8 @@ def get_operator_chain(kusto_code) -> list:
 
     **Operator nodes only**: the source the pipeline reads from is not an
     operator and is not in the list, so ``T | where a | take 1`` returns two
-    nodes and a bare ``T`` returns none. It used to lead with the source's
-    ``NameReference``, which made ``len()`` an operator count that was one
-    too high and forced every consumer to know that element 0 was different
-    in kind from the rest. Read the source from
+    nodes and a bare ``T`` returns none — ``len()`` is an operator count,
+    and every element is an operator like the rest. Read the source from
     :func:`find_table_references` instead.
 
     **Main pipeline only**: the walk follows the top-level pipe chain, so
@@ -479,7 +491,7 @@ def get_operator_chain(kusto_code) -> list:
 
 
 def _is_path_selector(node) -> bool:
-    """True when this NameReference is the ``.member`` half of a PathExpression.
+    """Return True when this NameReference is the ``.member`` half of a PathExpression.
 
     ``tostring(InitiatedBy.user.userPrincipalName)`` references exactly one
     column — ``InitiatedBy``. Everything after a dot is a key inside that
@@ -518,10 +530,10 @@ def get_referenced_columns(kusto_code, force_syntactic: bool = False) -> set[str
     callee, a wildcard pattern, a ``let`` or ``| as`` alias, a ``$``-prefixed
     macro, the selector half of a path into a dynamic value, or a source span
     :func:`find_table_references` already reported as a table. That last test
-    is by ``(TextStart, Width)``, not by name — matching on the name meant a
+    is by ``(TextStart, Width)``, not by name — matching on the name drops a
     genuine column that happens to be spelled like some table in the same
-    query disappeared, so ``T | where T2 > 1 | join (T2) on a`` lost ``T2``
-    from both places at once.
+    query, so ``T | where T2 > 1 | join (T2) on a`` loses ``T2`` from both
+    places at once.
 
     The two modes differ on a column the query *creates* and never reads
     back. Syntactic mode reports it — the ``a`` of ``T | extend a = x + y``
@@ -571,8 +583,9 @@ def get_referenced_columns(kusto_code, force_syntactic: bool = False) -> set[str
             if kind == "NameReference":
                 if _is_function_callee(node):
                     return
-                # A `union T*` pattern is not a column either, and it no
-                # longer lands among the table refs to be filtered out there.
+                # A `union T*` pattern is not a column either; wildcards
+                # never land in `table_spans`, so the span test below
+                # cannot exclude it.
                 if _is_wildcard_name(node):
                     return
                 if (node.TextStart, node.Width) in table_spans:
@@ -633,7 +646,7 @@ def get_referenced_functions(kusto_code, force_syntactic: bool = False) -> set[s
 
 
 def _is_plugin_callee(node) -> bool:
-    """True when this NameReference names the plug-in of an ``evaluate``.
+    """Return True when this NameReference names the plug-in of an ``evaluate``.
 
     ``evaluate bag_unpack(d)`` parses as a plain ``FunctionCallExpression``
     directly under the ``EvaluateOperator``, so the plug-in name is an
@@ -650,7 +663,7 @@ def _is_plugin_callee(node) -> bool:
 
 
 def get_structural_hash(kusto_code) -> str:
-    """SHA256 over the AST shape — a "same query modulo the data" fingerprint.
+    """Return a SHA256 over the AST shape — a "same query modulo the data" fingerprint.
 
     **Blind to** literal values (``x == 1`` and ``x == 5`` hash alike),
     identifiers (table, column and ordinary function names — ``Alpha | where
@@ -663,8 +676,8 @@ def get_structural_hash(kusto_code) -> str:
     plug-in an ``evaluate`` names — ``join kind=inner`` versus
     ``kind=leftanti``, ``union kind=inner`` versus ``kind=outer``,
     ``evaluate bag_unpack(d)`` versus ``evaluate pivot(d)``. Those are not
-    cosmetic: they select the operator's semantics, and folding them together
-    made this hash claim two genuinely different queries were one shape.
+    cosmetic: they select the operator's semantics, and a hash that folds
+    them together claims two genuinely different queries are one shape.
 
     The exception inside that sensitivity is a named parameter whose value is
     an ordinary literal — ``union isfuzzy=true`` and ``isfuzzy=false``, or
@@ -696,9 +709,11 @@ def get_structural_hash(kusto_code) -> str:
 
 
 def find_time_expressions(kusto_code) -> list[tuple[str, int, int]]:
-    """Return ``[(text, start, length), ...]`` for every time-related expression
-    in source order: time-function calls (``ago``, ``now``, ``bin``, ...) plus
-    standalone datetime/timespan literals not already inside a matched call.
+    """Return ``[(text, start, length), ...]`` for every time-related expression.
+
+    In source order: time-function calls (``ago``, ``now``, ``bin``, ...)
+    plus standalone datetime/timespan literals not already inside a matched
+    call.
 
     One entry per construct: a matched call nested inside another matched
     call is reported at the outer one only, so ``startofday(now())`` is a
@@ -742,8 +757,8 @@ def find_time_expressions(kusto_code) -> list[tuple[str, int, int]]:
             end = start + node.Width
             # `startofday(now())` is one expression. The walk is pre-order,
             # so an enclosing match is already recorded when the argument is
-            # reached; reporting both handed the caller two overlapping spans
-            # for one construct. The suppressed range is a subset of the one
+            # reached; reporting both would hand the caller two overlapping
+            # spans for one construct. The suppressed range is a subset of the one
             # that suppressed it, so the literal pass below stays correct
             # without recording it.
             if _within_function(start, end):
@@ -780,8 +795,8 @@ def find_time_expressions(kusto_code) -> list[tuple[str, int, int]]:
 def get_time_range(kusto_code) -> list[tuple[str, int, int]]:
     """Deprecated alias for :func:`find_time_expressions`.
 
-    The old name promised a resolved range and returned a discovery list,
-    which led callers to use it as a lookback extractor and get wrong answers.
+    The name promises a resolved range but returns a discovery list, which
+    leads callers to use it as a lookback extractor and get wrong answers.
     """
     warnings.warn(
         "get_time_range() is deprecated; use find_time_expressions(). It "
@@ -802,10 +817,10 @@ def _quote_table_name(new_name: str) -> str:
     keep in step with it. A hand-rolled
     ``re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*")`` test looks right and passes
     every KQL **keyword** through bare, which is the same silent failure the
-    quoting exists to prevent: ``replace_table("A", "project")`` emitted
+    quoting exists to prevent: ``replace_table("A", "project")`` emits
     ``project | count``, a query that validates with **zero** diagnostics and
-    reads no table at all. It also got the escaping wrong — a name containing
-    a newline produced a broken literal.
+    reads no table at all. It also gets the escaping wrong — a name
+    containing a newline produces a broken literal.
 
     The helper returns the name unchanged when it is usable bare (``Z_9``),
     ``['name']`` when it is not, and switches to the double-quoted form
@@ -820,7 +835,7 @@ def replace_table(kusto_code, old_name: str, new_name: str, force_syntactic: boo
     ``new_name`` is emitted verbatim when it is a bare identifier and in
     KQL's bracketed form, ``['my-new-table']``, when it is not — a hyphenated
     or spaced table name is legal in Kusto and illegal as a bare identifier,
-    and pasting one in raw produced a query that parses as arithmetic and
+    and pasting one in raw produces a query that parses as arithmetic and
     reads no table at all. Both names must be non-empty strings; a
     ``ValueError`` beats returning a query with the table name deleted from
     it.

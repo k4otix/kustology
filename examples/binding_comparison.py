@@ -73,8 +73,8 @@ def main() -> None:
     print(f"  {QUERY}")
     print()
     cols = STORM_EVENTS_SCHEMA["StormEvents"]
-    # Counted, not written down. The literal said "22 columns" and would
-    # have kept saying it after an edit to the dict above.
+    # Counted, not written down: a hard-coded column count would silently
+    # go stale as the dict above changes.
     print(f"Schema (StormEvents — {len(cols)} columns):")
     for name, kql_type in cols.items():
         print(f"  {name:<22s} {kql_type}")

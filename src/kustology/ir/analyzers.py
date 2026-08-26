@@ -56,7 +56,7 @@ Severity = Literal["info", "warning", "error"]
 class Finding(BaseModel):
     """One analyzer hit. Stable wire shape — minor versions add fields only.
 
-    ``span`` is optional because some findings are project-wide (e.g.
+    ``span`` is optional because some findings are project-wide (for example,
     "no time filter found anywhere in the query") and don't anchor to a
     single source location. Analyzer authors should populate it when
     they can — surfacing a precise span turns a finding from a label

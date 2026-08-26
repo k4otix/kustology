@@ -69,9 +69,11 @@ def _is_allowed_scalar(value) -> bool:
 
 
 def _walk_for_dotnet(obj, path: str, problems: list):
-    """Recurse over every attribute reachable from `obj`. Anything that isn't
-    a Python primitive, pydantic model, list/tuple, dict, or known enum is a
-    .NET leak — flag with its path."""
+    """Recurse over every attribute reachable from ``obj``.
+
+    Anything that isn't a Python primitive, pydantic model, list/tuple, dict,
+    or known enum is a .NET leak — record it in ``problems`` with its path.
+    """
     if _is_allowed_scalar(obj):
         return
     if isinstance(obj, (list, tuple)):
@@ -100,7 +102,7 @@ def test_ir_has_no_dotnet_refs(builder, query):
 
 @pytest.mark.parametrize("query", CORPUS, ids=lambda q: q[:50])
 def test_ir_serializes_cleanly(builder, query):
-    """Cheaper smoke test: model_dump_json must succeed and round-trip back to an equal hash."""
+    """Check the cheap half of the contract: ``model_dump_json`` succeeds and round-trips to an equal hash."""
     ir = builder.build(query)
     dumped = ir.model_dump_json()
     reloaded = QueryIR.model_validate_json(dumped)

@@ -11,8 +11,9 @@ Stability: pre-1.0. Minor breaking changes are possible at minor versions
 until the IR survives one DLL upgrade cycle. See CHANGELOG.
 
 ``IR_SCHEMA_VERSION`` is the IR shape's own version, distinct from the
-``kustology`` package version. Bump on any breaking field-shape change so
-serialized IR JSON can carry a version tag (e.g. via wrapper envelope) and
+``kustology`` package version. It moves on breaking field-shape changes —
+once per release, in lockstep with ``SEMANTIC_HASH_SCHEME`` — so serialized
+IR JSON can carry a version tag (for example, via a wrapper envelope) and
 consumers can refuse to load an incompatible payload.
 """
 

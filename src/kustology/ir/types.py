@@ -15,6 +15,12 @@ except ImportError:
 
 
 class KustoType(StrEnum):
+    """Kusto type names as wire strings.
+
+    ``str(KustoType.LONG)`` is ``"long"``, not ``"KustoType.LONG"``, so
+    members compare, format, and serialize as the KQL spelling.
+    """
+
     BOOL = "bool"
     INT = "int"
     LONG = "long"

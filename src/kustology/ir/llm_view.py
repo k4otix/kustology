@@ -11,8 +11,8 @@ being fed to a language model:
 * A ``QueryIR`` root additionally carries ``ir_schema_version``. The view is
   a lossy projection with no validator behind it, so unlike
   ``model_dump_json`` — which pydantic re-validates — a dump from an earlier
-  release is indistinguishable from a query that simply did not use the
-  fields a reader expects. The tag is the same ``IR_SCHEMA_VERSION`` the
+  release is indistinguishable from a query that did not use the fields a
+  reader expects. The tag is the same ``IR_SCHEMA_VERSION`` the
   CLI's JSON envelope publishes.
 * Fields holding their declared default (``result_type=unresolved``,
   ``result_type_inner=None``, empty lists/dicts) are dropped.
@@ -58,7 +58,7 @@ from pydantic_core import PydanticUndefined
 
 # Imported for isinstance/issubclass dispatch rather than matched by class
 # name. Name-string dispatch silently stops firing when a class is renamed:
-# the rule just never applies again and the LLM view quietly regresses.
+# the rule never applies again and the LLM view quietly regresses.
 from ._normalize import _kql_string
 from .expr import (
     Between,
@@ -303,11 +303,11 @@ def _collapse_polarity_into_op(out: dict[str, Any], cls: type) -> None:
       signal, and ``between``/``!between`` is a closed two-member set that
       polarity fully determines. Synthesize it and drop polarity.
 
-    ``SetMembership`` used to be synthesized like ``Between``, which was
-    the worst of both: it emitted ``op: "in"`` for ``has_any`` and
-    ``has_all``, and because ``case_sensitive`` defaults to ``False`` the
-    default-stripping pass above removed that field too — so a model was
-    shown ``has_all`` as a bare, case-sensitive ``in``.
+    Synthesizing ``SetMembership`` like ``Between`` would be the worst of
+    both: it would emit ``op: "in"`` for ``has_any`` and ``has_all``, and
+    because ``case_sensitive`` defaults to ``False`` the default-stripping
+    pass above would remove that field too — so a model would see
+    ``has_all`` as a bare, case-sensitive ``in``.
     """
     polarity = out.get("polarity")
     if polarity is None:

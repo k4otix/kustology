@@ -190,8 +190,8 @@ def test_redundant_canonical_form_dropped_on_leaves(storm_ir):
     assert "canonical_form" not in bin_op["right"]
     assert bin_op["right"]["value"] == "TEXAS"
 
-    # Subtree BinOp: canonical_form summarizes the comparison and now
-    # carries the bound table-qualified column → kept.
+    # Subtree BinOp: canonical_form summarizes the comparison and, on a
+    # bound parse, carries the table-qualified column → kept.
     assert bin_op["canonical_form"] == 'StormEvents.State == "TEXAS"'
 
 
@@ -235,9 +235,10 @@ def test_setmembership_shows_its_real_operator():
     """``SetMembership.op`` is carried on the model, so the view surfaces it
     rather than synthesizing one from polarity.
 
-    Synthesizing labelled ``has_any`` and ``has_all`` as ``in``, and since
-    ``case_sensitive`` defaults to False the default-stripping pass removed
-    that too -- a model was shown ``has_all`` as a case-sensitive ``in``.
+    Synthesizing ``has_any`` and ``has_all`` as ``in`` would lose which one
+    a query wrote, and because ``case_sensitive`` defaults to ``False``,
+    the default-stripping pass would drop that field too -- a model would
+    be shown ``has_all`` as an indistinguishable case-sensitive ``in``.
     """
     for op in ("in", "!in", "in~", "!in~", "has_any", "has_all"):
         ir = IRBuilder().build(f'T | where x {op} ("a", "b")')
@@ -295,8 +296,8 @@ def test_lookup_kind_field_is_renamed():
 
 
 def test_llm_view_kind_comes_from_the_model_field():
-    """KIND ClassVars are gone; the view reads the pydantic discriminator
-    default, so the two can never disagree (the drift IR-5 warned about)."""
+    """The view reads the pydantic discriminator default rather than a
+    separate ``KIND`` ClassVar, so the two can never disagree."""
     from kustology.ir import FilterOp
 
     assert not hasattr(FilterOp, "KIND")
@@ -309,17 +310,15 @@ def test_every_ir_model_class_has_kind_field():
     when a new operator is added without updating the LLM discriminator
     vocabulary.
 
-    This test used to check for a ``KIND`` ClassVar. Task 4 converted the
-    four big operator/source/tables unions to ``Field(discriminator="kind")``,
-    and Task 7 did the same for ``Expr``'s own ``AnyExpr`` union, so pydantic
-    now enforces (at model-build time) that every member of those unions
-    carries a working ``kind`` discriminator -- ``Expr`` subclasses included,
-    since they are all gathered into ``AnyExpr``. But some exported models
-    (``SortKey``, ``ReorderKey``, ``ForkBranch`` and their siblings -- see
+    Pydantic enforces, at model-build time, that every member of a
+    ``Field(discriminator="kind")`` union carries a working ``kind``
+    discriminator -- ``Expr`` subclasses included, since they are all
+    gathered into ``AnyExpr``. But some exported models (``SortKey``,
+    ``ReorderKey``, ``ForkBranch`` and their siblings -- see
     ``test_canonical_coverage.py``) hang off an operator field directly
     rather than sitting in any discriminated union, so nothing else
-    guarantees they still carry a ``kind`` field. This test is what is left
-    to catch that after the ``KIND`` ClassVar's removal.
+    guarantees they still carry a ``kind`` field. This test is what
+    catches that.
     """
     from pydantic import BaseModel
 
@@ -346,14 +345,13 @@ def test_every_ir_model_class_has_kind_field():
 def test_kind_values_are_unique_per_class():
     """Two different IR classes must not share a ``kind`` default.
 
-    Discriminated unions (Task 4's four, and Task 7's ``AnyExpr``) already
-    reject a duplicate discriminator value among the classes *within* the
-    same union, but each union is checked in isolation -- pydantic has no
-    way to notice a ``FilterOp`` and some unrelated ``Expr`` subclass both
-    claiming ``kind="filter"``, since the two never validate against the
-    same tagged union. So this test is the only thing still checking
-    uniqueness across the full exported vocabulary, every discriminated
-    union included.
+    Discriminated unions already reject a duplicate discriminator value
+    among the classes *within* the same union, but each union is checked
+    in isolation -- pydantic has no way to notice a ``FilterOp`` and some
+    unrelated ``Expr`` subclass both claiming ``kind="filter"``, since the
+    two never validate against the same tagged union. This test is what
+    checks uniqueness across the full exported vocabulary, every
+    discriminated union included.
     """
     from pydantic import BaseModel
 
@@ -394,11 +392,11 @@ def test_canonical_serialization_still_round_trips(storm_ir):
 def test_dispatch_survives_a_class_rename():
     """The view's rules dispatch on class identity, not on class *name*.
 
-    They used to compare ``cls.__name__`` against string literals, so
-    renaming a class would silently stop every rule that mentioned it --
-    no error, just a quietly worse LLM view. A subclass is the cheapest
-    way to prove identity dispatch: it has a different ``__name__`` and
-    must still get the rules.
+    Guards against comparing ``cls.__name__`` against string literals
+    instead: renaming a class would then silently stop every rule that
+    mentioned it -- no error, just a quietly worse LLM view. A subclass is
+    the cheapest way to prove identity dispatch: it has a different
+    ``__name__`` and must still get the rules.
     """
     from kustology.ir.expr import ColumnRef, SetMembership
     from kustology.ir.llm_view import (
@@ -417,7 +415,7 @@ def test_dispatch_survives_a_class_rename():
     assert "canonical_form" not in out
 
     # SetMembership carries its own op, so the rule only drops the
-    # now-redundant polarity -- but it still has to *fire*, which is what
+    # redundant polarity -- but it still has to *fire*, which is what
     # identity dispatch buys.
     out2 = {"polarity": "exclusion", "op": "!in~"}
     _collapse_polarity_into_op(out2, RenamedSetMembership)
@@ -425,9 +423,10 @@ def test_dispatch_survives_a_class_rename():
 
 
 def test_body_span_is_omitted_from_a_let_function():
-    """``_OMIT_FIELDS`` matched the name ``span`` exactly, so ``LetFunction``
-    -- the one model whose span field is called ``body_span`` -- shipped a
-    raw character offset into the LLM view that every other node was spared.
+    """Guards against ``_OMIT_FIELDS`` matching the name ``span`` exactly:
+    ``LetFunction`` -- the one model whose span field is called
+    ``body_span`` -- would then ship a raw character offset into the LLM
+    view that every other node is spared.
 
     The body itself is rendered: it is the query a reader has to see to know
     what the function does. Parameters render as their own dicts rather than
@@ -450,16 +449,16 @@ def test_body_span_is_omitted_from_a_let_function():
 
 
 def test_the_llm_view_is_tagged_with_the_ir_schema_version():
-    """A dump handed to a model, cached, or written to disk had nothing on it
-    saying which IR shape produced it.
+    """Guards against a dump handed to a model, cached, or written to disk
+    carrying nothing that says which IR shape produced it.
 
     ``model_dump_json`` round-trips through pydantic, which validates the
     shape and fails loudly on drift; the LLM view is a lossy projection with
-    no validator behind it, so a consumer holding one from an earlier release
-    had no way to tell -- the fields it expected were simply absent, which
-    reads identically to a query that did not use them. The tag is the same
-    ``IR_SCHEMA_VERSION`` the CLI's JSON envelope already publishes, so the
-    two agree by construction.
+    no validator behind it, so without the tag, a consumer holding one from
+    an earlier release has no way to tell -- the fields it expected are
+    absent outright, which reads identically to a query that did not use
+    them. The tag is the same ``IR_SCHEMA_VERSION`` the CLI's JSON envelope
+    already publishes, so the two agree by construction.
     """
     from kustology.ir import IR_SCHEMA_VERSION
 
@@ -483,9 +482,9 @@ def test_only_the_root_carries_the_schema_version():
 def test_the_null_flag_strip_is_scoped_to_binop():
     """``polarity``/``case_sensitive`` are stripped when ``None`` *on BinOp*,
     where ``None`` means "the operator is arithmetic, so neither question
-    applies". The strip used to be typeless -- it took only the output dict
-    -- so it reached into every node in the IR, and any future model with a
-    legitimately-optional ``case_sensitive`` would have had it silently
+    applies". Guards against a typeless strip that takes only the output
+    dict: it would reach into every node in the IR, and any future model
+    with a legitimately-optional ``case_sensitive`` would have it silently
     removed from the view with no way to tell an absent field from a null
     one.
 

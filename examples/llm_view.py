@@ -30,7 +30,7 @@ about the query.
   every member of ``LiteralExpr.literal_kind``.
 * ``result_schema`` is dropped from **operator** nodes and kept on
   ``Pipeline``. "What columns does this query return" is one answer per
-  pipeline; repeating it per step was 35% of the whole view — that figure
+  pipeline; repeating it per step is 35% of the whole view — that figure
   is measured across the 49-query fixture corpus bound against a schema
   naming every referenced column (295,156 of 851,224 bytes), not on the
   one query below. This query's own reduction is printed at run time.
@@ -78,7 +78,7 @@ QUERY = (
 
 
 def _column_refs(node):
-    """Every ``column_ref`` dict in a ``to_llm_dict`` payload."""
+    """Yield every ``column_ref`` dict in a ``to_llm_dict`` payload."""
     if isinstance(node, dict):
         if node.get("kind") == "column_ref":
             yield node
@@ -114,7 +114,7 @@ _LITERAL_PROBES = {
 
 
 def _literals(node):
-    """Every ``literal`` dict in a ``to_llm_dict`` payload."""
+    """Yield every ``literal`` dict in a ``to_llm_dict`` payload."""
     if isinstance(node, dict):
         if node.get("kind") == "literal":
             yield node

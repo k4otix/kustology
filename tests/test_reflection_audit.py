@@ -9,8 +9,8 @@ different ways depending on how the read is written.
 ``getattr(node, "Uris", None)`` on a node whose member is ``URIs`` returns
 ``None``: the guard around it declines, and the field it would have
 populated keeps its declared default. No exception, no log line, no failing
-test — the surface reads as implemented forever. Four separate defects
-shipped that way and were found together:
+test — the surface reads as implemented forever. The shapes that ship this
+way:
 
 ===========================  ==========================================
 probe                        reality
@@ -22,12 +22,12 @@ probe                        reality
 ===========================  ==========================================
 
 Direct attribute access — ``n.ValueExpression`` — is the opposite: it
-raises ``AttributeError`` out of whatever public API the caller invoked.
-Two builder branches shipped that way, so ``T | top-hitters 5 of a by b``
-and ``T | __partitionby a (take 1)`` crashed ``to_ir()`` on valid KQL while
-both kinds sat in ``HANDLED_OPERATOR_KINDS`` claiming to be modelled.
+raises ``AttributeError`` out of whatever public API the caller invoked, so
+a builder branch written that way crashes ``to_ir()`` on valid KQL
+(``T | top-hitters 5 of a by b``, ``T | __partitionby a (take 1)``) while
+its kind sits in ``HANDLED_OPERATOR_KINDS`` claiming to be modeled.
 
-This test closes most of both classes rather than the six instances. It
+This test closes most of both classes rather than single instances. It
 parses ``src/kustology/`` for every PascalCase member name that is either
 passed to ``getattr``/``hasattr`` or read as a direct attribute, and
 asserts each one resolves on a type this library actually interops with.
@@ -63,19 +63,19 @@ and the culture pins in ``bridge.py``. What makes that acceptable rather
 than a hole: every one of those reads is *eagerly executed* on a hot path —
 module import, ``parse()``, or the literal lowering every IR build runs — so
 a typo there fails the suite loudly on the next run. The reads this test
-exists for are the opposite: rare operator branches that no fixture covered,
-which is how ``ValueExpression`` survived to a release.
+exists for are the opposite: rare operator branches no fixture covers —
+exactly the shape that lets a ``ValueExpression`` reach a release.
 
-**The check is per name, not per type.** The fourth defect above probed
-``Keys`` (which exists) for ``Count`` (which exists on plenty of other
-types, just not on ``RowSchema``), so a name-level check cannot see it —
+**The check is per name, not per type.** The ``Keys``/``Count`` shape above
+probes ``Keys`` (which exists) for ``Count`` (which exists on plenty of
+other types, just not on ``RowSchema``), so a name-level check cannot see it —
 and for the same reason it does not see ``PartitionByOperator.Expression``,
 where ``Expression`` is a real member of dozens of other nodes. Catching
 those needs the value assertion the individual tests make: a field asserted
 non-default on a real parse. Both are needed; neither subsumes the other.
 
-Verified to bite: reintroducing ``Uris``, ``IsNullable``, ``Underlying`` or
-``n.ValueExpression`` turns this red.
+Verified to bite: writing ``Uris``, ``IsNullable``, ``Underlying`` or
+``n.ValueExpression`` into ``src/`` turns this red.
 
 Tier 1: no pydantic import.
 """
@@ -220,8 +220,9 @@ def _probed_member_names() -> dict[str, list[str]]:
 # ``LiteralExpression.LiteralValue`` hands back a boxed BCL primitive, and
 # ``_builder_helpers`` reads members off it. Naming the *types* the library
 # touches is more honest than excusing member names -- but it is also
-# looser, because adding one type admits everything on it: these two add 136
-# names the bundled assembly does not have, of which the library reads two.
+# looser, because adding one type admits everything on it: these two add a
+# long tail of names the bundled assembly does not have, of which the
+# library reads two.
 #
 # So the widening is gated by its own footprint. ``BCL_ONLY_MEMBERS`` pins
 # the probes that ``_INTEROP_TYPES`` -- and nothing else -- explains, and
@@ -231,7 +232,7 @@ def _probed_member_names() -> dict[str, list[str]]:
 # read that only a BCL type explains must be declared here with its reason,
 # an entry whose last probe disappears must be removed, and a wrong-member
 # read that one of these types happens to explain fails instead of passing
-# unnoticed. The effective admitted surface is these two names, not 136.
+# unnoticed. The effective admitted surface is these two names, not the tail.
 _INTEROP_TYPES = ("System.DateTime", "System.TimeSpan")
 
 BCL_ONLY_MEMBERS: dict[str, str] = {
@@ -245,7 +246,7 @@ BCL_ONLY_MEMBERS: dict[str, str] = {
 def _member_names(types) -> set[str]:
     names: set[str] = set()
     for t in types:
-        # All 913 types in the bundled assembly reflect cleanly; a bare
+        # Every type in the bundled assembly reflects cleanly; a bare
         # loop here means a type that stops doing so fails loudly rather
         # than quietly shrinking the set this test checks against.
         names.update(prop.Name for prop in t.GetProperties())
@@ -287,7 +288,7 @@ def test_bcl_footprint_is_exactly_justified(assembly_members):
     every one of them a plausible *wrong* member read on a Kusto syntax node
     that would then pass. Pinning the footprint as an exact set is what
     keeps the admitted surface at the two names the library genuinely reads
-    instead of the 136 the two types expose.
+    instead of everything the two types expose.
 
     Equality, not containment, so this is stale-proof in both directions: a
     new BCL read must be declared here with its reason, and an entry whose
@@ -372,8 +373,8 @@ def test_imported_names_are_excluded_but_call_results_are_not():
 
 
 def test_allowlist_has_no_stale_entries(dotnet_members):
-    """An allowlist entry that is no longer probed, or that now resolves in
-    the assembly anyway, is dead weight that hides the next real miss."""
+    """An allowlist entry with no matching probe, or one that already
+    resolves in the assembly, is dead weight that hides the next real miss."""
     probed = set(_probed_member_names())
     stale = {
         name for name in ALLOWED_ELSEWHERE

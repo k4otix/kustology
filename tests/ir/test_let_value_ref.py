@@ -3,30 +3,30 @@
 
 """A ``let``-bound scalar used in an expression is not a column.
 
-``let threshold = 5; T | where Count > threshold`` lowered ``threshold`` to a
-:class:`~kustology.ir.ColumnRef`, so the IR claimed the query reads two
-columns from ``T`` when it reads one and compares it against a query-local
-constant. Two things followed:
+Lowering ``threshold`` in ``let threshold = 5; T | where Count > threshold``
+to a :class:`~kustology.ir.ColumnRef` claims the query reads two columns
+from ``T`` when it reads one and compares it against a query-local constant.
+Two things follow:
 
 * ``find_all(ir, ColumnRef)`` — the documented way to ask which columns a
-  query touches — reported ``threshold``. Column-level lineage, "does this
+  query touches — reports ``threshold``. Column-level lineage, "does this
   detection read the column we just renamed", and every schema-drift check
-  built on it answered wrongly, and the binder had to fail to resolve a
+  built on it answer wrongly, and the binder has to fail to resolve a
   column that never existed.
 * ``_canonicalize_let_names`` renames a ``let`` name to its declaration index
   on the hash's copy, so the local label a query chose cannot change its
   digest. It renames :class:`LetBinding` and :class:`LetRef` and deliberately
   not ``ColumnRef``, since a real column called ``threshold`` *is* a
-  different query — so the declaration was canonicalized, the use site was
-  not, and ``let n = 5; T | where a > n`` hashed apart from
-  ``let m = 5; T | where a > m``. That gap is pinned by
-  ``test_ir_builder.test_renaming_a_scalar_let_binding_does_not_change_the_hash``,
-  which carried a strict ``xfail`` naming this task.
+  different query — so a use site lowered to ``ColumnRef`` escapes the
+  rename, and ``let n = 5; T | where a > n`` hashes apart from
+  ``let m = 5; T | where a > m``, the pair
+  ``test_ir_builder.test_renaming_a_scalar_let_binding_does_not_change_the_hash``
+  pins.
 
-:class:`LetValueRef` is the node the use site builds instead. It is
-deliberately *not* a ``ColumnRef`` subclass: the binder resolves column
-provenance by isinstance, and a subclass would inherit that behaviour and
-send the binder looking for a column of that name in the scope.
+:class:`LetValueRef` is the node the use site builds. It is deliberately
+*not* a ``ColumnRef`` subclass: the binder resolves column provenance by
+isinstance, and a subclass would inherit that behavior and send the binder
+looking for a column of that name in the scope.
 
 The last section pins the known limitation this buys — a ``let`` name that
 shadows a real column is classified as the binding, because classifying it
@@ -65,7 +65,7 @@ def _hash(query: str, schema: dict | None = None) -> str:
 
 # Parametrization shared by every test whose claim has to hold in both bind
 # states. Classification is made from the query text, so bind state must not
-# change it -- that is the invariant the shadowing limitation below is traded
+# change it — that is the invariant the shadowing limitation below is traded
 # for, and asserting it only unbound would leave the trade unproven.
 BOTH_MODES = pytest.mark.parametrize(
     "schema", [None, _T_SCHEMA], ids=["unbound", "bound"],
@@ -92,9 +92,11 @@ def test_find_all_column_ref_no_longer_reports_the_let_name(schema):
 
 
 def test_a_let_value_ref_is_not_a_column_ref():
-    """Pinned as a type relationship, not just an observed name set: making
-    ``LetValueRef`` a ``ColumnRef`` subclass would satisfy every ``isinstance``
-    the binder runs and quietly reinstate the bug."""
+    """Pin the type relationship, not only an observed name set: making
+    ``LetValueRef`` a ``ColumnRef`` subclass would satisfy every
+    ``isinstance`` the binder runs and quietly turn the reference back into
+    a column.
+    """
     assert not issubclass(LetValueRef, ColumnRef)
 
 
@@ -108,8 +110,9 @@ def test_a_let_bound_list_in_a_membership_test_is_a_let_value_ref(schema):
 
 
 def test_a_real_column_of_the_same_name_is_still_a_column_ref():
-    """The boundary. Without a ``let`` declaring it, ``threshold`` is a
-    column and must stay one."""
+    """The boundary: without a ``let`` declaring it, ``threshold`` is a
+    column and must stay one.
+    """
     ir = _ir("T | where Count > threshold")
     assert {c.name for c in find_all(ir, ColumnRef)} == {"Count", "threshold"}
     assert list(find_all(ir, LetValueRef)) == []
@@ -117,8 +120,9 @@ def test_a_real_column_of_the_same_name_is_still_a_column_ref():
 
 def test_only_bindings_declared_earlier_produce_a_let_value_ref():
     """``self._let_names`` is populated in declaration order, so a name bound
-    *later* is not a reference to it -- the same rule ``LetRef`` follows at
-    source position (``test_let_bindings.py``)."""
+    *later* is not a reference to it — the same rule ``LetRef`` follows at
+    source position (``test_let_bindings.py``).
+    """
     ir = _ir("let early = later + 1; let later = 5; T | where a > early")
     (rhs,) = [b.rhs_expr for b in ir.let_bindings if b.name == "early"]
     assert isinstance(rhs.left, ColumnRef)
@@ -131,8 +135,8 @@ def test_only_bindings_declared_earlier_produce_a_let_value_ref():
 # The rename pair itself (``let n ...`` vs ``let m ...``) is asserted in
 # test_hash_battery.py (let-scalar-name-rename) and, with the structural
 # checks that go with it, in test_ir_builder.py's
-# test_renaming_a_scalar_let_binding_does_not_change_the_hash -- the copy
-# that used to live here was a third, redundant assertion of the same pair.
+# test_renaming_a_scalar_let_binding_does_not_change_the_hash. Asserting it
+# again here would be a third, redundant copy of the same pair.
 
 def test_a_let_scalar_and_a_real_column_still_hash_apart():
     """The near-miss the ``ColumnRef`` lowering was protecting: reading a

@@ -1,22 +1,24 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
+"""Parse, format, and validate entry points, plus the guard around Microsoft's analyzer."""
+
 from collections.abc import Callable
 from typing import Any
 
 from .bridge import FormattingOptions, KustoCode, KustoCodeService
 
-# A schema is a mapping of table name to column spec. `str` used to be in
-# this union and never worked: `build_global_state` raises `TypeError` on
-# anything that isn't a dict, so `parse(q, schema="(a:string)")` was a
-# type-checked call that could only fail at runtime. The single-table string
-# form is a *value* inside the mapping — `{"T": "(a:string)"}` — not a
-# substitute for it.
+# A schema is a mapping of table name to column spec. `str` is deliberately
+# not in the union: `build_global_state` raises `TypeError` on anything that
+# isn't a dict, so admitting `parse(q, schema="(a:string)")` would type-check
+# a call that can only fail at runtime. The single-table string form is a
+# *value* inside the mapping — `{"T": "(a:string)"}` — not a substitute for
+# it.
 SchemaLike = dict | None
 
 # Binder code emitted when a name doesn't refer to any known table/variable/function.
 # This one code, and no other, is what ``validate(..., ignore_unknown_tables=True)``
-# waives -- see ``_UNKNOWN_NAME_CODES`` for why that stays narrow.
+# waives — see ``_UNKNOWN_NAME_CODES`` for why that stays narrow.
 _UNKNOWN_TABLE_CODE = "KS204"
 
 # Every binder code for "this name is not among the things the GlobalState
@@ -36,7 +38,7 @@ _UNKNOWN_TABLE_CODE = "KS204"
 # **Deliberately not what ``validate(ignore_unknown_tables=True)`` waives.**
 # The two flags answer different questions. ``validate`` only reaches the
 # binder when the caller passed a schema, so there the caller owns every name
-# in the query and is waiving exactly one dimension of it -- tables outside
+# in the query and is waiving exactly one dimension of it — tables outside
 # their schema. Suppressing "unknown function" there would hide an error
 # about a name their schema was supposed to describe. This set is for the
 # opposite case: a binding run against ``GlobalState.Default``, globals the
@@ -50,7 +52,7 @@ _UNKNOWN_NAME_CODES = frozenset({
 # kustology's own diagnostic code, deliberately outside Microsoft's ``KS***``
 # space: it reports a failure of *our* call into their binder, not a defect in
 # the query. A consumer filtering on ``KS`` codes will not mistake it for one,
-# and a consumer gating on ``severity == "Error"`` still sees it -- which is
+# and a consumer gating on ``severity == "Error"`` still sees it — which is
 # the point, since the IR it accompanies was built from an unbound tree.
 ANALYZE_FAILED_CODE = "KUSTOLOGY001"
 
@@ -62,17 +64,18 @@ def _analyze_guarded(
     """Bind a tree, or fall back to the unbound one and say so.
 
     The single guard around every call this package makes into Microsoft's
-    analyzer -- ``KustoCode.ParseAndAnalyze`` in :func:`parse` and
+    analyzer — ``KustoCode.ParseAndAnalyze`` in :func:`parse` and
     :func:`validate`, ``KustoCode.Analyze`` in
     :meth:`kustology.KustoQuery.to_ir`, and ``ParseAndAnalyze`` again in
     :meth:`kustology.ir.IRBuilder.build`. It exists because the binder can
     *crash* on input the parser accepts without a single diagnostic: a
     ``declare pattern`` whose match arm supplies more values than the
     declaration has parameters sends ``Binder.NodeBinder.VisitPatternDeclaration``
-    indexing the declared-parameter list with the supplied-value index, and
-    the ``IndexOutOfRangeException`` came out of ``parse()``/``to_ir()`` raw
-    (Kusto.Language 12.3.2 through 12.4.1, unchanged). A caller who passed a
-    schema got a CLR traceback where they asked for diagnostics.
+    indexing the declared-parameter list with the supplied-value index
+    (Kusto.Language 12.3.2 through 12.4.1, unchanged). Unguarded, that
+    ``IndexOutOfRangeException`` comes out of ``parse()``/``to_ir()`` raw —
+    a caller who passed a schema gets a CLR traceback where they asked for
+    diagnostics.
 
     Returns ``(code, failure)``. ``failure`` is ``None`` when the analysis
     succeeded; otherwise the tree is the **unanalyzed** parse and ``failure``
@@ -83,8 +86,8 @@ def _analyze_guarded(
     Falling back is safe in the one way that matters here: everything the
     binder writes is stripped before ``semantic_hash`` is computed, so an
     unbound build produces the *same digest* a bound one would have. What is
-    genuinely lost is the binder's own answers -- ``Expr.result_type``,
-    ``Pipeline.result_schema``, table provenance -- which is why the failure
+    genuinely lost is the binder's own answers — ``Expr.result_type``,
+    ``Pipeline.result_schema``, table provenance — which is why the failure
     is an ``Error`` rather than a warning.
 
     ``start``/``length`` are zero because the failure has no source location:
@@ -94,7 +97,7 @@ def _analyze_guarded(
 
     The ``except Exception`` is deliberately broad. A .NET exception reaches
     Python through pythonnet as an ordinary ``Exception`` subclass, and there
-    is no shared base class for "the binder gave up" -- the arity crash is an
+    is no shared base class for "the binder gave up" — the arity crash is an
     ``IndexOutOfRangeException`` and the next one will be something else.
     ``BaseException`` is *not* caught, so ``KeyboardInterrupt`` and
     ``SystemExit`` still propagate.
@@ -118,8 +121,7 @@ def _analyze_guarded(
 
 
 def parse(query_text: str, schema: SchemaLike = None):
-    """
-    Parse a KQL query and return a KustoQuery.
+    """Parse a KQL query and return a ``KustoQuery``.
 
     When ``schema`` is provided the query is bound (semantic analysis runs);
     callers can use ``KustoQuery.has_semantics`` to check.
@@ -189,8 +191,7 @@ def validate(
     schema: SchemaLike = None,
     ignore_unknown_tables: bool = False,
 ) -> list[dict]:
-    """
-    Validate a KQL query and return diagnostics.
+    """Validate a KQL query and return diagnostics.
 
     Without ``schema`` only parser diagnostics are returned. With ``schema`` the
     query is bound and semantic diagnostics (unresolved columns, type errors) are

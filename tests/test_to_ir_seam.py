@@ -46,7 +46,7 @@ def parse_counter(monkeypatch):
     monkeypatch.setattr(_builder, "KustoCode", _Counter)
     # ``core`` binds ``KustoCode`` at module scope too, and ``core.to_ir``
     # is the function every test in this file is actually about. Leaving it
-    # out pointed the instrument away from the code under test; see
+    # out points the instrument away from the code under test; see
     # ``test_the_counter_is_wired_to_every_module_to_ir_parses_through``.
     monkeypatch.setattr(_core, "KustoCode", _Counter)
     yield _Counter
@@ -80,9 +80,9 @@ def test_to_ir_does_not_reparse_semantic(parse_counter):
 
 
 def test_to_ir_default_attaches_when_schema_available():
-    """Default ``to_ir()`` on a bound query should auto-run ``SchemaAttacher``.
+    """Default ``to_ir()`` on a bound query auto-runs ``SchemaAttacher``.
 
-    Without this, callers that legitimately want table provenance had to write
+    Without the default, a caller who wants table provenance writes
     ``parse(query, schema=schema).to_ir(attach_schema=True)`` — the schema
     appears twice in the call chain even though only one schema is in play.
     """
@@ -139,9 +139,9 @@ def test_a_dict_attach_reaches_microsofts_binder():
 
 
 def test_the_dict_path_equals_the_parse_time_binding():
-    """`to_ir(attach_schema=d)` and `parse(q, schema=d).to_ir()` are now the
-    same computation, shape included: `let A = T` lowers to rhs_pipeline in
-    both, where the old dict path (unbound build) produced rhs_expr."""
+    """`to_ir(attach_schema=d)` and `parse(q, schema=d).to_ir()` are the same
+    computation, shape included: `let A = T` lowers to rhs_pipeline in both.
+    An unbound build produces rhs_expr instead — the divergence this pins."""
     schema = {"T": {"a": "long"}}
     q = "let A = T; A | project a"
     via_dict = parse(q).to_ir(attach_schema=schema)
@@ -151,7 +151,7 @@ def test_the_dict_path_equals_the_parse_time_binding():
 
 def test_a_dict_override_on_a_bound_parse_rebinds():
     """A dict on an already-bound parse re-binds against the dict, rather
-    than overlaying the parse-time answer (which kept the old types)."""
+    than overlaying the parse-time answer — which would keep its types."""
     ir = parse("T | project a", schema={"T": {"a": "long"}}).to_ir(
         attach_schema={"T": {"a": "real"}}
     )
@@ -167,8 +167,7 @@ def test_the_dict_path_leaves_the_receiver_syntactic():
 def test_a_partial_dict_stays_lenient():
     """Unknown tables under a partial dict are the Sentinel norm: the IR
     builds, and operators Microsoft leaves open report result_schema=None
-    rather than raising or guessing. (The honest-None half tightens further
-    in the binder-surgery task; here it just must not error.)"""
+    rather than raising or guessing."""
     q = "Unknown | where x > 1"
     ir = parse(q).to_ir(attach_schema={"T": {"a": "long"}})
     assert ir.main_pipeline is not None
@@ -183,7 +182,7 @@ def test_an_empty_dict_means_no_attach_and_no_rebind():
 
 
 def test_schemaless_to_ir_analyzes_without_a_second_parse(parse_counter):
-    """K27's default-globals analysis must use ``Analyze``, not a re-parse.
+    """Schemaless ``to_ir()`` must analyze with ``Analyze``, not a re-parse.
 
     ``KustoCode.Analyze(globals)`` binds the tree already in hand and returns
     a new bound ``KustoCode``; ``ParseAndAnalyze`` would throw the tree away
@@ -205,10 +204,10 @@ def test_schemaless_to_ir_analyzes_without_a_second_parse(parse_counter):
 def test_result_schema_survives_an_opted_out_attach_on_a_bound_parse():
     """``attach_schema=False`` skips provenance, not Microsoft's shape.
 
-    The two used to arrive together because ``SchemaAttacher`` was the only
-    thing that filled ``result_schema``. The binder already knew it, so a
-    caller who wants the output columns and not the ``ColumnRef.table`` pass
-    no longer has to pay for both.
+    ``result_schema`` comes from the binder, which already knows it;
+    ``SchemaAttacher`` adds only the ``ColumnRef.table`` provenance pass. A
+    caller who wants the output columns and not the provenance does not pay
+    for both.
     """
     schema = {"DeviceProcessEvents": {"FileName": "string", "DeviceName": "string"}}
     ir = parse(
@@ -220,7 +219,7 @@ def test_result_schema_survives_an_opted_out_attach_on_a_bound_parse():
 
 
 def test_a_schemaless_parse_still_has_no_result_schema():
-    """K27's default-globals analysis must not fabricate an output schema.
+    """Default-globals analysis must not fabricate an output schema.
 
     Default globals know no tables, so the symbol is *open* and Microsoft
     declines. The columns an open symbol does list are the ones the query
@@ -246,7 +245,7 @@ def test_a_partial_dict_keeps_the_receivers_diagnostic_leniency():
 def test_the_counter_is_wired_to_every_module_to_ir_parses_through(parse_counter):
     """The fixture must patch ``core``, or the tests above guard nothing.
 
-    ``core.to_ir`` is where 5.1's decision lives, and ``core`` binds
+    ``core.to_ir`` is where the reuse decision lives, and ``core`` binds
     ``KustoCode`` at module scope (``from .bridge import GlobalState,
     KustoCode``). Patching ``services`` and ``ir.builder`` leaves that
     binding pointing at the real class, so a re-parse introduced *there* --

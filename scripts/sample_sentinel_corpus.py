@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Sample 200 representative KQL queries from an Azure-Sentinel clone.
+"""Sample a representative KQL corpus from an Azure-Sentinel clone.
 
-Phase A (50 queries): diversity picks — queries containing at least one rare
-operator keyword (scan, make-graph, fork, facet, parse-kv, materialize,
-mv-apply, partition, evaluate, find, top-nested, make-series,
-sample-distinct, external_data, pivot, union isfuzzy, assert-schema).
-Round-robin across keywords to avoid one dominating.
+Phase A: diversity picks — queries containing at least one rare operator
+keyword from RARE_KEYWORDS, drawn round-robin across the keywords (up to
+DIVERSITY_BUDGET) so no single keyword dominates.
 
-Phase B (150 queries): stratified random fill — Detections 50 / Hunting 60 /
-Solutions 30 / Parsers 10. Random within each stratum, deterministic via
---seed.
+Phase B: stratified random fill — the per-stratum budgets in STRATA,
+sampled randomly within each stratum, deterministic via --seed.
 
 Outputs (gitignored):
 - tests/fixtures/sentinel_sample/{subfolder}/{slug}.kql — query bodies
@@ -49,6 +46,7 @@ OUT_ROOT = REPO_ROOT / "tests/fixtures/sentinel_sample"
 
 
 def extract_query_from_yaml(path: Path) -> str | None:
+    """Return the first query or ParserQuery body in the YAML, or None."""
     try:
         with path.open(encoding="utf-8") as f:
             docs = list(yaml.safe_load_all(f))
@@ -77,11 +75,13 @@ def slugify(path: Path) -> str:
 
 
 def sample(sentinel_root: Path, seed: int) -> dict:
+    """Pick diversity and stratified query indexes; return the sampling plan."""
     rng = random.Random(seed)
     all_queries: list[tuple[Path, str, str]] = []
     for stratum_key, (sub, _) in STRATA.items():
         for path in iter_yaml(sentinel_root, sub):
             body = extract_query_from_yaml(path)
+            # Skip tombstone stubs whose body says the query moved elsewhere.
             if body is None or "moved to new location" in body.lower():
                 continue
             all_queries.append((path, stratum_key, body))
@@ -135,6 +135,7 @@ def _git_sha(repo: Path) -> str | None:
 
 
 def write_sample(sentinel_root: Path, plan: dict) -> dict:
+    """Write the planned queries and manifest.json under OUT_ROOT; return the manifest."""
     all_q = plan["all_queries"]
     OUT_ROOT.mkdir(parents=True, exist_ok=True)
     manifest: dict = {
@@ -190,7 +191,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     if _git_sha(args.sentinel_root) is None:
         # A directory that exists but isn't a git checkout (empty scratch
-        # dir, wrong path, clone that failed partway) used to sample zero
+        # dir, wrong path, clone that failed partway) would sample zero
         # queries from empty stratum folders and exit 0 with an empty
         # manifest -- indistinguishable from "ran fine, nothing matched."
         print(f"error: {args.sentinel_root} is not a git repository "

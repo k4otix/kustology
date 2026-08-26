@@ -38,8 +38,7 @@ _UNKNOWN_TYPE_NAME = "unknown"
 
 
 def _caller_stacklevel() -> int:
-    """Return the ``warnings.warn`` stacklevel of the first frame outside this
-    package, counted from the caller of *this* function.
+    """Return the ``warnings.warn`` stacklevel of the first frame outside this package.
 
     A hardcoded number cannot be right here. The depth from
     :func:`_resolve_scalar_type` out to user code depends on which entry point
@@ -77,11 +76,11 @@ def _resolve_scalar_type(type_name: str, *, column: str | None = None):
 
     The lookup key is case-folded. ``ScalarTypes.GetSymbol`` is an exact
     dictionary lookup and every scalar type name and alias in the grammar is
-    lower-case (``long``, ``int64``, ``datetime``, ``boolean``, …), so a
-    schema transcribed from a portal column list — ``"LONG"``, ``"DateTime"``
-    — missed every time and produced a silently mistyped ``string`` column.
-    Folding cannot collide with a real name, because there is no scalar type
-    whose spelling differs from another only by case.
+    lower-case (``long``, ``int64``, ``datetime``, ``boolean``, …), so an
+    unfolded lookup misses a schema transcribed from a portal column list —
+    ``"LONG"``, ``"DateTime"`` — every time and silently mistypes those
+    columns ``string``. Folding cannot collide with a real name, because
+    there is no scalar type whose spelling differs from another only by case.
 
     A genuine miss is the caller's typo in their own schema dict, so the
     warning is reported against the caller's own line rather than against
@@ -95,11 +94,11 @@ def _resolve_scalar_type(type_name: str, *, column: str | None = None):
     ``"unknown"`` is answered directly. It is Microsoft's own name for "no
     type" (``ScalarTypes.Unknown.Name``) and what
     :func:`extract_schemas_from_global_state` emits for a column the binder
-    could not type — but ``GetSymbol`` does not carry it, so the dict form
-    used to scold the caller for a real type name and hand back ``string``
-    while ``{"T": "(c:unknown)"}`` kept it. Round-tripping the extractor's
-    own output through :func:`build_global_state` silently retyped those
-    columns.
+    could not type — but ``GetSymbol`` does not carry it, so left to the
+    lookup the dict form scolds the caller for a real type name and hands
+    back ``string`` while ``{"T": "(c:unknown)"}`` keeps it, and
+    round-tripping the extractor's own output through
+    :func:`build_global_state` silently retypes those columns.
 
     A non-``str`` type name is a ``TypeError`` raised here rather than at the
     CLR boundary: ``GetSymbol(None)`` surfaces as a bare
@@ -136,10 +135,11 @@ def _warn_on_untyped_schema_string_columns(name: str, table) -> None:
     """Warn for each column Microsoft's schema-string parser left ``unknown``.
 
     ``TableSymbol.From("(n:bogus)")`` does not reject the unrecognized name:
-    it types the column ``ScalarTypes.Unknown`` and returns, so the typo
-    reached the binder and resolved nothing while the equivalent dict form
-    ``{"n": "bogus"}`` warned. Same mistake, same category of warning, same
-    attribution — the only difference is the fallback, and Microsoft's
+    it types the column ``ScalarTypes.Unknown`` and returns, so without a
+    warning the typo reaches the binder and resolves nothing while the
+    equivalent dict form ``{"n": "bogus"}`` warns. Same mistake, same
+    category of warning, same attribution — the only difference is the
+    fallback, and Microsoft's
     ``unknown`` is kept because substituting ``string`` here would invent a
     type the caller never wrote.
 
@@ -166,12 +166,12 @@ def _warn_on_untyped_schema_string_columns(name: str, table) -> None:
 
 
 def _check_column_name(column, table: str):
-    """A column key becomes a ``ColumnSymbol.Name`` verbatim, so it is a str.
+    """Check that a column key is a str; it becomes the ``ColumnSymbol.Name`` verbatim.
 
-    ``ColumnSymbol(5, …)`` came back as pythonnet's "No method matches given
+    ``ColumnSymbol(5, …)`` surfaces as pythonnet's "No method matches given
     arguments for ColumnSymbol..ctor" — the same unnameable, schema-silent
-    wording :func:`_resolve_scalar_type` stopped emitting for the *type*
-    position one argument to the right.
+    wording :func:`_resolve_scalar_type` heads off for the *type* position
+    one argument to the right.
     """
     if not isinstance(column, str):
         raise TypeError(

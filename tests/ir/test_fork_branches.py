@@ -3,19 +3,19 @@
 
 """``fork`` branches: the sub-pipelines and the names they can be given.
 
-``ForkOp`` declared a ``pipelines`` list and the builder handed each element
-to ``_visit_pipeline`` — but the element is a ``ForkExpression``, a node kind
-``_visit_pipeline``'s walker has no case for, so the walk fell straight
-through: every branch came back with no operators and an ``UnknownSource``,
-and the branch's name was never looked at. The consequences are two, and the
-second is the one that bites hardest:
+Each branch is a ``ForkExpression`` — a node kind a plain pipeline walk has
+no case for — so a builder that hands it to ``_visit_pipeline`` unmodified
+drops everything: the branch comes back with no operators and an
+``UnknownSource``, and its name is never looked at. The consequences are
+two, and the second is the one that bites hardest:
 
-* ``T | fork (take 1) (count)`` and ``T | fork (count) (where x == 1)`` built
-  the same IR and hashed alike, which is the lossy-lowering shape AGENTS.md
-  warns about — a populated-looking node two different queries reach.
-* Nothing *inside* a branch was reachable. ``find_all(ir, FilterOp)`` on a
-  query whose only ``where`` sits in a fork branch returned an empty list, so
-  every analyzer built on the documented ``walk``/``find_all`` traversal was
+* ``T | fork (take 1) (count)`` and ``T | fork (count) (where x == 1)``
+  build the same IR and hash alike, which is the lossy-lowering shape
+  AGENTS.md warns about — a populated-looking node two different queries
+  reach.
+* Nothing *inside* a branch is reachable. ``find_all(ir, FilterOp)`` on a
+  query whose only ``where`` sits in a fork branch returns an empty list, so
+  every analyzer built on the documented ``walk``/``find_all`` traversal is
   silently blind to the contents of a fork.
 
 The tests below assert both, plus the branch name, on real parses.
@@ -43,8 +43,11 @@ def _ir(query: str, **kwargs) -> QueryIR:
 
 
 def _fork(ir: QueryIR) -> ForkOp:
-    """The one ``ForkOp`` in ``ir``. Takes the IR rather than the query so a
-    test that needs both the operator and the whole tree parses once."""
+    """Return the one ``ForkOp`` in ``ir``.
+
+    Takes the IR rather than the query so a test that needs both the
+    operator and the whole tree parses once.
+    """
     (op,) = find_all(ir, ForkOp)
     return op
 
@@ -62,15 +65,17 @@ def test_fork_builds_one_branch_per_parenthesized_pipeline():
 
 
 def test_fork_records_the_branch_name_and_leaves_an_unnamed_branch_none():
-    """``a=`` is a ``NameEqualsClause`` on the ``ForkExpression``; it names the
-    result table the branch produces, so it is data, not formatting."""
+    """``a=`` is a ``NameEqualsClause`` on the ``ForkExpression``; it names
+    the result table the branch produces, so it is data, not formatting.
+    """
     op = _fork(_ir("T | fork a=(where x == 1 | count) (take 1)"))
     assert [b.name for b in op.branches] == ["a", None]
 
 
 def test_branch_contents_are_reachable_by_find_all():
-    """The RED case. Before fork branches were built, the only ``where`` in
-    this query lived inside a branch and ``find_all`` could not see it."""
+    """Guard the traversal contract: the only ``where`` in this query lives
+    inside a branch, so a walk that skips branch pipelines cannot see it.
+    """
     ir = _ir("T | fork a=(where x == 1 | count) (take 1)")
     assert [type(o).__name__ for o in find_all(ir, FilterOp)] == ["FilterOp"]
     assert [type(o).__name__ for o in find_all(ir, CountOp)] == ["CountOp"]
@@ -86,9 +91,10 @@ def test_branch_operators_are_in_source_order():
 
 
 def test_branch_pipeline_has_an_implicit_source_not_an_unknown_one():
-    """A fork branch runs against the enclosing row set — that is exactly what
-    ``ImplicitSource`` means. ``UnknownSource`` would claim the builder could
-    not work the source out."""
+    """A fork branch runs against the enclosing row set — that is exactly
+    what ``ImplicitSource`` means. ``UnknownSource`` would claim the builder
+    could not work the source out.
+    """
     ir = _ir("T | fork (where x == 1) (count)")
     op = _fork(ir)
     assert all(isinstance(b.pipeline.source, ImplicitSource) for b in op.branches), [
@@ -120,10 +126,10 @@ def test_nested_fork_branches_are_built_too():
 # -- hashing --------------------------------------------------------------
 
 MUST_DIFFER = [
-    # branch-bodies, branch-order and branch-name-value are dropped: they
-    # duplicate test_hash_battery.py's fork-branch-bodies, fork-branch-order
-    # and fork-branch-name pairs exactly. The rest stay -- none is in the
-    # battery.
+    # Branch-bodies, branch-order, and branch-name-value pairs live in
+    # test_hash_battery.py (fork-branch-bodies, fork-branch-order,
+    # fork-branch-name); the pairs here are the ones the battery does not
+    # carry.
     ("branch-count", "T | fork (take 1) (count)", "T | fork (take 1)"),
     ("branch-name-present", "T | fork a=(count) (take 1)", "T | fork (count) (take 1)"),
     ("inside-a-branch", "T | fork (where x == 1) (count)", "T | fork (where x == 2) (count)"),
@@ -139,18 +145,22 @@ def test_distinguishable_forks_hash_apart(case_id, a, b):
 
 
 def test_the_same_fork_written_twice_still_hashes_alike():
-    """Guard against the fix over-reaching into something volatile: only the
-    whitespace differs here."""
+    """Guard against branch modelling reaching into something volatile:
+    only the whitespace differs here.
+    """
     assert _hash("T | fork a=(count) (take 1)") == _hash("T |   fork   a=(count)  (take 1)")
 
 
 # -- binding --------------------------------------------------------------
 
 def test_binder_reaches_into_fork_branches():
-    """``ForkBranch`` is a plain ``BaseModel`` holding a ``Pipeline``, so
+    """Bind through fork branches with the enclosing scope inherited.
+
+    ``ForkBranch`` is a plain ``BaseModel`` holding a ``Pipeline``, so
     ``SchemaAttacher._fill_children`` recurses through it and hands the
-    pipeline to ``_walk_pipeline`` with the enclosing scope inherited.
-    Asserted on non-default values: the column's table *and* its type."""
+    pipeline to ``_walk_pipeline``. Asserted on non-default values: the
+    column's table *and* its type.
+    """
     schema = {"T": {"x": "string", "n": "long"}}
     ir = _ir("T | fork a=(where x == 'v' | count) (top 2 by n)", schema=schema)
     assert ir.schema_attached
@@ -172,9 +182,10 @@ def test_fork_branches_round_trip_through_json():
 
 
 def test_the_old_pipelines_field_is_gone():
-    """``ForkOp.pipelines`` is replaced, not aliased -- ``extra="forbid"``
-    means a dump written against the old shape must fail loudly rather than
-    validate into an IR whose branches are silently empty again."""
+    """``ForkOp`` carries ``branches`` with no ``pipelines`` alias —
+    ``extra="forbid"`` makes a dump written with that key fail loudly rather
+    than validate into an IR whose branches are silently empty.
+    """
     import pydantic
 
     ir = _ir("T | fork (count) (take 1)")

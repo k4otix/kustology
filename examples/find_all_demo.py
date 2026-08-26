@@ -22,8 +22,8 @@ which is what makes ``ColumnRef.join_side`` observable. ``join_side`` is a
 separate field from ``table`` because ``table`` never carries the
 ``$left`` / ``$right`` syntax at all — an unresolvable side there is
 honestly ``None``, so ``join_side`` is the only place the side survives on
-a bound parse, and `$left.a == $left.b` is not the join `$left.a ==
-$right.b`.
+a bound parse, and ``$left.a == $left.b`` is not the join ``$left.a ==
+$right.b``.
 
 Requires the ``[ir]`` extras: ``pip install 'kustology[ir]'``.
 """

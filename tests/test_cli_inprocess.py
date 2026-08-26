@@ -7,8 +7,8 @@
 "-m", "kustology.cli", ...])`. That's the right test for "does the shipped
 entry point actually work end to end," but coverage instrumentation lives in
 the parent process — it never sees a line executed inside the child
-subprocess, so `cli.py` was effectively unmeasured no matter how many
-subprocess cases existed. These tests call `kustology.cli.main()` directly
+subprocess, so `cli.py` goes unmeasured no matter how many subprocess
+cases exist. These tests call `kustology.cli.main()` directly
 with `capsys` capturing stdout/stderr, so coverage attributes to the right
 file. `tests/test_cli.py` remains the end-to-end layer and keeps its own copy
 of the cases where "through the real entry point" is the point — notably the
@@ -17,8 +17,9 @@ than the double below.
 
 These tests pin the exit-code contract `cli.py`'s module docstring documents:
 0 success, 1 the input had errors, 2 a usage error. Every case below states
-which of the three it is exercising and why, because the three used to be
-decided by which exception happened to escape rather than by what went wrong.
+which of the three it is exercising and why, because leaving the code to
+whichever exception happens to escape decides it by accident rather than by
+what went wrong.
 """
 from __future__ import annotations
 
@@ -103,10 +104,11 @@ def test_format_empty_input_is_not_an_error(monkeypatch, capsys):
 
 def test_format_refuses_input_it_could_not_parse(monkeypatch, capsys):
     """`T | where` is missing the filter's expression (KS006, Error). The
-    formatter happily returns `'T | where '` for it, so `format` used to
-    print half-parsed output and exit 0 — a caller piping the result into a
-    file wrote a query the parser had already rejected. It now exits 1 and
-    writes *nothing at all* to stdout; the diagnostics go to stderr."""
+    formatter happily returns `'T | where '` for it, so without a guard
+    `format` would print half-parsed output and exit 0 — a caller piping the
+    result into a file writes a query the parser has already rejected.
+    `format` must exit 1 and write *nothing at all* to stdout; the
+    diagnostics go to stderr."""
     monkeypatch.setattr(sys, "stdin", _stdin("T | where"))
     rc = main(["format", "-"])
     captured = capsys.readouterr()
@@ -145,9 +147,10 @@ def test_format_does_not_double_a_newline_the_formatter_already_emitted(
 def test_format_missing_file_is_a_usage_error(capsys):
     """A path that does not exist is a *usage* error — the docstring lists
     "missing file" under exit 2. `open()` raises `FileNotFoundError`, which
-    used to fall through to the bare `except Exception` and exit 1, the code
-    reserved for "we read your query and it had errors". A CI job branching
-    on 1-vs-2 could not tell a typo'd path from a broken query."""
+    without a guard falls through to the bare `except Exception` and exits
+    1, the code reserved for "we read your query and it had errors" —
+    leaving a CI job branching on 1-vs-2 unable to tell a typo'd path from a
+    broken query."""
     rc = main(["format", "/no/such/path/does-not-exist.kql"])
     captured = capsys.readouterr()
     assert rc == 2
@@ -178,15 +181,16 @@ class _DeferredBrokenPipeStdout(io.StringIO):
 def test_broken_pipe_is_a_success_not_a_usage_error(monkeypatch, capsys, tmp_path):
     """`kustology parse --ast --json big.kql | head` is a *correct*
     invocation whose reader stopped reading. `BrokenPipeError` is an
-    `OSError`, so a blanket `except OSError: return 2` in `main` swept
-    stdout writes in with the input reads and reported exit 2 — the code the
+    `OSError`, so a blanket `except OSError: return 2` in `main` would sweep
+    stdout writes in with the input reads and report exit 2 — the code the
     module docstring reserves for bad flags, a missing file and a malformed
-    `--schema`. The mapping now lives at the two read sites instead, and a
-    broken pipe stops the emit without changing the command's own code,
-    which for a clean `parse` is 0.
+    `--schema`. The mapping instead lives at the two read sites, so a broken
+    pipe stops the emit without changing the command's own code, which for a
+    clean `parse` is 0.
 
     `test_format_missing_file_is_a_usage_error` is the control: the read
-    site must still produce 2, so this is not just the mapping deleted."""
+    site must still produce 2, so a broken-pipe guard that swallowed every
+    exit-2 case would not pass silently here."""
     q = tmp_path / "q.kql"
     q.write_text("StormEvents | take 5", encoding="utf-8")
     monkeypatch.setattr(sys, "stdout", _BrokenPipeStdout())
@@ -202,9 +206,9 @@ def test_broken_pipe_keeps_the_validation_verdict(monkeypatch, capsys, tmp_path)
     (KS006), so `validate` owes exit 1 whether or not the reader stayed to
     read the diagnostics — otherwise `kustology validate q.kql | head` in CI
     reads as a pass on a query that fails. Returning 0 for every broken pipe
-    traded "a broken pipe is a usage error" for "a broken pipe erases the
-    result"; `_cmd_validate` now decides `rc` before it writes and the guard
-    only stops the emit."""
+    would trade "a broken pipe is a usage error" for "a broken pipe erases
+    the result"; `_cmd_validate` decides `rc` before it writes, and the
+    guard only stops the emit."""
     q = tmp_path / "q.kql"
     q.write_text("T | where", encoding="utf-8")
     monkeypatch.setattr(sys, "stdout", _BrokenPipeStdout())
@@ -357,9 +361,9 @@ def test_validate_schema_file_too_large_is_a_clean_usage_error(
 
 def test_validate_schema_malformed_json_is_a_usage_error(tmp_path, monkeypatch, capsys):
     """A `--schema` file that isn't valid JSON is a flag the caller got
-    wrong, not a query the caller got wrong: exit 2. `json.JSONDecodeError`
-    used to reach the bare `except Exception` and report 1, which is the
-    code that says "your KQL has errors" — here the KQL is fine.
+    wrong, not a query the caller got wrong: exit 2. Without a guard,
+    `json.JSONDecodeError` reaches the bare `except Exception` and reports
+    1, the code that says "your KQL has errors" — here the KQL is fine.
 
     `_cmd_validate` reads the query body before the schema, so stdin must
     hold valid input — otherwise a failure to reach `_load_schema` at all
@@ -420,11 +424,11 @@ def test_parse_ast_json_shape(monkeypatch, capsys):
 
 def test_parse_ast_json_is_the_librarys_own_tree(monkeypatch, capsys):
     """The CLI's JSON is `walker.node_to_dict` output, byte for byte — not a
-    second implementation of it. `cli._ast_to_dict` used to be a near-copy
-    that differed in one respect nobody had noticed: it left each node's
-    *leading trivia* in `text`, so `| where x == 1` serialized the `where`
-    token as `' where'` and the pipe token as `'\\n|'`. Comparing against
-    `KustoQuery.to_dict()` is what stops the copy coming back."""
+    second implementation of it. A parallel implementation risks drifting in
+    ways nobody notices: leaving each node's *leading trivia* in `text`
+    would serialize `| where x == 1`'s `where` token as `' where'` and the
+    pipe token as `'\\n|'`. Comparing against `KustoQuery.to_dict()` is what
+    stops a copy from coming back."""
     query = 'StormEvents\n| where EventType == "Tornado" // c\n| take 5'
     monkeypatch.setattr(sys, "stdin", _stdin(query))
     rc = main(["parse", "--ast", "--json"])
@@ -443,8 +447,9 @@ def test_parse_ast_json_is_the_librarys_own_tree(monkeypatch, capsys):
 
 def test_parse_refuses_input_it_could_not_parse(monkeypatch, capsys):
     """Same contract as `format`: an Error-severity diagnostic means exit 1.
-    `parse` used to dump the AST of the broken query and exit 0, so a script
-    that only checked the status code treated `T | where` as a good parse."""
+    Without this guard, `parse` would dump the AST of the broken query and
+    exit 0, so a script that only checks the status code would treat
+    `T | where` as a good parse."""
     monkeypatch.setattr(sys, "stdin", _stdin("T | where"))
     rc = main(["parse"])
     captured = capsys.readouterr()
@@ -476,10 +481,10 @@ def test_parse_ast_with_schema_binds_without_changing_the_tree(
 
 
 def test_parse_ir_json_is_wrapped_in_a_versioned_envelope(monkeypatch, capsys):
-    """`--ir --json` used to emit the bare `QueryIR` dump, so a consumer
-    holding a stored payload had no way to tell which IR shape produced it —
-    both version tags existed but neither was reachable from the CLI. The
-    output is now an envelope naming both, with the IR under `"ir"`."""
+    """Without the envelope, `--ir --json` would emit the bare `QueryIR`
+    dump, leaving a consumer holding a stored payload no way to tell which
+    IR shape produced it even though both version tags exist. The output is
+    an envelope naming both, with the IR under `"ir"`."""
     pytest.importorskip("pydantic")
     from kustology.ir import IR_SCHEMA_VERSION, SEMANTIC_HASH_SCHEME
 
@@ -544,11 +549,11 @@ def test_parse_ast_json_truncates_a_paren_bomb_instead_of_recursing(
     monkeypatch, capsys
 ):
     """1200 nested parentheses nest the AST past 2400 levels — deeper than
-    CPython's own 1000-frame limit, so the old emitter's `_MAX_AST_DEPTH =
-    1000` marker was unreachable: the walk raised `RecursionError` first and
-    the CLI reported it as exit 1 with no output. The cap now lives in
-    `walker.MAX_AST_DEPTH` at 300, well inside the frame budget, so the
-    emitter reaches it and writes a truncation marker."""
+    CPython's own 1000-frame limit. A depth cap set at 1000 would sit past
+    that limit and go unreachable: the walk raises `RecursionError` first,
+    and the CLI reports it as exit 1 with no output. `walker.MAX_AST_DEPTH`
+    at 300 sits well inside the frame budget, so the emitter reaches it and
+    writes a truncation marker."""
     query = "T | where " + "(" * 1200 + "1" + ")" * 1200
     monkeypatch.setattr(sys, "stdin", _stdin(query))
     rc = main(["parse", "--ast", "--json"])
@@ -610,10 +615,10 @@ def test_stdin_over_the_default_env_var_override_ceiling_is_a_usage_error(
 
 def test_input_ceiling_counts_bytes_not_characters(monkeypatch, capsys):
     """`KUSTOLOGY_MAX_INPUT_BYTES` is named in bytes and must mean bytes.
-    `_read_capped` used to read a *decoded text* stream, so `len(data)`
-    counted characters and a payload of 20 characters sailed under a 22-byte
-    ceiling while occupying 28 bytes on the wire — the ceiling exists to
-    bound memory, and characters do not bound memory.
+    Reading `_read_capped`'s stream as *decoded text* would make
+    `len(data)` count characters, so a payload of 20 characters would sail
+    under a 22-byte ceiling while occupying 28 bytes on the wire — the
+    ceiling exists to bound memory, and characters do not bound memory.
 
     The payload below is chosen so the two counts disagree across the cap:
     20 characters, 28 bytes, cap 22. A character count accepts it; a byte

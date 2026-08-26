@@ -129,7 +129,7 @@ def test_mv_expand_modifiers_all_reach_the_hash():
     """Each modifier alone must move the digest, and off a common base.
 
     Comparing the spellings pairwise is what catches a field that is
-    modelled but not hashed: several could still collapse onto the bare form
+    modeled but not hashed: several could still collapse onto the bare form
     if only one pair were checked. ``bagexpansion`` is absent because it is
     not a fifth modifier -- it is ``kind`` spelled the old way, pinned as an
     equality above.
@@ -445,7 +445,7 @@ def test_two_different_hints_are_kept_apart():
 
 
 def test_a_non_hint_parameter_is_not_a_hint():
-    """``kind=`` changes the operator and is modelled as a field; only
+    """``kind=`` changes the operator and is modeled as a field; only
     ``hint.*`` is advisory."""
     (op,) = _ops("T | join kind=inner (U) on k")
     assert op.hints == {}
@@ -527,8 +527,11 @@ def test_find_qualified_table_keeps_its_database():
 
 def test_find_project_smart_is_the_default_projection():
     """``project-smart`` is what a bare ``find`` does, so the two must hash
-    alike. True today because the clause holds no columns; pinned so a
-    future read of ``ProjectKeyword`` cannot split them by accident."""
+    alike.
+
+    True today because the clause holds no columns; pinned so a future read
+    of ``ProjectKeyword`` cannot split them by accident.
+    """
     assert _hash("find in (T) where a == 1 project-smart") == _hash(
         "find in (T) where a == 1"
     )
@@ -537,8 +540,8 @@ def test_find_project_smart_is_the_default_projection():
 # -- evaluate ---------------------------------------------------------------
 
 def test_evaluate_declared_schema_is_modeled():
-    """`: (x:string)` is the operator's declared result shape; it was dropped
-    (documented KNOWN_COLLISIONS) and now rides the IR in clause order."""
+    """`: (x:string)` is the operator's declared result shape, carried on
+    the IR in clause order."""
     (op,) = _ir("T | evaluate bag_unpack(d) : (y:long, z:datetime)").main_pipeline.operators
     assert op.declared_schema == [("y", "long"), ("z", "datetime")]
     assert op.declared_schema_star is False

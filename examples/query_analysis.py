@@ -60,6 +60,7 @@ def show_query(label: str, query: str) -> None:
 
 
 def analyze(query_text: str) -> None:
+    """Run every ``KustoQuery`` analyzer over ``query_text`` and print each result."""
     show_query("Input query", query_text)
 
     result = parse(query_text)

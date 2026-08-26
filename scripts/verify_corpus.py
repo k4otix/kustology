@@ -14,9 +14,9 @@ Schema-loading priority:
 
 Per query: build+enrich (via the public ``parse(q).to_ir(attach_schema=
 schemas)`` path, which re-binds through Microsoft's own binder) → roundtrip.
-Classifies six structural failure categories. Semantic diagnostics from the
-.NET binder are recorded as informational metadata only; they don't count as
-failures.
+Failures are classified into the structural categories in ``CATEGORIES``.
+Semantic diagnostics from the .NET binder are recorded as informational
+metadata only; they don't count as failures.
 
 This is a maintainer diagnostic against a local, gitignored corpus sample
 (``tests/fixtures/sentinel_sample``, populated by
@@ -49,9 +49,9 @@ from kustology.ir import (
     walk,
 )
 
-# "binder_exception" is kept for report-shape stability -- see
-# verify_query's docstring for why the public `to_ir(attach_schema=...)`
-# path can no longer populate it separately from "builder_exception".
+# "binder_exception" is kept for report-shape stability -- the public
+# `to_ir(attach_schema=...)` path cannot populate it separately from
+# "builder_exception"; see verify_query's docstring.
 CATEGORIES = [
     "builder_exception", "binder_exception",
     "bare_operator", "unknown_expr", "unknown_source",
@@ -162,8 +162,10 @@ def load_schemas_c(az_bin: Path,
 
 
 def load_schemas_a(corpus_root: Path) -> dict[str, dict[str, str]]:
-    """Option A: synthesize empty-column schemas by scanning the corpus for
-    table-name patterns. Stops .NET 'table not found' diagnostics."""
+    """Option A: synthesize empty-column schemas from table names in the corpus.
+
+    Stops .NET "table not found" diagnostics but provides no column info.
+    """
     return {name: {} for name in sorted(_scan_table_names(corpus_root))}
 
 
@@ -189,13 +191,11 @@ def verify_query(schemas: dict, qid: str, body: str) -> dict | None:
 
     ``parse(body).to_ir(attach_schema=schemas)`` re-binds through Microsoft's
     binder and runs the provenance pass in one call — the same single seam
-    every caller uses, rather than the ``IRBuilder``/``SchemaAttacher`` pair
-    this script used to construct and drive by hand. That collapses the old
-    two-stage try/except: a failure during the build proper and a failure
-    during enrichment are no longer separably reachable through this
-    entry point, so both land in ``builder_exception`` now.
-    ``binder_exception`` stays in :data:`CATEGORIES` for report-shape
-    stability but is not populated by this path.
+    every caller uses. A failure during the build proper and a failure
+    during enrichment are not separably reachable through this entry
+    point, so both land in ``builder_exception``. ``binder_exception``
+    stays in :data:`CATEGORIES` for report-shape stability but is never
+    populated by this path.
     """
     failure: dict = {"id": qid, "categories": []}
 
@@ -310,8 +310,8 @@ def main(argv: list[str] | None = None) -> int:
     if total == 0:
         # An empty corpus is not "0 failures" -- it's the sample never
         # having been populated (scripts/sample_sentinel_corpus.py wasn't
-        # run) or --corpus pointing somewhere with no .kql files. Either way
-        # it means this run verified nothing, which used to read as success.
+        # run) or --corpus pointing somewhere with no .kql files. Either
+        # way the run verified nothing, and that must not read as success.
         print(
             f"FAIL: corpus is empty -- no .kql files found under "
             f"{args.corpus}",

@@ -4,15 +4,14 @@
 """Oracle: our ``Pipeline.result_schema`` must equal Microsoft's ``ResultType``.
 
 The binder in ``Kusto.Language`` already computes, exactly, the columns and
-types a query returns. ``SchemaAttacher`` used to re-derive the same answer
-from hand-written per-operator rules, and a pre-release audit found a dozen
-places where the two disagreed (K07–K14, K28) — join-collision renaming,
+types a query returns, so the IR never re-derives that answer: the builder
+stamps ``ResultType`` onto each operator it closes, ``SchemaAttacher``
+overlays that onto the walked scope for provenance, and where Microsoft
+leaves a symbol open the IR says ``result_schema=None``. Any hand-written
+per-operator rule would be a guess at something Microsoft has already
+answered, and the shapes this oracle sweeps — join-collision renaming,
 wildcard ``project-keep``, ``mv-expand``'s element type, ``arg_max(t, *)``,
-and so on. Every one of those was a rule we wrote guessing at something
-Microsoft had already answered, so the rules are gone: the builder stamps
-``ResultType`` onto each operator it closes, ``SchemaAttacher`` overlays that
-onto the walked scope for provenance, and where Microsoft leaves a symbol
-open the IR says ``result_schema=None``.
+and so on — are exactly where such guesses diverge.
 
 This module is the disagreement detector. For each query it asks Microsoft
 for ``code.ResultType`` and asks us for
@@ -26,9 +25,8 @@ complete — an ``evaluate`` plug-in may add more, or the source was never
 described. The requirement there is that we decline too, so ``theirs`` comes
 back as the ``OPEN`` sentinel and the assertion becomes ``ours is None``.
 That is the same requirement as an exact match, stated for the case where
-there is no exact answer to match; before the hand rules were retired those
-cases were an xfail list, because a guess either happened to line up with the
-partial list or did not.
+there is no exact answer to match — a guessed column list could only line up
+with Microsoft's partial one by luck.
 
 **Two legs, and both compare Microsoft's capture against Microsoft's own
 direct answer.** The bound leg parses with a schema up front
@@ -57,9 +55,9 @@ for a fixture with no syntactically-recognizable table. ``to_ir(attach_schema
 those fixtures rather than comparing, since nothing about the reroute is
 being exercised when it never ran.
 
-Both legs compare full ``(name, type)`` pairs: there is no more
-names-only/``unknown``-leniency to grant a leg that never reached Microsoft's
-answer, because both of them do.
+Both legs compare full ``(name, type)`` pairs: names-only or
+``unknown``-type leniency would only excuse a leg that never reaches
+Microsoft's answer, and both of them do.
 """
 
 from __future__ import annotations
@@ -131,9 +129,9 @@ MATRIX: list[tuple[str, str]] = [
     ("arg-max-star", "T | summarize arg_max(t, *)"),
     ("arg-min-star", "T | summarize arg_min(t, *)"),
     ("arg-max-columns", "T | summarize arg_max(t, a, s)"),
-    # A multi-output aggregate *alongside* another one. Every other entry
-    # here has its multi-output aggregate alone, which is what let a
-    # bind-dependent alignment guard through the bind-state sweep below:
+    # A multi-output aggregate *alongside* another one — the only shape that
+    # can catch a bind-dependent alignment in the bind-state sweep below.
+    # Every other entry here has its multi-output aggregate alone;
     # `arg_max(t, *)` reports six columns bound and one unbound, so a
     # `summarize` holding it plus anything else lines up in exactly one bind
     # state and the *other* aggregate is named two different ways.
@@ -178,7 +176,7 @@ MATRIX: list[tuple[str, str]] = [
     ("as-operator", "T | as X"),
     ("make-series", "T | make-series c = count() on t step 1h by k"),
     ("evaluate-bag-unpack", "T | evaluate bag_unpack(d)"),
-    # A plug-in that adds columns rather than consuming one -- the other
+    # A plug-in that adds columns rather than consuming one — the other
     # half of ``evaluate``, and the case where nothing about the input
     # schema changes.
     ("evaluate-autocluster", "T | evaluate autocluster()"),
@@ -197,10 +195,8 @@ MATRIX: list[tuple[str, str]] = [
 ]
 
 # The bound leg's MATRIX run: one representative id per construct family
-# (join, union-conflict, mv-expand `to typeof`, wildcard project-keep, typed
-# parse, a multi-output summarize aggregate, datatable, search, evaluate,
-# getschema) rather than the whole matrix -- see the module docstring for why
-# most of the matrix cannot fail there.
+# rather than the whole matrix — see the module docstring for why most of
+# the matrix cannot fail there.
 BOUND_LEG_IDS: set[str] = {
     "join-inner",
     "union-conflict",
@@ -214,9 +210,9 @@ BOUND_LEG_IDS: set[str] = {
     "getschema",
 }
 
-# Guard against BOUND_LEG_IDS drifting from MATRIX -- e.g. a rename inside
-# the generated join-kind family -- which would otherwise silently shrink
-# the bound leg's coverage below its ten categories with no test failure.
+# Guard against BOUND_LEG_IDS drifting from MATRIX — for example, a rename
+# inside the generated join-kind family — which would otherwise silently
+# shrink the bound leg's coverage with no test failure.
 _unknown_bound_ids = BOUND_LEG_IDS - {case_id for case_id, _ in MATRIX}
 assert not _unknown_bound_ids, (
     f"BOUND_LEG_IDS names ids not in MATRIX: {sorted(_unknown_bound_ids)}"
@@ -226,7 +222,7 @@ CORPUS_DIR = Path(__file__).resolve().parent.parent / "fixtures" / "complex_quer
 
 
 def _case(case_id: str, query: str):
-    """One parametrized case, named after the shape it exercises."""
+    """Return one parametrized case, named after the shape it exercises."""
     return pytest.param(case_id, query, id=case_id)
 
 
@@ -245,12 +241,12 @@ def _heuristic_schema(query: str) -> dict[str, dict[str, str]]:
     ``set``s, so their iteration order varies with ``PYTHONHASHSEED``, and
     that order reaches the assertion: it decides the column order of the
     ``GlobalState``, which decides Microsoft's output order, which this gate
-    compares as an ordered list. Every case agrees on every seed today, so
-    nothing is flaky now — but a gate whose expected value depends on the
-    seed is one change away from passing on CI and failing on a laptop.
-    There are no ``xfail`` markers left in this module to turn that into a
-    quieter xpass/xfail flip; it would surface as a direct assertion
-    failure instead, with no visible cause beyond the seed.
+    compares as an ordered list. Every case agrees on every seed, so nothing
+    is flaky — but a gate whose expected value depends on the seed is one
+    change away from passing on CI and failing on a laptop. This module has
+    no ``xfail`` markers to turn that into a quieter xpass/xfail flip; it
+    would surface as a direct assertion failure, with no visible cause
+    beyond the seed.
     """
     q = parse(query)
     columns = {
@@ -290,10 +286,10 @@ OPEN = _Open()
 def microsoft_columns(
     query: str, schema: dict,
 ) -> list[tuple[str, str]] | _Open | None:
-    """``[(name, type), …]`` for the whole query, straight from the binder.
+    """Return ``[(name, type), …]`` for the whole query, straight from the binder.
 
     Three outcomes, and the difference between the last two is the whole
-    point of this module post-Task-3:
+    point of this module:
 
     * ``None`` — no tabular ``ResultType`` at all (``facet``, ``fork``).
     * ``OPEN`` — a ``TableSymbol`` whose ``IsOpen`` is true. Microsoft names
@@ -318,7 +314,7 @@ def microsoft_columns(
 
 
 def our_columns(query: str, schema: dict, ir=None) -> list[tuple[str, str]] | None:
-    """Our answer. Pass ``ir`` when the caller already built one."""
+    """Return our answer. Pass ``ir`` when the caller already built one."""
     if ir is None:
         ir = parse(query, schema=schema).to_ir()
     result_schema = ir.main_pipeline.result_schema
@@ -326,13 +322,12 @@ def our_columns(query: str, schema: dict, ir=None) -> list[tuple[str, str]] | No
 
 
 def assert_open_or_equal(query: str, theirs, ours) -> None:
-    """The comparison both legs make, once each has produced its two answers.
+    """Make the comparison both legs share, once each has produced its two answers.
 
     An *open* symbol is compared as an absence, not as a column list: the
-    requirement is that we decline where Microsoft declined. Before Task 3
-    the hand-rolled rules answered anyway, and this is where that showed —
-    a merged scope that happened to match the partial list passed, and one
-    that did not sat in an xfail dict.
+    requirement is that we decline where Microsoft declines. Any produced
+    list is a failure there — a merged scope that happens to match the
+    partial list would pass by luck, not by contract.
     """
     if theirs is OPEN:
         assert ours is None, (
@@ -370,8 +365,8 @@ def test_corpus_fixture_matches_microsoft(name: str, query: str):
     ir = parse(query, schema=schema).to_ir()
     # ``code.ResultType`` describes the *last* statement and ``main_pipeline``
     # the first, so the comparison is only meaningful for a single-statement
-    # query. No fixture has a second one today; the guard is here so that
-    # adding one produces this sentence rather than a mystifying column diff.
+    # query. No fixture has a second one; the guard makes adding one produce
+    # this sentence rather than a mystifying column diff.
     assert not ir.additional_pipelines, (
         f"{name} has {len(ir.additional_pipelines)} extra tabular statements; "
         "compare the last pipeline, not main_pipeline"
@@ -383,18 +378,17 @@ def test_corpus_fixture_matches_microsoft(name: str, query: str):
 
 
 def dict_path_columns(query: str, schema: dict, ir=None) -> list[tuple[str, str]] | None:
-    """Our answer through the public ``attach_schema=dict`` entry point.
+    """Return our answer through the public ``attach_schema=dict`` entry point.
 
     ``parse(query)`` alone is syntactic; ``to_ir(attach_schema=schema)``
     re-binds that same tree through Microsoft's own binder
     (``build_global_state(schema)`` + ``KustoCode.Analyze``) before building
     the IR, so this is the caller-facing path a schema dict with no cluster
-    to bind against actually takes -- and, since Task 1, its output schemas,
-    types, and IR shape are byte-identical to
-    ``parse(query, schema=schema).to_ir()``. (Diagnostics are not: they
-    follow the receiver's own bind state, not the dict's -- out of scope for
-    this module, which compares ``result_schema`` only.) Pass ``ir`` when
-    the caller already built one.
+    to bind against actually takes — and its output schemas, types, and IR
+    shape are byte-identical to ``parse(query, schema=schema).to_ir()``.
+    (Diagnostics are not: they follow the receiver's own bind state, not the
+    dict's — out of scope for this module, which compares ``result_schema``
+    only.) Pass ``ir`` when the caller already built one.
     """
     if ir is None:
         ir = parse(query).to_ir(attach_schema=schema)
@@ -403,13 +397,12 @@ def dict_path_columns(query: str, schema: dict, ir=None) -> list[tuple[str, str]
 
 
 def assert_dict_path_agrees(query: str, schema: dict, ir=None) -> None:
-    """Ordered ``(name, type)`` pairs, exactly -- both sides are Microsoft now.
+    """Require ordered ``(name, type)`` pairs, exactly — both sides are Microsoft's.
 
     The rerouted dict path takes its answer from ``ResultType`` the same as
-    the bound leg does, so there is no more names-only/``unknown``-leniency
-    to grant: a real divergence here is a defect in the reroute plumbing
-    (per-operator capture, ordering, the ``Analyze`` seam), not a hand rule
-    guessing wrong.
+    the bound leg does, so there is no names-only or ``unknown``-type
+    leniency to grant: a divergence here is a defect in the reroute plumbing
+    (per-operator capture, ordering, the ``Analyze`` seam).
     """
     theirs = microsoft_columns(query, schema)
     if theirs is None:
@@ -432,12 +425,12 @@ def test_operator_matrix_matches_microsoft_via_dict_path(
 def test_corpus_fixture_matches_microsoft_via_dict_path(
     name: str, query: str,
 ):
-    """Types included -- both sides are Microsoft's own answer here."""
+    """Compare types too — both sides are Microsoft's own answer here."""
     schema = _heuristic_schema(query)
     if not schema:
         # No table is referenced syntactically (a `let`-function corpus
         # fixture, or one whose only source is a call-style ASIM parser), so
-        # the heuristic schema is `{}` -- and `to_ir` treats an *empty*
+        # the heuristic schema is `{}` — and `to_ir` treats an *empty*
         # ``attach_schema`` dict as a no-op, the same as ``attach_schema=
         # False``: no re-bind at all (see the `to_ir` docstring). There is
         # nothing here for the dict path specifically to exercise: any
@@ -463,7 +456,7 @@ def test_auto_names_do_not_depend_on_the_bind_state():
     The builder names an unnamed aggregate from ``ResultNameKind`` /
     ``ResultNamePrefix`` on the call's resolved ``ReferencedSymbol`` (see
     ``_auto_name`` / ``_function_result_name``), and aggregate function
-    symbols live in ``GlobalState.Default`` -- the same global state
+    symbols live in ``GlobalState.Default`` — the same global state
     regardless of whether the query's own tables are bound to a schema. The
     read is per-expression, not derived from the operator's result schema,
     so it resolves identically whether the parse is bound against ``SCHEMA``,
@@ -471,8 +464,8 @@ def test_auto_names_do_not_depend_on_the_bind_state():
     ``Assignment.name`` is hashed, a bind-state-dependent name would give the
     same query two different ``semantic_hash`` values.
 
-    This asserts that identity holds over the whole matrix and corpus, not
-    just over the cases that originally motivated it.
+    The assertion sweeps the whole matrix and corpus rather than a
+    hand-picked case list.
     """
     from kustology.ir import compute_semantic_hash
 

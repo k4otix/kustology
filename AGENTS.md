@@ -3,6 +3,41 @@
 Non-obvious technical context for agents modifying this repository. Read
 before changing CLR interop, the AST analysis layer, or the bundled DLL.
 
+## Documentation style
+
+These rules govern all prose and comments in the repository — README and
+docs, docstrings, and inline comments. Version-history records
+(`CHANGELOG.md`) and this file's postmortem notes are the exceptions: they
+exist to carry history.
+
+- **Narrative prose and docstrings follow the Microsoft Writing Style
+  Guide.** Active voice, present tense, second person for instructions.
+  Sentence-case headings. Contractions are fine. No filler ("please",
+  "simply", "just", "easy"). Spell out Latin abbreviations — "for example"
+  and "that is", not "e.g." and "i.e.". Oxford comma.
+- **Python docstrings follow PEP 257, written in Microsoft style.** Triple
+  double quotes. The summary line is one imperative sentence ending in a
+  period ("Return the bound tree.", not "Returns the bound tree."). A
+  one-liner keeps its closing quotes on the same line; a multi-line
+  docstring puts a blank line after the summary and the closing quotes on
+  their own line. Document parameters, returns, and raises only when the
+  signature doesn't already say it.
+- **Inline comments are terse and action-oriented.** Comment only
+  non-obvious or complex load-bearing code and critical decision points.
+  State the constraint or the decision, not what the next line does. A
+  comment that restates the code is noise — delete it.
+- **Prose is greenfield: explain what is, not what was.** Outside the
+  exceptions above, never write "previously", "now", "no longer", "used
+  to", or any reference to removed code, past defects, or the change that
+  produced the current behavior. Rationale is welcome when phrased as
+  present-tense fact ("newlines are safe to fold because a KQL string
+  literal cannot contain a raw one"), not as narration of a fix. History
+  belongs in git and the changelog.
+
+Two standing rules elsewhere in this file are part of the same discipline:
+never write a count you did not derive, and keep changelog entries to one
+to three lines.
+
 ## .NET runtime and pythonnet interop
 
 ### Use the public `KustoCodeService` for formatting

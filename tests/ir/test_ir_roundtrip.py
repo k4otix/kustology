@@ -52,7 +52,7 @@ QUERIES = [
     # let-bindings.
     "let cutoff = ago(1h); DeviceProcessEvents | where TimeGenerated > cutoff",
     "let allowlist = dynamic(['svc_a','svc_b']); DeviceProcessEvents | where AccountName !in (allowlist)",
-    # let-declared functions. `LetFunction` holds a whole second IR --
+    # let-declared functions. `LetFunction` holds a whole second IR —
     # parameters with their declared types and defaults, body-scoped bindings,
     # and a tail that is either a nested `Pipeline` or an `AnyExpr`. Each of
     # those is a recursive field reached only through this node, so a missing
@@ -146,14 +146,12 @@ def test_ir_roundtrip(builder, attacher, query):
 
 
 def test_dumps_carrying_removed_fields_are_rejected():
-    """``extra="forbid"`` makes the removal visible instead of silent.
+    """``extra="forbid"`` makes a retired wire field loud instead of silent.
 
-    ``QueryIR.parse_warnings``, ``Span.source_text`` and ``Expr.nullable``
-    were declared and never populated by any code path -- the first two by
-    nothing at all, the third by a probe naming a .NET member that does not
-    exist. A stored dump written by an older release carries them, and must
-    fail to load rather than quietly dropping data. That is what the
-    IR_SCHEMA_VERSION bump is for.
+    ``QueryIR.parse_warnings``, ``Span.source_text``, and ``Expr.nullable``
+    are not fields of the current model, but a stored dump written by an
+    older release carries them — and it must fail to load rather than
+    quietly dropping data. That is what the IR_SCHEMA_VERSION bump is for.
     """
     import json
 
@@ -165,7 +163,7 @@ def test_dumps_carrying_removed_fields_are_rejected():
     ir = IRBuilder().build("DeviceProcessEvents | where FileName == 'a.exe'")
     payload = json.loads(ir.model_dump_json())
 
-    # Round-trips cleanly as written today.
+    # Control: the unmutated dump round-trips cleanly.
     assert QueryIR.model_validate(payload).semantic_hash == ir.semantic_hash
 
     for mutate in (
@@ -182,25 +180,25 @@ def test_dumps_carrying_removed_fields_are_rejected():
 def test_dumps_missing_a_field_added_this_release_are_rejected():
     """The other direction: a required field the older shape did not have.
 
-    ``extra="forbid"`` rejects a dump carrying a field that no longer
-    exists, which the test above pins. It says nothing about a dump written
-    before a field was *added* -- that one is short a key, not carrying a
+    ``extra="forbid"`` rejects a dump carrying a field the model does not
+    have, which the test above pins. It says nothing about a dump written
+    before a field was *added* — that one is short a key, not carrying a
     spare, and only the field being required (no pydantic default) makes it
-    fail. WS4 added several such fields, and ``SortKey`` is the sharpest
-    case: ``SortOp.expressions`` used to be a ``list[AnyExpr]`` holding the
-    bare ordering expression, and is now a ``list[SortKey]`` wrapping it as
-    ``expression`` alongside a required ``direction``.
+    fail. ``SortKey`` is the sharpest case: the older wire shape holds the
+    bare ordering expression directly in ``SortOp.expressions``, where the
+    current ``list[SortKey]`` wraps it as ``expression`` alongside a
+    required ``direction``.
 
-    That shape change matters precisely because the old dump is *lossy* --
+    The distinction matters precisely because the older dump is *lossy* —
     it predates the model recording which way the rows come back. Loading it
     by treating the missing direction as some default would invent the half
-    of the query the old builder threw away, and reproduce the collision
+    of the query that dump never carried, and reproduce the collision
     ``SortKey`` exists to close. So it must fail loudly instead, and the
     error has to name the field a reader would have to add.
 
-    Built by demoting a real dump rather than by hand, so it stays a
-    genuine 0.2-dev payload: ``expressions[0]`` is replaced with the very
-    expression node the current shape carries inside it.
+    Built by demoting a real dump rather than by hand, so the payload stays
+    genuine: ``expressions[0]`` is replaced with the very expression node
+    the current shape carries inside it.
     """
     import json
 
@@ -219,7 +217,7 @@ def test_dumps_missing_a_field_added_this_release_are_rejected():
     assert sort_op["expressions"][0]["kind"] == "sort_key"
     assert sort_op["expressions"][0]["direction"] == "desc"
 
-    # The 0.2-dev shape: the ordering expression sat directly in the list.
+    # The older wire shape: the ordering expression sits directly in the list.
     sort_op["expressions"] = [sort_op["expressions"][0]["expression"]]
 
     with pytest.raises(ValidationError) as excinfo:
@@ -227,8 +225,8 @@ def test_dumps_missing_a_field_added_this_release_are_rejected():
 
     # `Pipeline.operators` is a discriminated union (on `kind`), so pydantic
     # picks the `SortOp` member by its `"sort"` tag directly instead of
-    # trying every member and reporting a branch of noise per failed one --
-    # the tag value itself shows up as a `loc` segment in place of the old
+    # trying every member and reporting a branch of noise per failed one —
+    # the tag value itself shows up as a `loc` segment rather than a
     # per-member class-name segment. Matching on the leaf name alone would
     # also accept a `missing` on some unrelated member's own `expression`
     # field, so the path is still checked in full.

@@ -14,14 +14,14 @@ down — that is the drift they exist to catch.
 
 `canonical()` is a long if/elif chain over `Expr` subclasses, ending in a
 `raw_text` fallback for anything it doesn't recognize. That fallback exists
-so `canonical()` never crashes on an unmodelled shape, but it means a NEW
+so `canonical()` never crashes on an unmodeled shape, but it means a NEW
 `Expr` subclass added later without a matching branch renders as garbage
-(the .NET node's raw text) instead of failing loudly -- and `canonical()`
+(the .NET node's raw text) instead of failing loudly — and `canonical()`
 feeds both `Expr.canonical_form` and `semantic_hash`, so two semantically
 different queries could silently collapse to the same hash.
 
-This test does not exercise `canonical()`'s behaviour -- the per-type tests
-already do that (see `test_literals.py`, etc). It inspects `canonical()`'s
+This test does not exercise `canonical()`'s behavior — the per-type tests
+already do that (see `test_literals.py` and its siblings). It inspects `canonical()`'s
 *source* and asserts every live `Expr` subclass name appears somewhere in
 the function body. That's a coarse check (a name appearing in a comment
 would also pass), but it is exactly calibrated to catch what matters here:
@@ -31,10 +31,9 @@ covers every non-`UnknownExpr` subclass there is, discovered by walking
 without touching `canonical()` fails CI instead of shipping a builder that
 renders the new shape as its raw source text.
 
-The count is deliberately not written down. It used to say "all 22 ... adding
-a 23rd" and went stale the first time a subclass landed (`TypedNameDecl`, then
-`LetValueRef`), which is the hand-maintained-list drift AGENTS.md warns about
--- in a docstring whose whole subject is a list that must not be
+The count is deliberately not written down: a written count is itself a
+hand-maintained list, stale the moment a subclass lands — the drift AGENTS.md
+warns about, in a docstring whose whole subject is lists that must not be
 hand-maintained.
 
 ## `AnyExpr` and `__all__`
@@ -42,7 +41,7 @@ hand-maintained.
 The same drift, two more places, and both are quieter than a bad render.
 
 A subclass missing from `AnyExpr` is missing from every *field* typed
-`AnyExpr` -- which is nearly every expression-holding field in the IR. The
+`AnyExpr` — which is nearly every expression-holding field in the IR. The
 builder can still construct the node in memory, so nothing fails at build
 time; the break surfaces one layer out, at
 `QueryIR.model_validate_json(ir.model_dump_json())`, where pydantic has no
@@ -50,12 +49,11 @@ member of the union whose `kind` literal matches and rejects the dump the
 library itself wrote. So the gap ships as "stored IR from this version does
 not load", not as a missing feature.
 
-A class missing from `__all__` (or from the module's imports) is simply not
+A class missing from `__all__` (or from the module's imports) is not
 importable as `from kustology.ir import X`, which for a node the builder
-puts in the tree means a consumer cannot name the type it is being handed --
-no `isinstance` check, no `find_all(ir, X)`. WS4 added nine model classes
-across nine tasks; the risk this test closes is the tenth one landing with
-its `__init__` line forgotten.
+puts in the tree means a consumer cannot name the type it is being handed —
+no `isinstance` check, no `find_all(ir, X)`. The risk this test closes is a
+new model class landing with its `__init__` line forgotten.
 
 Both are checked by introspection over the live modules, so a new class is
 covered the moment it is defined. `Expr` itself is included deliberately:
@@ -84,15 +82,15 @@ def _all_expr_subclasses(cls: type = E.Expr) -> set[type]:
 
 
 def _anyexpr_member_names() -> set[str]:
-    """The class names named by `expr.AnyExpr`, forward references included.
+    """Return the class names `expr.AnyExpr` names, forward references included.
 
     `AnyExpr` is `Annotated[Union[...], Field(discriminator="kind")]`, so
     `get_args` on it first hands back the `Union` and the `FieldInfo`
     metadata; strip the `Annotated` wrapper before reading the union
     members. Members are written as string literals (the union is defined
     before the classes it names), so the underlying `get_args` hands back a
-    mix of `ForwardRef` and -- once pydantic's `model_rebuild` has resolved
-    them -- real classes. Normalize both to a bare name.
+    mix of `ForwardRef` and — once pydantic's `model_rebuild` has resolved
+    them — real classes. Normalize both to a bare name.
     """
     annotation = E.AnyExpr
     while typing.get_origin(annotation) is typing.Annotated:
@@ -106,20 +104,17 @@ def _anyexpr_member_names() -> set[str]:
 
 
 def _public_models() -> set[type]:
-    """Every public pydantic model defined anywhere in `kustology.ir`.
+    """Return every public pydantic model defined anywhere in `kustology.ir`.
 
     Filtered by `__module__` so a class a module merely imported (the `expr`
     classes `query` uses in its own annotations) is attributed to the module
     that defines it and counted exactly once.
 
-    The submodule list comes from `pkgutil`, not from a pair of imports.
-    Naming `expr` and `query` by hand made this function the very thing the
-    module docstring rails against -- a hand-maintained list -- and it was
-    already incomplete: it saw 99 models where the package defines 101,
-    missing `Span` (in `spans`) and `Finding` (in `analyzers`). Both are
-    exported, so the guard could not have caught either one going missing.
-    A model in a submodule nobody thought to import is exactly the case
-    this test exists for.
+    The submodule list comes from `pkgutil`, not from imports named by hand —
+    a hand-named list would make this function the very thing the module
+    docstring rails against, and a model in a submodule nobody thought to
+    import is exactly the case this test exists for: `Span` lives in `spans`
+    and `Finding` in `analyzers`, not in the obvious `expr`/`query` pair.
     """
     out: set[type] = set()
     for info in pkgutil.iter_modules(ir_pkg.__path__):
@@ -172,15 +167,15 @@ def test_every_expr_subclass_is_exported():
 
 
 def test_every_ir_model_is_exported():
-    """The same guard, widened past `Expr` to every model in the package.
+    """Apply the same guard, widened past `Expr` to every model in the package.
 
-    `AnyExpr` membership only constrains expression nodes, and WS4's new
-    classes were mostly *not* expressions -- `SortKey`, `ReorderKey`,
-    `ForkBranch`, `MvExpandColumn`, `MakeSeriesAggregate`, `DataTableSource`,
+    `AnyExpr` membership only constrains expression nodes, and many models
+    are *not* expressions — `SortKey`, `ReorderKey`, `ForkBranch`,
+    `MvExpandColumn`, `MakeSeriesAggregate`, `DataTableSource`, and
     `ExternalDataSource` are plain `BaseModel`s hanging off an operator or a
-    pipeline source. Nothing but this test would have noticed one of them
-    missing from `__all__`: the IR builds, dumps and reloads perfectly, and
-    only a consumer trying to import the name finds out.
+    pipeline source. Nothing but this test notices one of them missing from
+    `__all__`: the IR builds, dumps, and reloads perfectly, and only a
+    consumer trying to import the name finds out.
     """
     exported = set(ir_pkg.__all__)
     models = _public_models()
@@ -189,10 +184,10 @@ def test_every_ir_model_is_exported():
 
 
 def test_everything_exported_resolves():
-    """The reverse direction: no `__all__` entry without an import behind it.
+    """Check the reverse direction: no `__all__` entry without an import behind it.
 
     `from kustology.ir import *` raises `AttributeError` on a name in
-    `__all__` that the module never bound -- a class added to the list and
+    `__all__` that the module never bound — a class added to the list and
     not to the import block above it. Cheap to get wrong, and invisible to
     every test that imports names explicitly.
     """
@@ -201,17 +196,14 @@ def test_everything_exported_resolves():
 
 
 def test_the_binder_enricher_alias_is_gone():
-    """``BinderEnricher = SchemaAttacher`` was a bare assignment in `binder.py`,
-    re-exported through `kustology.ir.__all__`, and never documented — no
-    mention in the README, the CHANGELOG, an example or a test.
+    """Guard the absence of a ``BinderEnricher`` alias for ``SchemaAttacher``.
 
     An exported name is a promise: it turns up in `dir()`, in generated API
-    documentation and in `from kustology.ir import *`, and once a consumer
-    imports it the alias has to be kept working across the 1.0 line. Nothing
-    was ever written down about which of the two names was the real one, so
-    the pair only cost — two spellings of one class in every search result.
-    Removed before 0.2.0 rather than documented, because the class that does
-    the work already has the name that says what it does.
+    documentation, and in `from kustology.ir import *`, and once a consumer
+    imports it an alias has to be kept working across the 1.0 line. A second
+    spelling would buy nothing — two names for one class in every search
+    result, with nothing written down about which one is real — so the class
+    that does the work keeps the one name that says what it does.
     """
     from kustology.ir import binder
 
@@ -219,30 +211,30 @@ def test_the_binder_enricher_alias_is_gone():
     assert "BinderEnricher" not in ir_pkg.__all__
     assert not hasattr(binder, "BinderEnricher")
 
-    # The control: the class that did the work survives, so this was the
-    # deletion of a duplicate name and not of the functionality. It lives in
-    # `kustology.ir.binder` as an internal — its own export was removed
-    # separately (see test_schema_attacher_is_not_exported).
+    # The control: the class that does the work exists, so the guard is
+    # about a duplicate name, not the functionality. It lives in
+    # `kustology.ir.binder` as an internal — its own non-export has its own
+    # guard (see test_schema_attacher_is_not_exported).
     assert inspect.isclass(binder.SchemaAttacher)
 
 
 def test_schema_attacher_is_not_exported():
-    """``SchemaAttacher`` left the public surface in 0.2.0: exported by
-    0.1.0, but the export was never needed.
+    """Guard that ``SchemaAttacher`` stays off the public surface.
 
     The only production caller is ``KustoQuery.to_ir`` (``core.py``), which
     always holds the ``KustoCode`` it parsed — so nothing in the library
-    ever enriches a detached IR through the public name. No README snippet,
-    example or document ever showed constructing the class directly, and a
-    search of public code found no external use. The supported paths are
-    ``parse(query, schema=...)`` and ``KustoQuery.to_ir(attach_schema=...)``;
-    the class stays in ``kustology.ir.binder`` as an internal, where
-    ``to_ir`` and the binder tests reach it.
+    ever enriches a detached IR through a public name, and no README
+    snippet, example, or document shows constructing the class directly.
+    The supported paths are ``parse(query, schema=...)`` and
+    ``KustoQuery.to_ir(attach_schema=...)``; the class stays in
+    ``kustology.ir.binder`` as an internal, where ``to_ir`` and the binder
+    tests reach it.
     """
     from kustology.ir import binder
 
     assert not hasattr(ir_pkg, "SchemaAttacher")
     assert "SchemaAttacher" not in ir_pkg.__all__
 
-    # The mechanism survives internally: `KustoQuery.to_ir` still runs it.
+    # The control: `KustoQuery.to_ir` runs the class internally, so only
+    # the export is absent.
     assert inspect.isclass(binder.SchemaAttacher)

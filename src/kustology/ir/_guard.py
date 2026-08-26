@@ -11,6 +11,7 @@ from __future__ import annotations
 
 
 def _require_pydantic() -> None:
+    """Raise ``ImportError`` with install guidance when pydantic is absent."""
     try:
         import pydantic  # noqa: F401
     except ImportError as e:  # pragma: no cover — exercised by base-install CI

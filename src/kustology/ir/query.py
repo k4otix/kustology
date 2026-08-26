@@ -48,6 +48,8 @@ from .spans import Span
 # lead every emitted dict.
 
 class Diagnostic(BaseModel):
+    """One parser or binder message, carried through to the IR."""
+
     model_config = {"extra": "forbid"}
     kind: Literal["diagnostic"] = "diagnostic"
     message: str
@@ -82,13 +84,17 @@ class TabularSchema(BaseModel):
     Distinct again from ``columns is None`` on the enclosing
     :attr:`Operator.result_schema` / :attr:`Pipeline.result_schema`, which
     means *no schema was determined at all*, and from ``columns == {}``,
-    which claims the step emits no columns."""
+    which claims the step emits no columns.
+    """
+
     model_config = {"extra": "forbid"}
     kind: Literal["tabular_schema"] = "tabular_schema"
     columns: dict[str, str] = {}
 
 
 class Assignment(BaseModel):
+    """One ``name = expression`` pair, as ``extend`` and ``summarize`` write it."""
+
     model_config = {"extra": "forbid"}
     kind: Literal["assignment"] = "assignment"
     name: str
@@ -129,10 +135,10 @@ class Operator(BaseModel):
     # :func:`kustology.ir._builder_helpers.table_symbol_columns` for what
     # "closed" buys and why an open one is dropped instead of read.
     #
-    # This is the *only* source of an operator's output schema. ``Schema-
-    # Attacher`` used to re-derive one per operator by hand and a dozen of
-    # those rules disagreed with the binder, so they are gone; it now
-    # overlays this onto its scope for provenance and derives nothing.
+    # This is the *only* source of an operator's output schema.
+    # ``SchemaAttacher`` overlays it onto its scope for provenance and
+    # derives nothing of its own -- hand-derived per-operator rules disagree
+    # with the binder, so none exist.
     # ``None`` means Microsoft did not answer for this operator (no schema,
     # or a schema it could not fully determine), and nothing else answers in
     # its place -- the enclosing ``Pipeline.result_schema`` reports ``None``
@@ -177,13 +183,13 @@ class TableRef(BaseModel):
 
     ``database`` and ``cluster`` are the qualifiers the query stated, and
     they are data rather than decoration: ``database('d1').T`` and
-    ``database('d2').T`` read two different tables and used to build the
-    same node, so they carried the same ``semantic_hash``.
+    ``database('d2').T`` read two different tables, so folding the
+    qualifiers away would give them one node and one ``semantic_hash``.
 
     ``is_wildcard`` marks a pattern rather than a name -- ``union T*``
-    matches a *set* of tables, and without the flag it was indistinguishable
-    from a literal table that happens to be called ``T*`` (``union ['T*']``,
-    which is a legal and different query).
+    matches a *set* of tables, and without the flag it would be
+    indistinguishable from a literal table that happens to be called ``T*``
+    (``union ['T*']``, which is a legal and different query).
     """
 
     model_config = {"extra": "forbid"}
@@ -217,11 +223,11 @@ class LetRef(BaseModel):
 class UnknownSource(BaseModel):
     """Source the IR builder couldn't model — captures provenance.
 
-    ``raw_text`` is the node's own source, ``ToString(IncludeTrivia.Minimal)``.
-    It used to be the constant string ``"unknown"``, which made every
-    unmodelled source hash identically no matter what the query said.
+    ``raw_text`` is the node's own source, ``ToString(IncludeTrivia.Minimal)``
+    -- never a shared constant, which would make every unmodeled source hash
+    identically no matter what the query said.
 
-    **Known boundary: an unmodelled source is formatting-sensitive in the
+    **Known boundary: an unmodeled source is formatting-sensitive in the
     hash.** ``Minimal`` drops the node's *leading* trivia but not trivia
     *interior* to it — no ``IncludeTrivia`` mode does, checked against all
     four — so ``let /*c*/ x = 1;`` and ``let x = 1;`` produce different
@@ -233,7 +239,7 @@ class UnknownSource(BaseModel):
     one query), never a false *merge* (two different queries sharing a
     digest), and it reaches only the sources the builder already could not
     model. :class:`~kustology.ir.expr.UnknownExpr` and :class:`UnknownOp`
-    have carried the same property since they were written.
+    carry the same property.
     """
 
     model_config = {"extra": "forbid"}
@@ -255,7 +261,8 @@ class ImplicitSource(BaseModel):
 
 class FuncCallSource(BaseModel):
     """Function-call-as-pipeline-source — a user-defined function that returns
-    a table, e.g. ``findAnomalies('foo') | summarize ...``."""
+    a table, as in ``findAnomalies('foo') | summarize ...``.
+    """
     model_config = {"extra": "forbid"}
     kind: Literal["func_call_source"] = "func_call_source"
     name: str
@@ -268,9 +275,9 @@ class DataTableSource(BaseModel):
 
     The values *are* the query: a ``datatable`` of allow-listed hashes and
     the same ``datatable`` of different hashes are two different queries.
-    The builder used to lower every one of them to
-    ``FuncCallSource(name="datatable", args=[])``, discarding the schema and
-    every row, so they all shared one ``semantic_hash``.
+    Lowering them to a bare ``FuncCallSource(name="datatable", args=[])``
+    would discard the schema and every row, leaving them all one
+    ``semantic_hash``.
 
     ``rows`` is the reshape of what the parser hands over. ``Values`` on the
     .NET node is a *flat* list of expressions with no row structure at all;
@@ -302,16 +309,16 @@ class ExternalDataSource(BaseModel):
     guaranteed to be a URI**: when the element does not fold to a literal —
     a ``let``-bound feed URL, or ``strcat("https://", env)`` — the field
     records that element's source text instead (``"u"``, or the whole call
-    as written). Resolving those needs the query, not just this field.
+    as written). Resolving those needs the query, not only this field.
 
     ``properties`` is the whole ``with (...)`` clause, keys verbatim, in the
-    same ``dict[str, str]`` shape :attr:`RenderOp.properties` uses. Only
-    ``format`` used to be read and the rest were dropped, which was a
-    collision rather than a cosmetic gap: ``ignoreFirstRecord=true`` skips
-    the CSV header row, so it changes the rows the feed returns, and a
-    source node has no ``raw_text`` for the dropped text to survive in.
-    ``format`` remains as its own field because the rest of the library
-    reads it; it is *also* present in ``properties`` under the name the
+    same ``dict[str, str]`` shape :attr:`RenderOp.properties` uses. Reading
+    only ``format`` and dropping the rest would be a collision rather than
+    a cosmetic gap: ``ignoreFirstRecord=true`` skips the CSV header row, so
+    it changes the rows the feed returns, and a source node has no
+    ``raw_text`` for dropped text to survive in.
+    ``format`` is *also* its own field because the rest of the library
+    reads it; it stays present in ``properties`` under the name the
     query wrote, so a consumer reconstructing the clause sees a complete
     one.
     """
@@ -333,11 +340,11 @@ class DistinctOp(Operator):
 class TakeOp(Operator):
     kind: Literal["take"] = "take"
     # KQL allows any scalar expression here (`let n = 10; T | take n`,
-    # `take toscalar(U | count)`), not just an integer literal, so the field
-    # widens to ``AnyExpr``. ``int`` is listed first so Pydantic validates a
-    # JSON literal ``5`` as a plain ``int`` -- matching existing ``op.count
-    # == 5`` assertions and downstream consumers -- instead of coercing it
-    # into an expression model; the four sibling ops below follow suit.
+    # `take toscalar(U | count)`), not only an integer literal, so the field
+    # admits ``AnyExpr``. ``int`` is listed first so Pydantic validates a
+    # JSON literal ``5`` as a plain ``int`` -- matching ``op.count == 5``
+    # assertions and downstream consumers -- instead of coercing it into an
+    # expression model; the sibling count and limit fields below follow suit.
     count: int | AnyExpr
 
 
@@ -345,9 +352,9 @@ class SortKey(BaseModel):
     """One ordering key of ``sort by`` / ``order by`` / ``top … by``.
 
     The expression alone is not the key: ``sort by x asc`` and
-    ``sort by x desc`` return rows in opposite orders and used to build
-    identical IR, because the builder unwrapped the AST's
-    ``OrderedExpression`` and dropped its ordering clause on the floor.
+    ``sort by x desc`` return rows in opposite orders, so the AST's
+    ``OrderedExpression`` cannot be unwrapped to its inner expression
+    without dropping the half that decides the order.
 
     ``direction`` is **required and has no default**, which is deliberate and
     is not the same statement as "the query always writes it". KQL's
@@ -375,19 +382,18 @@ class SortKey(BaseModel):
       would put a computed value in a field whose remaining job is to answer
       "did the query write this?".
     * Substituting it would **merge two spellings** in ``semantic_hash``:
-      ``sort by x asc`` currently splits from ``sort by x asc nulls first``,
-      and would stop. That merge is arguably correct, but a dedup consumer
+      ``sort by x asc`` splits from ``sort by x asc nulls first``, and
+      would stop. That merge is arguably correct, but a dedup consumer
       survives a failure to merge and cannot survive a wrong one, so the
-      split is the safe side of a call we did not have to make for 0.2.0.
+      split is the safe side of a call that does not have to be made.
 
-    An earlier version of this docstring justified the asymmetry structurally
-    — the nulls clause being "grammatically independent" of ``asc``/``desc``.
-    That is true of the parse tree and is not a reason: .NET's
+    The asymmetry is not structural — the nulls clause is not "grammatically
+    independent" of ``asc``/``desc`` in any way that decides this. .NET's
     ``OrderingClause`` carries ``AscOrDescKeyword`` and ``NullsClause`` as
     independently optional peers, and ``sort by x nulls first`` — where
-    ``AscOrDescKeyword`` *is* ``None`` — already records ``direction="desc"``
+    ``AscOrDescKeyword`` *is* ``None`` — records ``direction="desc"``
     right beside ``nulls="first"``. The grammar treats them alike; the
-    asymmetry is our choice about what the field means.
+    asymmetry is a choice about what the field means.
     """
 
     model_config = {"extra": "forbid"}
@@ -414,9 +420,7 @@ class TopHittersOp(Operator):
     count: int | AnyExpr
     # ``top-hitters N of C [by V]`` has two column operands, not one: ``of``
     # is the column whose top values are being found, ``by`` the optional
-    # weight summed to rank them. Only ``by`` existed, and the builder filled
-    # it from a member that exists on no node -- so both operands were
-    # unrepresentable and the operator raised instead of lowering.
+    # weight summed to rank them.
     #
     # ``of`` is required and ``by`` is not, because the grammar says so and
     # the parser agrees: ``OfExpression`` is never ``None`` even for a bare
@@ -440,8 +444,8 @@ class SearchOp(Operator):
     """``search`` — a term match across columns, optionally scoped to tables.
 
     ``tables`` is the ``in (A, B)`` scope, which decides *what is searched*:
-    ``search in (A) 'x'`` and ``search in (B) 'x'`` read different tables and
-    used to build the same node, since the in-clause was not read at all.
+    ``search in (A) 'x'`` and ``search in (B) 'x'`` read different tables,
+    so the in-clause is data rather than decoration.
     Entries are :class:`TableRef`, or :class:`LetRef` when an earlier ``let``
     bound the name -- the same reading the pipeline's own source position
     gets, so a qualifier (``database('d').T``) and a wildcard (``T*``) survive
@@ -452,12 +456,12 @@ class SearchOp(Operator):
     documentation guess: a bound parse of ``search kind=bogus 'x'`` is
     diagnosed *"Expected one of: default, case_insensitive,
     case_sensitive"*, so the grammar in the bundled DLL names ``default``
-    itself. Leaving the field optional split two spellings of one query --
-    a bare ``search`` and ``search kind=default`` hashed apart.
+    itself. Left optional, the field would split two spellings of one query
+    -- a bare ``search`` and ``search kind=default`` would hash apart.
 
     One residual, and it is a *split* rather than a merge: Microsoft
     documents ``case_insensitive`` as a synonym for ``default``, and the two
-    are recorded verbatim, so they still hash apart. Folding them would mean
+    are recorded verbatim, so they hash apart. Folding them would mean
     reporting a value the query did not write, which is a different decision
     from substituting an unwritten default and is not made here.
     """
@@ -474,8 +478,8 @@ class UnionOp(Operator):
 
     ``union_kind`` decides the *output schema*: ``outer`` keeps every column
     any input has, ``inner`` keeps only the columns they all share. Two
-    queries differing in it return different columns, and the builder read
-    neither, so they shared a node and a hash.
+    queries differing in it return different columns, so the field is data
+    the node and the hash must both see.
 
     Required with no default, holding KQL's effective value ``"outer"`` for
     a bare ``union`` — see :class:`ParseOp.parse_kind` for why the field is
@@ -498,14 +502,14 @@ class MakeSeriesAggregate(BaseModel):
     """One ``make-series`` aggregate, with the value that fills its gaps.
 
     ``default=0`` and ``default=1`` produce different series -- the value
-    substituted into every bucket with no rows -- and the builder unwrapped
-    the parser's ``MakeSeriesExpression`` to the inner assignment, so the
-    clause was dropped and all three of ``default=0``, ``default=1`` and no
-    default built the same node.
+    substituted into every bucket with no rows -- so the clause is data:
+    unwrapping the parser's ``MakeSeriesExpression`` to the inner assignment
+    would drop it and fold all three of ``default=0``, ``default=1`` and no
+    default into one node.
 
     ``name`` and ``expr`` are spelled as on :class:`Assignment` deliberately:
-    the binder reads ``a.name`` / ``a.expr`` over this list and needs no
-    change for the element type having grown a third field.
+    the binder reads ``a.name`` / ``a.expr`` over this list without caring
+    which of the two element types it is holding.
     """
 
     model_config = {"extra": "forbid"}
@@ -531,18 +535,18 @@ class MvExpandColumn(BaseModel):
 
     ``mv-expand a to typeof(string)`` tells KQL the expanded rows are
     strings, which changes the output column's type and therefore what
-    downstream operators can do with it. The builder unwrapped the parser's
-    ``MvExpandExpression`` to its inner expression and dropped the
-    ``ToTypeOf`` clause, so the typed and untyped forms built identical IR.
+    downstream operators can do with it -- so the ``ToTypeOf`` clause is
+    data, and unwrapping the parser's ``MvExpandExpression`` to its inner
+    expression would give the typed and untyped forms identical IR.
 
     ``to_typeof`` is the type as the query wrote it (``string``, ``long``),
     not a resolved :class:`~kustology.ir.types.KustoType` -- the same
     reasoning as :class:`~kustology.ir.expr.TypedNameDecl.declared_type`.
 
-    It stays optional, and *not* on the argument that the unwritten
-    behaviour is unstatable: ``mv-expand a to typeof(dynamic)`` parses and
+    It is optional, and *not* on the argument that the unwritten
+    behavior is unstatable: ``mv-expand a to typeof(dynamic)`` parses and
     binds with no diagnostic, so the clause can name what an unwritten one
-    leaves behind. It stays optional because the two are not equivalent --
+    leaves behind. It is optional because the two are not equivalent --
     writing ``to typeof(dynamic)`` asserts the element type where omitting
     the clause leaves the binder to infer one from ``dynamic<T>``, and the
     IR should not claim the query stated a type it did not. The two spellings
@@ -559,9 +563,9 @@ class MvExpandColumn(BaseModel):
 class MvExpandOp(Operator):
     """``mv-expand`` — one output row per element of a dynamic column.
 
-    Every modifier here changes the rows the operator returns and every one
-    of them used to be discarded, so ``mv-expand a``,
-    ``mv-expand a limit 10`` and ``mv-expand with_itemindex=i a`` were one
+    Every modifier here changes the rows the operator returns, so each is
+    data: discarding them would fold ``mv-expand a``,
+    ``mv-expand a limit 10`` and ``mv-expand with_itemindex=i a`` into one
     node with one ``semantic_hash``.
 
     ``expand_kind`` is required and carries KQL's effective default
@@ -569,14 +573,14 @@ class MvExpandOp(Operator):
     the deprecated ``bagexpansion=bag`` are the same modifier, which the DLL
     confirms by giving both the same value set (``kind=bogus`` and
     ``bagexpansion=bogus`` are each diagnosed *"Expected one of: bag,
-    array"*). Two fields split those spellings in the hash, the way reading
-    only ``render``'s ``with`` clause would have split *its* two spellings.
-    A query writing both -- which parses clean in 12.4.1 -- records
-    ``kind``, the modern spelling, as ``render``'s merge prefers its modern
-    spelling too.
+    array"*). Two fields would split those spellings in the hash, the way
+    reading only ``render``'s ``with`` clause would split *its* two
+    spellings. A query writing both -- which parses clean in 12.4.1 --
+    records ``kind``, the modern spelling, as ``render``'s merge prefers its
+    modern spelling too.
 
-    ``row_limit`` and ``with_item_index`` stay optional. That is not because
-    KQL has no unwritten behaviour -- the documented implicit ``limit`` is
+    ``row_limit`` and ``with_item_index`` are optional. That is not because
+    KQL has no unwritten behavior -- the documented implicit ``limit`` is
     ``2147483647``, and that literal parses clean -- but because the
     unwritten case is not *stated* by any value: recording 2147483647 on
     every bare ``mv-expand`` would report a bound the query never set and
@@ -601,8 +605,8 @@ class RenderOp(Operator):
     ``render columnchart with (kind=stacked)``, and folding them into one
     dict is what makes those two spellings of one query hash alike.
 
-    None of it was read, so every ``render timechart`` was one node however
-    it was configured.
+    The dict is data, not decoration: dropping it would make every
+    ``render timechart`` one node however it is configured.
     """
 
     kind: Literal["render"] = "render"
@@ -634,8 +638,8 @@ class ReorderKey(BaseModel):
     ``desc``; it means "emit these in the order I listed them". There is no
     effective value to substitute, so ``direction`` is genuinely optional and
     ``None`` is the honest record. Stamping ``"desc"`` on a bare term would
-    both misreport it and collapse it against an explicit ``desc`` — a new
-    hash collision in the act of fixing one.
+    both misreport it and collapse it against an explicit ``desc`` in the
+    hash.
 
     Because ``None`` is a real declared default here, ``to_llm_dict`` drops
     the field on unwritten terms and renders it on written ones, which is the
@@ -668,9 +672,10 @@ class MvApplyOp(Operator):
     """``mv-apply`` — expand a dynamic column and run a subquery per row.
 
     Every modifier here changes the rows the operator returns, the same
-    register as :class:`MvExpandOp`'s modifiers, and until 0.2.0 none of them
-    were read: ``mv-apply x=d on (...)``, ``mv-apply x=d to typeof(long) on
-    (...)`` and ``mv-apply x=d limit 3 on (...)`` were one node.
+    register as :class:`MvExpandOp`'s modifiers: ``mv-apply x=d on (...)``,
+    ``mv-apply x=d to typeof(long) on (...)`` and
+    ``mv-apply x=d limit 3 on (...)`` are three different nodes with three
+    different digests.
 
     ``to_typeof`` is **one field**, unlike :class:`MvExpandColumn`'s
     per-column version. Syntactically the ``to typeof(...)`` clause attaches
@@ -681,15 +686,15 @@ class MvApplyOp(Operator):
     takes the first written occurrence across ``assignments`` rather than
     adding a wrapper type this operator does not need.
 
-    ``row_limit`` and ``item_index`` (``with_itemindex=``) stay optional for
-    the same reason ``MvExpandOp``'s do: KQL substitutes an *effective*
+    ``row_limit`` and ``item_index`` (``with_itemindex=``) are optional for
+    the same reason ``MvExpandOp``'s are: KQL substitutes an *effective*
     value for neither an unwritten ``limit`` nor an unwritten index column,
     so ``None`` is the honest record rather than a guessed default (D8 does
     not apply here). ``item_index`` must **precede** the expansion column --
     ``mv-apply x=d with_itemindex=i on (...)`` is a parse error, unlike
     ``mv-expand``'s postfix-tolerant spelling.
 
-    Not modelled: an undocumented ``id <expr>`` clause (``MvApplyContextIdClause``
+    Not modeled: an undocumented ``id <expr>`` clause (``MvApplyContextIdClause``
     in the grammar) parses cleanly between ``limit`` and ``on`` but is
     `.Hide()`-marked in the parser, meaning it carries no public completion
     entry -- the same "nothing reaches it as documented surface" register as
@@ -710,8 +715,7 @@ class ParseOp(Operator):
     ``parse_kind`` selects the matching engine and the three values are not
     interchangeable: ``simple`` matches the pattern literally, ``regex``
     treats it as a regular expression, ``relaxed`` tolerates a failed match
-    instead of nulling the row. The builder read none of them, so all three
-    built the same node.
+    instead of nulling the row.
 
     It is **required and has no default**, carrying KQL's *effective* value
     (D8): a bare ``parse`` records ``"simple"``, never ``None``. As on
@@ -756,9 +760,9 @@ class EvaluateOp(Operator):
     ``declared_schema_star`` is ``True`` when the clause opens with ``*`` —
     append the plug-in's columns to the schema rather than replace it. The
     binder still derives the real ``result_schema`` from the clause; these
-    fields are the query's own declaration of it, now carried into
+    fields are the query's own declaration of it, carried into
     ``semantic_hash`` so two spellings with different declared schemas (or
-    none) no longer collide.
+    none) hash apart.
     """
 
     kind: Literal["evaluate"] = "evaluate"
@@ -794,10 +798,10 @@ class LookupOp(Operator):
     """``lookup`` — enrich the left table from a dimension table.
 
     ``lookup_kind`` is required and carries KQL's effective default
-    ``"leftouter"`` for an unwritten ``kind=`` (D8). The builder used to
-    substitute ``"inner"``, which is a *different* operator: ``leftouter``
-    keeps left rows with no match and ``inner`` drops them, so a bare
-    ``lookup`` was recorded as the one thing it is not.
+    ``"leftouter"`` for an unwritten ``kind=`` (D8). That default is not
+    ``"inner"``, and the two are *different* operators: ``leftouter``
+    keeps left rows with no match and ``inner`` drops them, so substituting
+    ``inner`` would record a bare ``lookup`` as the one thing it is not.
     """
 
     kind: Literal["lookup"] = "lookup"
@@ -828,7 +832,7 @@ class GetSchemaOp(Operator):
     member -- unlike every other named-parameter reader in this file,
     ``GetSchemaOperator`` has no ``.Parameters`` list to walk, only this one
     optional slot. The DLL does not validate the value set the way it does
-    for e.g. ``mv-expand kind=``: an unrecognized spelling still parses
+    for ``mv-expand kind=``: an unrecognized spelling still parses
     clean, so ``output_kind`` records whatever text was written rather than
     a value drawn from a known set. ``None`` means the clause was absent,
     not that KQL substitutes a default -- there is nothing else this
@@ -849,11 +853,11 @@ class FindOp(Operator):
 
     ``tables`` is the ``in (T, U)`` scope, read the same way as the
     pipeline's own source position and :class:`SearchOp.tables`, so a
-    qualifier, a wildcard and a ``let`` alias each survive. It was
-    ``list[str]`` filled with ``el.ToString().strip()`` -- the no-argument
-    overload, which is ``IncludeTrivia.All`` -- so a comment written before
-    a table name became *part of the name* and ``find in (// note`` ↵ ``T)``
-    hashed differently from ``find in (T)``.
+    qualifier, a wildcard and a ``let`` alias each survive. Entries are
+    structured nodes, not ``ToString()`` text: the no-argument overload is
+    ``IncludeTrivia.All``, which would fold a comment written before a
+    table name into the name itself and make ``find in (// note`` ↵ ``T)``
+    hash differently from ``find in (T)``.
 
     ``project`` is the ``project a, b`` column list, which decides the
     output schema; a typed column (``project a:string``) arrives as a
@@ -862,14 +866,12 @@ class FindOp(Operator):
 
     There is no ``project_away`` field. ``FindOperator.ProjectAway`` exists
     as a member on the .NET node, but no spelling of the clause reaches it
-    in the bundled parser: the eight forms probed -- including Microsoft's
-    own documented example -- all parse ``project-away`` as a *separate*
-    ``ProjectAwayOperator`` statement with an ``Expected: ;`` diagnostic.
-    A declared field nothing can populate reads as implemented and cannot be
-    tested (AGENTS.md), so it is left out until a DLL refresh makes the
-    clause reachable. The 12.3.2 -> 12.4.1 refresh did not: re-probed on
-    12.4.1, ``FindOperator.ProjectAway`` is still ``None`` and the clause
-    still lands on its own ``ProjectAwayOperator``.
+    in the bundled 12.4.1 parser: the eight forms probed -- including
+    Microsoft's own documented example -- all leave it ``None``, parsing
+    ``project-away`` as a *separate* ``ProjectAwayOperator`` statement with
+    an ``Expected: ;`` diagnostic. A declared field nothing can populate
+    reads as implemented and cannot be tested (AGENTS.md), so it is left
+    out until a DLL refresh makes the clause reachable.
     """
 
     kind: Literal["find"] = "find"
@@ -906,14 +908,11 @@ class ForkBranch(BaseModel):
 class ForkOp(Operator):
     """``fork`` — one branch per parenthesized sub-pipeline.
 
-    The field is ``branches`` and not ``pipelines`` because it used to be
-    ``pipelines`` and it used to be empty: the builder handed each
-    ``ForkExpression`` to ``_visit_pipeline``, whose walker had no case for
-    that node kind, so every branch came back with no operators and an
-    ``UnknownSource``. Renaming the field is what stops a dump written
-    against the old shape from validating -- under ``extra="forbid"`` a
-    stored ``pipelines`` key now fails loudly instead of quietly producing
-    the empty branches it recorded.
+    Each entry pairs the sub-pipeline with the result-table name the query
+    gave it — see :class:`ForkBranch` for why the wrapper exists. Under
+    ``extra="forbid"`` a serialized payload keyed ``pipelines`` — the shape
+    an earlier ``IR_SCHEMA_VERSION`` wrote — fails validation loudly
+    instead of loading with data dropped.
     """
 
     kind: Literal["fork"] = "fork"
@@ -923,7 +922,7 @@ class ForkOp(Operator):
 class ScanOp(Operator):
     """``scan`` — kept as its own source text; the step machine is not modeled.
 
-    This is the first of eight *modelled* operators the IR records on
+    This is the first of eight *modeled* operators the IR records on
     ``raw_text`` rather than in typed fields, and the register is the same
     as :class:`LetFunction`'s: the boundary is stated in the model instead
     of being left as fields that read as implemented and are not. The other
@@ -1012,8 +1011,8 @@ class ParseKvOp(Operator):
     kind: Literal["parse_kv"] = "parse_kv"
     target: AnyExpr
     # ``as (b:string, c:long)`` -- a name:type schema, modeled the same way
-    # as :class:`AssertSchemaOp`. It was ``list[Assignment]``, which had no
-    # expression to hold: a declared key has a type, not a value.
+    # as :class:`AssertSchemaOp`: a declared key has a type, not a value, so
+    # there is no expression for an ``Assignment`` shape to hold.
     columns: dict[str, str] = {}
     properties: list[tuple[str, str]] = []
 
@@ -1149,7 +1148,7 @@ class UnknownOp(Operator):
     """Operator the IR builder couldn't dispatch — captures provenance.
 
     Symmetric to :class:`kustology.ir.UnknownExpr`. When operator
-    dispatch falls through (e.g. ``BadQueryOperator`` or a new operator
+    dispatch falls through (``BadQueryOperator``, or a new operator
     kind introduced in a Kusto.Language upgrade), the builder emits this
     instead of a bare ``Operator(span=...)`` so analyzers can detect
     coverage gaps and the coverage audit has something to grow against.
@@ -1161,6 +1160,8 @@ class UnknownOp(Operator):
 
 
 class Pipeline(BaseModel):
+    """One tabular statement: a source plus the operators piped after it."""
+
     model_config = {"extra": "forbid"}
     kind: Literal["pipeline"] = "pipeline"
     # Discriminated on the kind literal; member order is not load-bearing.
@@ -1200,9 +1201,9 @@ class JoinOp(Operator):
     ``"innerunique"`` for an unwritten ``kind=`` (D8). That default is not
     ``inner``: ``innerunique`` deduplicates the *left* side's join keys
     first, so a bare ``join`` and ``join kind=inner`` return different row
-    counts from the same data. The builder substituted ``"inner"``, which
-    both mislabelled every bare join and collapsed it onto the explicit
-    ``kind=inner`` spelling in the hash.
+    counts from the same data. Substituting ``"inner"`` would both mislabel
+    every bare join and collapse it onto the explicit ``kind=inner``
+    spelling in the hash.
 
     Required with no pydantic default so ``to_llm_dict`` renders it -- see
     :class:`ParseOp.parse_kind`.
@@ -1276,10 +1277,10 @@ class LetFunction(BaseModel):
     query returns, not a spelling.
 
     A ``declare query_parameters`` written inside the body lands in
-    ``body_query_parameters``, scoped there for the same reason. It used to be
-    dropped: the ``FunctionBody`` grammar admits exactly ``let`` and
-    ``QueryParametersStatement``, and the second was the statement kind the
-    builder modelled nowhere.
+    ``body_query_parameters``, scoped there for the same reason. The
+    ``FunctionBody`` grammar admits exactly ``let`` and
+    ``QueryParametersStatement``, so the two body lists cover every
+    statement kind a body can hold.
 
     Two boundaries remain, and are boundaries rather than omissions:
 
@@ -1348,10 +1349,10 @@ class LetBinding(BaseModel):
     rhs_function: LetFunction | None = None
     # Tables and time expressions found inside whichever of ``rhs_pipeline``
     # and ``rhs_function`` is populated; empty for a scalar binding. A
-    # function's body is one of the places a query reads a table from, so
-    # leaving it out made the field answer "which tables does this binding
-    # read, unless it is a function" -- a qualification no lineage consumer
-    # could see.
+    # function's body is one of the places a query reads a table from, so it
+    # counts here too -- otherwise the field would answer "which tables does
+    # this binding read, unless it is a function", a qualification no
+    # lineage consumer could see.
     # ``inner_tables`` is real tables only -- a hop to an earlier binding
     # (``let B = A | …``) is a ``LetRef``, reachable via
     # ``find_all(rhs_pipeline, LetRef)``. Keeping aliases out means the field
@@ -1369,29 +1370,29 @@ class LetBinding(BaseModel):
     # (``inner_time_exprs``) or a copy of their names (``inner_tables``), so
     # ``compute_semantic_hash`` clears them before it dumps -- see
     # ``transforms._DERIVED_INDEX_FIELDS``. Nothing is lost by that: the nodes
-    # they index are hashed through the right-hand side. Something was lost by
-    # the alternative -- a *copy* of a name cannot be alpha-canonicalized, so
-    # while ``inner_tables`` was hashed a body reading a tabular parameter
-    # carried its written name (``["T"]`` vs ``["U"]``) into the digest after
-    # every ``TableRef`` beside it had been renamed, and two spellings of one
-    # function split. Read them freely off your own IR; they are populated as
-    # always, and only the digest ignores them.
+    # they index are hashed through the right-hand side. Hashing them would
+    # lose something instead -- a *copy* of a name cannot be
+    # alpha-canonicalized, so a body reading a tabular parameter would carry
+    # its written name (``["T"]`` vs ``["U"]``) into the digest after every
+    # ``TableRef`` beside it had been renamed, splitting two spellings of one
+    # function. Read them freely off your own IR; only the digest ignores
+    # them.
     inner_tables: list[str] = []
     inner_time_exprs: list[AnyExpr] = []
 
 
 # -- statements that are neither ``let`` nor tabular -------------------------
 #
-# KQL's statement list admits five more kinds, and until 0.2.0 the builder
-# read none of them: whatever they said was absent from the IR and from
-# ``semantic_hash``, so two *different* values of one statement hashed alike
-# rather than merely colliding with a query that omitted it. They live on one
+# KQL's statement list admits five more kinds, each modeled below. What they
+# say is part of the query, so it must reach the IR and ``semantic_hash``:
+# two *different* values of one statement are two different queries, not
+# merely a query with and without it. They live on one
 # ordered :attr:`QueryIR.statements` list rather than five per-kind fields --
 # the hash payload, the canonicalizer and the binder each enumerate
 # ``QueryIR``'s fields by name, so one field is three registration points and
 # five would be fifteen places for a new kind to go silently unhashed.
 #
-# None of them carries a ``span``. Every other model in this file does, and
+# None of them carries a ``span``. Operator and expression nodes all do, and
 # these deliberately do not: a span is volatile (stripped before the digest)
 # and these nodes have no consumer that triangulates back to source text the
 # way an operator or an expression does. :attr:`PatternMatch.body_span` is the
@@ -1405,8 +1406,7 @@ class SetOptionStmt(BaseModel):
 
     ``set query_now=datetime(2020-01-01)`` pins what ``now()`` returns for
     the whole query, so two different values are two different queries and a
-    query that pins it is not the query that does not. All three used to
-    share one digest.
+    query that pins it is not the query that does not.
 
     ``value`` is ``None`` for the valueless spelling (``set notruncation``),
     where the .NET ``ValueClause`` really is absent rather than defaulted.
@@ -1489,11 +1489,10 @@ class PatternMatch(BaseModel):
     one, at most one of the two ever set.
 
     ``body_lets`` is where a ``let`` written inside the braces lives, and it
-    is scoped **here**. It used to be hoisted into
-    :attr:`QueryIR.let_bindings`, because the top-level sweep's ancestor
-    filter named ``FunctionDeclaration`` and a pattern body is owned by a
-    ``PatternMatch``. That declared the binding in a scope the query never
-    wrote it in, and once this field exists it would declare it twice.
+    is scoped **here** rather than hoisted into
+    :attr:`QueryIR.let_bindings`: the query declares it inside the body, so
+    listing it at top level would put it in a scope the query never wrote
+    it in — and, with this field populated, would declare it twice.
 
     ``body_span`` locates the body for callers that want the text; it stays
     volatile, so it does not reach ``semantic_hash``.
@@ -1522,8 +1521,8 @@ class PatternStmt(BaseModel):
     ``(a:string)[L:string]`` -- read as :class:`~kustology.ir.expr.TypedNameDecl`
     through the same path every other ``name:type`` position in the grammar
     uses. Their names are recorded **verbatim**, not alpha-canonicalized, and
-    that is now an asymmetry with a ``let``-declared function's parameters,
-    which *are* renamed to ``$param<i>``. The difference is what the name
+    that is a deliberate asymmetry with a ``let``-declared function's
+    parameters, which *are* renamed to ``$param<i>``. The difference is what the name
     binds. A function parameter is bound inside the body: the builder shadows
     it there (see :class:`LetFunctionParameter`), so every reference to it is
     identifiable and renaming the declaration and its references together is
@@ -1560,8 +1559,9 @@ class AliasStmt(BaseModel):
 
     ``expression`` is what the alias points at, and it is the whole point of
     the statement: two aliases naming different databases send every
-    qualified reference in the query somewhere else, and used to share a
-    digest with each other and with a query that declared no alias at all.
+    qualified reference in the query somewhere else, so dropping it would
+    give them one digest — shared with a query that declares no alias at
+    all.
     """
 
     model_config = {"extra": "forbid"}
@@ -1605,8 +1605,7 @@ class UnknownStmt(BaseModel):
     The statement-position sibling of :class:`UnknownOp` and
     :class:`~kustology.ir.expr.UnknownExpr`, and defensive in the same
     register: it exists so a statement kind a future Kusto.Language adds
-    lands somewhere visible instead of vanishing the way all five modelled
-    kinds used to.
+    lands somewhere visible instead of vanishing.
 
     It is the **one** statement model that carries ``raw_text``, and that is
     a deliberate exception rather than an oversight. Recorded source text
@@ -1615,7 +1614,7 @@ class UnknownStmt(BaseModel):
     to guard -- which is why
     ``test_hash_battery.py::test_no_battery_pair_discriminates_on_an_unmodelled_blob``
     asserts no battery query reaches a text-carrying node, this one included.
-    Nothing the builder currently parses produces it.
+    No statement the bundled parser emits reaches it.
     """
 
     model_config = {"extra": "forbid"}
@@ -1636,6 +1635,8 @@ AnyStatement = Annotated[
 
 
 class QueryIR(BaseModel):
+    """Root of the IR: one parsed query, its statements, and its digest."""
+
     model_config = {"extra": "forbid"}
     kind: Literal["query"] = "query"
     raw_text: str
@@ -1654,21 +1655,20 @@ class QueryIR(BaseModel):
     # a per-kind field could not.
     #
     # The field is always present in the ``semantic_hash`` payload, empty
-    # list included, mirroring ``additional_pipelines``. That is what moved
-    # every digest in 0.2.0 once, deliberately: the alternative (omitting the
-    # key when the list is empty, the way ``_strip_unwritten_fields`` omits an
-    # unwritten operator modifier) buys a stable digest for statement-free
-    # queries at the cost of a payload whose shape depends on its own
-    # contents, and the digest was already moving in this release.
+    # list included, mirroring ``additional_pipelines``: the alternative
+    # (omitting the key when the list is empty, the way
+    # ``_strip_unwritten_fields`` omits an unwritten operator modifier) would
+    # buy a stable digest for statement-free queries at the cost of a
+    # payload whose shape depends on its own contents.
     statements: list[AnyStatement] = []
     main_pipeline: Pipeline
     # The second and later tabular statements of a multi-statement query, in
     # source order. KQL separates statements with ``;`` and a query may hold
-    # several tabular ones -- ``T | count; U | count`` -- of which the builder
-    # used to keep only the first, so that query built exactly the IR of
-    # ``T | count`` and carried its ``semantic_hash``. Everything past the
-    # first semicolon was gone: unreachable through ``walk``/``find_all``,
-    # invisible to the binder, and absent from the digest.
+    # several tabular ones -- ``T | count; U | count`` -- so everything past
+    # the first semicolon is part of the query: reachable through
+    # ``walk``/``find_all``, visible to the binder, and in the digest.
+    # Keeping only the first would give that query exactly the IR and
+    # ``semantic_hash`` of ``T | count``.
     #
     # ``main_pipeline`` stays the first statement rather than becoming
     # ``pipelines[0]``: the overwhelmingly common query has exactly one, and
@@ -1698,7 +1698,7 @@ class QueryIR(BaseModel):
 # pydantic idiom for a cycle, and it is load-bearing rather than incidental:
 # ``test_nested_pipelines`` asserts both classes come out complete with the
 # resolved annotation, so a pydantic change that stopped reaching the caller's
-# namespace fails loudly instead of silently reinstating an untyped field.
+# namespace fails loudly instead of silently leaving an untyped field.
 for _expr_cls in REBUILT_BY_QUERY_MODULE:
     _expr_cls.model_rebuild()
 

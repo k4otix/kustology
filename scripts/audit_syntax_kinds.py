@@ -4,11 +4,11 @@
 
 """Audit the IR builder's SyntaxKind coverage against Kusto.Language.dll.
 
-Compares the live ``Kusto.Language.Syntax.SyntaxKind`` enum (read via
-pythonnet reflection) against :attr:`IRBuilder.HANDLED_OPERATOR_KINDS`,
+The audit compares the live ``Kusto.Language.Syntax.SyntaxKind`` enum (read
+via pythonnet reflection) against :attr:`IRBuilder.HANDLED_OPERATOR_KINDS`,
 :attr:`IRBuilder.HANDLED_EXPR_KINDS` and
-:attr:`IRBuilder.HANDLED_STATEMENT_KINDS`. Writes (or compares to) a JSON
-baseline at ``tests/fixtures/syntax_kinds_baseline.json``.
+:attr:`IRBuilder.HANDLED_STATEMENT_KINDS`, then writes (or compares to) a
+JSON baseline at ``tests/fixtures/syntax_kinds_baseline.json``.
 
 Usage
 -----
@@ -27,13 +27,14 @@ The baseline carries:
 * ``dispatched_via_class`` — empirical map from Python class name to the
   set of SyntaxKind enum values that resolve to it, discovered by
   parsing the corpus under ``tests/fixtures/complex_queries/`` and
-  walking the AST. ``"BinaryExpression"`` collapses ~20 kinds
-  (``AddExpression``, ``EqualExpression``, …); without this section the
-  audit's "unhandled" count is misleadingly inflated by every such
-  subkind. Re-discovered on every ``--update-baseline``.
+  walking the AST. One class can collapse many kinds —
+  ``"BinaryExpression"`` covers ``AddExpression``, ``EqualExpression``,
+  and the rest of the operator family; without this section the audit's
+  "unhandled" count is misleadingly inflated by every such subkind.
+  Re-discovered on every ``--update-baseline``.
 * ``deliberately_skipped`` — kinds the IR has no intent to model
-  (tokens, trivia, structural list helpers, etc.). Allow-list for the
-  diff.
+  (tokens, trivia, structural list helpers, and so on). Allow-list for
+  the diff.
 * ``unhandled`` — everything in ``all`` that's neither handled (directly
   or via class-name collapse) nor skipped. ``--check`` fails when this
   set grows beyond what the baseline records.
@@ -91,8 +92,8 @@ def _discover_dispatched_via_class() -> dict[str, list[str]]:
 
     The builder dispatches on ``type(node).__name__``. Many Python classes
     collapse multiple SyntaxKind enum values — ``BinaryExpression`` covers
-    ``AddExpression`` / ``EqualExpression`` / ``BangTildeExpression`` /
-    etc. This empirical map makes that collapse visible to the audit so
+    ``AddExpression``, ``EqualExpression``, ``BangTildeExpression``, and
+    more. This empirical map makes that collapse visible to the audit so
     the "unhandled" set isn't padded with subkinds already covered by a
     class-level dispatch.
 

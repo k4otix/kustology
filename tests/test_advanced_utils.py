@@ -14,9 +14,9 @@ def test_get_operator_chain():
 def test_get_operator_chain_excludes_the_source_table():
     """The chain is operators, so the source table is not one of them.
 
-    Element 0 used to be the ``NameReference`` naming the table, which made
-    every caller either special-case it or count it as an operator — and
-    ``__repr__`` did the latter, reporting a two-operator query as ``3 ops``.
+    A chain whose element 0 is the ``NameReference`` naming the table makes
+    every caller either special-case it or count it as an operator — and a
+    ``__repr__`` doing the latter reports a two-operator query as ``3 ops``.
     """
     chain = parse("T | where a | take 1").get_operator_chain()
     assert [str(node.Kind) for node in chain] == ["FilterOperator", "TakeOperator"]
@@ -25,20 +25,20 @@ def test_get_operator_chain_excludes_the_source_table():
 
 
 def test_get_operator_chain_of_a_bare_table_is_empty():
-    """A query with no operators has an empty chain rather than a one-element
-    one holding its source."""
+    """A bare table has an empty chain, not a one-element one holding its source."""
     assert parse("T").get_operator_chain() == []
     assert "0 ops" in repr(parse("T"))
 
 
 def test_every_public_kustoquery_member_is_documented():
-    """`KustoQuery` is the whole tier-1 API and half of it delegated silently.
+    """Every public `KustoQuery` member carries a docstring of its own.
 
-    Six members carried no docstring at all — including `get_structural_hash`,
-    whose module-level function documents at length what the hash is blind to,
-    and `get_referenced_columns`, whose two modes disagree by design. A caller
-    reading `help(KustoQuery)` saw a bare signature and had no way to know
-    there was anything to read.
+    `KustoQuery` is the whole tier-1 API, and much of it delegates: the
+    behavior worth reading lives with the implementation — what
+    `get_structural_hash` is blind to, how `get_referenced_columns`'s two
+    modes disagree by design. A member with no docstring leaves a
+    `help(KustoQuery)` reader a bare signature and no way to know there is
+    anything to read.
     """
     from kustology import KustoQuery
 
@@ -120,9 +120,9 @@ def test_referenced_columns_excludes_a_bracketed_let_alias():
     """A bracketed `let` name must match its bracketed use site.
 
     The declaring side is a NameDeclaration and the use side a NameReference
-    wrapping a BracketedName; while the two spelled the identifier
-    differently (``['my-var']`` vs ``my-var``) the let filter missed the
-    alias and reported the scalar as a column.
+    wrapping a BracketedName; unless both read back as the same identifier
+    (``['my-var']`` vs ``my-var``), the let filter misses the alias and
+    reports the scalar as a column.
     """
     query = "let ['my-var'] = 5;\nT | project ['my-var'], Account"
     cols = parse(query).get_referenced_columns(force_syntactic=True)
@@ -135,8 +135,8 @@ def test_referenced_columns_keeps_a_column_that_shares_a_table_name():
 
     ``T2`` is the join's source table in one place and an ordinary column in
     another. Filtering the extracted names against the set of table names
-    dropped both occurrences, so a query that filters on a column named after
-    some other table reported that column as absent.
+    drops both occurrences, so a query that filters on a column named after
+    some other table reports that column as absent.
     """
     cols = parse("T | where T2 > 1 | join (T2) on a").get_referenced_columns(
         force_syntactic=True
@@ -161,7 +161,7 @@ def test_referenced_columns_syntactic_reports_a_column_the_query_creates():
     """``extend a = …`` creates a column even where nothing reads it back.
 
     The alias is a ``NameDeclaration``, not a ``NameReference``, so a walk
-    that only collected references saw ``x`` and ``y`` and missed ``a``
+    that only collects references sees ``x`` and ``y`` and misses ``a``
     entirely. Semantic mode is the mirror image here — the binder attaches a
     ``ColumnSymbol`` to references, and there is no reference — so the two
     modes are asserted separately rather than for equality.
@@ -213,7 +213,7 @@ def test_structural_hash_distinguishes_join_kind():
 
     The parameter value is a ``TokenLiteralExpression``, whose *kind* string
     contains "Token" — so a walker that skips every kind containing "Token"
-    threw the value away and hashed an inner join identically to an anti-join.
+    throws the value away and hashes an inner join identically to an anti-join.
     """
     inner = parse("T | join kind=inner (U) on a").get_structural_hash()
     leftanti = parse("T | join kind=leftanti (U) on a").get_structural_hash()
@@ -239,7 +239,7 @@ def test_structural_hash_distinguishes_evaluate_plugin():
 
 
 def test_structural_hash_still_ignores_whitespace_and_literals():
-    """The boundary the fix must not cross: same shape, different text."""
+    """The boundary kind-retention must not cross: same shape, different text."""
     base = parse("T | join kind=inner (U) on a | where x == 1").get_structural_hash()
     respaced = parse(
         "T\n| join   kind=inner (U) on a\n| where x == 5"
@@ -270,7 +270,7 @@ def test_find_time_expressions_finds_bin():
     """`bin` is how nearly every real Sentinel query buckets time.
 
     Its first signature declares no return type, so reading signature zero
-    alone put it in ``scalar_functions()`` and this discovery aid skipped
+    alone files it under ``scalar_functions()`` and this discovery aid skips
     the single most common temporal construct in the corpus.
     """
     times = parse("T | summarize count() by bin(TimeGenerated, 1h)").find_time_expressions()
@@ -310,9 +310,9 @@ def test_find_time_expressions_reports_only_the_outer_of_two_nested_calls():
     """``startofday(now())`` is one time expression, not two.
 
     The inner ``now()`` is an argument of the outer call, so reporting both
-    gave a reader two overlapping spans for one construct — the same
-    double-count the literal pass already avoids for ``ago(1h)``, which this
-    pass did not apply to itself.
+    gives a reader two overlapping spans for one construct — the same
+    double-count the literal pass avoids for ``ago(1h)``, applied to the
+    call pass itself.
     """
     times = parse("T | where Time > startofday(now())").find_time_expressions()
     assert [t[0] for t in times] == ["startofday(now())"]
@@ -323,9 +323,11 @@ def test_find_time_expressions_reports_only_the_outer_of_two_nested_calls():
 
 
 def test_find_time_expressions_keeps_a_temporal_call_inside_a_non_temporal_one():
-    """The containment rule is about *matched* calls only. ``tostring`` is not
-    a time function, so it opens no range and the ``now()`` inside it is still
-    the query's time expression."""
+    """The containment rule is about *matched* calls only.
+
+    ``tostring`` is not a time function, so it opens no range and the
+    ``now()`` inside it is still the query's time expression.
+    """
     times = parse("T | extend s = tostring(now())").find_time_expressions()
     assert [t[0] for t in times] == ["now()"]
 
@@ -482,10 +484,10 @@ def test_collect_nodes_visits_every_node_when_predicate_is_constant():
 # --- AST depth cap -------------------------------------------------------
 #
 # `MAX_AST_DEPTH` lives in `kustology.utils.walker` and bounds both the
-# `node_to_dict` serializer and `KustoWalker.visit`. Before it existed the
-# only cap was a CLI-local constant of 1000 that CPython's own 1000-frame
-# recursion limit made unreachable, so `KustoQuery.to_dict()` on deeply
-# nested input raised `RecursionError` out of the library.
+# `node_to_dict` serializer and `KustoWalker.visit`. A cap at or above
+# CPython's own 1000-frame recursion limit is unreachable, so without this
+# one `KustoQuery.to_dict()` on deeply nested input raises `RecursionError`
+# out of the library.
 
 _PAREN_BOMB = "T | where " + "(" * 1200 + "1" + ")" * 1200
 
@@ -498,9 +500,9 @@ def _walk_depths(node, depth=0):
 
 
 def test_to_dict_truncates_instead_of_raising_recursion_error():
-    """1200 nested parens nest the AST past 2400 levels. `to_dict()` used to
-    raise `RecursionError`; it now returns a tree capped at `MAX_AST_DEPTH`
-    whose deepest nodes carry `truncated: True` and no children."""
+    """1200 nested parens nest the AST past 2400 levels; `to_dict()` returns
+    a tree capped at `MAX_AST_DEPTH` whose deepest nodes carry
+    `truncated: True` and no children, rather than raising `RecursionError`."""
     import json as _json
 
     from kustology.utils.walker import MAX_AST_DEPTH
@@ -517,7 +519,7 @@ def test_to_dict_truncates_instead_of_raising_recursion_error():
 
 
 def test_to_dict_of_an_ordinary_query_carries_no_truncation_marker():
-    """Control for the cap: a real query nests ~17 levels, so nothing is
+    """Control for the cap: a real query nests far below it, so nothing is
     marked truncated and the key is absent everywhere. Without this, a
     `node_to_dict` that truncated at depth 0 would pass the test above."""
     data = parse(

@@ -18,7 +18,7 @@ Durations are the loudest case, not the only one: every fractional numeric
 literal kind is affected the same way. The bridge pins InvariantCulture at
 import to close all of them.
 
-These tests pass on an en-US machine even without the fix. Run them under
+These tests pass on an en-US machine even without the pin. Run them under
 ``LANG=de-DE`` to see them fail.
 
 They cover the pin as it stands after import. They do *not* — and cannot —
@@ -82,7 +82,7 @@ def test_fractional_timespan_literal_is_culture_independent(literal, expected_ti
 
 @pytest.mark.parametrize("literal,expected_ticks", [("15m", 9_000_000_000), ("1h", 36_000_000_000)])
 def test_integer_timespan_literal_unaffected(literal, expected_ticks):
-    """Integer literals were always correct — guard against regressing them."""
+    """Integer literals contain no decimal separator for a culture to corrupt."""
     assert _single_timespan_ticks(f"T | where X > {literal}") == expected_ticks
 
 
@@ -90,9 +90,9 @@ def test_integer_timespan_literal_unaffected(literal, expected_ticks):
 def test_fractional_real_literal_is_culture_independent(literal, expected):
     """`real` corrupts exactly like `timespan` — `1.5` reads back as `15.0`.
 
-    Documented separately because the README and CHANGELOG framed the defect
-    as a *duration* problem, which would let a consumer writing
-    ``| where CpuPct > 1.5`` conclude they were unaffected.
+    Pinned separately because the defect is easy to read as a duration-only
+    problem, which would let a consumer writing ``| where CpuPct > 1.5``
+    conclude they are unaffected.
     """
     value = _single_literal(f"T | where CpuPct > {literal}", "RealLiteralExpression")
     assert value == expected
@@ -138,7 +138,7 @@ def test_pin_survives_a_thread_created_after_import():
 # fractional literal parses correctly, the locale job goes green, and it has
 # tested nothing.
 #
-# Across all 1063 cultures .NET exposes, the outcome for a fractional literal is
+# Across every culture .NET exposes, the outcome for a fractional literal is
 # decided entirely by the decimal separator: '.' parses correctly, ',' or '٫'
 # corrupts. Group separator never matters — a KQL literal contains none. So the
 # two matrix cultures are one representative per failure mode, and asserting

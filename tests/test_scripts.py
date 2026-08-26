@@ -3,11 +3,11 @@
 
 """Exit-code tests for the scripts/*.py maintenance tooling.
 
-A pre-release audit found several of these scripts exit 0 on failure -- an
-empty corpus, a network error, a directory that isn't the repo it claims to
-be all read as success. Each test here drives one script through argv/main()
-and asserts the process-level exit code a caller (a human, or CI) actually
-sees, not just that the function runs without raising.
+The failure a maintenance script is most prone to is exiting 0 on failure --
+an empty corpus, a network error, a directory that isn't the repo it claims
+to be all read as success. Each test here drives one script through
+argv/main() and asserts the process-level exit code a caller (a human, or
+CI) actually sees, not only that the function runs without raising.
 
 scripts/ has no __init__.py -- it isn't an installed package -- so each
 module is loaded fresh by file path with importlib rather than imported by
@@ -391,8 +391,8 @@ def test_sample_sentinel_corpus_missing_dir_exits_nonzero(tmp_path):
 
 def test_sample_sentinel_corpus_non_repo_dir_exits_nonzero(tmp_path):
     """A directory that exists but was never `git init`ed (a stray scratch
-    dir, a wrong path, a clone that failed partway) used to sample zero
-    queries from empty stratum folders and exit 0 with an empty manifest --
+    dir, a wrong path, a clone that failed partway) samples zero queries
+    from empty stratum folders; exiting 0 with an empty manifest there is
     indistinguishable from a real, successful, empty result."""
     pytest.importorskip("yaml")
     mod = _load("sample_sentinel_corpus")

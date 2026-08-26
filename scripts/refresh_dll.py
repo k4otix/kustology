@@ -65,11 +65,10 @@ def _atomic_write_bytes(path: Path, data: bytes) -> None:
 
     tempfile.mkstemp creates the temp file at mode 0600 (owner-only), and
     os.replace carries the *source* file's mode to the destination -- so
-    without an explicit chmod, every atomically-written file would
-    silently lose its group/world-readable bits relative to what
-    shutil.copyfile/Path.write_text would have produced. We restore the
-    target's existing mode when overwriting a file that already exists,
-    or fall back to the umask-default 0644 for a brand new one.
+    without an explicit chmod, every atomic write would silently drop the
+    group/world-readable bits shutil.copyfile or Path.write_text grants.
+    The chmod restores the target's existing mode when overwriting, or
+    the umask-default 0644 for a brand new file.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o644
@@ -135,10 +134,11 @@ def write_pinned_version(version: str) -> None:
 
 
 def _csproj_text(version: str) -> str:
-    """The throwaway project file dotnet publish resolves PACKAGE@version
-    against. Split out from restore_and_publish so the TFM pin can be
-    asserted on without invoking dotnet (which would need network access to
-    restore the package)."""
+    """Return the throwaway csproj text that resolves PACKAGE at `version`.
+
+    A separate function so the TFM pin can be asserted on without
+    invoking dotnet, which needs network access to restore the package.
+    """
     return textwrap.dedent(f"""\
         <Project Sdk="Microsoft.NET.Sdk">
           <PropertyGroup>

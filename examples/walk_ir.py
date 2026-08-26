@@ -61,6 +61,7 @@ def _describe_column(c) -> str:
 
 
 def walk(node, depth: int = 0) -> None:
+    """Print ``node`` and everything under it as a depth-indented tree."""
     indent = "  " * depth
     if isinstance(node, QueryIR):
         print(f"{indent}QueryIR (schema_attached={node.schema_attached})")
