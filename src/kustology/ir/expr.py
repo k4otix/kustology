@@ -41,7 +41,7 @@ class Expr(BaseModel):
     kind: Literal["expr"] = "expr"
     span: Span
     result_type: KustoType = KustoType.UNRESOLVED
-    # For DYNAMIC, the element type (e.g. dynamic<bool>). None otherwise.
+    # For DYNAMIC, the element type (for example, dynamic<bool>). None otherwise.
     result_type_inner: KustoType | None = None
 
     @property
@@ -49,8 +49,8 @@ class Expr(BaseModel):
         """Stable, commutative-aware string form of this expression.
 
         Pure function of the subtree — recomputed on each access so the
-        result always reflects current binder state (e.g. ``ColumnRef.table``
-        populated post-bind). Not a serialized field: kept out of
+        result always reflects current binder state (for example,
+        ``ColumnRef.table`` populated post-bind). Not a serialized field: kept out of
         ``model_dump()`` to avoid storing data that the tree already
         determines.
         """
@@ -111,7 +111,7 @@ class ColumnRef(Expr):
     table: str | None = None
     # Which side of a join the reference was written against, when the query
     # said so with `$left.` / `$right.` -- set by the builder on every such
-    # reference, resolved or not, and the sole carrier of the side now that
+    # reference, resolved or not, and the sole carrier of the side, since
     # `table` never holds `$left`/`$right` itself. Kept separate from
     # `table` because the side is semantic: `$left.a == $left.b` is not the
     # join `$left.a == $right.b`, and losing it on a bound parse would
@@ -123,16 +123,16 @@ class LetValueRef(Expr):
     """A reference, in expression position, to a name an earlier ``let`` bound.
 
     ``threshold`` in ``let threshold = 5; T | where Count > threshold`` --
-    a query-local constant, not a column of ``T``. It used to lower to a
-    :class:`ColumnRef`, which made the IR state something the query does not:
+    a query-local constant, not a column of ``T``. Lowering it to a
+    :class:`ColumnRef` would make the IR state something the query does not:
     that the filter reads two columns. ``find_all(ir, ColumnRef)`` is the
     documented way to ask which columns a query touches, so column lineage,
-    schema-drift checks and rename impact analysis all counted the ``let``
-    name among them, and the binder spent every lookup failing to place a
-    column that does not exist.
+    schema-drift checks, and rename impact analysis would all count the
+    ``let`` name among them, and the binder would spend every lookup failing
+    to place a column that does not exist.
 
     It is the expression-position twin of
-    :class:`~kustology.ir.query.LetRef`, which already covered the *source*
+    :class:`~kustology.ir.query.LetRef`, which covers the *source*
     position (``let Base = T | …; Base | count``). Both exist for the same
     reason: a name a ``let`` bound is neither a table nor a column, and
     saying it is either one is a wrong answer rather than a missing one.
@@ -142,14 +142,14 @@ class LetValueRef(Expr):
     this node exists to stop. Nothing types it but ``map_semantic_info``,
     which copies the .NET ``ResultType`` the parser already computed.
 
-    It also restores an equivalence the hash is documented to have. A
+    It also carries an equivalence the hash is documented to have. A
     ``let`` name is a local label, so ``compute_semantic_hash`` renames every
     binding to its declaration index -- but the rename can only touch nodes
     that *are* ``let`` names, and a ``ColumnRef`` is not one (a real column
-    called ``n`` is a different query). The declaration was canonicalized
-    while the use site kept the name the query wrote, so
-    ``let n = 5; T | where a > n`` and ``let m = 5; T | where a > m`` hashed
-    apart. Adding this class to ``transforms._LET_NAME_MODELS`` closes that.
+    called ``n`` is a different query). This class's membership in
+    ``transforms._LET_NAME_MODELS`` is what lets the rename reach the use
+    site along with the declaration, so ``let n = 5; T | where a > n`` and
+    ``let m = 5; T | where a > m`` hash together.
 
     **Known limitation: a ``let`` name that shadows a real column.** The
     classification is made from the query text alone -- "is this name bound by
@@ -181,9 +181,9 @@ class LetValueRef(Expr):
     ``tests/ir/test_semantic_hash_bind_invariance.py`` exists to hold.
     Shadowing a column with a ``let`` is rare; a bind-dependent hash is
     load-bearing for every consumer that stores digests. The trade is made
-    knowingly in favour of the invariant, and it is the same text-only rule
-    :class:`~kustology.ir.query.LetRef` already applies at source position.
-    ``tests/ir/test_let_value_ref.py`` pins the behaviour above so it stays a
+    knowingly in favor of the invariant, and it is the same text-only rule
+    :class:`~kustology.ir.query.LetRef` applies at source position.
+    ``tests/ir/test_let_value_ref.py`` pins the behavior above so it stays a
     decision rather than drifting.
     """
 
@@ -200,12 +200,12 @@ class TypedNameDecl(Expr):
     column does not exist until this operator creates it — which is why it is
     its own node rather than a :class:`ColumnRef` with a type hanging off it.
 
-    Both halves used to be thrown away. The builder lowered the whole
-    declaration to ``ColumnRef(name=visit_name(node))``, which reads the
-    ``Name`` child and never the ``Type``, so ``parse a with 'x' b:long`` and
-    ``parse a with 'x' b`` built identical IR and carried the same
-    ``semantic_hash`` — though the first states the capture's type and the
-    second leaves it a string. ``declared_type`` is the type as the query
+    Both halves are data. Lowering the declaration to a bare name would
+    read the ``Name`` child and never the ``Type``, so
+    ``parse a with 'x' b:long`` and ``parse a with 'x' b`` would build
+    identical IR and carry the same ``semantic_hash`` — though the first
+    states the capture's type and the second leaves it a string.
+    ``declared_type`` is the type as the query
     wrote it (``long``, ``string``, ``datetime``), not a resolved
     :class:`~kustology.ir.types.KustoType`: it is source text, and a
     consumer that wants the enum can map it, while a consumer that wants to
@@ -229,15 +229,11 @@ class BinOp(Expr):
     kind: Literal["bin_op"] = "bin_op"
     op: str
     # ``None`` on the arithmetic operators (``+ - * / %``), where neither
-    # field applies: both are categories of *comparison*. They used to be
-    # populated for arithmetic too, from rules that have no arithmetic case
-    # -- ``polarity`` from whether the operator text contains ``!``, and
-    # ``case_sensitive`` from the string-operator suffix check falling
-    # through to its comparison default -- so every ``a + 1`` in every query
-    # recorded ``polarity="inclusion", case_sensitive=True``. Neither is
-    # merely uninteresting there; both are answers to questions the node
-    # cannot be asked, and a consumer filtering on ``case_sensitive`` (the
-    # example in ``walk``'s own docstring) had arithmetic answering it.
+    # field applies: both are categories of *comparison*. Neither is merely
+    # uninteresting there; both are answers to questions the node cannot be
+    # asked, and defaulting them would have every ``a + 1`` answering a
+    # consumer that filters on ``case_sensitive`` (the example in ``walk``'s
+    # own docstring).
     polarity: Literal["inclusion", "exclusion"] | None
     case_sensitive: bool | None = True
     left: AnyExpr
@@ -250,11 +246,12 @@ class SetMembership(Expr):
     # Source of truth, as on ``BinOp`` -- ``polarity`` and ``case_sensitive``
     # are derived from it and kept for convenience.
     #
-    # Without it those two fields were the only discriminators, giving four
-    # states for six operators: ``in~``, ``has_any`` and ``has_all`` collapsed
-    # into one indistinguishable node with an identical ``semantic_hash``,
-    # though ``has_any`` and ``has_all`` are opposites (OR vs AND of term
-    # matches) and ``in~`` compares whole values rather than terms.
+    # The derived pair cannot replace it: two booleans give four states for
+    # six operators, so without ``op`` the node would collapse ``in~``,
+    # ``has_any`` and ``has_all`` into one indistinguishable shape with an
+    # identical ``semantic_hash``, though ``has_any`` and ``has_all`` are
+    # opposites (OR vs AND of term matches) and ``in~`` compares whole
+    # values rather than terms.
     op: str
     column: AnyExpr
     values: list[AnyExpr]
@@ -295,19 +292,18 @@ class RegexMatch(Expr):
 class Exists(Expr):
     """A null/empty test: ``isnull``, ``isnotnull``, ``isempty``, ``isnotempty``.
 
-    All four lower here. Only the two positive forms used to, which left the
-    IR modelling one half of a symmetric pair: a consumer asking "which
-    columns does this query null-check" through ``find_all(ir, Exists)`` saw
-    ``isnotnull(C)`` and missed ``isnull(C)``, and the shape it had to fall
-    back on for the other half -- a :class:`FuncCall` identified by a name
-    string -- is the shape this class exists to replace.
+    All four lower here, the full symmetric set: a consumer asking "which
+    columns does this query null-check" through ``find_all(ir, Exists)``
+    sees ``isnull(C)`` and ``isnotnull(C)`` alike, with no fallback to the
+    shape this class exists to replace -- a :class:`FuncCall` identified by
+    a name string.
     """
 
     kind: Literal["exists"] = "exists"
     # Which function produced this. The four are four different predicates:
     # ``isnotempty`` also rejects ``""`` where ``isnotnull`` does not, and
     # each pair is the other's negation. Without this field the two positive
-    # forms lowered to the same node with the same semantic_hash.
+    # forms would lower to the same node with the same semantic_hash.
     op: str
     # ``inclusion`` for ``isnotnull``/``isnotempty``, ``exclusion`` for
     # ``isnull``/``isempty``. Redundant with ``op`` in the same way
@@ -368,25 +364,25 @@ class BracketedExpr(Expr):
 class ToScalarExpr(Expr):
     """``toscalar(...)`` — a whole tabular pipeline reduced to one value.
 
-    ``pipeline`` was declared ``Any``, the cheap way around the ``expr`` ↔
-    ``query`` import cycle, and ``Any`` costs more than it saves. The builder
-    put a real :class:`~kustology.ir.query.Pipeline` there, so an in-memory IR
-    looked correct and every ``walk`` reached inside — but pydantic was told
-    nothing, so ``model_validate_json`` reloaded the nested query as a plain
-    dict. The reloaded IR did not equal the one it came from, ``walk`` (which
-    yields models, and a dict of primitives holds none) stopped seeing the
-    inner query entirely, and ``compute_semantic_hash`` — which strips spans
-    by walking — left every offset inside it in the digest, so rehashing
-    stored IR did not reproduce its own hash.
+    ``pipeline`` is a typed :class:`~kustology.ir.query.Pipeline`, and the
+    typing is load-bearing. Declared ``Any`` — the cheap way around the
+    ``expr`` ↔ ``query`` import cycle — pydantic would be told nothing: an
+    in-memory IR would look correct and every ``walk`` would reach inside,
+    but ``model_validate_json`` would reload the nested query as a plain
+    dict. The reloaded IR would not equal the one it came from, ``walk``
+    (which yields models, and a dict of primitives holds none) would stop
+    seeing the inner query entirely, and ``compute_semantic_hash`` — which
+    strips spans by walking — would leave every offset inside it in the
+    digest, so rehashing stored IR would not reproduce its own hash.
 
-    The cycle is real and the fix is a forward reference, not an import:
+    The cycle is real and the answer is a forward reference, not an import:
     ``query.py`` imports this module, so ``Pipeline`` is a string here and
     ``query.py`` rebuilds this class (and :class:`SubqueryExpr`) once
     ``Pipeline`` is defined, resolving the reference from its own namespace.
 
-    ``| None`` rather than a bare ``Pipeline`` because the field previously
-    accepted anything, ``None`` included; narrowing it to required-and-present
-    would be a larger break than typing it. The builder always populates it.
+    ``| None`` rather than a bare ``Pipeline`` keeps the accepted payloads
+    wider than the produced ones: the builder always populates the field,
+    and ``None`` stays valid so a payload carrying it still loads.
     """
 
     kind: Literal["to_scalar"] = "to_scalar"
@@ -404,7 +400,7 @@ class SubqueryExpr(Expr):
     inner query into an ``UnknownExpr`` blob of raw text.
 
     See :class:`ToScalarExpr` for why ``pipeline`` is a forward reference and
-    what declaring it ``Any`` used to cost.
+    why its typing is load-bearing.
     """
 
     kind: Literal["subquery"] = "subquery"
@@ -419,18 +415,17 @@ class ExternalDataExpr(Expr):
     :func:`~kustology.ir._builder_helpers.read_external_data` so they cannot
     drift apart.
 
-    ``uris`` replaced a singular ``uri: str`` that held whichever URI came
-    first. ``externaldata`` takes a list, and a feed stitched from two URIs
-    is not the feed from either one of them — the dropped entries made two
-    different queries build the same node. As on the source class, an entry
-    is **not guaranteed to be a URI**: an element that does not fold to a
-    literal (a ``let``-bound feed URL, ``strcat(...)``) is recorded as its
-    own source text.
+    ``uris`` is a list because the construct takes one: a feed stitched
+    from two URIs is not the feed from either one of them, so dropping
+    entries would make two different queries build the same node. As on the
+    source class, an entry is **not guaranteed to be a URI**: an element
+    that does not fold to a literal (a ``let``-bound feed URL,
+    ``strcat(...)``) is recorded as its own source text.
 
     ``properties`` mirrors the source class: the whole ``with (...)``
     clause, keys verbatim, with ``format`` promoted to its own field as
     well. See :class:`~kustology.ir.query.ExternalDataSource` for why
-    dropping the other properties was a collision.
+    dropping the other properties would be a collision.
     """
 
     kind: Literal["external_data"] = "external_data"
@@ -446,9 +441,9 @@ class DataTableExpr(Expr):
     The source-position form is
     :class:`~kustology.ir.query.DataTableSource`; both are filled by the
     builder's ``_read_datatable`` so they cannot drift apart. The values
-    are the query — see ``DataTableSource`` for why dropping them was a
-    collision; in expression position the un-modeled shape was worse, an
-    ``UnknownExpr`` hashing its own source text.
+    are the query — see ``DataTableSource`` for why dropping them would be
+    a collision; in expression position the unmodeled fallback is worse
+    still, an ``UnknownExpr`` hashing its own source text.
     """
 
     kind: Literal["datatable"] = "datatable"
@@ -468,8 +463,8 @@ class UnknownExpr(Expr):
 # ``ToScalarExpr.pipeline`` and ``SubqueryExpr.pipeline`` are forward
 # references to ``Pipeline``, and since both classes are members of
 # ``AnyExpr``, *every* expression class with an ``AnyExpr`` field needs them
-# resolved too -- so rebuilding any of them in this module fails, not just the
-# two. ``query.py`` imports this one, so a module-level rebuild there always
+# resolved too -- so rebuilding any of them in this module fails, not only
+# the two. ``query.py`` imports this one, so a module-level rebuild there always
 # runs after these classes are defined.
 REBUILT_BY_QUERY_MODULE: tuple[type[BaseModel], ...] = (
     LiteralExpr, ColumnRef, LetValueRef, TypedNameDecl, BinOp, SetMembership,

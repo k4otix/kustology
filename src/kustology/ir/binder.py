@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-"""Provenance pass over an already-built IR. Internal since 0.2.0.
+"""Provenance pass over an already-built IR.
 
 Fills ``result_type`` on expressions the .NET binder couldn't resolve and
 attaches ``table`` provenance to ``ColumnRef`` nodes by walking the pipeline
@@ -78,22 +78,22 @@ def _flatten_side(entries: list[ScopeEntry]) -> ScopeEntry:
 
     A join has exactly one right side, whatever the pipeline that produced
     it: ``(R)`` leaves one entry, ``(union A, B)`` leaves one per arm behind
-    the empty entry its implicit source produced. Taking ``rhs_scope[:1]``
-    picked that empty entry and appended nothing at all, so ``$right.k`` had
-    no side to resolve against; appending every entry instead made one row
-    set look like several to ``_resolve_side``, which reads the side's entry
-    count. Merging is what makes the side one thing again.
+    the empty entry its implicit source produces. Taking ``rhs_scope[:1]``
+    would pick that empty entry and append nothing at all, leaving
+    ``$right.k`` no side to resolve against; appending every entry would
+    make one row set look like several to ``_resolve_side``, which reads the
+    side's entry count. Merging is what makes the side one thing.
 
-    The merged entry keeps a table when every contributing entry named the
+    The merged entry keeps a table when every contributing entry names the
     same one, and otherwise records provenance per column in ``origins`` --
     so a right-hand ``R | project b`` still reports ``b`` as ``R``'s.
 
     A contributing entry counts by ``table`` alone, not ``table and
     columns``: a named table this walk has no schema for still names the
     side unambiguously (there is only ever one contributor once the
-    flattening is done), so requiring known columns too just threw that
-    identification away and left an honest ``$right.x`` unresolved when a
-    guess-free answer was sitting right there.
+    flattening is done), so requiring known columns too would throw that
+    identification away and leave an honest ``$right.x`` unresolved when a
+    guess-free answer is sitting right there.
     """
     columns: dict[str, str] = {}
     origins: dict[str, str | None] = {}
@@ -123,11 +123,11 @@ class ScopeEntry:
     (``table=None``).
 
     ``origins`` is what keeps provenance alive across that re-filing. The
-    anonymous entry has no ``table``, so before it existed every column
-    reference *after* a ``project`` reported ``table=None`` while the same
-    column before it reported the real table — one query, two answers for one
-    column, and any lineage consumer reading ``ColumnRef.table`` silently got
-    the wrong one. ``origins`` maps a column name to the table it came from,
+    anonymous entry has no ``table``, so without ``origins`` every column
+    reference *after* a ``project`` would report ``table=None`` while the
+    same column before it reports the real table — one query, two answers for
+    one column, and any lineage consumer reading ``ColumnRef.table`` silently
+    gets the wrong one. ``origins`` maps a column name to the table it came from,
     which is not always ``entry.table``: a projected column keeps ``"T"``
     while living in a table-less entry, and a computed one (``extend n =
     a + 1``) maps to ``None`` explicitly, so "invented here" is recorded
@@ -490,8 +490,9 @@ class SchemaAttacher:
         ``_table_schema`` already answers ``{}`` for a masked name, but a
         ``ScopeEntry`` built straight from a name -- ``_source_entry``'s
         plain-``TableRef`` fallback, ``search``/``find``'s table seeding --
-        used to write that name into ``table`` regardless, on the theory
-        that a *label* is harmless even where the columns are withheld. It
+        would otherwise write that name into ``table`` regardless, on the
+        theory that a *label* is harmless even where the columns are
+        withheld. It
         is not: ``_resolve_side``'s single-entry fallback (built for an
         honestly-unknown table -- one entry, so it must be the side, even
         with no columns to confirm it) reads ``entries[0].table`` straight
@@ -508,8 +509,8 @@ class SchemaAttacher:
 
         Shared by ``_source_entry``'s ``LetRef`` branch (a pipeline's own
         source) and ``search``/``find``'s table seeding -- both name a
-        ``let`` alias rather than a real table, and both used to write the
-        alias into ``table`` unconditionally. That is right when
+        ``let`` alias rather than a real table, and both would otherwise
+        write the alias into ``table`` unconditionally. That is right when
         ``_let_schemas`` actually has the alias's columns (a tabular
         binding the walk closed): the alias *is* what the pipeline reads,
         and reporting the underlying table would lose the step the query
@@ -578,7 +579,7 @@ class SchemaAttacher:
             # claims nothing about its own output, rather than claiming with
             # `columns={}` that it emits none. And it does not inherit: every
             # other implicit-source sub-pipeline runs against the enclosing
-            # rows and wants to, but saying that an *unmodelled* one emits
+            # rows and wants to, but saying that an *unmodeled* one emits
             # the enclosing columns is a guess about a shape we have already
             # admitted we do not understand. (That second half is defensive
             # only -- a fork or mv-apply body is an ``ImplicitSource``, never
@@ -947,9 +948,10 @@ class SchemaAttacher:
             except ValueError:
                 pass
         elif isinstance(expr, BinOp):
-            # Every ``BinOp`` used to be typed ``bool``, arithmetic included,
-            # so ``extend n = a + 1`` recorded ``n:bool`` -- the same answer
-            # the node gives for the predicate ``a > 1``. Arithmetic is left
+            # Typing every ``BinOp`` as ``bool`` outright would misclassify
+            # arithmetic too, recording ``extend n = a + 1`` as ``n:bool``
+            # -- the same answer the node gives for the predicate
+            # ``a > 1``. Arithmetic is left
             # unresolved rather than guessed at: its type is the promotion of
             # its operands' (``long + real`` is a real, ``datetime -
             # datetime`` a timespan) and the fallback does not model that.

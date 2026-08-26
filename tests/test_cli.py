@@ -3,7 +3,7 @@
 
 """Subprocess-based tests for the `kustology` CLI.
 
-We invoke the CLI via `python -m kustology.cli` so the tests don't
+The tests invoke the CLI via `python -m kustology.cli` so they don't
 depend on `pip install -e .` having been run. The installed `kustology`
 entry point (declared in pyproject.toml `[project.scripts]`) shares the
 same `main()` function, so testing the module form covers both.
@@ -11,15 +11,11 @@ same `main()` function, so testing the module form covers both.
 `tests/test_cli_inprocess.py` calls `main()` directly and owns the CLI's
 behavioral contract — every exit code, every output shape, every edge case.
 This file keeps only what a direct call to `main()` cannot prove: that the
-shipped entry point launches at all, and the handful of cases that need the
-real interpreter underneath it. That's an entry-point smoke test (`version`),
-one exit-code case pinned through the real binary rather than only through
-`main()` (a missing file, exit 2), one through-the-binary check of the
-human-branch exit-1 contract, and the byte-ceiling test that needs the
-interpreter's actual `sys.stdin.buffer` — a `TextIOWrapper` double can't
-stand in for that one. Every other case that used to live here duplicated
-an in-process test asserting the identical contract and was deleted rather
-than kept as a slower second copy.
+shipped entry point launches at all, and the cases that need the real
+interpreter underneath it — its actual `sys.stdin.buffer`, its actual
+stream encodings, the real exit codes a shell sees. A case that duplicates
+an in-process test asserting the identical contract is a slower second copy
+and does not belong here.
 """
 from __future__ import annotations
 
@@ -55,8 +51,10 @@ def test_version_prints_runtime_version():
 
 
 def test_missing_file_is_a_usage_error():
-    """Exit 2 through the real entry point, not just through `main()` —
-    the docstring's contract is what a shell script branches on."""
+    """Pin exit 2 through the real entry point, not only through `main()`.
+
+    The documented exit codes are what a shell script branches on.
+    """
     result = _run("format", "/no/such/path/does-not-exist.kql")
     assert result.returncode == 2, result.stderr
     assert "FileNotFoundError" in result.stderr
@@ -64,10 +62,12 @@ def test_missing_file_is_a_usage_error():
 
 
 def test_input_ceiling_counts_bytes_on_real_stdin():
-    """The in-process suite fakes `sys.stdin` with a `TextIOWrapper`; this
-    runs the same 20-character/28-byte payload through the interpreter's own
-    `sys.stdin.buffer`, so the byte accounting is proved on the real object
-    and not only on the double. Cap 22 rejects it, cap 28 lets it through."""
+    """Prove the byte accounting on the interpreter's own `sys.stdin.buffer`.
+
+    The in-process suite fakes `sys.stdin` with a `TextIOWrapper`; this runs
+    the same 20-character/28-byte payload through the real object, not only
+    the double. Cap 22 rejects it, cap 28 lets it through.
+    """
     payload = 'T | where a== "日本語だ"'
     assert (len(payload), len(payload.encode("utf-8"))) == (20, 28)
 
@@ -94,10 +94,13 @@ def test_validate_broken_query_exits_1():
 
 
 def test_non_ascii_output_survives_a_charmap_stdout():
-    """Windows consoles default to a charmap codec that cannot encode most
-    of Unicode; KQL is arbitrary Unicode, so the CLI reconfigures its
+    """Guard the CLI's UTF-8 stream reconfiguration under a charmap stdout.
+
+    Windows consoles default to a charmap codec that cannot encode most of
+    Unicode, and KQL is arbitrary Unicode, so the CLI reconfigures its
     streams to UTF-8. PYTHONIOENCODING=cp1252 reproduces the Windows
-    failure mode on any platform (PR #17's windows-latest cell)."""
+    failure mode on any platform.
+    """
     query = 'T | where s == "日本語"'
     result = _run("format", stdin=query, env={"PYTHONIOENCODING": "cp1252"})
     assert result.returncode == 0, result.stderr

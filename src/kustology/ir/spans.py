@@ -6,6 +6,8 @@ from pydantic import BaseModel
 
 
 class Span(BaseModel):
+    """A character range in the original query text: start offset plus width."""
+
     # ``extra="forbid"`` is the project-wide default for IR models: validation
     # of pre-existing JSON must fail loudly when fields drift, instead of
     # silently dropping data.

@@ -11,13 +11,14 @@ KQL admits five statement kinds beside ``let`` and a tabular expression::
     alias database db1 = cluster('c').database('d');
     restrict access to (database("d"), T);
 
-The builder collected ``let`` statements and pipelines and read none of these,
-so whatever they said was absent from the IR *and* from ``semantic_hash``.
-That is worse than lossy: two different ``set query_now`` pins hashed alike,
-and nothing in the IR recorded that a statement had been there at all.
+A builder that collects only ``let`` statements and pipelines reads none of
+these, so whatever they said would be absent from the IR *and* from
+``semantic_hash``. That is worse than lossy: two different ``set query_now``
+pins would hash alike, and nothing in the IR would record that a statement
+had been there at all.
 
 ``QueryIR.statements`` holds them in source order, one discriminated union
-over the five modelled kinds plus a defensive ``UnknownStmt``. The hash
+over the five modeled kinds plus a defensive ``UnknownStmt``. The hash
 payload names it explicitly (``compute_semantic_hash`` builds a
 ``{let_bindings, statements, main_pipeline, additional_pipelines}`` dict
 rather than dumping the whole model), so a field left out of that dict would
@@ -121,7 +122,8 @@ def test_query_parameter_names_are_not_canonicalized():
 
 def test_a_function_bodys_query_parameters_are_scoped_to_the_body():
     """``FunctionBody``'s statement list admits ``let`` and
-    ``declare query_parameters``; the second used to be dropped on the floor."""
+    ``declare query_parameters``; guards the second against being dropped on
+    the floor."""
     ir = _ir("let f = (x:long) { declare query_parameters(p:long = 1); T | take x }; f(1)")
     assert ir.statements == []
     fn = ir.let_bindings[0].rhs_function
@@ -312,8 +314,8 @@ def test_compute_semantic_hash_agrees_with_the_stored_field():
 # -- the subtree is reachable ----------------------------------------------
 
 def test_walk_reaches_into_a_statement():
-    """``find_all`` is the documented traversal; an analyzer built on it saw
-    nothing a statement said."""
+    """``find_all`` is the documented traversal; an analyzer built on it
+    needs to see what a statement says, not just the pipeline."""
     ir = _ir('declare pattern P = (a:string) { ("x") = { T | take 1 }; }; U | count')
     assert sorted(t.name for t in find_all(ir, TableRef)) == ["T", "U"]
 

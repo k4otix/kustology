@@ -41,9 +41,9 @@ documented survivor list that has quietly stopped being true is the exact
 failure this file exists to prevent. Its assertion is equality, so closing a
 gap turns the list red on purpose -- a consumer works around the collisions
 kustology discloses, so one silently disappearing from the disclosure is a
-defect even though the behaviour improved. **It is empty as of 0.2.0**: the
-last three rows were the ``let``-function ones, closed when the body was
-modelled. The list stays for the next gap; see the comment above it.
+defect even though the behavior improved. **The list is empty**: nothing
+currently needs disclosing as a known gap. It stays for the next one; see
+the comment above it.
 
 One category needs a caveat rather than a claim of coverage. WS2 fix #1
 (datetime literals UTC-normalized in ``literal_value_and_ticks`` so
@@ -112,15 +112,15 @@ still pin that the two ``Kind`` branches produce a matching,
 self-consistent representation.
 
 The WS4 block at the end of each list is the regression net for a whole
-workstream. Nine tasks closed a family of *lossy lowering* bugs -- the
-builder reached a fully populated node from several different KQL
-constructs, so nothing looked stubbed and the distinction between the
-constructs was simply gone. Every one of them was, by construction, a
-``semantic_hash`` collision, and a collision is the failure mode this file
-exists to catch and the one no other test in the suite is shaped to see:
-the per-task tests assert that a field holds the right value, which stays
-true if a *later* change stops that field reaching the digest. The pairs
-below assert the consequence instead.
+workstream. Nine tasks guard against a family of *lossy lowering* bugs: the
+builder reaches a fully populated node from several different KQL
+constructs, so nothing looks stubbed even though the distinction between
+the constructs is gone from the digest. Each such collapse is, by
+construction, a ``semantic_hash`` collision, and a collision is the failure
+mode this file exists to catch and the one no other test in the suite is
+shaped to see: a per-task test asserts that a field holds the right value,
+which stays true if a *later* change stops that field from reaching the
+digest. The pairs below assert the consequence instead.
 
 They are written against the model as it stands rather than as the
 workstream planned it, which is not the same list: ``bag_expansion`` was
@@ -145,7 +145,7 @@ One thing is deliberately absent:
   ``lt-vs-gt-swapped`` below exercises the same limitation deliberately
   (``a < b`` vs ``b > a``, mathematically the same predicate, hashed apart)
   because the task brief calls it out by name as a required ``MUST_DIFFER``
-  case: it pins *current* behaviour, not a claim that the behaviour is right.
+  case: it pins *current* behavior, not a claim that the behavior is right.
 """
 
 import pytest
@@ -315,10 +315,9 @@ MUST_DIFFER = [
         "let S = (w:int) { w + 1 }; T | extend y = S(1)",
         "let S = (w:int) { w + 2 }; T | extend y = S(1)",
     ),
-    # A `let` written inside the body used to be hoisted into top-level
-    # `let_bindings`, which is where its value reached the digest from. It is
-    # scoped to `body_lets` now, so this pair pins that the value still splits
-    # -- the route changed and the answer must not have.
+    # Guards a `let` written inside the body staying scoped to `body_lets`
+    # rather than reaching the digest through top-level `let_bindings`: the
+    # route must not change the answer.
     (
         "let-function-body-nested-let-value",
         "let S = (w:int) { let z = 5; A | take z }; S(1)",
@@ -510,10 +509,9 @@ MUST_DIFFER = [
         "T | make-series C=count() on d in range(datetime(2024-01-01), datetime(2024-01-03), 1h)",
     ),
     ("render-with-properties", "T | render timechart with (title='a')", "T | render timechart with (title='b')"),
-    # `join`/`lookup` defaulted to "inner", which is a different operator in
-    # each case -- so every bare join was mislabelled *and* collapsed onto
-    # the explicit kind=inner spelling. See the MUST_EQUAL half for the
-    # effective default each now records.
+    # Guards `join`/`lookup`'s effective default: a bare join must record
+    # "innerunique", not collapse onto "inner", a different operator. See
+    # the MUST_EQUAL half for the effective default each records.
     ("join-default-vs-inner", "T | join U on a", "T | join kind=inner U on a"),
     ("lookup-default-vs-inner", "T | lookup U on a", "T | lookup kind=inner U on a"),
     ("find-scope-tables", "find in (A) where x == 1", "find in (B) where x == 1"),
@@ -571,21 +569,20 @@ MUST_DIFFER = [
     # in `test_ir_builder.py::test_all_four_null_tests_hash_distinctly`,
     # which is pairwise-complete over all four and therefore a strict
     # superset of a `isnull-vs-isempty`/`isnull-vs-isnotnull` pair here.
-    # `datatable(...)` in expression position used to fall through to
-    # UnknownExpr, hashing the raw source text -- which happened to
-    # discriminate on value too, so this pair passed for the wrong reason
-    # before DataTableExpr existed. See test_no_battery_pair_discriminates_on_an_unmodelled_blob.
+    # Guards `datatable(...)` in expression position building a real
+    # `DataTableExpr` rather than falling through to `UnknownExpr` and
+    # hashing raw source text -- which would happen to discriminate on value
+    # too, passing this pair for the wrong reason. See
+    # test_no_battery_pair_discriminates_on_an_unmodelled_blob.
     (
         "expr-datatable-values",
         'T | where a in ((datatable(x:string)["v"]))',
         'T | where a in ((datatable(x:string)["w"]))',
     ),
-    # `evaluate`'s output-schema clause closure (moved out of
-    # KNOWN_COLLISIONS): `EvaluateOp` used to carry only `func`, dropping the
-    # .NET `EvaluateSchemaClause` (`EvaluateOperator.Schema`) entirely.
-    # `declared_schema`/`declared_schema_star` now carry it, so a written
-    # schema, a different written schema, and no clause at all are three
-    # distinct digests.
+    # Guards `evaluate`'s output-schema clause: `declared_schema` and
+    # `declared_schema_star` carry the .NET `EvaluateSchemaClause`
+    # (`EvaluateOperator.Schema`), so a written schema, a different written
+    # schema, and no clause at all are three distinct digests.
     (
         "evaluate-schema-clause-columns",
         "T | evaluate bag_unpack(d) : (x:string)",
@@ -604,12 +601,10 @@ MUST_DIFFER = [
         "T | evaluate bag_unpack(d) : (*, x:string)",
         "T | evaluate bag_unpack(d) : (x:string)",
     ),
-    # The five statement kinds. Each was a collision of the worst shape --
-    # nothing in the IR recorded that the statement was there, so two
-    # *different* values of one statement hashed alike, not merely a query
-    # with one against a query without. `QueryIR.statements` carries them
-    # now. Every row below was a KNOWN_MERGES row in
-    # `examples/semantic_hash_demo.py` until this task.
+    # The five statement kinds. Guards the worst collision shape: nothing
+    # else would record that the statement was there, so two *different*
+    # values of one statement would hash alike, not merely a query with one
+    # against a query without. `QueryIR.statements` carries them.
     (
         "set-two-values",
         "set query_now=datetime(2020-01-01); T | take 1",
@@ -658,11 +653,10 @@ MUST_DIFFER = [
         'restrict access to (database("d")); T | take 1',
         'restrict access to (database("e")); T | take 1',
     ),
-    # A `let` inside a pattern body used to be hoisted into top-level
-    # `let_bindings`, which is where its value reached the digest from. It is
-    # scoped to `PatternMatch.body_lets` now, so this pins that the value still
-    # splits -- the route changed and the answer must not have. Same shape as
-    # `let-function-body-nested-let-value` above.
+    # Guards a `let` inside a pattern body staying scoped to
+    # `PatternMatch.body_lets` rather than reaching the digest through
+    # top-level `let_bindings`: the route must not change the answer. Same
+    # shape as `let-function-body-nested-let-value` above.
     (
         "pattern-nested-let-scoped",
         'declare pattern P = (a:string) { ("x") = { let z = 5; T | take z }; }; T | take 1',
@@ -731,7 +725,7 @@ MUST_EQUAL = [
     # D8 -- a required field carrying KQL's *effective* default, so the bare
     # spelling and the explicit one are one query and one digest. The value
     # is the one KQL actually applies, which for join/lookup is not the
-    # "inner" the builder used to assume.
+    # "inner" a naive read of the bare spelling would assume.
     ("sort-bare-is-desc", "T | sort by a", "T | sort by a desc"),
     ("top-bare-is-desc", "T | top 5 by a", "T | top 5 by a desc"),
     # The same default reached through the *other* branch of the same
@@ -761,9 +755,9 @@ MUST_EQUAL = [
     ("search-bare-is-default", "search 'x'", "search kind=default 'x'"),
     ("join-bare-is-innerunique", "T | join U on a", "T | join kind=innerunique U on a"),
     ("lookup-bare-is-leftouter", "T | lookup U on a", "T | lookup kind=leftouter U on a"),
-    # Two spellings of one modifier folded onto one field. Modelling
-    # `bagexpansion=` separately from `kind=` would have split these, which
-    # is why `bag_expansion` was dropped rather than kept alongside.
+    # Two spellings of one modifier fold onto one field: modeling
+    # `bagexpansion=` separately from `kind=` would split these, which is
+    # why there is no separate `bag_expansion` field alongside `kind`.
     ("mv-expand-bagexpansion-is-kind", "T | mv-expand bagexpansion=array a", "T | mv-expand kind=array a"),
     # Same shape on `render`: the legacy bare parameter and the `with (...)`
     # clause land in the same properties dict.
@@ -772,10 +766,10 @@ MUST_EQUAL = [
     # still excluded from the digest: a hint asks the engine to execute the
     # query differently, not to return different rows.
     ("join-hint-excluded", "T | join hint.strategy=shuffle U on a", "T | join U on a"),
-    # `FindOp.tables` was read with the no-argument ToString() overload,
-    # which is IncludeTrivia.All, so a comment written before a table name
-    # became part of the name and changed the digest. Last known site of a
-    # defect class fixed in four other readers earlier in this release.
+    # Guards `FindOp.tables`, read with the no-argument `ToString()`
+    # overload: `IncludeTrivia.All` means a comment written before a table
+    # name is part of the name in the raw text, and reaches the digest
+    # through it.
     ("find-table-comment", "find in (// note\nT) where x == 1", "find in (T) where x == 1"),
     # A let-bound name is a local label: the hash renames every binding to
     # its declaration index. That rename could not reach a use site lowered
@@ -814,8 +808,8 @@ MUST_EQUAL = [
         "T | parse-kv a as (b:string) with ( pair_delimiter = ',' )",
     ),
     # A `let` function's body is built out of the same nodes as any other
-    # pipeline, so every canonicalization rule that already held for a
-    # top-level query now holds inside the braces -- with no case for the body
+    # pipeline, so every canonicalization rule that holds for a top-level
+    # query holds inside the braces too -- with no special case for the body
     # anywhere in `transforms.py`. Formatting and comments first, then the
     # signature's own formatting.
     (
@@ -922,24 +916,19 @@ MUST_EQUAL = [
     # pins that the body's own scope reaches a reference nested inside a call
     # argument.
     #
-    # It used to pin something narrower and more fragile.
     # `LetBinding.inner_time_exprs` aliases the same `FuncCall` objects that
-    # live inside `rhs_function` rather than copies of them, so the rename
-    # walk reached each one twice and only renamed it correctly because
-    # `rhs_function` is declared *before* the index on `LetBinding` -- this
-    # row was the tripwire for that field order. The index is cleared before
-    # the rename runs now (`transforms._DERIVED_INDEX_FIELDS`), so there is no
-    # second path to the node and no field order to trip over. The row stays
-    # because what it asserts is still true and still worth asserting; what it
-    # no longer needs to be read as is a warning about declaration order.
+    # live inside `rhs_function` rather than copies of them, so a rename walk
+    # would reach each one twice if the index were not cleared first.
+    # `transforms._DERIVED_INDEX_FIELDS` clears it before the rename runs, so
+    # there is no second path to the node and no field order to trip over.
     (
         "let-function-body-time-alias-rename",
         "let S = () { let d = 1h; A | where t > ago(d) | take 1 }; S()",
         "let S = () { let e = 1h; A | where t > ago(e) | take 1 }; S()",
     ),
-    # The statement kinds, modelled in 0.2.0. Whitespace is the shape that
-    # proves a statement is *structure* in the digest rather than recorded
-    # text: a node that kept its own source would split every one of these.
+    # The statement kinds. Whitespace is the shape that proves a statement is
+    # *structure* in the digest rather than recorded text: a node that kept
+    # its own source would split every one of these.
     ("set-whitespace", "set querytrace; T | take 1", "set   querytrace;\nT | take 1"),
     (
         "query-parameters-whitespace",
@@ -1036,7 +1025,7 @@ def test_must_equal(case_id, query_a, query_b):
 # *closes* turns this list red. That is intended: the digest's documented
 # survivor list is the safety mechanism a consumer works around, so a survivor
 # silently ceasing to be one is a documentation defect even though the
-# behaviour improved.
+# behavior improved.
 # ---------------------------------------------------------------------------
 
 KNOWN_COLLISIONS: list[tuple[str, str, str]] = []
@@ -1072,23 +1061,22 @@ def test_no_battery_pair_discriminates_on_an_unmodelled_blob():
     claims to guard, and would keep passing if that field were deleted
     tomorrow.
 
-    That is not hypothetical here: ``project-reorder x asc`` was an
-    ``UnknownExpr`` for part of this workstream, and its direction pair
-    would have passed green through the regression it was meant to catch.
-    Asserting the whole battery is text-free is cheaper than reasoning
-    about it pair by pair, and it holds for the pre-WS4 cases too.
+    This is a real risk, not a hypothetical one: an operator that lowers to
+    ``UnknownExpr`` carries ``raw_text``, so its direction pair would pass
+    green through the exact regression it is meant to catch. Asserting the
+    whole battery is text-free is cheaper than reasoning about it pair by
+    pair, and it holds for the pre-WS4 cases too.
 
     The check is **not** limited to the ``Unknown*`` classes, and the
-    difference is the point. Eight modelled operators also record their own
+    difference is the point. Eight modeled operators also record their own
     source -- ``ScanOp``, ``TopNestedOp``, ``MacroExpandOp``, ``MakeGraphOp``
     and the four ``graph-*`` operators -- because they are dispatched but
-    only partly modelled. Nothing in the battery reaches one today, so
-    naming them in prose (which this docstring used to do while the
-    assertion checked three classes by name) protected nobody: the first
-    pair written against ``scan`` or ``graph-match`` would have discriminated
-    on ``raw_text`` and passed. Deriving the set from ``model_fields``
-    instead means a node added to the partly-modelled list is covered from
-    the moment it is defined, the same rule the rest of this suite follows.
+    only partly modeled. Nothing in the battery reaches one today, so naming
+    them in prose would protect nobody: the first pair written against
+    ``scan`` or ``graph-match`` would discriminate on ``raw_text`` and pass.
+    Deriving the set from ``model_fields`` instead means a node added to the
+    partly-modeled list is covered from the moment it is defined, the same
+    rule the rest of this suite follows.
     """
     offenders: dict[str, list[str]] = {}
     for query in sorted({q for _, a, b in MUST_DIFFER + MUST_EQUAL + KNOWN_COLLISIONS for q in (a, b)}):

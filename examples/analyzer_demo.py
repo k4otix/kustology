@@ -73,7 +73,8 @@ def join_key_type_mismatch(ir: QueryIR) -> Iterable[Finding]:
     """Flag a join whose two keys are bound to different types.
 
     Needs a bound parse: ``result_type`` is the binder's answer, and on an
-    unbound one both sides read ``unresolved`` and nothing can be compared.
+    unbound one both sides read ``unresolved`` and compare equal, so the
+    rule never fires.
     """
     for op in find_all(ir, JoinOp):
         for condition in op.on:
@@ -126,9 +127,11 @@ ANALYZERS: list[AnalyzerFn] = [join_key_type_mismatch, unplaced_columns]
 
 
 def run_all(ir: QueryIR, analyzers: list[AnalyzerFn]) -> list[Finding]:
-    """The composition recipe from ``kustology.ir.analyzers``'s docstring.
+    """Run every analyzer and concatenate what each yields.
 
-    Identical but for the loop variable, which is spelled out here.
+    This is the composition recipe from ``kustology.ir.analyzers``'s
+    docstring, identical but for the loop variable, which is spelled out
+    here.
     """
     return [f for analyzer in analyzers for f in analyzer(ir)]
 

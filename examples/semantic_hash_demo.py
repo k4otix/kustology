@@ -16,22 +16,19 @@ and everything the binder supplied. Passing a schema does not move the
 digest.
 
 **Splits you want.** Different literals, a different operator sequence,
-and — new in 0.2.0 — the operators that used to collapse. ``in~`` /
-``has_any`` / ``has_all`` all built one ``SetMembership`` with no field
-recording which, so ``has_any`` and ``has_all``, which are opposites,
-shared a digest. ``SetMembership.op`` is what separates them now, and
-``Exists.op`` does the same for ``isnotnull`` / ``isnotempty``. The five
-statement kinds — ``set``, ``declare query_parameters``,
-``declare pattern``, ``alias database``, ``restrict access`` — join them:
-they were absent from the IR entirely, so two different values of one
-statement collided with each other, and they are on
-``QueryIR.statements`` now.
+and the near-synonyms that all lower to one node type. ``in~`` /
+``has_any`` / ``has_all`` each build a ``SetMembership``, and
+``SetMembership.op`` records which — so ``has_any`` and ``has_all``,
+which are opposites, get different digests. ``Exists.op`` does the same
+for ``isnotnull`` / ``isnotempty``. The five statement kinds — ``set``,
+``declare query_parameters``, ``declare pattern``, ``alias database``,
+``restrict access`` — ride on ``QueryIR.statements``, so two different
+values of one statement split as well.
 
 **Merges you may not want.** Every case is a row in ``KNOWN_MERGES`` below
 and every row is hashed when this file runs, so the list *is* the claim.
 There is no tally in this sentence on purpose — a number quoted about the
-list is one more thing that can drift away from it, and in this file it
-twice did.
+list is one more thing that can drift away from it.
 
 A consumer deduplicating on the digest acts on that third group, so the
 rows are load-bearing rather than illustrative: if any of them stops
@@ -61,8 +58,8 @@ def digest(query: str, schema: dict | None = None) -> str:
     return compute_semantic_hash(parse(query, schema=schema).to_ir())
 
 
-# (label, left, right, expected) — `expected` is what the docs claim, and
-# the runner prints a loud marker if the measurement disagrees.
+# (label, left, right). The list a pair sits in is the claim; `report`
+# raises if the measurement disagrees.
 MERGES = [
     ("formatting and comments",
      "T | where a==1 and d>1h",
@@ -106,19 +103,19 @@ SPLITS = [
      'T | where a in ("x")', 'T | where a in~ ("x")'),
     ("isnotnull vs isnotempty",
      "T | where isnotnull(a)", "T | where isnotempty(a)"),
-    # `evaluate`'s output-schema clause used to be the costliest known gap:
-    # it declares the columns the plug-in returns, so what collided was the
-    # operator's result *shape*. `EvaluateOp.declared_schema` now carries it.
+    # `evaluate`'s output-schema clause declares the columns the plug-in
+    # returns — the operator's result *shape* — and
+    # `EvaluateOp.declared_schema` carries it into the digest.
     ("evaluate's declared output schema splits",
      "T | evaluate bag_unpack(d) : (x:string)",
      "T | evaluate bag_unpack(d) : (y:long, z:datetime)"),
     ("declared schema vs none splits",
      "T | evaluate bag_unpack(d) : (x:string)",
      "T | evaluate bag_unpack(d)"),
-    # A `let` function's body was the largest known gap in 0.2.0: what
-    # collided was an arbitrary amount of query rather than one modifier.
-    # `LetFunction` now carries the body, the parameters' declared types and
-    # defaults, and the `view` keyword.
+    # A `let` function's body is an arbitrary amount of query, not one
+    # modifier — the highest-stakes thing to split on. `LetFunction` carries
+    # the body, the parameters' declared types and defaults, and the `view`
+    # keyword.
     ("`let` function bodies split",
      "let S = (w:int) { A | where EventID == 4625 | summarize c=count() by Account | where c > w }; S(5)",
      "let S = (w:int) { A | where EventID == 4624 | summarize c=count() by Computer | where c > w }; S(5)"),
@@ -138,9 +135,9 @@ SPLITS = [
     ("a parameter's default splits",
      "let S = (w:int) { A | where x > w }; S(5)",
      "let S = (w:int=3) { A | where x > w }; S(5)"),
-    # The remaining operator-modifier gaps, closed in 0.2.0: mv-apply's
-    # `to typeof(...)`, `limit` and `with_itemindex=`, parse-kv's `with (...)`
-    # properties, getschema's `kind=`, consume's `decodeblocks=`.
+    # Operator modifiers that change results, so each is in the digest:
+    # mv-apply's `to typeof(...)`, `limit` and `with_itemindex=`, parse-kv's
+    # `with (...)` properties, getschema's `kind=`, consume's `decodeblocks=`.
     ("mv-apply's `to typeof(...)` splits",
      "T | mv-apply d to typeof(long) on (take 1)",
      "T | mv-apply d on (take 1)"),
@@ -161,13 +158,12 @@ SPLITS = [
      "T | getschema kind=csl", "T | getschema"),
     ("consume's `decodeblocks=` splits",
      "T | consume decodeblocks=true", "T | consume"),
-    # The five statement kinds that are neither `let` nor tabular. Until
-    # 0.2.0 the builder read none of them, and every row below sat in
-    # KNOWN_MERGES: not "a query with a statement collides with one without"
-    # (easy to shrug off) but two *different values of the same statement*
-    # colliding with each other, which is the shape that costs a dedup
-    # consumer a rule. `QueryIR.statements` carries them now, in source
-    # order, and the order is part of the digest too.
+    # The five statement kinds that are neither `let` nor tabular.
+    # `QueryIR.statements` carries them in source order, and the order is
+    # part of the digest too. The collision these rows guard against is not
+    # "a query with a statement versus one without" (easy to shrug off) but
+    # two *different values of the same statement*, the shape that costs a
+    # dedup consumer a rule.
     ("`set` splits: pinned query_now vs none",
      "set query_now=datetime(2020-01-01); T | take 1", "T | take 1"),
     ("`set` splits: two different query_now values",
@@ -192,12 +188,11 @@ SPLITS = [
      'restrict access to (database("e")); T | take 1'),
 ]
 
-# Every row here is a *merge* the library makes on purpose. The statement
-# kinds used to be the rest of this list and are gone from it: they are in
-# SPLITS above, one row per kind, since 0.2.0 models all five. Nothing was
-# retired quietly — a gap that closes turns
-# `tests/ir/test_hash_battery.py`'s KNOWN_COLLISIONS red on purpose, and
-# that is the tripwire that brought this list here.
+# Every row here is a *merge* the library makes on purpose, and the list
+# can only shrink loudly: a gap that closes turns
+# `tests/ir/test_hash_battery.py`'s KNOWN_COLLISIONS red on purpose, so a
+# row leaves this file with a failing test pointing at it rather than
+# quietly.
 KNOWN_MERGES = [
     ("typed nulls: real(null) == datetime(null) — deliberate",
      "T | where a > real(null)", "T | where a > datetime(null)"),
@@ -207,7 +202,7 @@ KNOWN_MERGES = [
 
 
 def errors(query: str) -> list[str]:
-    """Error-severity diagnostic codes for ``query``, if any."""
+    """Return the error-severity diagnostic codes for ``query``, if any."""
     return [d["code"] for d in parse(query).diagnostics if d["severity"] == "Error"]
 
 
@@ -216,8 +211,7 @@ def report(title: str, pairs, expect_equal: bool) -> int:
 
     Raises rather than printing a wrong table. ``tests/test_examples.py``
     calls ``main()``, so every row here is a claim the suite enforces —
-    which is the only thing that stops this file drifting away from the
-    library the way its own prose twice did.
+    the only thing that stops this file drifting away from the library.
     """
     print(f"\n=== {title}")
     for label, left, right in pairs:

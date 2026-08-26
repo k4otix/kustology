@@ -13,9 +13,9 @@ for:
 * ``UnknownSource`` — a pipeline whose source wasn't a TableRef / LetRef.
 * unspecialized ``Operator`` — fall-through from ``_visit_operator``.
 
-Emits a JSON report with per-kind counts and a sample of source queries that
-triggered each. Used as both a manual diagnostic and a CI signal — see
-the ``corpus-regression`` CI job, which invokes this script directly.
+The script emits a JSON report with per-kind counts and a sample of source
+queries that triggered each. It serves as both a manual diagnostic and a CI
+signal — the ``corpus-regression`` CI job invokes it directly.
 
 Usage
 -----
@@ -57,21 +57,15 @@ def _walk(ir, unknown_exprs: Counter, unknown_sources: Counter, unspecialized_op
           per_kind_examples: dict, query_name: str) -> None:
     """Walk an IR for coverage gaps, accumulating counts and examples.
 
-    Uses the generic ``find_all``, which iterates ``model_fields``. The
-    hand-rolled traversal this replaced recursed a hardcoded tuple of
-    attribute names with no ``pipeline`` entry, so nothing inside
-    ``toscalar(...)`` / ``materialize(...)`` / a bare subquery was ever
-    counted, and it probed operator fields by ``hasattr`` from a fixed list
-    that missed ``SortOp.expressions``, ``TopOp.by``, ``RangeOp.start``, and
-    others. Measured when the swap was made, over the 33 fixtures the corpus
-    held then: the generic walker reaches 3661 nodes against the old walk's
-    3179, with nothing lost. (The corpus is 49 fixtures now; the comparison
-    is not re-runnable, since the walk it beat no longer exists.)
+    The generic ``find_all`` iterates ``model_fields``, so every nested
+    sub-pipeline — a ``toscalar(...)`` or ``materialize(...)`` argument, a
+    bare subquery — is reached without a hand-maintained list of attribute
+    names to recurse into.
 
-    ``find_all`` over the whole ``QueryIR`` covers ``let`` right-hand sides
-    and ``additional_pipelines`` for free -- a gap reachable only through one
-    is still a gap, and walking ``main_pipeline`` alone is how an unpopulated
-    tabular ``rhs_pipeline`` went unreported here.
+    ``find_all`` runs over the whole ``QueryIR``, not ``main_pipeline``
+    alone, so every ``let`` binding's right-hand side (a tabular
+    ``rhs_pipeline`` included) and ``additional_pipelines`` are covered
+    too — a gap reachable only through one of those is still a gap.
     """
     from kustology.ir import Operator, UnknownExpr, UnknownOp, UnknownSource, find_all
 
@@ -84,10 +78,10 @@ def _walk(ir, unknown_exprs: Counter, unknown_sources: Counter, unspecialized_op
         per_kind_examples["<UnknownSource>"].append(query_name)
 
     for op in find_all(ir, Operator):
-        # Two shapes of "dispatch fell through". Strict identity catches the
-        # bare-base-class fallthrough (isinstance would match every subclass);
-        # UnknownOp is what _visit_operator actually emits today, and being an
-        # Operator subclass it slipped past an identity-only filter.
+        # Two shapes of dispatch fallthrough. Strict identity catches a bare
+        # base-class Operator (isinstance would match every subclass);
+        # UnknownOp -- what _visit_operator emits on fallthrough -- is an
+        # Operator subclass, so it needs its own isinstance arm.
         if type(op) is Operator:
             unspecialized_ops["<bare Operator>"] += 1
             per_kind_examples["<bare Operator>"].append(query_name)
@@ -199,7 +193,6 @@ def main() -> int:
     print(f"  unspecialized ops:     {sum(unspecialized_ops.values())}")
 
     if tmp_clone is not None:
-        # Best-effort cleanup; ignore failures.
         import shutil
         shutil.rmtree(tmp_clone, ignore_errors=True)
 

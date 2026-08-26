@@ -121,10 +121,11 @@ def test_walk_with_predicate_filters_yielded_nodes():
 def test_walk_descends_tuple_valued_fields():
     """``CaseExpr.branches`` is ``list[tuple[Expr, Expr]]``.
 
-    The walker descended list- and dict-valued fields but not tuples, so
-    every expression inside a ``case(...)`` arm was invisible to
-    ``walk``/``find_all`` — including whole sub-pipelines, had one been
-    nested there. Only the ``default`` arm, a plain field, was reachable.
+    Guards tuple descent: a walker that descends list- and dict-valued
+    fields but not tuples leaves every expression inside a ``case(...)``
+    arm invisible to ``walk``/``find_all`` — including whole sub-pipelines,
+    were one nested there — reaching only the ``default`` arm, a plain
+    field.
     """
     from kustology.ir import CaseExpr
 

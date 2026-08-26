@@ -3,22 +3,18 @@
 
 """Every ``Pipeline`` union member must round-trip back to its own class.
 
-``Pipeline.source``, ``Pipeline.operators``, ``SearchOp.tables`` and
-``FindOp.tables`` used to carry ``union_mode="left_to_right"`` plus a
-hand-maintained ordering rule (fields-less classes first, ``UnknownOp``/
-``UnknownSource`` last): pydantic's default "smart" mode would otherwise
-prefer a defaulted-fields class over the true fields-less one when given a
-span+kind payload, so the position of every member in the list mattered.
-``expr.AnyExpr`` never carried that config, but plain "smart" mode has the
-same order-dependent tie-break among structurally identical members --
-a kind-less ``And``/``Or`` payload (both just ``span`` + ``operands``)
-silently validated as whichever came first in the ``Union``. That failure
-mode no longer exists for any of the five -- all are now
-``Field(discriminator="kind")``, and every member of them carries a unique
+``Pipeline.source``, ``Pipeline.operators``, ``SearchOp.tables``,
+``FindOp.tables`` and ``expr.AnyExpr`` are each
+``Field(discriminator="kind")``, and every member carries a unique
 ``kind: Literal[...]``, so member order is cosmetic and a kind-less or
 mismatched payload is rejected by name instead of absorbed by shape (see
 ``test_operator_payload_without_kind_is_rejected_with_a_discriminator_error``
-below).
+below). Without the discriminator, pydantic's default "smart" mode ties by
+shape: it would prefer a defaulted-fields class over a true fields-less one
+when given a span+kind payload, so the position of every member in the list
+would matter, and a kind-less ``And``/``Or`` payload (both just ``span`` +
+``operands``) would silently validate as whichever came first in the
+``Union``.
 
 The exhaustive-membership checks and round-trip tests stay regardless: a
 discriminator only changes *how* a payload is matched to a class, not
@@ -26,8 +22,8 @@ whether a class can go missing from the union declaration or a ``Literal``
 can be mis-declared, so the same coverage still catches both.
 
 The two membership assertions are the load-bearing half. Without them a
-class added to the union later would simply not be exercised, and the
-silent failure mode -- a ``FilterOp`` payload validating as a fields-less
+class added to the union later would not be exercised, and the silent
+failure mode -- a ``FilterOp`` payload validating as a fields-less
 ``GetSchemaOp`` with the predicate dropped -- is exactly the one that
 produces a passing test suite and a wrong IR.
 """
@@ -71,12 +67,12 @@ def _sample(annotation):
 
     Every field is filled, not just the required ones. Filling only what is
     required leaves each defaulted field at its default, and a payload made
-    entirely of defaults is exactly the shape the ORDERING RULE warns
-    about — ``{"kind": …, "span": …, "predicate": null, "tables": []}`` is
-    what a fields-less class's payload has to be told apart from. Giving
-    every optional field a non-default value also puts it through the
-    round-trip, which is where a mis-declared ``Literal`` or a container
-    type the validator coerces would show up.
+    entirely of defaults is exactly the shape a smart-mode union could not
+    tell apart by shape alone -- ``{"kind": …, "span": …, "predicate": null,
+    "tables": []}`` is what a fields-less class's payload has to be told
+    apart from. Giving every optional field a non-default value also puts
+    it through the round-trip, which is where a mis-declared ``Literal`` or
+    a container type the validator coerces would show up.
     """
     annotation = _unwrap(annotation)
     if annotation is Span:
@@ -182,8 +178,8 @@ def test_operator_round_trips_to_its_own_class(sample):
 
 
 def test_operator_payload_without_kind_is_rejected_with_a_discriminator_error():
-    """Under left_to_right unions a kind-less payload was absorbed by shape
-    (20 of 53 classes collapsed onto a structural twin). A discriminated
+    """Under a shape-based ("smart") union, a kind-less payload is absorbed
+    by whichever structurally compatible class comes first. A discriminated
     union refuses it by name instead."""
     import pydantic
     import pytest

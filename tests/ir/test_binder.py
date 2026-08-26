@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-"""Provenance and honesty tests for ``SchemaAttacher``.
+"""Test the provenance and honesty contracts of ``SchemaAttacher``.
 
 Two contracts are under test and they are deliberately separate.
 
@@ -11,12 +11,12 @@ from, across ``project`` / ``summarize`` / joins / unions / ``search`` /
 file is that.
 
 **Honesty** is the other half: ``Pipeline.result_schema`` is Microsoft's
-``ResultType`` or it is ``None``. The hand-rolled per-operator schema rules
-that used to answer here are gone, so the *schemas* are pinned in
-``tests/ir/test_binder_oracle.py`` against the binder rather than against a
-hand-written expectation. What is pinned here is the shape of the contract —
-where an answer appears, where ``None`` appears, and that ``None`` and an
-empty ``TabularSchema`` stay distinguishable.
+``ResultType`` or it is ``None`` — there are no hand-rolled per-operator
+schema rules. The *schemas* are pinned in ``tests/ir/test_binder_oracle.py``
+against the binder rather than against a hand-written expectation. What is
+pinned here is the shape of the contract — where an answer appears, where
+``None`` appears, and that ``None`` and an empty ``TabularSchema`` stay
+distinguishable.
 """
 
 import pytest
@@ -59,8 +59,8 @@ def attacher(schema):
 
 def test_an_open_symbol_gets_no_invented_schema():
     """Partial schemas are the norm; where Microsoft declines to type an
-    operator (open symbol -- the table is not in the dict), the IR now says
-    result_schema=None instead of a hand-computed guess."""
+    operator (open symbol -- the table is not in the dict), the IR says
+    result_schema=None rather than a hand-computed guess."""
     ir = parse("Unknown | project a, b").to_ir(attach_schema={"T": {"a": "long"}})
     (op,) = ir.main_pipeline.operators
     assert op.result_schema is None
@@ -68,9 +68,9 @@ def test_an_open_symbol_gets_no_invented_schema():
 
 
 def test_provenance_still_fills_under_an_open_symbol():
-    """Deleting the schema rules must not delete provenance: a column read
-    from a table the dict does describe keeps its table even when a later
-    operator is open."""
+    """Honesty must not cost provenance: a column read from a table the
+    dict does describe keeps its table even when a later operator is
+    open."""
     q = "T | where a > 1 | lookup Unknown on a | project a"
     ir = parse(q).to_ir(attach_schema={"T": {"a": "long"}})
     from kustology.ir import FilterOp
@@ -96,10 +96,9 @@ def test_a_symbol_can_close_mid_pipeline_over_an_undescribed_table():
 
     ``T | count`` returns ``Count:long`` whatever ``T`` is, so the binder
     closes the symbol there even though the source is unknown, and the
-    answer survives with no schema dict at all. ``getschema`` was probed the
-    same way and answers the same: its four columns *describe* the input's
-    shape rather than passing it through, so they can be named without
-    knowing it.
+    answer survives with no schema dict at all. ``getschema`` answers the
+    same way: its four columns *describe* the input's shape rather than
+    passing it through, so they can be named without knowing it.
     """
     assert parse("T | count").to_ir().main_pipeline.result_schema.columns == {
         "Count": "long",
@@ -164,13 +163,14 @@ def test_every_documented_schema_value_shape_reaches_the_walk(value, expect_type
 
 
 def test_a_schema_string_does_not_crash_the_walks_type_fallback():
-    """Historical regression pin: ``_fill``'s type fallback used to do
-    ``schemas[table].get(name)``, which raised ``AttributeError`` against a
-    string schema value. Since the reroute, ``core.to_ir`` normalizes every
-    schema shape (dict/string/list) through ``build_global_state`` before
-    ``SchemaAttacher`` ever runs, so a raw string no longer reaches this
-    code on the public path -- this test pins the public path against the
-    historical crash rather than exercising the fallback directly.
+    """A string-valued schema entry must ride the public path unharmed.
+
+    ``core.to_ir`` normalizes every schema shape (dict/string/list) through
+    ``build_global_state`` before ``SchemaAttacher`` ever runs, so a raw
+    string never reaches ``_fill``'s type fallback -- whose
+    ``schemas[table].get(name)`` read raises ``AttributeError`` against a
+    string value. This pins the public path rather than exercising the
+    fallback directly.
     """
     import warnings
 
@@ -182,13 +182,14 @@ def test_a_schema_string_does_not_crash_the_walks_type_fallback():
 
 
 def test_a_schema_string_does_not_crash_the_search_seeding():
-    """Historical regression pin: ``search`` used to seed
-    ``ScopeEntry(columns=dict(...))`` straight from the schema value, and
-    ``dict("(a:long)")`` is a ``ValueError``. Since the reroute,
-    ``core.to_ir`` normalizes the schema shape before ``SchemaAttacher`` ever
-    runs, so this string no longer reaches the seeding code on the public
-    path either -- a different crash site from the one above, pinned the
-    same way, against a perfectly ordinary type.
+    """The second crash site for a string-valued schema entry.
+
+    ``search`` seeds ``ScopeEntry(columns=dict(...))`` from the schema
+    value, and ``dict("(a:long)")`` is a ``ValueError``. ``core.to_ir``
+    normalizes the schema shape before ``SchemaAttacher`` ever runs, so the
+    raw string never reaches the seeding code on the public path either --
+    a different crash site from the one above, pinned the same way, against
+    a perfectly ordinary type.
     """
     ir = parse("search in (T) 'x'").to_ir(attach_schema={"T": "(a:long)"})
     assert ir.main_pipeline.result_schema.columns == {
@@ -443,7 +444,7 @@ def test_let_names_do_not_leak_between_enrich_calls(schema):
 
 
 def test_builder_schemas_snapshot_reaches_body_pipelines(schema):
-    """Precondition, not behaviour: ``find_all(ir, Pipeline)`` is a generic
+    """Precondition, not behavior: ``find_all(ir, Pipeline)`` is a generic
     walk, so it already reaches a let-function's ``body_pipeline`` -- the
     ``_builder_schemas`` snapshot ``enrich`` takes at entry covers it before
     ``_walk_function_body`` exists to consume it. Pinned directly rather
@@ -485,18 +486,17 @@ def test_a_tabular_parameters_columns_answer_no_table_rather_than_the_callers(sc
     as though it were a real, schema-described table.
 
     Probed and pinned rather than assumed: the alternative honest-looking
-    answer was ``table="X"`` (the parameter's own name, still labelling the
+    answer was ``table="X"`` (the parameter's own name, still labeling the
     source even though no columns are known). Through this test's own
     resolution path -- an ordinary bare ``ColumnRef``, filled by
     ``_resolve_column_table``/``_column_origins`` -- that never happens:
     those only ever answer from a scope entry's *known* columns, so an
     unknown column of a masked entry resolves to ``None`` the same way an
     unknown column of any other schema-less table would. This is **not**
-    the whole story, though -- ``_resolve_side``'s single-entry fallback (a
+    the whole story, though: ``_resolve_side``'s single-entry fallback (a
     *different* resolution path, reached only from inside a join's ``on``
-    clause) used to answer the parameter's own name here, because
-    ``ScopeEntry.table`` carried it regardless of masking; that leak and its
-    fix (``_entry_table``) are covered separately by
+    clause) reads ``ScopeEntry.table`` directly, so it needs its own guard,
+    ``_entry_table``, covered separately by
     ``test_a_masked_tabular_parameters_own_name_does_not_surface_inside_a_joins_on_clause``.
 
     The parameter is named after a real schema table on purpose, and ``a``
@@ -518,25 +518,20 @@ def test_a_tabular_parameters_columns_answer_no_table_rather_than_the_callers(sc
 def test_a_masked_tabular_parameters_own_name_does_not_surface_inside_a_joins_on_clause(
     schema,
 ):
-    """A second, separate leak path for the same root cause as the test
-    above -- caught by review, not by the original probe.
+    """Guards a second, separate resolution path to the same masked name.
 
-    ``_source_entry``'s plain-``TableRef`` branch used to write the bare
-    name into ``ScopeEntry.table`` unconditionally; only ``_table_schema``
-    (the *columns*) knew about the mask. ``$left.AccountName`` has no known
-    column to resolve by name here (the left side's one entry is masked to
-    ``columns={}``), so it falls through to ``_resolve_side``'s
-    single-entry fallback -- built for an honestly-unknown table, where one
-    entry unambiguously names the side even with no columns to confirm it.
-    That fallback read ``entries[0].table`` straight back out, which used
-    to be the parameter's own (colliding) name: the exact leak masking
-    exists to prevent, on a path the original test's docstring claimed
-    (wrongly, as it turns out) could not reach it. ``_entry_table`` closes
-    it at the source: a masked name never becomes a ``ScopeEntry.table``
-    label in the first place, so this fallback answers ``None`` for free.
+    ``$left.AccountName`` has no known column to resolve by name here (the
+    left side's one entry is masked to ``columns={}``), so it falls through
+    to ``_resolve_side``'s single-entry fallback -- built for an
+    honestly-unknown table, where one entry unambiguously names the side
+    even with no columns to confirm it. That fallback reads
+    ``entries[0].table``, so ``_entry_table`` guards it directly: a masked
+    name never becomes a ``ScopeEntry.table`` label in the first place, so
+    this fallback answers ``None`` rather than the parameter's own
+    (colliding) name.
 
     The real right-hand table is a plain, unmasked reference and is
-    unaffected -- only the masked left side used to leak.
+    unaffected -- only the masked left side is at risk here.
     """
     ir = parse(
         "let f = (DeviceProcessEvents:(*)) { "
@@ -726,10 +721,10 @@ def test_a_search_over_a_non_tabular_let_alias_does_not_surface_through_a_later_
 ):
     """The sibling of the masking test above, for the other half of the same
     ``ScopeEntry(table=..., columns={})`` fallback: ``search``/``find``'s
-    ``LetRef`` seeding wrote ``table=alias`` even when ``alias`` never
-    reached ``_let_schemas`` (a scalar ``let``, a function binding, a
-    tabular ``let`` the binder could not close), the one case
-    ``_source_entry`` already got right for a pipeline's own source
+    ``LetRef`` seeding must answer ``table=None``, not ``table=alias``, when
+    ``alias`` never reached ``_let_schemas`` (a scalar ``let``, a function
+    binding, a tabular ``let`` the binder could not close) -- the one case
+    ``_source_entry`` already gets right for a pipeline's own source
     position (see ``_source_entry``'s ``LetRef`` branch).
 
     Unreachable through the columns path directly -- an empty-columns entry
@@ -737,8 +732,8 @@ def test_a_search_over_a_non_tabular_let_alias_does_not_surface_through_a_later_
     reads every contributing entry's ``.table`` regardless of its columns,
     so the same right-side-of-a-join reproduction as the masking test above
     surfaces it: with ``A`` a scalar (no schema, never registered in
-    ``_let_schemas``), ``search in (A)`` used to hand ``$right.Unknown``
-    the label ``"A"`` -- a table the query never actually read from.
+    ``_let_schemas``), a naive seeding would hand ``$right.Unknown`` the
+    label ``"A"`` -- a table the query never actually read from.
     """
     ir = parse(
         "let A = 5; DeviceFileEvents | join (search in (A) 'x') "
@@ -978,9 +973,9 @@ def test_project_rename_provenance_needs_a_real_column_on_the_right():
     """The thread is only followed where there is an input name to follow.
 
     Every ``project-rename`` term the parser accepts has a ``ColumnRef`` on
-    the right, so this guards a hand-built or unmodelled IR rather than a
+    the right, so this guards a hand-built or unmodeled IR rather than a
     query: with no column to carry from, the target files anonymously
-    instead of borrowing a neighbour's table.
+    instead of borrowing a neighbor's table.
     """
     from kustology.ir.binder import _renamed_columns
     from kustology.ir.expr import LiteralExpr
@@ -1002,7 +997,7 @@ def test_project_rename_provenance_needs_a_real_column_on_the_right():
 
 
 def test_a_computed_column_has_no_table_and_does_not_borrow_one():
-    """``origins`` must record "invented here", not inherit the neighbours'."""
+    """``origins`` must record "invented here", not inherit the neighbors'."""
     ir = _dict_path("T | project n = a + 1, k | where n > 1")
     tables = _tables(ir)
     assert tables["k"] == {"T"}
@@ -1171,13 +1166,13 @@ def test_lookups_bare_on_key_resolves_to_the_left_side_too():
 
 
 def test_enriching_twice_does_not_change_result_schema():
-    """The invariant inverted when the walk stopped deriving schemas.
+    """Guards re-enriching an already-bound IR as a no-op on
+    ``result_schema``.
 
-    ``enrich`` used to compute the shape, so handing a second attacher a
-    different dict changed the answer. It now only ever writes back a copy
-    of what Microsoft stamped, so a second call is a no-op on
-    ``result_schema`` no matter what dict it carries — and *re-binding* is
-    how a caller changes a schema. The operator-less branch is the one that
+    ``enrich`` only ever writes back a copy of what Microsoft stamped, never
+    recomputing the shape, so a second call with a different dict leaves
+    ``result_schema`` unchanged no matter what dict it carries -- only
+    *re-binding* changes a schema. The operator-less branch is the one that
     reads the pipeline's own field back, so it is the one that has to be
     pinned.
     """
@@ -1193,13 +1188,12 @@ def test_enriching_twice_does_not_change_result_schema():
 
 
 def test_enriching_twice_does_not_wipe_an_operator_less_let_binding():
-    """The regression the unconditional snapshot exists to prevent.
+    """Guards the regression the unconditional snapshot prevents.
 
     ``enrich`` reads each binding's ``result_schema`` to register what the
     alias holds. With no operators there is nothing else to read the shape
-    off, so if the snapshot of the builder's value were skipped on a second
-    call — as it used to be once ``schema_attached`` was set — the binding
-    and everything resolving through it would go to ``None``.
+    off, so skipping the snapshot of the builder's value on a second call
+    would send the binding and everything resolving through it to ``None``.
     """
     ir = parse("let M = materialize(T); M | project a").to_ir(
         attach_schema={"T": {"a": "long"}},
@@ -1502,19 +1496,19 @@ def test_an_unparseable_query_gets_no_result_schema():
 
 
 @pytest.mark.parametrize("schema,query,expect", [
-    # Two separate effects, and only the first is pre-existing.
+    # Two separate effects.
     #
     # (1) An *unqualified* `search` seeds every table the dict describes --
-    #     the dict standing in for "every table in the database". That is
-    #     older than this walk and unchanged by it; cases 2 and 3 are it.
+    #     the dict standing in for "every table in the database". Cases 2
+    #     and 3 exercise it.
     #
-    # (2) The seeded entries are now *appended* to whatever scope the
-    #     operator inherited, where the old rule replaced the scope
-    #     wholesale (`scope[:] = [...]`). This is new here, and it applies
-    #     to a qualified `search in (U)` just as much as an unqualified one
-    #     -- case 1 is qualified. Replacing the scope would be a statement
-    #     about the operator's *output*, which is Microsoft's to make and
-    #     which it does make; appending keeps the walk to what it is for.
+    # (2) The seeded entries are *appended* to whatever scope the operator
+    #     inherited, rather than replacing it wholesale (`scope[:] =
+    #     [...]`) -- it applies to a qualified `search in (U)` just as much
+    #     as an unqualified one, case 1 being qualified. Replacing the scope
+    #     would be a statement about the operator's *output*, which is
+    #     Microsoft's to make and which it does make; appending keeps the
+    #     walk to what it is for.
     #
     # Both cost provenance only, and cost it as ambiguity rather than as a
     # wrong table: a name two entries disagree about answers `None`. Case 1
@@ -1547,12 +1541,11 @@ def test_the_unknown_column_sentinel_is_microsofts_word_and_only_microsofts():
     reason for the split is that ``columns`` values are Microsoft's type
     *names*: ``ScalarTypes.Unknown.Name`` is literally ``"unknown"``.
 
-    Since the schema rules were retired there is only one producer of that
-    dict — the builder, copying the binder's stamp — so the two spellings
-    can no longer meet in one field by accident. Both halves are pinned:
-    Microsoft's word arrives, and ``enrich`` cannot introduce a second
-    spelling over the top of it because it no longer writes type strings at
-    all.
+    Only one thing produces that dict — the builder, copying the binder's
+    stamp — so the two spellings cannot meet in one field by accident. Both
+    halves are pinned: Microsoft's word arrives, and ``enrich`` cannot
+    introduce a second spelling over the top of it, because it writes no
+    type strings at all.
     """
     import warnings
 

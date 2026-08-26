@@ -31,7 +31,7 @@ def test_time_functions_reads_every_overload_not_just_the_first():
 
     Their overload lists are ``[None, timespan, datetime, datetime]`` and
     ``[None, timespan, timespan, datetime]``: reading signature zero alone
-    saw ``None`` and filed the two most common temporal functions in KQL
+    sees ``None`` and files the two most common temporal functions in KQL
     under ``scalar_functions()``.
     """
     funcs = time_functions()
@@ -66,7 +66,7 @@ def test_all_function_names_includes_names_dir_cannot_see():
 
     ``Functions.ToString``, ``Functions.GetType`` and ``Functions.All`` are
     shadowed by ``System.Object.ToString`` / ``GetType`` and by the symbol
-    list itself, so enumerating with ``dir()`` silently dropped ``tostring``
+    list itself, so enumerating with ``dir()`` silently drops ``tostring``
     — the most-called scalar function in Sentinel content — along with
     ``gettype`` and ``all``. ``Functions.All`` lists all three.
     """
@@ -76,9 +76,12 @@ def test_all_function_names_includes_names_dir_cannot_see():
 
 
 def test_scalar_and_aggregate_functions_are_disjoint():
-    """``any``, ``hll_merge``, ``merge_tdigest`` and ``tdigest_merge`` are
-    declared in both ``Functions`` and ``Aggregates``. They are aggregates;
-    a caller asking "is this a scalar function?" got yes for all four."""
+    """Names declared in both ``Functions`` and ``Aggregates`` stay aggregates.
+
+    ``any``, ``hll_merge``, ``merge_tdigest``, and ``tdigest_merge`` appear
+    in both symbol lists. They are aggregates; left in the scalar bucket
+    they answer yes to "is this a scalar function?" for all four.
+    """
     overlap = aggregate_functions() & scalar_functions()
     assert overlap == set(), f"scalar_functions() still carries aggregates: {sorted(overlap)}"
     for agg in ("any", "hll_merge", "merge_tdigest", "tdigest_merge"):
@@ -86,9 +89,12 @@ def test_scalar_and_aggregate_functions_are_disjoint():
 
 
 def test_plugin_functions_lists_evaluate_plugins():
-    """``evaluate`` plug-ins live in ``Kusto.Language.PlugIns``, which nothing
-    reflected over — so ``bag_unpack`` and ``pivot`` were absent from every
-    category and from ``all_function_names()``."""
+    """``evaluate`` plug-ins live in ``Kusto.Language.PlugIns``, their own list.
+
+    Reflection that stops at ``Functions`` and ``Aggregates`` never sees
+    ``bag_unpack`` or ``pivot`` — not in any category, and not in
+    ``all_function_names()``.
+    """
     plugins = plugin_functions()
     for canonical in ("bag_unpack", "pivot", "narrow", "sql_request"):
         assert canonical in plugins, f"expected {canonical!r} in plugin_functions(); got {sorted(plugins)[:20]}"
@@ -101,13 +107,14 @@ def test_plugin_functions_lists_evaluate_plugins():
 
 
 def test_syntax_kinds_has_expected_breadth():
-    """SyntaxKind reflection: every enum member as a string. Sanity-check size
-    + a few canonical members. The actual coverage audit lives elsewhere
-    (scripts/audit_syntax_kinds.py)."""
+    """Sanity-check the size and a few canonical members of ``syntax_kinds()``.
+
+    The coverage audit itself lives in ``scripts/audit_syntax_kinds.py``.
+    """
     kinds = syntax_kinds()
     # The Kusto syntax grammar is broad — sanity-check that reflection
-    # returned a real result, not an empty fallback. 100 is well below the
-    # real number (~600).
+    # returned a real result, not an empty fallback. 100 sits far below the
+    # enum's real size, so only an empty or truncated result trips this.
     assert len(kinds) > 100, f"expected >100 SyntaxKinds via reflection, got {len(kinds)}"
     # SyntaxKind names are granular (AddExpression / EqualExpression / etc.)
     # rather than the Python class names ("BinaryExpression") the IR builder
@@ -117,11 +124,11 @@ def test_syntax_kinds_has_expected_breadth():
 
 
 def test_plugin_functions_is_exported_from_the_package_root():
-    """The brief required both exports; only ``reflection``'s was exercised.
+    """``kustology.plugin_functions`` is the import path a caller actually writes.
 
-    ``kustology.plugin_functions`` is the import path a caller actually
-    writes, and a name missing from ``__all__`` is invisible to
-    ``from kustology import *`` and to documentation tooling.
+    A name missing from ``__all__`` is invisible to
+    ``from kustology import *`` and to documentation tooling, so the root
+    re-export is asserted directly rather than assumed from ``reflection``'s.
     """
     import kustology
 

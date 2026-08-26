@@ -1,6 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
+"""Start the CLR, load ``Kusto.Language``, and re-export its core types.
+
+Importing this module has process-wide side effects, in order: CoreCLR is
+initialized, the bundled ``Kusto.Language.dll`` is referenced, and .NET's
+culture is pinned to invariant — see :func:`_pin_invariant_culture` for why
+the pin is global and permanent. Downstream modules import from here — or
+import this module for its side effects — so initialization precedes any
+use of the CLR.
+"""
+
 import logging
 import os
 import sys
@@ -10,6 +20,8 @@ import pythonnet
 
 logger = logging.getLogger(__name__)
 
+# The `opt` symlink, not a `Cellar/X.Y.Z/` path, so detection survives
+# `brew upgrade`.
 _HOMEBREW_OPT_PATHS = [
     Path("/opt/homebrew/opt/dotnet/libexec"),
     Path("/usr/local/opt/dotnet/libexec"),
@@ -24,6 +36,7 @@ _USER_PATHS = [Path.home() / ".dotnet"]
 
 
 def _is_dotnet_root(path: Path) -> bool:
+    """Test whether ``path`` holds a dotnet install with its ``host/fxr`` tree."""
     return path.is_dir() and (path / "host" / "fxr").is_dir()
 
 
@@ -34,6 +47,17 @@ def _candidate_dotnet_roots():
 
 
 def _load_runtime() -> None:
+    """Initialize CoreCLR, probing known dotnet roots when the default fails.
+
+    pythonnet defaults to Mono off-Windows, so coreclr is always requested
+    explicitly. An explicit ``DOTNET_ROOT`` is honored with no fallback:
+    when the host pins a root, failing loudly there beats probing past it.
+    Otherwise the default load runs first, then each candidate root in
+    turn. The probes exist because ``clr_loader.find_dotnet_root()`` falls
+    back to the parent of ``which dotnet``, which is wrong for Homebrew's
+    layout — ``libhostfxr.dylib`` lives under ``<dotnet>/libexec/host/fxr/``,
+    not ``<dotnet>/bin/host/fxr/``.
+    """
     if pythonnet.get_runtime_info():
         return
 
@@ -119,6 +143,12 @@ def _pin_invariant_culture() -> None:
 
 
 def _initialize_bridge() -> None:
+    """Load the runtime, reference ``Kusto.Language.dll``, and pin culture.
+
+    The pin comes last because it imports ``System.*``, which needs a live
+    CLR; it still runs at import time, before anything can parse, so the
+    first read of any ``LiteralValue`` happens under invariant culture.
+    """
     _load_runtime()
 
     import clr

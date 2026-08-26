@@ -34,7 +34,7 @@ def _safe_name(sym: object) -> str | None:
 
 
 def _safe_return_type_name(sym: object) -> str | None:
-    """A function's return-type name, lowercased, across *every* overload.
+    """Return a function's return-type name, lowercased, across every overload.
 
     ``Signature.DeclaredReturnType`` carries the primitive type symbol for
     fixed-return functions (``strcat`` → string, ``ago`` → datetime).
@@ -42,13 +42,14 @@ def _safe_return_type_name(sym: object) -> str | None:
     need ``GetReturnType()`` resolution at the call site — not something we
     can do offline here.
 
-    A function has one ``Signature`` per overload and they need not agree.
+    A function has one ``Signature`` per overload and they need not agree:
     ``bin`` declares ``[None, timespan, datetime, datetime]`` and ``bin_at``
-    ``[None, timespan, timespan, datetime]``, so reading signature zero saw
-    ``None`` for the two functions almost every Sentinel query uses to bucket
-    time and filed both under ``scalar``. ``datetime`` / ``timespan`` wins as
-    soon as any overload declares it; otherwise the first declared name is
-    used, and ``None`` means no overload declared one at all.
+    ``[None, timespan, timespan, datetime]``, so reading signature zero alone
+    reports ``None`` for the two functions almost every Sentinel query uses
+    to bucket time and files both under ``scalar``. ``datetime`` /
+    ``timespan`` wins as soon as any overload declares it; otherwise the
+    first declared name is used, and ``None`` means no overload declared one
+    at all.
     """
     try:
         signatures = getattr(sym, "Signatures", None)
@@ -73,26 +74,25 @@ def _safe_return_type_name(sym: object) -> str | None:
 
 
 def _enumerate_static_symbols(container_name: str) -> dict[str, object]:
-    """Return ``{symbol_name: symbol}`` for every ``FunctionSymbol`` the named
-    ``Kusto.Language.<container>`` class declares.
+    """Return every ``FunctionSymbol`` static on ``Kusto.Language.<container_name>``, keyed by symbol name.
 
     ``container.All`` — an ``IReadOnlyList[FunctionSymbol]`` — is the
     authoritative list and is read first. Enumerating with ``dir()`` alone
     loses any static whose .NET name collides with a member of
     ``System.Object`` or with the list itself: ``Functions.ToString``,
-    ``Functions.GetType`` and ``Functions.All`` are shadowed, so ``tostring``
-    — the most-called scalar function in Sentinel content — ``gettype`` and
-    ``all`` were absent from every category this module publishes.
+    ``Functions.GetType`` and ``Functions.All`` are shadowed, hiding
+    ``tostring`` — the most-called scalar function in Sentinel content —
+    ``gettype`` and ``all`` from every category this module publishes.
 
-    The ``dir()`` sweep is kept as a supplement rather than replaced, because
-    ``All`` is not exhaustive either: ``PlugIns.SchemaMerge`` is a real
-    ``evaluate`` plug-in that ``PlugIns.All`` omits. Neither list subsumes the
-    other, so both are read. What each contributes moves with the assembly and
-    is not a reason to drop either: on the bundled 12.4.1 the ``dir()`` half
-    adds only ``schema_merge``, to ``PlugIns`` -- on 12.3.2 it contributed to
-    ``Functions`` as well, and 12.4.1 folded those into ``Functions.All`` --
-    while ``All`` still recovers ``tostring``, ``gettype`` and ``all``, which
-    ``dir()`` alone cannot see.
+    The ``dir()`` sweep supplements ``All`` rather than yielding to it,
+    because ``All`` is not exhaustive either: ``PlugIns.SchemaMerge`` is a
+    real ``evaluate`` plug-in that ``PlugIns.All`` omits. Neither list
+    subsumes the other, so both are read. What each contributes moves with
+    the assembly and is not a reason to drop either: on the bundled 12.4.1
+    the ``dir()`` half adds only ``schema_merge``, to ``PlugIns`` — on 12.3.2
+    it contributed to ``Functions`` as well, and 12.4.1 folded those into
+    ``Functions.All`` — while ``All`` still recovers ``tostring``,
+    ``gettype`` and ``all``, which ``dir()`` alone cannot see.
     """
     out: dict[str, object] = {}
     try:
@@ -177,11 +177,11 @@ def _load() -> None:
         all_set.add(name)
         plugin_set.add(name)
 
-    # Four names -- `any`, `hll_merge`, `merge_tdigest`, `tdigest_merge` --
+    # Four names — `any`, `hll_merge`, `merge_tdigest`, `tdigest_merge` —
     # are declared in both `Functions` and `Aggregates`. They are aggregates,
     # and `scalar` is defined as the leftovers, so the aggregate list wins.
-    # Without this a caller asking "is this a scalar function?" got yes for
-    # all four. `time` and `string` need no such subtraction: neither
+    # Without the subtraction a caller asking "is this a scalar function?"
+    # gets yes for all four. `time` and `string` need none: neither
     # intersects `Aggregates` on the bundled assembly.
     scalar_set -= agg_set
 

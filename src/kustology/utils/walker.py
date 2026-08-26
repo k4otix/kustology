@@ -15,9 +15,9 @@ Both recursive helpers stop at :data:`MAX_AST_DEPTH`.
 
 from __future__ import annotations
 
-# Bridge import elsewhere in the package (``kustology.bridge``) already
-# triggered ``clr.AddReference("Kusto.Language")`` by the time this module is
-# reachable via ``kustology.utils`` — see AGENTS.md.
+# ``kustology.bridge`` has already run ``clr.AddReference("Kusto.Language")``
+# by the time this module is reachable via ``kustology.utils`` — see
+# AGENTS.md.
 #
 # ``IncludeTrivia`` selects how much of the whitespace and comments around a
 # node ``ToString()`` renders. The no-argument overload is ``All``, which
@@ -36,13 +36,13 @@ from Kusto.Language.Syntax import IncludeTrivia
 # them — where a caller cannot do anything useful with it.
 #
 # 300 is comfortably inside the frame budget (the emitters and JSON
-# serialization stack on top of the walk) and comfortably above real KQL --
-# though real KQL is deeper than it looks, so the margin is 7x and not the
-# 17x an earlier version of this comment implied. Counting the root as level
-# 0 (the convention ``visit`` uses), the 49-fixture Sentinel corpus has a
-# median depth of 18, a deepest of 42, and 22 fixtures past 20; a
-# 100-operator pipe chain, which nests left-associatively one level per
-# operator, reaches 106.
+# serialization stack on top of the walk) and comfortably above real KQL —
+# though real KQL is deeper than it looks: measured against the deepest
+# fixture, the margin is about 7x, not the 17x the median suggests.
+# Counting the root as level 0 (the convention ``visit`` uses), the
+# 49-fixture Sentinel corpus has a median depth of 18, a deepest of 42, and
+# 22 fixtures past 20; a 100-operator pipe chain, which nests
+# left-associatively one level per operator, reaches 106.
 MAX_AST_DEPTH = 300
 
 _NAME_NODE_KINDS = frozenset(
@@ -57,7 +57,7 @@ _NAME_NODE_KINDS = frozenset(
 
 
 class KustoWalker:
-    """Base class for manual AST traversal. Override pre_visit / post_visit.
+    """Base class for manual AST traversal; override ``pre_visit`` / ``post_visit``.
 
     The walk stops descending at :data:`MAX_AST_DEPTH`. A node at the cap is
     still visited — ``pre_visit`` and ``post_visit`` both run for it — but
@@ -160,8 +160,9 @@ def node_name(node) -> str:
     ``NameDeclaration`` is the *declaring* side of a name — the ``X`` in
     ``let X = ...`` or ``| as X`` — and belongs here for the same reason:
     analyzers match declarations against references by name, so the two
-    sides must spell a bracketed identifier identically. They did not, and
-    ``let ['weird-name'] = T; ['weird-name'] | take 1`` reported the alias
+    sides must spell a bracketed identifier identically. Reading the
+    declaring side's source text instead splits them, and
+    ``let ['weird-name'] = T; ['weird-name'] | take 1`` reports the alias
     as a second table.
     """
     if str(node.Kind) in _NAME_NODE_KINDS:

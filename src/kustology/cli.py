@@ -21,17 +21,17 @@ neither writes output derived from a query the parser rejected.
 Because 2 is a claim about the *invocation*, the mapping is attached to the
 two places that read one — :func:`_read_input` and :func:`_load_schema`,
 which raise :class:`_UsageError` — and not to a blanket ``except OSError``
-in :func:`main`. A blanket one also covers every ``sys.stdout.write``, so
-``kustology parse --ast --json big.kql | head`` — a correct invocation whose
-reader simply stopped reading — reported a usage error.
+in :func:`main`. A blanket one covers every ``sys.stdout.write`` too, and
+reports a usage error for ``kustology parse --ast --json big.kql | head``
+— a correct invocation whose reader stopped reading.
 
 A broken pipe is neither a usage error nor a verdict. Each command decides
 its exit code before it writes and wraps only the writing in
 :func:`_tolerate_broken_pipe`, so a reader hanging up stops the output and
 nothing else: ``kustology validate q.kql | head`` still exits 1 on a query
 that fails validation. Only a pipe that breaks outside any command's guard
-— i.e. before a code was ever decided — reaches :func:`main`'s own arm and
-exits 0.
+— that is, before a code was ever decided — reaches :func:`main`'s own arm
+and exits 0.
 """
 from __future__ import annotations
 
@@ -68,8 +68,8 @@ class _UsageError(Exception):
 
     Raised where the invocation is actually read (a path we cannot open, a
     ``--schema`` file that is not JSON) so that ``main`` needs no blanket
-    ``except OSError``. The blanket form is what let a ``BrokenPipeError``
-    from a ``sys.stdout.write`` be reported as a usage error.
+    ``except OSError`` — the blanket form reports a ``BrokenPipeError``
+    from a ``sys.stdout.write`` as a usage error.
 
     The message is rendered verbatim after ``error: ``, so callers embed the
     exception's own class name where it is useful (``FileNotFoundError: …``).
@@ -106,9 +106,9 @@ def _read_capped(stream, limit: int, source: str) -> str:
     if isinstance(data, str):
         # An embedder calling `main()` in-process with `sys.stdin` set to a
         # `StringIO` lands here: no `.buffer`, and `read` hands back text.
-        # Silently measuring its length would revert the ceiling to counting
-        # characters — the exact defect this function was rewritten to fix —
-        # and `.decode` would then die with a bare `AttributeError`. Say so.
+        # Silently measuring its length would make the ceiling count
+        # characters — the failure the byte read exists to prevent — and
+        # `.decode` would then die with a bare `AttributeError`. Say so.
         raise TypeError(
             f"{source} is a decoded text stream with no .buffer, so the "
             f"{limit}-byte input ceiling cannot be enforced over it. Pass a "
@@ -131,8 +131,8 @@ def _read_input(args: argparse.Namespace) -> str:
             return _read_capped(f, limit, args.file)
     except OSError as e:
         # Scoped to the read: a path that does not exist, a directory, a
-        # permission denial. `main` no longer classifies OSError at large,
-        # so writes are not swept up with reads.
+        # permission denial. Classifying OSError here, not at large in
+        # `main`, keeps writes from being swept up with reads.
         raise _UsageError(f"{type(e).__name__}: {e}") from e
 
 
@@ -312,13 +312,9 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 def _ast_dict_to_text(node: dict, indent: int = 0) -> str:
     """Render a :func:`~kustology.utils.walker.node_to_dict` tree as text.
 
-    The CLI used to carry its own ``_ast_to_dict`` / ``_ast_to_text`` pair
-    alongside the library's serializer. Three copies of one traversal meant
-    three depth caps to keep honest, and they had already drifted: the CLI's
-    dict left each node's leading trivia in ``text`` where the library's
-    stripped it. Both emitters now render the library's dict, so the JSON and
-    the text form describe the same tree by construction and the depth cap is
-    enforced once, in the walker.
+    Both ``parse`` emitters — this one and the ``--json`` dump — render the
+    library's dict, so the JSON and the text form describe the same tree by
+    construction and the depth cap is enforced once, in the walker.
     """
     label = node["kind"]
     text = node["text"]
@@ -407,13 +403,13 @@ def main(argv: list[str] | None = None) -> int:
     # KQL is arbitrary Unicode, and this CLI's contract is to emit UTF-8 on
     # every platform. Left alone, a Windows console attaches `sys.stdout`
     # with the OS charmap codepage, which cannot encode most of Unicode —
-    # `kustology format`/`parse` on a query containing e.g. Japanese then
+    # `kustology format`/`parse` on a query containing, for example, Japanese
     # dies with a `UnicodeEncodeError` instead of printing. `reconfigure` is
     # only on `io.TextIOWrapper`; a real terminal or pipe has it, but a test
     # double standing in for stdout/stderr (an `io.StringIO`, a bespoke stub)
     # may not, so the `getattr` guard skips those rather than crashing on a
     # missing method. `ValueError`/`OSError` cover a stream that is closed or
-    # otherwise cannot be reconfigured (e.g. a detached buffer); either way we
+    # otherwise cannot be reconfigured (a detached buffer); either way we
     # fall back to whatever encoding it already had rather than fail startup
     # over an encoding upgrade. This runs before any command writes a byte
     # and before `_tolerate_broken_pipe`/`_silence_broken_stdout` ever touch
@@ -453,7 +449,7 @@ def main(argv: list[str] | None = None) -> int:
         # decided and that arm returns 0. A pipe breaking *here* would
         # therefore turn `kustology validate bad.kql | head` into a pass —
         # the exact failure `_tolerate_broken_pipe` exists to prevent, one
-        # frame further out. Today every stdout write in this module is
+        # frame further out. Every stdout write in this module is
         # inside a guard that flushes on the way out, so this flush finds an
         # empty buffer and cannot raise; the handler is what keeps that an
         # implementation detail instead of a load-bearing invariant, and it

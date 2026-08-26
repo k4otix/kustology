@@ -10,10 +10,10 @@ and asserts that the builder doesn't fall back to ``UnknownExpr`` or to a
 bare ``Operator`` — both indicate "this kind of node/operator wasn't handled
 by the builder's dispatch and slipped through as raw."
 
-The walk covers ``ir.let_bindings`` as well as ``ir.main_pipeline``. It did
-not until 0.2, which is why an unpopulated tabular ``let`` right-hand side —
-the dominant Sentinel ``let X = ( T | where … );`` idiom — passed this gate
-green while producing a bare ``UnknownExpr``.
+The walk covers ``ir.let_bindings`` as well as ``ir.main_pipeline``: a walk
+over the main pipeline alone passes an unpopulated tabular ``let``
+right-hand side — the dominant Sentinel ``let X = ( T | where … );`` idiom —
+green while it produces a bare ``UnknownExpr``.
 
 When a new gap surfaces (a real-world query trips one of these assertions),
 the right fix is to add the missing case to ``ir/builder.py``, not to relax
@@ -21,17 +21,16 @@ the assertion.
 
 ## Why some fixtures are synthetic
 
-A gate parametrized over found queries only covers what the sample happened
+A gate parametrized over found queries only covers what the sample happens
 to contain, and the shapes it misses are invisible: the run is green either
-way. That is not hypothetical here. Modelling the ordering clause in 0.2
-regressed ``project-reorder x asc`` to an ``UnknownExpr`` for part of the
-work, and this gate — whose entire job is to catch exactly that — stayed
-green, because all 33 fixtures at the time spelled ``project-reorder``
-without a direction. The corpus also had no ``fork``, no ``lookup``, no
-``find``, no ``search``, no ``render``, no ``nulls`` ordering, no
-``externaldata`` in source position, no wildcard or ``database()``/
-``cluster()``-qualified table name, and no ``datatable`` carrying an actual
-schema and rows.
+way. A modifier no fixture spells — ``project-reorder x asc`` in a sample
+where every extracted fixture writes ``project-reorder`` without a
+direction — can regress to an ``UnknownExpr`` and sail through a gate whose
+entire job is to catch exactly that. The extracted sample alone also
+reaches no ``fork``, no ``lookup``, no ``find``, no ``search``, no
+``render``, no ``nulls`` ordering, no ``externaldata`` in source position,
+no wildcard or ``database()``/``cluster()``-qualified table name, and no
+``datatable`` carrying an actual schema and rows.
 
 So the corpus is deliberately two things. The Sentinel-derived files supply
 realistic shape and scale; alongside them sits one small hand-written file
@@ -89,30 +88,23 @@ def builder():
 
 
 def _scan(ir):
-    """Every coverage gap in ``ir``, found with the generic walker.
-
-    This replaced three hand-rolled traversals -- one here, one in
-    ``scripts/mine_corpus.py``, one in ``SchemaAttacher`` -- that each
-    recursed a hardcoded tuple of attribute names. All three omitted
-    ``pipeline``, so nothing inside ``toscalar(...)`` / ``materialize(...)``
-    / a bare subquery was ever inspected, and this one also probed operator
-    fields by ``hasattr`` from a fixed list, missing ``SortOp.expressions``,
-    ``TopOp.by``, ``RangeOp.start``/``end``/``step``,
-    ``FacetOp.with_pipeline``, ``MacroExpandOp.pipeline`` and
-    ``MakeSeriesOp.on_column`` among others.
+    """Return every coverage gap in ``ir``, found with the generic walker.
 
     ``find_all`` iterates ``model_fields``, so a gate built on it cannot
-    develop a blind spot when the model grows a field -- which is the whole
-    reason this gate exists. It also covers ``let`` bindings for free,
-    without the separate walk that used to be needed.
+    develop a blind spot when a model grows a field — which is the whole
+    reason this gate exists. A traversal that recurses a hardcoded tuple of
+    attribute names goes blind exactly there: omit ``pipeline`` and nothing
+    inside ``toscalar(...)``, ``materialize(...)``, or a bare subquery is
+    ever inspected; probe operator fields by ``hasattr`` from a fixed list
+    and every field the list misses is exempt. The same walk also covers
+    ``let`` bindings for free.
     """
     return (
         list(find_all(ir, UnknownExpr)),
         # Two shapes of "dispatch fell through": the bare base class (caught by
-        # strict identity -- isinstance would match every subclass) and the
-        # UnknownOp the builder actually emits today. Filtering on identity
-        # alone left this bucket structurally empty, because UnknownOp *is* an
-        # Operator subclass.
+        # strict identity — isinstance would match every subclass) and the
+        # UnknownOp the builder emits. Identity alone leaves this bucket
+        # structurally empty, because UnknownOp *is* an Operator subclass.
         [
             op for op in find_all(ir, Operator)
             if type(op) is Operator or isinstance(op, UnknownOp)
@@ -123,18 +115,15 @@ def _scan(ir):
 
 
 def _degraded_let_bindings(ir) -> list[str]:
-    """Tabular ``let`` right-hand sides that landed on ``rhs_expr``.
+    """Return tabular ``let`` right-hand sides that landed on ``rhs_expr``.
 
-    Closes a hole the ``SubqueryExpr`` work opened. Removing the paren
-    unwrap in ``_visit_let_statement`` used to degrade
-    ``let X = ( T | where … );`` -- the dominant Sentinel idiom -- to an
-    ``UnknownExpr``, which the first assertion caught. Now that a bare
-    tabular subquery is modeled, the same regression degrades it to
-    ``rhs_expr=SubqueryExpr`` with ``inner_tables=[]`` instead, which is a
-    perfectly well-formed node the gate had no reason to flag.
-
-    A ``SubqueryExpr`` on a ``let`` right-hand side always means the unwrap
-    failed: the binding is tabular, so it belongs in ``rhs_pipeline``.
+    A ``SubqueryExpr`` on a ``let`` right-hand side always means the
+    parenthesized-RHS unwrap in ``_visit_let_statement`` did not fire: the
+    binding is tabular, so it belongs in ``rhs_pipeline``. The failure is
+    quiet — a bare tabular subquery is a modeled shape, so the regression
+    degrades ``let X = ( T | where … );`` to ``rhs_expr=SubqueryExpr`` with
+    ``inner_tables=[]``, a perfectly well-formed node the ``UnknownExpr``
+    assertion has no reason to flag.
     """
     return [
         lb.name for lb in ir.let_bindings
@@ -173,12 +162,12 @@ def test_complex_kql_parsing(builder, name, query):
 
 
 def test_gate_walks_let_bindings():
-    """The gate itself must reach into `let` right-hand sides.
+    """Require the gate itself to reach into `let` right-hand sides.
 
-    This is the structural fix: walking only ``main_pipeline`` is what let an
-    unpopulated tabular ``let`` — and the ``UnknownExpr`` standing in for it —
-    ship green through six task reviews. Built from a synthetic IR rather than
-    a query so the coverage survives the builder growing better.
+    Walking only ``main_pipeline`` passes an unpopulated tabular ``let`` —
+    and the ``UnknownExpr`` standing in for it — without a murmur. Built
+    from a synthetic IR rather than a query so the coverage survives the
+    builder growing better.
     """
     from kustology.ir import (
         LetBinding,
@@ -230,11 +219,11 @@ def test_gate_walks_let_bindings():
 def test_gate_sees_unknown_op():
     """``T | reduce by X`` is not dispatched by the builder and must trip the gate.
 
-    ``UnknownOp`` subclasses ``Operator``, so the identity test
-    ``type(op) is Operator`` that this gate used never matched it — and the
-    builder stopped emitting bare ``Operator`` when ``UnknownOp`` landed. The
-    bucket has been structurally empty ever since, which is exactly the blind
-    spot the gate exists to prevent.
+    ``UnknownOp`` subclasses ``Operator``, so an identity-only filter
+    (``type(op) is Operator``) never matches it — and the builder emits
+    ``UnknownOp``, never a bare ``Operator``, for an undispatched kind.
+    Identity alone leaves the bucket structurally empty, which is exactly
+    the blind spot the gate exists to prevent.
     """
     from kustology.ir import UnknownOp
 

@@ -43,12 +43,12 @@ from .expr import (
 
 
 def _case_fold_side(e: Any) -> bool:
-    """True iff ``e`` is a single-argument ``tolower(...)``/``toupper(...)`` call."""
+    """Return True when ``e`` is a single-argument ``tolower(...)``/``toupper(...)`` call."""
     return isinstance(e, FuncCall) and e.name.lower() in ("tolower", "toupper") and len(e.args) == 1
 
 
 def _literal_matches_fold(lit: Any, fn: str) -> bool:
-    """True iff ``lit`` is a string literal already in the case ``fn`` folds to.
+    """Return True when ``lit`` is a string literal already in the case ``fn`` folds to.
 
     ``tolower(X) == "Y"`` (capital Y) is always false -- ``tolower`` never
     returns anything but lowercase -- while ``X =~ "Y"`` is a case-insensitive
@@ -69,7 +69,7 @@ def normalize_in_place(expr: Any) -> Any:
       either side -- ``"y" == tolower(X)`` rewrites the same way, with the
       unwrapped operand landing on the left and the literal on the right, so
       it collapses to the same canonical form/hash as ``tolower(X) == "y"``.
-      A literal that does not already match the fold (e.g.
+      A literal that does not already match the fold (for example
       ``tolower(X) == "Y"``) is left alone -- that predicate is always false,
       while ``X =~ "Y"`` is not -- and so is a comparison against anything
       that is not a literal at all (``tolower(X) == Col``), since there is no
@@ -130,10 +130,10 @@ def _kql_string(value: str) -> str:
     """Render ``value`` as a KQL double-quoted string literal.
 
     Escaping is the whole point. ``f("a\\", \\"b")`` is a call with **one**
-    argument whose value contains quotes and a comma; rendered raw it came
-    out as ``f("a", "b")``, a call with two arguments -- a description of a
+    argument whose value contains quotes and a comma; rendered raw it reads
+    as ``f("a", "b")``, a call with two arguments -- a description of a
     tree that does not exist. Backslash goes first, or it would re-escape
-    the backslashes the other rules just introduced.
+    the backslashes the later replacements introduce.
 
     ``\\r`` is escaped alongside ``\\n`` for the same reason: a raw control
     character inside the quotes makes the rendering unreadable and, for a
@@ -155,8 +155,9 @@ def _kql_literal(value: Any, literal_kind: str) -> str:
     ``bool`` is checked before anything else because ``True`` is a Python
     ``int`` subclass, and before ``literal_kind`` because the kind tells us
     what the parser called it, not how to write it down. KQL's spellings are
-    ``true`` / ``false`` / ``null``; ``str()`` produced Python's, so a
-    canonical form of ``x == True`` named no value KQL has.
+    ``true`` / ``false`` / ``null``; ``str()`` produces Python's, so falling
+    through to it would give ``x == True`` a canonical form naming a value
+    KQL has no spelling for.
 
     Non-string kinds that happen to hold a ``str`` (``datetime``,
     ``timespan``, ``guid``, ``dynamic``) stay unquoted: their KQL spelling is
@@ -172,7 +173,7 @@ def _kql_literal(value: Any, literal_kind: str) -> str:
 
 
 def canonical(expr: Any) -> str:
-    """Stable, commutative-aware string representation for diffing.
+    """Return a stable, commutative-aware string representation for diffing.
 
     Parenthesized **by precedence**, not by what the source wrote. The
     parentheses *are* in the .NET tree -- ``ParenthesizedExpression`` -- but
@@ -194,10 +195,12 @@ def canonical(expr: Any) -> str:
     """
 
     def _wrap(text: str, prec: int, parent_prec: int, parens_on_equal: bool) -> str:
-        """Parenthesize ``text`` when its operator binds looser than the one
-        it sits inside -- or exactly as tight, in the right operand's
-        position, where a left-associative grammar could not have produced it
-        without brackets."""
+        """Parenthesize ``text`` when its operator binds looser than its parent.
+
+        Equal precedence also brackets in the right operand's position,
+        where a left-associative grammar could not have produced it without
+        brackets.
+        """
         if prec < parent_prec or (prec == parent_prec and parens_on_equal):
             return f"({text})"
         return text
@@ -234,10 +237,10 @@ def canonical(expr: Any) -> str:
             # belongs to the *child's* position rather than to the parent
             # operator: a right operand of equal precedence cannot have come
             # from an unbracketed parse, because an unbracketed chain nests
-            # left. This rule replaced one that asked whether the parent was
-            # ``-``, ``/`` or ``%`` -- the right observation attached to the
-            # wrong operator, which left ``x * (y / z)`` rendering as
-            # ``x * y / z``. Under integer division those are different
+            # left. Attaching the rule to the parent operator instead (ask
+            # whether the parent is ``-``, ``/`` or ``%``) is the right
+            # observation on the wrong node -- it renders ``x * (y / z)`` as
+            # ``x * y / z``, and under integer division those are different
             # numbers: ``2 * (7 / 2)`` is 6 and ``2 * 7 / 2`` is 7.
             text = (
                 f"{_render(e.left, prec)} {e.op} {_render(e.right, prec, True)}"
@@ -277,8 +280,8 @@ def canonical(expr: Any) -> str:
             return f"{e.name}({', '.join(_render(a) for a in e.args)})"
         if isinstance(e, SetMembership):
             # Render the recorded operator. Rebuilding it from polarity plus
-            # case_sensitive could only ever emit one of four strings, so
-            # has_any and has_all both came out as `in~` -- a different
+            # case_sensitive can only ever emit one of four strings, which
+            # collapses has_any and has_all onto `in~` -- a different
             # predicate. Same reason BinOp above renders `e.op` verbatim.
             vals = ", ".join(sorted(_render(v) for v in e.values))
             return f"{_render(e.column, _PREC_COMPARISON)} {e.op} ({vals})"
@@ -325,9 +328,8 @@ def canonical(expr: Any) -> str:
             return "*"
         if isinstance(e, ExternalDataExpr):
             cols = ", ".join(f"{n}:{ty}" for n, ty in e.columns)
-            # Every URI, in source order. Rendering only the first collapsed
-            # a two-URI feed onto a one-URI feed -- the same loss the
-            # singular ``uri`` field used to bake into the model.
+            # Every URI, in source order. Rendering only the first would
+            # collapse a two-URI feed onto a one-URI feed.
             return f"externaldata({cols})[{', '.join(e.uris)}]"
         if isinstance(e, DataTableExpr):
             cols = ", ".join(f"{n}:{ty}" for n, ty in e.columns)
@@ -341,8 +343,7 @@ def canonical(expr: Any) -> str:
         # than rendered: canonical() is a pure Expr function and Pipeline is
         # modeled in ir.query, so recursing would invert the dependency. The
         # wrapper is still named, which is what distinguishes these from each
-        # other and from every other shape -- before, all three rendered as a
-        # bare "?".
+        # other and from every other shape.
         if isinstance(e, ToScalarExpr):
             return f"toscalar({_pipeline_head(e.pipeline)} | ...)"
         if isinstance(e, SubqueryExpr):
@@ -356,6 +357,6 @@ def canonical(expr: Any) -> str:
 
 
 def _pipeline_head(pipeline: Any) -> str:
-    """The name a sub-pipeline reads from, for canonical rendering."""
+    """Return the name a sub-pipeline reads from, for canonical rendering."""
     source = getattr(pipeline, "source", None)
     return getattr(source, "name", None) or "..."

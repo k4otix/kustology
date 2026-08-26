@@ -4,12 +4,10 @@
 """Leading comments must not corrupt Tier 1 syntactic analysis.
 
 Microsoft's ``SyntaxNode.ToString()`` includes leading trivia — whitespace
-*and comments*. Every Tier 1 analyzer in ``kustology.utils.analysis`` read
-node names via ``node.ToString().strip()``, so a comment immediately before a
-table, column, or function name became part of the extracted name. Real
-Sentinel detection rules are full of leading comments, so this corrupted
-table/column/function extraction on exactly the queries this library exists
-to analyse.
+*and comments* — so an analyzer that reads a node name that way picks up any
+comment sitting immediately before a table, column, or function name. Real
+Sentinel detection rules are full of leading comments, so that corruption
+lands on exactly the queries this library exists to analyse.
 
 ``test_analyzers_ignore_comments`` pins that inserting comments before names
 must not change what the analyzers report. ``test_replace_table_after_leading_comment``
@@ -18,7 +16,7 @@ pins the trickier case: the *name* must be read without trivia while the
 the identifier, leaving the leading comment intact in the output.
 ``test_fixture_tables_are_identifiers`` sweeps the real Sentinel-derived
 corpus and asserts no extracted table name contains a newline or ``//`` —
-the tell-tale signature of this bug.
+the tell-tale signature of trivia leaking into a name.
 """
 
 from pathlib import Path

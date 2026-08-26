@@ -38,8 +38,8 @@ def walk(
     holding the *same* objects rather than copies. ``LetBinding`` is the
     clear case — ``inner_time_exprs`` and ``inner_tables`` point at nodes
     that also live inside ``rhs_pipeline`` — so an un-deduplicated walk
-    reported ``ago`` and ``now`` twice for a single ``let``, and any caller
-    counting occurrences double-counted them. Identity is the key
+    would report ``ago`` and ``now`` twice for a single ``let``, and any
+    caller counting occurrences would double-count them. Identity is the key
     (``id(node)``), not equality: two structurally identical nodes written
     at different offsets are different nodes and both must surface.
 
@@ -73,16 +73,16 @@ def _walk(
     implementation detail of one traversal, and a caller who supplied their
     own could silently suppress nodes.
 
-    Re-entering an already-visited object prunes its whole subtree, not just
+    Re-entering an already-visited object prunes its whole subtree, not only
     the yield — descending a second time can only re-yield what the first
     descent already produced. Holding ``id()`` values is safe because the
     root keeps every descendant alive for the traversal's lifetime, so no
     address is recycled underneath us.
 
     A side effect worth knowing: the set also makes a cycle terminate. The
-    builder does not produce one and this is not a licence to introduce one
-    — a cycle would still break ``model_dump`` and the hash — but the walker
-    no longer recurses forever if one ever appears.
+    builder does not produce one and this is not a license to introduce one
+    — a cycle would still break ``model_dump`` and the hash — but the walk
+    ends rather than recursing forever if one ever appears.
     """
     if id(node) in seen:
         return

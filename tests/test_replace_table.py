@@ -52,9 +52,8 @@ def test_replace_unknown_table_is_no_op():
 def test_replace_a_table_the_schema_does_not_know():
     """A bound parse must still rewrite a table the binder could not resolve.
 
-    Before this was fixed the call returned the query unchanged and raised
-    nothing, so a retarget against a partial schema silently shipped the old
-    name.
+    A call that returns the query unchanged and raises nothing means a
+    retarget against a partial schema silently ships the old name.
     """
     schema = {"SecurityEvent": {"Account": "string"}}
     q = parse("union SecurityEvent, SigninLogs", schema=schema)
@@ -85,9 +84,12 @@ def test_replace_repeated_references():
 
 
 def test_replace_rejects_an_empty_new_name():
-    """`replace_table("A", "")` deleted the table name and returned a query
-    the parser rejects — ` | count` — with no error at all, so the caller got
-    a broken string back and had to notice for themselves."""
+    """An empty new name is rejected, not spliced in.
+
+    Deleting the table name returns a query the parser rejects — ` | count`
+    — with no error at all, so the caller gets a broken string back and has
+    to notice for themselves.
+    """
     q = parse("A | count")
     with pytest.raises(ValueError) as exc_info:
         q.replace_table("A", "")
@@ -102,7 +104,7 @@ def test_replace_rejects_an_empty_old_name():
 
 
 def test_replace_rejects_a_non_string_name():
-    """A non-string reached the concatenation and died there with
+    """A non-string that reaches the concatenation dies there with
     ``can only concatenate str (not "NoneType") to str`` — a message about
     this function's internals rather than about the argument."""
     q = parse("A | count")
@@ -115,7 +117,7 @@ def test_replace_rejects_a_non_string_name():
 def test_replace_brackets_a_new_name_that_is_not_an_identifier():
     """`my-new-table` is a legal Kusto table name and an illegal bare
     identifier: pasted in raw it parses as the subtraction `my - new - table`,
-    so the rewritten query silently stopped reading a table at all. The
+    so the rewritten query silently stops reading a table at all. The
     emitted form is the bracketed-name quoting KQL provides for exactly this.
     """
     out = parse("A | count").replace_table("A", "my-new-table")

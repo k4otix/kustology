@@ -65,18 +65,24 @@ class VerifyDLLError(Exception):
 
 
 class ConfigError(VerifyDLLError):
-    """Local misconfiguration: no pin, missing bundled file, bad package
-    layout. Not evidence the bundled DLL is wrong -- we just couldn't check."""
+    """Local misconfiguration: no pin, missing bundled file, bad package layout.
+
+    Not evidence the bundled DLL is wrong -- the check couldn't run.
+    """
 
 
 class NetworkError(VerifyDLLError):
     """nuget.org could not be reached or returned an unexpected response.
-    Not evidence the bundled DLL is wrong -- we just couldn't check."""
+
+    Not evidence the bundled DLL is wrong -- the check couldn't run.
+    """
 
 
 class HashMismatchError(VerifyDLLError):
     """The bundled DLL's sha256 does not match the expected reference hash.
-    This is the one case that means the bundled binary itself is suspect."""
+
+    The one case that means the bundled binary itself is suspect.
+    """
 
 
 def read_pinned_version() -> str | None:
@@ -133,8 +139,10 @@ def fetch_nupkg(version: str) -> bytes:
 
 
 def find_dll_hash(nupkg_bytes: bytes) -> str | None:
-    """Return the sha256 of lib/<TFM>/Kusto.Language.dll inside the .nupkg,
-    or None if that exact path isn't present."""
+    """Return the sha256 of lib/<TFM>/Kusto.Language.dll inside the .nupkg.
+
+    Returns None if that exact path isn't present.
+    """
     target = f"lib/{TFM}/{DLL_NAME}"
     with zipfile.ZipFile(io.BytesIO(nupkg_bytes)) as z:
         if target not in z.namelist():
@@ -144,9 +152,12 @@ def find_dll_hash(nupkg_bytes: bytes) -> str | None:
 
 
 def _verify_offline() -> int:
-    """Check the bundled DLL against the locally recorded pin only. No
-    network access -- cannot detect drift from what nuget.org currently
-    ships, only whether the bundled file still matches its own pin."""
+    """Check the bundled DLL against the locally recorded pin only.
+
+    Makes no network request -- it cannot detect drift from what
+    nuget.org currently ships, only whether the bundled file matches
+    its own pin.
+    """
     bundled_path = BIN_DIR / DLL_NAME
     if not bundled_path.exists():
         raise ConfigError(f"{bundled_path} does not exist.")

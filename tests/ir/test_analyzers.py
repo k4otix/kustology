@@ -40,7 +40,7 @@ def test_finding_round_trips_through_json():
 
 
 def test_finding_rejects_unknown_fields():
-    """``extra="forbid"`` mirrors the rest of the IR — unknown wire fields fail."""
+    """Guard ``extra="forbid"``: like the rest of the IR, unknown wire fields fail."""
     from pydantic import ValidationError
     with pytest.raises(ValidationError):
         Finding.model_validate({
@@ -49,9 +49,11 @@ def test_finding_rejects_unknown_fields():
 
 
 def test_analyzer_protocol_composes():
-    """The documented pattern: each analyzer returns an Iterable[Finding];
-    callers chain them with a flat list comprehension. No registry, no
-    base class — just function composition.
+    """Exercise the documented compose pattern.
+
+    Each analyzer returns an ``Iterable[Finding]``; callers chain them with a
+    flat list comprehension. No registry, no base class — function composition
+    only.
     """
     ir = parse(
         "DeviceProcessEvents "

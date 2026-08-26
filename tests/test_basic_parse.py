@@ -188,10 +188,10 @@ def test_unknown_scalar_type_falls_back_with_warning():
 def test_unknown_scalar_type_warning_is_attributed_to_the_caller():
     """The warning must point at the line that wrote the bad type.
 
-    ``stacklevel=3`` landed on ``build_global_state`` — inside
-    ``kustology/utils/schema_state.py`` — so the warning's location was a
-    library file the caller does not own, `-W error::RuntimeWarning` blamed
-    the wrong module, and the default "once per location" filter deduplicated
+    A hardcoded ``stacklevel=3`` lands on ``build_global_state`` — inside
+    ``kustology/utils/schema_state.py`` — attributing the warning to a
+    library file the caller does not own: `-W error::RuntimeWarning` blames
+    the wrong module, and the default "once per location" filter deduplicates
     every caller's typo down to a single report.
     """
     with pytest.warns(RuntimeWarning) as record:
@@ -213,10 +213,11 @@ def test_unknown_scalar_type_warning_is_attributed_to_the_caller_of_validate():
 def test_unknown_scalar_type_warning_is_attributed_to_the_caller_of_build_global_state():
     """``build_global_state`` is public and one frame shallower than ``parse``.
 
-    A single hardcoded ``stacklevel`` cannot be right for both, and the one
-    tuned for ``parse`` overshot here — the warning was attributed a frame
+    A single hardcoded ``stacklevel`` cannot be right for both: the value
+    tuned for ``parse`` overshoots here, attributing the warning a frame
     *past* the caller, which for a module-level call is the interpreter
-    (``sys:1``). Computing the depth fixes both at once.
+    (``sys:1``). Computing the depth serves both call sites from one code
+    path.
     """
     from kustology.utils.schema_state import build_global_state
 
@@ -229,7 +230,7 @@ def test_unknown_scalar_type_warning_is_attributed_to_the_caller_of_build_global
 def test_unknown_scalar_type_warning_survives_extra_library_frames():
     """The depth must not depend on how many frames the library happens to use.
 
-    PEP 709 inlined list/dict/set comprehensions in **3.12**; on 3.10 and 3.11
+    PEP 709 inlines list/dict/set comprehensions starting in **3.12**; on 3.10 and 3.11
     — both inside this project's ``requires-python`` — the two comprehensions
     in the ``build_global_state`` → ``_build_table_symbol`` chain each push a
     frame, so the caller sits seven frames up rather than five and any
@@ -261,13 +262,14 @@ def test_unknown_scalar_type_warning_survives_extra_library_frames():
 
 
 def test_package_namespace_does_not_leak_its_version_lookup_imports():
-    """``kustology.PackageNotFoundError`` was importable and meant nothing.
+    """Guards against ``kustology.PackageNotFoundError`` leaking into the
+    top-level namespace, where it would mean nothing to a caller.
 
     The name is an implementation detail of reading ``__version__`` from the
     installed metadata; exported by accident it reads as part of this
     library's API, shows up in ``dir()`` and in generated documentation, and
     invites `from kustology import PackageNotFoundError`. ``__all__`` never
-    listed it, which is exactly why nothing caught it.
+    lists it, which is exactly why nothing else catches it.
     """
     import kustology
 
@@ -279,11 +281,10 @@ def test_package_namespace_does_not_leak_its_version_lookup_imports():
 
 
 def test_top_level_schema_string_is_rejected_naming_the_dict_form():
-    """`parse(q, schema="(a:string)")` was documented and typed as supported
-    and has never worked: `build_global_state` requires a mapping. The type
-    alias and the docstring both said otherwise, so the only way to find out
-    was the `TypeError`. Pin the raise *and* that the message points at the
-    form that does work — the per-table string `{"T": "(a:string)"}`."""
+    """A bare `schema="(a:string)"` cannot work: `build_global_state`
+    requires a mapping, and a bare string has no table name to attach
+    columns to. Pin the raise *and* that the message points at the form
+    that does work — the per-table string `{"T": "(a:string)"}`."""
     with pytest.raises(TypeError) as exc_info:
         parse("T | count", schema="(a:string)")
     message = str(exc_info.value)
@@ -296,8 +297,9 @@ def test_top_level_schema_string_is_rejected_naming_the_dict_form():
 
 
 def test_schema_like_alias_no_longer_advertises_a_bare_string():
-    """`SchemaLike` is the public annotation on `parse` and `validate`. It
-    included `str`, so a type checker green-lit the call that raises."""
+    """`SchemaLike` is the public annotation on `parse` and `validate`;
+    admitting `str` would let a type checker green-light a call that always
+    raises."""
     import types
     import typing
 
@@ -310,12 +312,13 @@ def test_schema_like_alias_no_longer_advertises_a_bare_string():
 
 
 def test_scalar_type_names_resolve_regardless_of_case():
-    """`{"T": {"c": "LONG"}}` typed the column `string`, with a warning.
+    """`{"T": {"c": "LONG"}}` must resolve to the `long` column type, not
+    fall back to `string`.
 
     Microsoft's `ScalarTypes.GetSymbol` is a dictionary lookup on the exact
-    lower-case spelling, so every capitalisation a caller might reasonably
-    write — `LONG`, `Long`, `DateTime`, `Real` — missed, fell through to the
-    unknown-type branch and silently produced a `string` column. A schema
+    lower-case spelling, so any capitalization a caller might reasonably
+    write — `LONG`, `Long`, `DateTime`, `Real` — misses, falls through to the
+    unknown-type branch, and silently produces a `string` column. A schema
     hand-written from a portal column list or lifted from a `.csl` file is
     full of them, and the only symptom is a binder that resolves the wrong
     type.
@@ -335,7 +338,7 @@ def test_scalar_type_names_resolve_regardless_of_case():
         state = build_global_state(schema)
 
     # Read back off the real .NET ColumnSymbols: `bool` is the alias's
-    # resolved name, and none of the four is the old `string` fallback.
+    # resolved name, and none of the four falls back to `string`.
     assert extract_schemas_from_global_state(state) == {
         "T": {"a": "long", "b": "datetime", "c": "real", "d": "bool"},
     }
@@ -348,8 +351,8 @@ def test_scalar_type_names_resolve_regardless_of_case():
 
 
 def test_a_non_string_scalar_type_raises_type_error_not_a_clr_exception():
-    """`{"T": {"c": None}}` reached `ScalarTypes.GetSymbol(None)` and came
-    back as a raw `System.ArgumentNullException` with a .NET stack trace
+    """Without a guard, `{"T": {"c": None}}` reaches `ScalarTypes.GetSymbol(None)`
+    and comes back as a raw `System.ArgumentNullException` with a .NET stack trace
     through `System.Collections.Generic.Dictionary` — a CLR type with no
     Python class to catch by name, and a message that says nothing about
     schemas.
@@ -375,7 +378,7 @@ def test_a_non_string_scalar_type_error_is_distinct_from_the_two_shape_errors():
     """Three positions in a schema can be the wrong type, and each names its
     own position: the schema itself, a table's value, and a column's type.
 
-    Conflating them was the trap the top-level string form fell into — one
+    Conflating them is the trap a single shared message falls into — one
     message that could mean any of three mistakes sends the reader looking in
     the wrong place.
     """
@@ -395,13 +398,14 @@ def test_a_non_string_scalar_type_error_is_distinct_from_the_two_shape_errors():
 
 
 def test_the_schema_string_form_warns_about_a_column_it_could_not_type():
-    """`{"T": "(n:bogus)"}` was silent; `{"T": {"n": "bogus"}}` warned.
+    """`{"T": "(n:bogus)"}` and `{"T": {"n": "bogus"}}` are two spellings of
+    one schema, and a typo in either must warn.
 
-    Two spellings of one schema, one of them with a typo in it, and only one
-    of them said so. Microsoft's schema-string parser does not reject an
-    unrecognized type name — it types the column `unknown`, which binds
-    without an error and resolves nothing — so the typo reached the binder
-    and the caller saw only columns that would not resolve.
+    Microsoft's schema-string parser does not reject an unrecognized type
+    name — it types the column `unknown`, which binds without an error and
+    resolves nothing — so left unguarded a bad name in the string form
+    reaches the binder silently, and the caller sees only columns that do
+    not resolve.
     """
     from kustology.utils.schema_state import (
         build_global_state,
@@ -458,7 +462,7 @@ def test_dict_keys_are_raw_column_names_not_bracket_quoted_query_syntax():
     The bracket-quoting is KQL *query* syntax for referring to a name that
     is not a bare identifier; a schema dict key is not query text, it is the
     name itself, so quoting it produces a column nothing can reference. The
-    behaviour is Microsoft's `ColumnSymbol(name, type)` and is correct — a
+    behavior is Microsoft's `ColumnSymbol(name, type)` and is correct — a
     column really can be named anything.
     """
     from kustology.utils.schema_state import (
@@ -473,13 +477,13 @@ def test_dict_keys_are_raw_column_names_not_bracket_quoted_query_syntax():
 
 
 def test_an_empty_schema_string_raises_value_error_not_a_clr_exception():
-    """`{"T": ""}` was the last raw CLR escape in this module.
+    """Without a guard, `{"T": ""}` reaches `TableSymbol.From("")`.
 
     `TableSymbol.From("")` raises `System.InvalidOperationException: Invalid
     schema:` with a .NET stack trace. It is neither a `TypeError` nor a
     `ValueError`, so a caller can only catch it with a bare `except
     Exception` and cannot name the type without importing from the CLR — the
-    same defect that made `{"T": {"c": None}}` unusable, one function away.
+    same shape of defect a non-`str` type name has, one function away.
 
     The blast radius is exactly the empty and whitespace-only strings.
     Microsoft's schema parser is otherwise permissive to a fault and accepts
@@ -510,13 +514,14 @@ def test_an_empty_schema_string_raises_value_error_not_a_clr_exception():
 
 
 def test_a_non_string_table_or_column_name_raises_type_error():
-    """Names had the defect the *type* position just had fixed.
+    """A non-`str` name carries the same defect the type position guards
+    against.
 
-    `{"T": {5: "long"}}` came back as pythonnet's "No method matches given
-    arguments for ColumnSymbol..ctor" — the same unnameable, schema-silent
-    wording this module's own docstring criticises `GetSymbol(5)` for. Keys
-    become a symbol's `Name` verbatim, so a key that is not a `str` cannot
-    be one.
+    Unguarded, `{"T": {5: "long"}}` reaches pythonnet as "No method matches
+    given arguments for ColumnSymbol..ctor" — the same unnameable,
+    schema-silent wording this module's own docstring criticizes
+    `GetSymbol(5)` for. Keys become a symbol's `Name` verbatim, so a key that
+    is not a `str` cannot be one.
     """
     from kustology.utils.schema_state import build_global_state
 
@@ -540,12 +545,13 @@ def test_the_two_forms_agree_on_a_deliberate_unknown_type():
     """`"unknown"` is Microsoft's own name for "no type", so writing it is
     not a typo — but `ScalarTypes.GetSymbol("unknown")` returns `None`.
 
-    So the dict form scolded the caller for a real type name and handed back
-    `string`, while `{"T": "(c:unknown)"}` accepted it and kept `unknown`.
-    Two spellings of one schema, disagreeing about both the warning and the
-    resulting type. It is also what `extract_schemas_from_global_state`
-    emits for a column the binder could not type, so round-tripping its
-    output through `build_global_state` silently retyped those columns.
+    Without a guard, the dict form scolds the caller for a real type name and
+    hands back `string`, while `{"T": "(c:unknown)"}` accepts it and keeps
+    `unknown` — two spellings of one schema, disagreeing about both the
+    warning and the resulting type. `unknown` is also what
+    `extract_schemas_from_global_state` emits for a column the binder could
+    not type, so round-tripping its output through `build_global_state` must
+    not retype those columns.
     """
     from kustology.utils.schema_state import (
         build_global_state,
@@ -560,7 +566,7 @@ def test_the_two_forms_agree_on_a_deliberate_unknown_type():
         "T": {"c": "unknown", "d": "long"},
     }
 
-    # The schema-string form has always kept it; the two now agree, so the
+    # The schema-string form keeps `unknown` too, so the two agree and the
     # extractor's output round-trips unchanged.
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
@@ -578,10 +584,11 @@ def test_the_two_forms_agree_on_a_deliberate_unknown_type():
 def test_every_untyped_schema_string_column_is_attributed_to_the_caller():
     """One warning per column, and the stack is walked once for all of them.
 
-    `_caller_stacklevel()` was called inside the loop, re-walking the whole
+    Calling `_caller_stacklevel()` inside the loop would re-walk the whole
     stack for every column. The depth cannot differ between iterations — it
-    is the same frame — so hoisting it is free, and this pins that hoisting
-    did not cost the attribution the walk exists to provide.
+    is the same frame — so hoisting it out of the loop is free, and this pins
+    that the hoisting does not cost the attribution the walk exists to
+    provide.
     """
     from kustology.utils.schema_state import build_global_state
 

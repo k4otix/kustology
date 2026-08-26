@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
+"""Tier 1 query surface: :class:`KustoQuery`."""
+
 import json
 
 from .bridge import GlobalState, KustoCode
@@ -21,15 +23,22 @@ from .utils.schema_state import extract_schemas_from_global_state as _extract_sc
 
 
 class KustoQuery:
+    """A parsed KQL query wrapping Microsoft's ``KustoCode``.
+
+    Construct through :func:`kustology.parse`, which decides whether the
+    parse is bound (schema passed) or purely syntactic; ``has_semantics``
+    reports which. Accessors that can answer both ways take the binder's
+    answer on a bound parse and a syntactic walk otherwise.
+    """
+
     def __init__(
         self, kusto_code: KustoCode, *, extra_diagnostics: list[dict] | None = None,
     ):
         self._code = kusto_code
         # Diagnostics kustology raised about this parse rather than ones
-        # Microsoft's parser or binder produced. Currently exactly one thing
-        # goes here: :func:`kustology.services._analyze_guarded`'s record that
-        # the analyzer crashed and the tree was left unbound. Keyword-only and
-        # defaulted, so every existing ``KustoQuery(code)`` call is unchanged.
+        # Microsoft's parser or binder produced — carrying
+        # :func:`kustology.services._analyze_guarded`'s record that the
+        # analyzer crashed and the tree is the unbound parse.
         self._extra_diagnostics: list[dict] = list(extra_diagnostics or [])
 
     @property
@@ -133,10 +142,10 @@ class KustoQuery:
 
         Descent stops at :data:`kustology.utils.walker.MAX_AST_DEPTH`; a node
         at the cap is emitted with no children and an extra
-        ``"truncated": True``. Without the cap this raised ``RecursionError``
-        on deeply nested input, since the AST's depth is the Python stack's
-        depth and a few kilobytes of parentheses outrun CPython's frame
-        limit. Real queries stay well inside it, but not as far inside as
+        ``"truncated": True``. The cap exists because the AST's depth is the
+        Python stack's depth — without one, a few kilobytes of parentheses
+        outrun CPython's frame limit and raise ``RecursionError``. Real
+        queries stay well inside it, but not as far inside as
         they look: counting the root as level 0, the 49-fixture corpus has a
         median depth of 18 and a deepest of 42
         (``FileHashEntity_SecurityEvent.kql``), and 22 of the 49 go past 20.
@@ -286,13 +295,12 @@ class KustoQuery:
           re-bind, not an overlay: on an already-bound parse it replaces
           the parse-time schema for this call rather than layering on top
           of it, and the resulting output schemas, types, and IR shape now
-          match ``parse(query, schema=dict).to_ir()`` exactly. ``let A = T``
+          match ``parse(query, schema=dict).to_ir()`` exactly — ``let A = T``
           lowers to ``rhs_pipeline`` whenever ``T`` resolves in *either*
-          path; the unbound dict path used to fall back to ``rhs_expr``
-          because the tree was never actually bound. A partial dict — one
-          that omits a table the query references — leaves that symbol
-          open: Microsoft's binder does not raise, it reports the affected
-          operator's ``result_schema`` as ``None`` rather than guessing.
+          path. A partial dict — one that omits a table the query
+          references — leaves that symbol open: Microsoft's binder does not
+          raise, it reports the affected operator's ``result_schema`` as
+          ``None`` rather than guessing.
           Diagnostics do not follow that equivalence: unknown-name
           suppression tracks the *receiver's* own bind state, not the
           dict's, so a dict on an unbound receiver stays lenient about
@@ -319,21 +327,20 @@ class KustoQuery:
             #
             # Guarded: Microsoft's binder crashes outright on some
             # clean-parsing input, and the fallback is the tree we already
-            # hold. ``build_global_state`` stays outside the guard -- a
+            # hold. ``build_global_state`` stays outside the guard — a
             # malformed schema dict is the caller's error and must still
             # raise. See ``services._analyze_guarded``.
             state = build_global_state(schemas)
             code, failure = _analyze_guarded(
                 lambda: self._code.Analyze(state), lambda: self._code,
             )
-            # ``build_global_state`` accepts three value shapes -- a
+            # ``build_global_state`` accepts three value shapes — a
             # ``{col: type}`` dict, a Kusto schema string ``"(col:type)"``,
-            # and a bare ``[col]`` list -- and ``parse(schema=...)``
+            # and a bare ``[col]`` list — and ``parse(schema=...)``
             # documents all three, so this entry point has to take them too.
             # ``SchemaAttacher`` takes only the first: it reads
-            # ``schemas[table][column]``, so a string value crashed on
-            # ``ValueError``/``AttributeError`` and a list value resolved by
-            # coincidence.
+            # ``schemas[table][column]``, so fed a string value it crashes
+            # and fed a list it resolves only by coincidence.
             #
             # Reading the shapes back off the ``GlobalState`` normalizes all
             # three at once, and reuses the parsing Microsoft already did
@@ -345,9 +352,9 @@ class KustoQuery:
         elif bound_by_caller:
             code = self._code
         else:
-            # D5/K27. ``Analyze`` binds this tree; it does not re-lex the
-            # text and it does not mutate ``self._code``. Guarded for the
-            # same reason the dict path above is.
+            # ``Analyze`` binds this tree; it does not re-lex the text and
+            # it does not mutate ``self._code``. Guarded for the same
+            # reason the dict path above is.
             code, failure = _analyze_guarded(
                 lambda: self._code.Analyze(GlobalState.Default), lambda: self._code,
             )

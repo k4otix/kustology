@@ -3,18 +3,13 @@
 
 """Claims written into the docs must match what they describe.
 
-Six closed counts in the 0.2.0 documentation pass turned out wrong -- "eight
-operators" (nine), "five jobs" (six), "four operator modifiers" (six across
-four), "four of the eight literal kinds" (four of eleven), and two more. The
-durable fix is to stop writing counts: derive them at runtime where the file
-runs, and describe the mechanism where it does not.
-
-No count survives that treatment here, closed or otherwise: a docs claim
-that used to spell out a number now describes the mechanism that produces
-it, so there is nothing left for this file to re-derive and compare.
+The standing rule is that a written-out count is never trusted: a doc
+derives its numbers where it runs and describes the producing mechanism
+where it does not, so no count exists here for this file to re-derive and
+compare.
 
 The same discipline extends to hand-maintained *lists*, which go stale the
-same way a count does and for the same reason: something was added on one
+same way a count does and for the same reason: something is added on one
 side of the repository and not the other. Each list pinned here is rebuilt
 from the directory or file it claims to enumerate.
 """
@@ -35,15 +30,13 @@ _LOCALLY_COVERED_JOBS = {"test", "test-ir", "lint"}
 
 
 def _workflow_jobs() -> set[str]:
-    """Job names from ``test.yml``, without a YAML parser.
+    """Return the job names from ``test.yml``, without a YAML parser.
 
     A regex, not ``yaml.safe_load``, so this module imports with no optional
     dependency at all -- it makes claims about the repository's own files and
-    should keep running in the barest environment that can collect it. (An
-    earlier draft was right that ``pyyaml`` was unreachable from the test
-    extras; it now ships in ``[test]``, but the regex has no reason to change.
-    The grammar it needs is tiny: a job is a two-space-indented mapping key
-    under the top-level ``jobs:``.)
+    should keep running in the barest environment that can collect it. The
+    grammar it needs is tiny: a job is a two-space-indented mapping key under
+    the top-level ``jobs:``.
     """
     jobs: set[str] = set()
     in_jobs = False
@@ -87,14 +80,14 @@ def test_contributing_names_every_ci_job_without_a_local_counterpart():
 def test_readme_points_at_every_runnable_example():
     """README's example table is a hand-maintained list of `examples/*.py`.
 
-    Adding an example and not the row is the drift this catches. The front
-    door pointed at ``examples/`` not at all until 0.2.0 -- ARCHITECTURE and
-    CONTRIBUTING both did -- so the list exists precisely because a reader
-    starting at the README would otherwise never learn the directory was
-    there. A stale list is the same failure one step later.
+    Adding an example and not the row is the drift this catches. The README
+    is the only one of the three docs a new user is guaranteed to read, so
+    the table is where they learn ``examples/`` exists at all -- a stale
+    list is the same failure one step later than a missing one.
 
-    Deliberately not asserting a count: the table counts itself, and this
-    file exists because six written-down counts in this release were wrong.
+    Deliberately not asserting a count: the table counts itself, and a
+    written-out count is exactly the kind of claim this file exists to keep
+    out of the docs.
     """
     readme = (REPO_ROOT / "README.md").read_text()
     on_disk = {
@@ -109,7 +102,7 @@ def test_readme_points_at_every_runnable_example():
         f"user is guaranteed to read."
     )
 
-    # ...and the reverse: a linked example that no longer exists.
+    # ...and the reverse: a linked example missing from examples/.
     linked = set(re.findall(r"examples/([A-Za-z0-9_]+\.py)", readme))
     stale = sorted(linked - on_disk)
     assert not stale, f"README.md links {stale}, which are not in examples/"

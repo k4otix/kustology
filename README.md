@@ -25,7 +25,7 @@ everywhere it appears. You work with Microsoft's syntax tree directly.
 
 The IR tier gives you a typed Pydantic model of the parsed query —
 `FilterOp`, `BinOp`, `ColumnRef` — for the questions an *analyzer*
-asks: which source table a column came from after joins, renames and
+asks: which source table a column came from after joins, renames, and
 `let` aliases, what schema the pipeline produces at the end, whether two
 queries are the same modulo formatting, and how to serialize the whole
 graph for a UI, a service, or a language model.
@@ -84,8 +84,9 @@ or `body_expr` for the tail. What is *not* done is inlining: `f(1)` stays a
 call, so the body is reachable once, through the declaration, rather than
 copied into every call site.
 
-Both tiers therefore see through the body, and a Tier 2 lineage walk over a
-function-declaring query is no longer empty. On a query with zero diagnostics:
+Both tiers therefore see through the body, so a lineage walk over a
+function-declaring query reports the tables and columns the body reads. On a
+query with zero diagnostics:
 
 ```python
 q = 'let f = () { SecurityEvent | where Account=="root" | project Computer }; f()'
@@ -153,7 +154,7 @@ they are part of the IR's versioned shape.
 ## Working with Microsoft's syntax tree
 
 Tier 1 is a thin projection: you get Microsoft's nodes, with Microsoft's
-shapes. These are the places that shape surprises people.
+shapes. These are the places where that shape surprises people.
 
 **Member lookup is exact, case-sensitive, and silent.** pythonnet resolves
 .NET members by exact name and returns nothing when one is absent, so a
@@ -164,9 +165,9 @@ getattr(node, "Uris", None)   # None -- the member is URIs
 getattr(node, "URIs", None)   # the SyntaxList you wanted
 ```
 
-Nothing raises and nothing logs. Four fields in this library sat at their
-default for a full release because of exactly this. Before relying on a
-probe, confirm the member exists:
+Nothing raises and nothing logs — the guard declines, the fallback value
+stands, and the surface reads as implemented. Before relying on a probe,
+confirm the member exists:
 
 ```python
 [m for m in dir(node) if m[:1].isupper()]
@@ -233,10 +234,10 @@ ir = parse("StormEvents | where StartTime > ago(7d) and CpuPct > 1.5").to_ir()
 # StartTime, CpuPct -> result_type unresolved, table None
 ```
 
-`GlobalState.Default` describes Kusto's built-in functions, aggregates and
-plug-ins — that is why `ago(1h)` types — but its **database is empty**: no
-tables, user-defined functions, external tables, materialized views, entity
-groups or stored query results. So columns and tables stay `unresolved`
+`GlobalState.Default` resolves everything built into the language — that is
+why `ago(1h)` types — but its **database is empty**: no tables, user-defined
+functions, external tables, materialized views, entity groups, or stored
+query results. So columns and tables stay `unresolved`
 until you supply a schema, and the "unknown name" diagnostics that binding
 raises are an artifact of how the types were obtained rather than anything
 you wrote. `to_ir()` filters that family out; a parse *you* bound keeps every
@@ -406,7 +407,7 @@ kustology parse --ir --schema s.json query.kql # enriched IR: types + provenance
 A `--schema` file is JSON in the same `{"Table": {"column": "type"}}` shape
 `parse(query, schema=...)` takes. On `parse` it binds the parse, and `to_ir()`
 auto-attaches on a bound parse, so `parse --ir --schema` emits column types,
-table provenance and `"schema_attached": true` rather than a skeleton.
+table provenance, and `"schema_attached": true` rather than a skeleton.
 `--ast` accepts it too, though binding does not change the syntax tree.
 
 `parse --ir --json` emits a versioned envelope, not a bare dump — both tags
@@ -461,17 +462,19 @@ Both IR tags move **once per release**, not once per change — so they mark
 what a consumer can observe, not the project's internal history.
 
 Tag stored IR JSON with `IR_SCHEMA_VERSION` and refuse a payload whose tag you
-do not recognise: every IR model sets `extra="forbid"`, so a dump from an
+do not recognize: every IR model sets `extra="forbid"`, so a dump from an
 older release fails to load rather than silently deserializing into a shape
-that no longer matches. IR JSON written before 0.2.0 does not load into 0.2.0.
+that does not match the one that wrote it. IR JSON written before 0.2.0 does
+not load into 0.2.0.
 
 `semantic_hash` carries its scheme as a prefix (`kustology-sem-v2:…`) for the
 same reason — a stored hash from a different scheme will not collide with a
 freshly computed one, instead of comparing unequal with no signal that the
-rules moved. **Note for anyone deduplicating queries by stored hash:** as of
-`kustology-sem-v2` the hash distinguishes `in` / `in~` / `has_any` /
-`has_all` and `isnotnull` / `isnotempty`, which it did not before. Rehash from
-source rather than comparing across schemes.
+rules moved. **Note for anyone deduplicating queries by stored hash:**
+schemes differ in which queries they merge — `kustology-sem-v2` distinguishes
+`in` / `in~` / `has_any` / `has_all` and `isnotnull` / `isnotempty`, where
+`kustology-sem-v1` does not. Rehash from source rather than comparing across
+schemes.
 
 ### What `semantic_hash` deliberately ignores
 
@@ -513,7 +516,7 @@ returns. Within `kustology-sem-v2` these are ignored:
   UTC before it is hashed, and numeric literals render invariant, so the same
   query digests identically in Tokyo and in New York, under `de-DE` and
   under `C`.
-- **Everything the binder supplied.** Column types, table provenance and
+- **Everything the binder supplied.** Column types, table provenance, and
   result schemas are stripped, so passing a schema does not move the digest.
   Source offsets and `hint.*` go the same way — a hint changes how the engine
   executes a query, not the rows it returns.
@@ -544,20 +547,17 @@ The caveats, all deliberate rather than accidental:
   costs a deduplicating consumer a duplicate entry, where the merge the
   narrow gate prevents would cost it a rule — but it is a boundary of the
   rename, not an exception the digest hides.
-- Equal digests are **not** a proof of equivalence. What remains is narrower
-  than it was: literal-level merges the library makes on purpose (typed
-  nulls, obfuscated strings) and a `let` function's call sites, which record
-  the body once at the declaration rather than per call.
+- Equal digests are **not** a proof of equivalence. What remains is narrow:
+  literal-level merges the library makes on purpose (typed nulls, obfuscated
+  strings) and a `let` function's call sites, which record the body once at
+  the declaration rather than per call.
 
-  **Every statement kind is now modelled.** `set`, `declare
-  query_parameters`, `declare pattern`, `alias database` and `restrict
-  access to` were dropped entirely before 0.2.0 and hashed as if absent, so
-  `set query_now=datetime(2020-01-01); T | take 1` shared a digest with a
-  bare `T | take 1` *and* with the same query pinned to a different
-  `query_now`. They live on `QueryIR.statements` in source order — order
-  included in the digest, since `set` scopes the query that follows it — and
-  they no longer appear under `unhandled` in
-  `tests/fixtures/syntax_kinds_baseline.json`.
+  **Every statement kind is modeled.** `set`, `declare query_parameters`,
+  `declare pattern`, `alias database`, and `restrict access to` live on
+  `QueryIR.statements` in source order — order included in the digest, since
+  `set` scopes the query that follows it — so
+  `set query_now=datetime(2020-01-01); T | take 1` hashes apart from a bare
+  `T | take 1` *and* from the same query pinned to a different `query_now`.
 
   `examples/semantic_hash_demo.py` hashes every merge it files when it runs
   and raises if one stops behaving as filed — the literal-level pair; the

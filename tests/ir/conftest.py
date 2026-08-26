@@ -50,5 +50,5 @@ _SAMPLE_SCHEMA: dict[str, dict[str, str]] = {
 
 @pytest.fixture(scope="module")
 def sample_schema() -> dict[str, dict[str, str]]:
-    """Inline ``{table: {column: type}}`` schema for the tier-2 tests."""
+    """Return the inline ``{table: {column: type}}`` schema for the tier-2 tests."""
     return _SAMPLE_SCHEMA

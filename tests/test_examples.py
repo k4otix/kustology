@@ -1,8 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-"""Smoke-test every example in ``examples/`` by importing it and running
-``main()``.
+"""Smoke-test every example in ``examples/``.
 
 The examples are the first thing a new user copies. Silent drift —
 signature changes, removed re-exports, dependency leaks — is invisible

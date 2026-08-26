@@ -41,7 +41,7 @@ def visit_name(node: Any) -> str:
 
 
 def map_net_type(type_name: str) -> KustoType:
-    """Map a .NET Kusto type name (e.g. ``"long"``) to a :class:`KustoType`."""
+    """Map a .NET Kusto type name (for example ``"long"``) to a :class:`KustoType`."""
     type_map = {
         "bool": KustoType.BOOL,
         "int": KustoType.INT,
@@ -62,9 +62,9 @@ def map_semantic_info(node: Any, expr: Any) -> None:
     """Copy ResultType and the dynamic-element type from the binder.
 
     Nullability is deliberately absent: no type in ``Kusto.Language``
-    exposes it. The probe that used to read ``res_type.IsNullable`` named a
-    member that does not exist, so ``Expr.nullable`` was ``True`` on every
-    node ever built while its declaration claimed the binder would flip it.
+    exposes it, and a ``getattr`` probe for a member like ``IsNullable``
+    returns its default silently -- a field fed that way keeps its declared
+    default on every node ever built while reading as implemented.
     """
     res_type = getattr(node, "ResultType", None)
     if res_type is None:
@@ -75,10 +75,10 @@ def map_semantic_info(node: Any, expr: Any) -> None:
         return
     expr.result_type = map_net_type(type_name)
     # ``ElementType`` on ``DynamicArraySymbol`` is the element type of a
-    # ``dynamic<T>``. The previous probe read ``Underlying`` or ``Element``:
-    # neither is a property on any type in ``Kusto.Language`` -- ``Element``
-    # exists only on the ``SeparatedElement`` syntax wrappers, never on a
-    # Symbol -- so this field was None on every node ever built.
+    # ``dynamic<T>``, and it is the member to probe: neither ``Underlying``
+    # nor ``Element`` is a property on any Symbol in ``Kusto.Language``
+    # (``Element`` exists only on the ``SeparatedElement`` syntax wrappers),
+    # so probing either leaves this field None on every node ever built.
     inner = getattr(res_type, "ElementType", None)
     if inner is not None:
         try:
@@ -99,17 +99,18 @@ def read_row_schema(node: Any) -> list[tuple[str, str]]:
 
     The one reader for every ``name:type`` declaration list in the grammar:
     ``datatable(a:int, b:string)``, ``externaldata(a:string)``,
-    ``| assert-schema (a:long)`` and ``| parse-kv … as (a:long)``. The two
-    dict-shaped consumers wrap the result in ``dict(...)``; the shape
-    difference is the *only* thing that ever differed between them.
+    ``| assert-schema (a:long)``, ``| parse-kv … as (a:long)``, and
+    ``evaluate … : (a:long)``. The two dict-shaped consumers wrap the result
+    in ``dict(...)``; the shape difference is the *only* thing that differs
+    between call sites.
 
-    Sharing it is the point rather than a tidy-up. This loop existed in four
-    independent copies and three of them read the column type with a bare
+    Sharing one reader is the point rather than a tidy-up: the column type
+    is read with ``node_text`` (``IncludeTrivia.Minimal``), never a bare
     ``ToString()`` — which is ``IncludeTrivia.All`` and prepends the node's
-    leading trivia, so ``assert-schema (a: // note\\n long)`` recorded the
-    type as ``"// note\\n long"`` and hashed differently from the identical
-    query without the comment. Fixing four copies leaves a fifth copy free
-    to reintroduce it; there is now nothing to copy.
+    leading trivia, so ``assert-schema (a: // note\\n long)`` would record
+    the type as ``"// note\\n long"`` and hash differently from the
+    identical query without the comment. One reader keeps that rule in one
+    place; a per-site copy is a copy free to lose it.
 
     ``node`` may be either the ``RowSchema`` itself or the node that owns
     one -- the operator or expression -- and the ambiguity is deliberate,
@@ -118,13 +119,12 @@ def read_row_schema(node: Any) -> list[tuple[str, str]]:
     A caller that pre-extracts either one is right, and so is a caller that
     passes the owner.
 
-    Accepting both is a correction rather than a convenience. The docstring
-    used to say the owner was the required argument while the code required
-    the ``RowSchema``, and getting that backwards returned an **empty list
-    with no exception** -- reinstating, silently, exactly the dropped-schema
-    collapse this function was extracted to prevent. A contract whose two
-    readings differ only by which one silently yields nothing is not one to
-    leave to documentation.
+    Accepting both shapes closes a silent failure, not a convenience gap: a
+    caller passing the shape this function does not take would get an
+    **empty list with no exception** -- silently, exactly the dropped-schema
+    collapse this function exists to prevent. A contract whose two readings
+    differ only by which one silently yields nothing is not one to leave to
+    documentation.
     """
     from ..utils.walker import iter_elements, node_text
 
@@ -145,7 +145,7 @@ def read_row_schema(node: Any) -> list[tuple[str, str]]:
 
 
 def is_wildcarded_name(name_node: Any) -> bool:
-    """True when a name node is a ``WildcardedName`` (``T*``, ``*``).
+    """Return True when a name node is a ``WildcardedName`` (``T*``, ``*``).
 
     ``T*`` and the bracketed literal ``['T*']`` both parse to a
     ``NameReference`` whose ``visit_name`` is the string ``"T*"``; only the
@@ -158,7 +158,7 @@ def is_wildcarded_name(name_node: Any) -> bool:
 
 
 def _qualifier_argument(node: Any) -> tuple[str, str] | None:
-    """``database('d')`` -> ``("database", "d")``; anything else -> ``None``.
+    """Read ``database('d')`` into ``("database", "d")``; anything else is ``None``.
 
     The argument is read through ``LiteralValue`` rather than the node's
     text so the quoting style (``'d'`` / ``"d"``) does not reach the IR.
@@ -166,8 +166,8 @@ def _qualifier_argument(node: Any) -> tuple[str, str] | None:
     ``ToString()`` (``IncludeTrivia.All``) so a comment before the argument
     cannot reach the hash. ``LiteralValue`` wins for every spelling a
     comment could currently precede here, so this is hardening against a
-    latent hazard rather than a live one -- but it is the same defect class
-    the URI fallback above really did have.
+    latent hazard rather than a live one -- the same defect class the URI
+    fallback in :func:`read_external_data` guards against.
     """
     if str(type(node).__name__) != "FunctionCallExpression":
         return None
@@ -203,8 +203,7 @@ def extract_qualified_table_ref(
     ``Selector`` is the ``database(...)`` call -- so the qualifiers are
     collected by walking that left spine rather than by reading two fixed
     positions. A plain dotted path (``A.B.T``) contributes no qualifiers and
-    still yields its trailing name, which is what the previous
-    ``extract_qualified_table_name`` returned for every one of these shapes.
+    still yields its trailing name.
     """
     if str(type(node).__name__) != "PathExpression":
         return None
@@ -247,8 +246,8 @@ def read_external_data(
 
     Shared by the source-position (:class:`ExternalDataSource`) and
     expression-position (:class:`ExternalDataExpr`) branches of the builder,
-    which is the point: they used to read the node separately and the two
-    readings could disagree.
+    which is the point: one reader means the two positions cannot disagree
+    about what the node says.
 
     URIs come from ``el.LiteralValue`` because the DLL decodes KQL's
     obfuscated string literal for us -- ``h"https://x"`` reads back as
@@ -260,11 +259,11 @@ def read_external_data(
     (``let u = "https://x"; externaldata(a:string)[u]``) yields ``["u"]``,
     and ``externaldata(a:string)[strcat("https://","x")]`` yields the whole
     call as written. A consumer resolving these has to read the query, not
-    just the field. The fallback uses ``node_text``
+    only the field. The fallback uses ``node_text``
     (``IncludeTrivia.Minimal``) rather than ``ToString()``, which is
-    ``IncludeTrivia.All``: with the latter, ``externaldata(a:string)[//
-    note\\n u]`` recorded the URI as ``"// note\\n u"`` and hashed
-    differently from the same query without the comment. A comment
+    ``IncludeTrivia.All``: the latter would record the URI of
+    ``externaldata(a:string)[// note\\n u]`` as ``"// note\\n u"``, hashing
+    it apart from the same query without the comment. A comment
     *interior* to the element -- ``strcat(// note\\n "https://","x")`` --
     still reaches the text, because no ``IncludeTrivia`` mode strips
     interior trivia; that is the same accepted boundary as
@@ -289,24 +288,21 @@ def read_external_data(
                 uris.append(str(value))
 
     # ``with (format="csv", ignoreFirstRecord=true)``. Every property is
-    # kept, not just the format: ``ignoreFirstRecord`` skips the CSV header,
-    # so it changes the rows the feed yields. Only ``format`` used to be
-    # read, and the comment here claimed the rest "stay in the source text"
-    # -- they do not. A source node carries no ``raw_text``, so the dropped
-    # properties reached nothing at all and two feeds parsed differently
-    # built one node with one ``semantic_hash``.
+    # kept, not only the format: ``ignoreFirstRecord`` skips the CSV header,
+    # so it changes the rows the feed yields -- and a source node carries no
+    # ``raw_text``, so a property dropped here reaches nothing at all and
+    # two feeds parsed differently build one node with one ``semantic_hash``.
     #
     # ``read_named_params`` is the same reader ``RenderOp.properties`` uses
-    # for the same job, so the two cannot drift, and it is strictly better
-    # than the inline loop it replaces: that one saw only ``LiteralValue``
-    # and a text fallback, where this also resolves a bare ``NameReference``
-    # value and guards the ``FunctionCallExpression``-has-a-``Name`` trap.
+    # for the same job, so the two cannot drift; beyond ``LiteralValue`` and
+    # a text fallback it also resolves a bare ``NameReference`` value and
+    # guards the ``FunctionCallExpression``-has-a-``Name`` trap.
     with_clause = getattr(node, "WithClause", None)
     properties = read_named_params(
         getattr(with_clause, "Properties", None) if with_clause is not None else None
     )
 
-    # ``format`` stays promoted to its own field: it is the one property the
+    # ``format`` is promoted to its own field: it is the one property the
     # rest of the library reads. The name is matched case-insensitively
     # because the grammar is, while the dict keeps whatever casing the query
     # wrote -- the same verbatim-keys rule ``hints`` and ``RenderOp`` follow.
@@ -317,7 +313,7 @@ def read_external_data(
 
 
 def is_table_symbol(sym: Any) -> bool:
-    """True iff ``sym`` is a Kusto TableSymbol (or a structural equivalent)."""
+    """Return True when ``sym`` is a Kusto TableSymbol (or a structural equivalent)."""
     if sym is None:
         return False
     try:
@@ -332,7 +328,7 @@ def is_table_symbol(sym: Any) -> bool:
 
 
 def table_symbol_columns(sym: Any) -> dict[str, str] | None:
-    """``{column: type}`` for a **closed** ``TableSymbol``, else ``None``.
+    """Return ``{column: type}`` for a **closed** ``TableSymbol``, else ``None``.
 
     This is the whole of "ask Microsoft what this operator returns": the
     binder puts a ``TableSymbol`` on every tabular node's ``ResultType``, and
@@ -378,7 +374,7 @@ def table_symbol_columns(sym: Any) -> dict[str, str] | None:
 
 
 def read_to_typeof(node: Any) -> str | None:
-    """The type named by an expression's ``to typeof(T)`` clause, if any.
+    """Return the type named by an expression's ``to typeof(T)`` clause, if any.
 
     Called on an ``MvExpandExpression`` or an ``MvApplyExpression`` -- both
     carry the same ``ToTypeOf`` member, which is why the reader is written
@@ -390,8 +386,8 @@ def read_to_typeof(node: Any) -> str | None:
     ``MvExpandExpression.ToTypeOf`` is a ``ToTypeOfClause`` whose ``TypeOf``
     is the whole ``typeof(string)`` literal expression -- rendering *that*
     node would record ``"typeof(string)"``, so the type name comes from its
-    ``Types`` list, confirmed with ``dir()`` on a real parse. The clause text
-    is the fallback for a shape the parser recovers differently.
+    ``Types`` list. The clause text is the fallback for a shape the parser
+    recovers differently.
 
     ``node_text`` (``IncludeTrivia.Minimal``) rather than ``ToString()``,
     which is ``IncludeTrivia.All``: the latter would put a comment written
@@ -418,7 +414,7 @@ def read_to_typeof(node: Any) -> str | None:
 
 
 def named_param_name(param: Any) -> str | None:
-    """The name a ``NamedParameter`` declares, or ``None`` if it has none."""
+    """Return the name a ``NamedParameter`` declares, or ``None`` if it has none."""
     name_node = getattr(param, "Name", None)
     if name_node is None:
         return None
@@ -426,7 +422,7 @@ def named_param_name(param: Any) -> str | None:
 
 
 def named_param_value(param: Any) -> str | None:
-    """The value a ``NamedParameter`` carries, rendered as a string.
+    """Return the value a ``NamedParameter`` carries, rendered as a string.
 
     Also called on ``GetSchemaOperator.KindParameter``, which is not a
     ``NamedParameter`` -- it is the operator's one singular slot rather than
@@ -446,10 +442,10 @@ def named_param_value(param: Any) -> str | None:
     **The bare-name branch is gated on the node class, not on the presence
     of a ``Name`` member**, and that is the whole reason the check is
     written this way. ``FunctionCallExpression`` also has a ``Name`` -- the
-    function's -- so an unguarded probe recorded
+    function's -- so an unguarded probe would record
     ``with (title=strcat("a","b"))`` as ``title="strcat"``: not what the
-    query said, and identical for every call whatever its arguments, so two
-    differently-titled charts shared a ``semantic_hash``. Only a
+    query says, and identical for every call whatever its arguments, so two
+    differently-titled charts would share a ``semantic_hash``. Only a
     ``NameReference`` means "the identifier is the value"; everything else
     belongs to the two branches below, and ``node_text`` renders the call as
     written.
@@ -492,22 +488,22 @@ def read_named_params(params: Any) -> dict[str, str]:
 
 
 def extract_hints(node: Any) -> dict[str, str]:
-    """Every ``hint.*`` named parameter an operator carries.
+    """Return every ``hint.*`` named parameter an operator carries.
 
     Keys keep the ``hint.`` prefix, because that is what the query wrote and
     stripping it would make ``hint.remote`` indistinguishable from a
     hypothetical plain ``remote=``. Non-hint parameters are left for the
     operator's own fields -- ``kind=`` changes what the operator *does* and
-    is modelled; a hint only changes how the engine runs it.
+    is modeled; a hint only changes how the engine runs it.
 
     The prefix match is **case-sensitive**, matching the grammar rather than
     being lenient about it. ``HINT.strategy=shuffle``, ``hint.STRATEGY=``
     and ``Hint.Strategy=`` are none of them named parameters in the bundled
     grammar: each fails to parse as one and is diagnosed rather than
     accepted (verified on 12.4.1). A
-    case-insensitive match therefore could not admit anything extra, and
-    pairing one with verbatim keys would have been the worse of both -- two
-    dictionary entries for one hint, the first time a parser did accept a
+    case-insensitive match therefore cannot admit anything extra, and
+    pairing one with verbatim keys would be the worse of both -- two
+    dictionary entries for one hint, the first time a parser accepts a
     second casing.
     """
     return {
@@ -582,14 +578,16 @@ def literal_value_and_ticks(node: Any) -> tuple[Any, int | None]:
     culture: the same datetime becomes ``1/1/2024 12:00:00 AM`` under en-US
     (with a U+202F narrow no-break space), ``01.01.2024 00:00:00`` under de-DE
     and ``2024/01/01 0:00:00`` under ja-JP. Those strings reach
-    ``semantic_hash`` through ``_normalize.canonical``, which made the hash
-    depend on the host locale. Explicit format specifiers remove the
-    dependency and, for datetimes, make the value round-trippable:
+    ``semantic_hash`` through ``_normalize.canonical``, so an unpinned
+    rendering makes the hash a function of the host locale. Explicit format
+    specifiers remove the dependency and, for datetimes, make the value
+    round-trippable:
 
-    * ``"o"`` — ISO 8601 round-trip, e.g. ``2024-01-01T00:00:00.0000000Z``
-      (every datetime literal is Kind-normalized to UTC before rendering, so
-      the ``Z`` suffix is unconditional -- see the datetime branch below)
-    * ``"c"`` — invariant TimeSpan constant form, tick-precise, e.g.
+    * ``"o"`` — ISO 8601 round-trip, for example
+      ``2024-01-01T00:00:00.0000000Z`` (every datetime literal is
+      Kind-normalized to UTC before rendering, so the ``Z`` suffix is
+      unconditional -- see the datetime branch below)
+    * ``"c"`` — invariant TimeSpan constant form, tick-precise, for example
       ``1.12:00:00`` and ``00:00:00.0000002``
 
     ``ticks`` is populated for datetime and timespan only.
@@ -614,7 +612,7 @@ def literal_value_and_ticks(node: Any) -> tuple[Any, int | None]:
         # instead parses as ``Local`` -- .NET silently converts it to the
         # *host's* wall-clock time and stamps it accordingly, so ``.Ticks``
         # already carries the host's UTC offset baked in and must be
-        # *converted* back to UTC, not just relabelled. Swapping these two
+        # *converted* back to UTC, not only relabeled. Swapping these two
         # branches would silently shift every non-UTC-offset timestamp by
         # the host's offset while leaving ones that already said "Z" alone.
         if raw.Kind == DateTimeKind.Local:
@@ -633,26 +631,26 @@ def literal_value_and_ticks(node: Any) -> tuple[Any, int | None]:
     #
     # Passing InvariantCulture here only pins how the value *renders* — it
     # does not protect the value itself. LiteralValue is parsed lazily on
-    # first property access, so for decimal (as for the timespan literals
-    # Task 1 fixed) a non-invariant ambient culture already in effect at
-    # *parse* time can corrupt the parsed value before this function ever
-    # runs (e.g. treating the decimal point as a group separator); no
-    # ToString() argument can recover a value that was mis-parsed upstream.
-    # What actually protects decimal is the import-time culture pin in
-    # ``bridge._pin_invariant_culture`` — this argument only removes one
-    # more ambient-culture dependency from the rendering step itself.
+    # first property access, so for decimal a non-invariant ambient culture
+    # in effect at *parse* time can corrupt the parsed value before this
+    # function ever runs (for example treating the decimal point as a group
+    # separator); no ToString() argument can recover a value that was
+    # mis-parsed upstream. What actually protects decimal is the import-time
+    # culture pin in ``bridge._pin_invariant_culture`` — this argument only
+    # removes one more ambient-culture dependency from the rendering step
+    # itself.
     return raw.ToString(None, CultureInfo.InvariantCulture), None
 
 
 # --- aggregate output naming -------------------------------------------------
 #
 # Most of an unnamed aggregate's auto-name comes from Microsoft's own
-# ``ResultNameKind``/``ResultNamePrefix`` symbol properties now (see
+# ``ResultNameKind``/``ResultNamePrefix`` symbol properties (see
 # ``IRBuilder._function_result_name`` in builder.py, a port of
 # ``GetFunctionResultName``). The two sets below are the cases that symbol
 # read cannot answer -- not because the port is incomplete, but because
-# Microsoft's own ``ResultNameKind`` is ``None`` for these functions too, and
-# still have to be listed by hand.
+# Microsoft's own ``ResultNameKind`` is ``None`` for these functions too, so
+# they have to be listed by hand.
 
 # Aggregates that emit their argument columns under the columns' own names,
 # optionally with the symbol's own ``ResultNamePrefix`` in front: ``take_any(a)``

@@ -7,12 +7,13 @@ KQL lets a query hold more than one tabular statement, separated by ``;``::
 
     T | count; U | count
 
-The builder read ``expr_stmts[0]`` and stopped, so everything after the first
-semicolon was discarded: ``T | count; U | count`` built exactly the IR of
-``T | count``, carried its ``semantic_hash``, and nothing in the second
-statement was reachable through ``walk``/``find_all``. That is the lossy
-lowering shape AGENTS.md describes — the node is fully populated, so nothing
-looks stubbed, while two different queries produce identical IR.
+Guards against under-lowering: a builder that reads only ``expr_stmts[0]``
+discards everything after the first semicolon, so ``T | count; U | count``
+would collapse onto the IR of ``T | count`` — same ``semantic_hash``, and
+nothing in the second statement reachable through ``walk``/``find_all``.
+That is the lossy lowering shape AGENTS.md describes — the node is fully
+populated, so nothing looks stubbed, while two different queries produce
+identical IR.
 
 ``QueryIR.additional_pipelines`` holds the second and later statements in
 source order. The hash payload names it explicitly (``compute_semantic_hash``
@@ -74,12 +75,12 @@ def test_a_single_statement_query_has_no_additional_pipelines():
 
 # -- the hash responds ----------------------------------------------------
 #
-# test_a_second_statement_changes_the_hash and
-# test_queries_differing_only_in_the_second_statement_hash_apart moved to
+# That a second statement changes the hash, and that two queries differing
+# only in their second statement hash apart, are asserted in
 # tests/ir/test_hash_battery.py as second-statement-dropped,
-# second-statement-table and second-statement-operator-param (the last one
-# added by this task -- the battery previously only proved the later
-# pipeline's source name reaches the digest, not its operators).
+# second-statement-table and second-statement-operator-param. The last of
+# those proves the later pipeline's operators reach the digest, not only
+# its source name.
 
 def test_statement_order_is_hashed():
     """``T | count; U | take 1`` and ``U | take 1; T | count`` are different
@@ -98,8 +99,8 @@ def test_compute_semantic_hash_agrees_with_the_stored_field():
 # -- the subtree is reachable ---------------------------------------------
 
 def test_walk_reaches_into_a_later_statement():
-    """``find_all`` is the documented traversal; an analyzer built on it was
-    blind to everything past the first semicolon."""
+    """``find_all`` is the documented traversal; an analyzer built on it
+    needs to see past the first semicolon, not just the main pipeline."""
     ir = _ir("T | count; U | where FileName == 'cmd.exe'")
     assert [f.name for f in find_all(ir, ColumnRef)] == ["FileName"]
     assert len(list(find_all(ir, FilterOp))) == 1
@@ -132,8 +133,9 @@ def test_the_binder_enriches_a_later_statement(sample_schema):
 
 def test_a_let_reference_in_a_later_statement_is_canonicalized():
     """``_canonicalize_let_names`` rewrites ``let`` names on the hash's copy.
-    It walked the main pipeline only, so a reference from statement two kept
-    its source-level name and the rename stopped being a rename."""
+    Guards against renaming the main pipeline only: a reference from a later
+    statement must be renamed the same way, or it keeps its source-level
+    name and the rename stops being a rename."""
     a = _hash("let X = T | take 1; T | count; X | count")
     b = _hash("let Y = T | take 1; T | count; Y | count")
     assert a == b

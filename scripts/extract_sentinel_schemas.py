@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Extract a {table: {column: type}} schema dict from a Sentinel
-reference markdown file.
+"""Extract a {table: {column: type}} schema dict from Sentinel reference markdown.
 
-The markdown is expected to use the following per-table layout:
+The markdown must use this per-table layout:
 
     ### `TableName`
     ...
@@ -14,10 +13,10 @@ The markdown is expected to use the following per-table layout:
     ...
 
 Output is JSON written to --output (default tests/fixtures/sentinel_schemas.json,
-which is gitignored — see .gitignore).
+which is gitignored).
 
-The committed code here does NOT reference any external repository path.
-Pass --reference-md to point it at the source markdown on your machine.
+The script references no external repository path. Pass --reference-md to
+point it at the source markdown on your machine.
 """
 from __future__ import annotations
 
@@ -36,6 +35,7 @@ KEY_COLUMNS_MARKER = "**Key Columns:**"
 
 
 def parse_reference(md_path: Path) -> dict[str, dict[str, str]]:
+    """Parse per-table Key Columns blocks into {table: {column: type}}."""
     schemas: dict[str, dict[str, str]] = {}
     current_table: str | None = None
     in_key_columns: bool = False
@@ -59,7 +59,7 @@ def parse_reference(md_path: Path) -> dict[str, dict[str, str]]:
                     continue
                 schemas[current_table][col_name] = col_type
             elif line.lstrip().startswith("**") and line.strip() != KEY_COLUMNS_MARKER:
-                # Next bold section (e.g. **Detection Use Cases:**) ends the block.
+                # Any later bold section (for example **Detection Use Cases:**) ends the block.
                 in_key_columns = False
     return schemas
 
@@ -81,10 +81,10 @@ def main(argv: list[str] | None = None) -> int:
     n_cols = sum(len(cols) for cols in schemas.values())
 
     if n_tables == 0:
-        # Write nothing. args.output defaults to the in-repo fixture that
-        # verify_corpus.py's option (B) reads; a zero-table write here used
-        # to clobber whatever a previous good run had produced, turning one
-        # bad markdown parse into two failures.
+        # Leave args.output untouched: it defaults to the in-repo fixture
+        # that verify_corpus.py's option B reads, and a zero-table write
+        # would clobber a previous good run's output -- one bad markdown
+        # parse must not become two failures.
         print("error: no tables parsed — check markdown format",
               file=sys.stderr)
         return 1

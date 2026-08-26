@@ -7,7 +7,7 @@ no ``UnknownExpr`` or unspecialized ``Operator`` nodes — making the corpus
 the practical coverage signal for the builder.
 
 The ``.kql`` files are checked in, so the harness runs offline. This script
-regenerates them when needed (new queries, Sentinel-side edits, etc.):
+regenerates them when needed (new queries, Sentinel-side edits, and so on):
 
     python scripts/extract_complex_corpus.py \
         --sentinel-repo /path/to/Azure-Sentinel
@@ -62,8 +62,11 @@ RELATIVE_PATHS: list[str] = [
 
 
 def _slugify(basename: str) -> str:
-    """Filename-safe slug. Sentinel YAML names often contain spaces and
-    parentheses; keep alphanumerics, collapse the rest to underscores."""
+    """Return a filename-safe slug for a Sentinel YAML basename.
+
+    Sentinel YAML names often contain spaces and parentheses; keep
+    alphanumerics and collapse the rest to underscores.
+    """
     stem = basename.removesuffix(".yaml")
     slug = re.sub(r"[^A-Za-z0-9_]+", "_", stem).strip("_")
     return slug or "query"

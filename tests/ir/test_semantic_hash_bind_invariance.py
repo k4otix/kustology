@@ -56,8 +56,9 @@ SCHEMA = {
     ],
 )
 def test_recomputed_hash_is_the_same_bound_and_unbound(query):
-    """The consumer-visible bug: following ``semantic_hash``'s own advice to
-    refresh the hash makes it depend on whether a schema was passed."""
+    """Guards the consumer-visible failure: following ``semantic_hash``'s own
+    advice to refresh the hash must not make it depend on whether a schema
+    was passed."""
     bound = parse(query, schema=SCHEMA).to_ir()
     unbound = parse(query).to_ir()
 
@@ -102,12 +103,14 @@ def test_join_side_keeps_semantically_different_join_keys_apart():
 def test_a_column_named_table_is_not_erased_from_the_hash():
     """Volatile fields are stripped by *model field*, not by key name.
 
-    The strip used to run over the dumped JSON and delete every key called
-    ``table`` / ``span`` / ``result_schema`` at any depth. ``AssertSchemaOp``
+    Guards against stripping by key name: a strip that runs over the dumped
+    JSON and deletes every key called ``table`` / ``span`` / ``result_schema``
+    at any depth catches more than the volatile fields. ``AssertSchemaOp``
     carries its declaration as ``dict[str, str]``, so a column a query
-    literally names ``table`` was a key at exactly that depth and vanished --
-    the asserted schema ``(a:long, table:long)`` hashed the same as
-    ``(a:long)``, which is a different assertion about the data.
+    literally names ``table`` is a key at exactly that depth -- a
+    key-name-based strip erases it, and the asserted schema
+    ``(a:long, table:long)`` would hash the same as ``(a:long)``, a
+    different assertion about the data.
     """
     with_extra = parse("T | assert-schema (a:long, table:long)").to_ir()
     without = parse("T | assert-schema (a:long)").to_ir()

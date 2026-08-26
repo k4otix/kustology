@@ -58,14 +58,13 @@ tests/               # pytest suite
 **Tier 1** — `kustology` top-level surface (`bridge`, `services`, `core`, `utils`,
 `reflection`, `cli`). Public API for callers and the CLI, and on a stabilization
 track — but this is a `0.y` line, so pre-1.0 Tier 1 may still break at a minor.
-0.2.0 did: `get_operator_chain()` stopped returning the source table as element
-0, so a consumer indexing from 1 to skip it now skips a real operator. In the
-same release `get_time_range()` became `find_time_expressions()`, which is the
-softer kind of break — the old name is kept as a deprecated alias.
+CHANGELOG.md calls out each break, hard ones (a changed return shape) and soft
+ones alike — a soft break renames an entry point but keeps the old name as a
+deprecated alias, the way `get_time_range()` aliases `find_time_expressions()`.
 
 **Tier 2** — `kustology.ir.*`. Pydantic IR with semantic enrichment. On a pre-1.0
-track until the IR survives one Kusto.Language.dll upgrade cycle without breaking. Minor
-breaking changes are possible at minor versions; each is called out in CHANGELOG.md.
+track until the IR survives one Kusto.Language.dll upgrade cycle without breaking.
+Breaking changes are possible at minor versions; each is called out in CHANGELOG.md.
 
 See README.md "Versioning and stability" for what counts as breaking, and for the
 three independent version tags (`__version__`, `IR_SCHEMA_VERSION`,
@@ -73,7 +72,7 @@ three independent version tags (`__version__`, `IR_SCHEMA_VERSION`,
 
 ## Where to add things
 
-**A new tabular operator** (e.g. `mv-apply`, `partition`):
+**A new tabular operator** (for example `mv-apply` or `partition`):
 
 1. Add an IR node class in `src/kustology/ir/query.py`.
 2. Add its `SyntaxKind` string to `IRBuilder.HANDLED_OPERATOR_KINDS` in
@@ -99,10 +98,10 @@ three independent version tags (`__version__`, `IR_SCHEMA_VERSION`,
 
    What you owe, in `src/kustology/ir/binder.py`, is **provenance**: does
    your operator reshape *which table* a column comes from? `join` /
-   `lookup`, `union`, `search` and `find` do — they bring new sources into
+   `lookup`, `union`, `search`, and `find` do — they bring new sources into
    scope — and each needs a structural branch in
    `SchemaAttacher._walk_operator_provenance()`.
-   If your operator just passes its input scope through unreshaped, the
+   If your operator passes its input scope through unreshaped, the
    generic fallback already fills its expressions and walks its
    sub-pipelines, and there is nothing to add. Either way, add a row to
    `MATRIX` in `tests/ir/test_binder_oracle.py` naming the construct your
@@ -121,14 +120,14 @@ three independent version tags (`__version__`, `IR_SCHEMA_VERSION`,
 6. Regenerate the baseline:
    `python scripts/audit_syntax_kinds.py --update-baseline`.
 
-If the operator's inner structure is genuinely not worth modelling yet, the
+If the operator's inner structure is genuinely not worth modeling yet, the
 honest fallback is a single `raw_text` field plus a class docstring saying
 what is inside the string and what that costs — see `ScanOp` and the seven
 operators it names. Do **not** declare typed fields you cannot populate: a
-declared-but-unfilled field reads as implemented, and 0.1.0 shipped several —
-one blocked a downstream consumer's design entirely.
+declared-but-unfilled field reads as implemented, is invisible to tests, and
+a downstream consumer can design against it before discovering it never fills.
 
-**A new IR expression** (e.g. a new literal kind, a new operator shape):
+**A new IR expression** (for example a new literal kind or operator shape):
 
 0. If what you are adding is a **name**, check the three that already
    exist before adding a fourth. A `let`-bound scalar in expression
@@ -143,18 +142,18 @@ one blocked a downstream consumer's design entirely.
    the classification — and therefore `semantic_hash` — does not depend
    on whether a schema was passed.
 1. Add the model in `src/kustology/ir/expr.py` (or reuse `LiteralExpr` if
-   it's just a new `literal_kind`).
+   all the addition needs is a new `literal_kind`).
 2. Add the class to the `AnyExpr` union in `expr.py` **and** to `__all__` in
    `src/kustology/ir/__init__.py`. Omitting either half produces surface
-   that looks implemented and is not — both directions shipped in v0.1.0.
+   that looks implemented and is not.
 3. Add its kind to `IRBuilder.HANDLED_EXPR_KINDS`.
 4. Add a dispatch branch in `IRBuilder._visit_expr()`.
 5. Add a render branch to `canonical()` in `src/kustology/ir/_normalize.py`,
    which backs `Expr.canonical_form`. That function ends in a silent
    fallthrough — `raw_text` if the node has one, otherwise a bare `"?"` —
-   so a missing branch degrades quietly rather than raising: 11 `Expr`
-   types had fallen through it, rendering `-X > 1`, `D.a == 1` and
-   `toscalar(...) > 1` all as the same string `"? > 1"`.
+   so a missing branch degrades quietly rather than raising, and every
+   shape that falls through renders as the same placeholder: `-X > 1`,
+   `D.a == 1`, and `toscalar(...) > 1` all become the one string `"? > 1"`.
 
    Steps 2 and 5 are the three hand-maintained class lists in the IR, and
    `tests/ir/test_canonical_coverage.py` rebuilds each one by
@@ -168,7 +167,7 @@ one blocked a downstream consumer's design entirely.
 7. Regenerate the baseline.
 
 **A new statement kind** (a `set`/`declare`/... construct that is neither
-`let` nor tabular, e.g. `alias database`, `restrict access to`):
+`let` nor tabular, for example `alias database` or `restrict access to`):
 
 1. Add the IR node class in `src/kustology/ir/query.py`, in the "statements
    that are neither `let` nor tabular" section, and add it as a new member of
@@ -216,7 +215,7 @@ protecting.
 | Every parser `SyntaxKind` is handled or explicitly skipped | `tests/test_coverage_audit.py` + `scripts/audit_syntax_kinds.py --check` |
 | Every kind in `HANDLED_OPERATOR_KINDS` actually builds from real KQL | `tests/ir/test_handled_kinds_smoke.py` |
 | A statement kind reaches `semantic_hash`'s payload, the `let`-rename canonicalizer, and (where it opens a body) the provenance pass | `tests/ir/test_hash_battery.py` (`set-two-values` et al., `pattern-body-let-rename`), `tests/ir/test_statements.py::test_statement_order_is_hashed` |
-| `canonical()`, `AnyExpr` and `ir.__all__` list every `Expr` subclass | `tests/ir/test_canonical_coverage.py` |
+| `canonical()`, `AnyExpr`, and `ir.__all__` list every `Expr` subclass | `tests/ir/test_canonical_coverage.py` |
 | Our `result_schema` equals Microsoft's `ResultType`, in order | `tests/ir/test_binder_oracle.py` (bound leg and dict-path leg) |
 | `semantic_hash` splits queries that differ and merges those that don't | `tests/ir/test_hash_battery.py` |
 | `semantic_hash` does not move when a schema is supplied | `tests/ir/test_semantic_hash_bind_invariance.py` |
@@ -235,7 +234,7 @@ raises `RuntimeError` with the paths it tried.
 
 `Kusto.Language.dll` is bundled at `src/kustology/bin/Kusto.Language.dll`,
 pinned by SHA-256 in `src/kustology/bin/VERSION.txt`, and refreshed via
-`scripts/refresh_dll.py` (which runs `dotnet publish` against a known nuget
+`scripts/refresh_dll.py` (which runs `dotnet publish` against a known NuGet
 version). CI verifies the hash on every push via `scripts/verify_dll.py`.
 
 ## See also

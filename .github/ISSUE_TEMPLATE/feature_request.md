@@ -17,5 +17,5 @@ result.<your_method>(...)
 ```
 
 **Alternatives considered**
-Why doesn't an existing analyzer (`get_referenced_tables`,
-`get_operator_chain`, etc.) cover this?
+Why doesn't an existing analyzer (such as `get_referenced_tables` or
+`get_operator_chain`) cover this?

@@ -36,6 +36,7 @@ _TRANSPARENT = {"List", "SeparatedElement", "TokenName"}
 
 
 def walk_node(node, depth: int = 0) -> None:
+    """Print the logical nodes under ``node`` as a depth-indented tree."""
     if node is None:
         return
     try:
@@ -75,9 +76,9 @@ def walk_node(node, depth: int = 0) -> None:
         # so recurse (no early return) to show the right-hand pipeline.
         print(f"{indent}Let: {node.Name.ToString().strip()}")
     elif kind == "FunctionDeclaration":
-        # `let f = (x:int) { ... }`. The IR records only the parameter names
-        # and a body span (see walk_ir.py); the AST has the whole body, which
-        # is the reason to reach for tier 1 here.
+        # `let f = (x:int) { ... }`, printed token-exact: ToString() is the
+        # declaration's source text, which the typed IR does not keep. The
+        # walk_ir.py mirror descends into the typed body instead.
         print(f"{indent}FunctionDeclaration: {node.ToString().strip()}")
         return
     elif kind == "ExpressionStatement":

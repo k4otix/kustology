@@ -9,9 +9,9 @@ semantic-equivalence rewriting is applied at build time. That keeps analyzers
 that care about textual structure (span tracking, redundant-where lints,
 formatting hints) unobstructed.
 
-When you instead want a *canonical* view — e.g. "give me the conjunction of
-all filter predicates as a single ``And``", or "rewrite ``tolower(X) == 'y'``
-to ``X =~ 'y'``" — apply a transform from this module. Each transform is
+When you instead want a *canonical* view — for example "give me the
+conjunction of all filter predicates as a single ``And``", or "rewrite
+``tolower(X) == 'y'`` to ``X =~ 'y'``" — apply a transform from this module. Each transform is
 opt-in, in-place, and traverses sub-pipelines so a single call covers nested
 join/lookup/union/fork branches.
 """
@@ -55,14 +55,15 @@ from .walk import _models_in, find_all, walk
 
 
 def merge_consecutive_filters(root: Pipeline | QueryIR) -> None:
-    """Collapse runs of consecutive ``FilterOp``s into a single ``FilterOp``
-    whose predicate is an ``And`` of the originals.
+    """Collapse each run of consecutive ``FilterOp``s into one ``FilterOp``.
 
-    Operates in place on ``root`` and every ``Pipeline`` reachable from it
-    (join/lookup RHS, union/fork branches, mv-apply right, materialize /
-    toscalar pipelines, etc.). The first FilterOp's span is preserved on the
-    merged result; the others' outer spans are dropped (inner predicate
-    spans survive unchanged).
+    The merged operator's predicate is an ``And`` of the originals. Operates
+    in place on ``root`` and every ``Pipeline`` reachable from it — join and
+    lookup right sides, union and fork branches, mv-apply bodies, and nested
+    sub-pipelines such as ``toscalar(...)`` and ``materialize(...)``
+    arguments. The first ``FilterOp``'s span is preserved on the merged
+    result; the others' outer spans are dropped (inner predicate spans
+    survive unchanged).
 
     Build a deep copy via ``model_copy(deep=True)`` first if you need to
     keep the original pre-merge IR.
@@ -178,12 +179,13 @@ def _merge_at_one_level(ops: list) -> list:
 # Cleared on the hash's deep copy before it is dumped. Keyed by **model field
 # name**, matched against ``type(node).model_fields`` at every node — not by
 # key path, and deliberately not by key name in the dumped JSON. Dropping
-# dictionary keys from the payload was both too broad and too narrow: too
-# broad because ``AssertSchemaOp.columns`` is a ``dict[str, str]`` of the
-# user's own column names, so ``assert-schema (a:long, table:long)`` lost the
-# column literally called ``table`` and hashed identically to ``(a:long)``;
-# too narrow because ``LetFunction.body_span`` is a span whose field is not
-# named ``span``, so source offsets kept reaching the digest.
+# dictionary keys from the payload would be both too broad and too narrow:
+# too broad because ``AssertSchemaOp.columns`` is a ``dict[str, str]`` of the
+# user's own column names, so ``assert-schema (a:long, table:long)`` would
+# lose the column literally called ``table`` and hash identically to
+# ``(a:long)``; too narrow because ``LetFunction.body_span`` is a span whose
+# field is not named ``span``, so source offsets would keep reaching the
+# digest.
 #
 # To extend: add the field name here. It applies to every model that declares
 # a field of that name, which is the intent — ``result_schema`` is meant to be
@@ -207,23 +209,21 @@ def _merge_at_one_level(ops: list) -> list:
 # statement about the result -- ``join hint.strategy=shuffle`` and ``join``
 # return the same rows -- so two rules differing only in tuning must
 # deduplicate to one. That makes it the exception to the "source-derived
-# information must keep hashing" rule two paragraphs down, and the exception
-# is decided by what the field *means*, not by where it comes from. A future
-# field only belongs here if the query would return identical rows without
-# it.
+# information must keep hashing" rule the next paragraph applies, and the
+# exception is decided by what the field *means*, not by where it comes
+# from. A future field only belongs here if the query would return identical
+# rows without it.
 #
 # ``join_side`` is deliberately *not* stripped, and is why it exists as a
-# field at all. ``table`` used to carry two different things: the
-# source-derived ``$left`` / ``$right`` sentinel, and the table the binder
-# resolves -- and the binder wrote the second over the first (see
-# ``SchemaAttacher._fill``). Hashing ``table`` made the hash bind-dependent;
-# dropping it without recording the side elsewhere collapsed
-# ``$left.a == $left.b`` into ``$left.a == $right.b``, which are different
-# queries. The sentinel is gone now -- an unresolvable side is honestly
-# ``None`` in ``table``, not a string to strip -- but the field would still
-# be reused for two purposes if the side lived there, so ``join_side``
-# remains the one place it lives, hashed on its own. Splitting the two apart
-# is the standing remedy for lossy lowering -- see AGENTS.md.
+# field at all. It keeps ``table`` to a single job -- the table the binder
+# resolves (see ``SchemaAttacher._fill``) -- so the source-derived ``$left``
+# / ``$right`` side never rides in a binder-written field. Carried there and
+# hashed, the side would make the hash bind-dependent; carried there and
+# stripped, ``$left.a == $left.b`` would collapse into
+# ``$left.a == $right.b``, which are different queries. An unresolvable side
+# is honestly ``None`` in ``table``, while the side itself lives in
+# ``join_side`` and hashes on its own. Splitting the two apart is the
+# standing remedy for lossy lowering -- see AGENTS.md.
 #
 # Stripping these fields does *not* make bind state invisible to the hash, and
 # no field-stripping could. The builder's ``let`` dispatch is bind-dependent by
@@ -251,24 +251,22 @@ _VOLATILE_FIELDS = frozenset({
 # still splits: whatever the index recorded, the nodes it indexed are hashed
 # beside it.
 #
-# Two things go wrong while they *are* hashed, and both are the same fault --
-# an index is a copy, and a copy of a name desynchronizes from the name.
+# Two things would go wrong if they were hashed, and both are the same fault
+# -- an index is a copy, and a copy of a name desynchronizes from the name.
 #
 # * ``inner_tables`` is a list of plain ``str``. No node rename can reach a
-#   string, so a body reading a tabular parameter records ``["T"]`` against
-#   ``["U"]`` however thoroughly the ``TableRef`` beside it is canonicalized,
-#   and two alpha-equivalent functions split on the index alone. It holds
-#   real table names only today, which is why the ``let`` rename never hit
-#   this -- but a tabular parameter reference is indistinguishable from a
-#   table name there (see :class:`~kustology.ir.query.LetBinding`), so the
-#   parameter rename does, and any later rename over a name this index can
-#   hold would too.
+#   string, so a body reading a tabular parameter would record ``["T"]``
+#   against ``["U"]`` however thoroughly the ``TableRef`` beside it is
+#   canonicalized, and two alpha-equivalent functions would split on the
+#   index alone. A tabular parameter reference is indistinguishable from a
+#   table name there (see :class:`~kustology.ir.query.LetBinding`), and any
+#   rename over a name this index can hold has the same exposure.
 # * ``inner_time_exprs`` holds the *same objects* as the right-hand side
-#   beside it rather than copies, so the rename walk reached each one twice
-#   and only renamed it correctly because ``rhs_function`` happens to be
+#   beside it rather than copies, so a rename walk would reach each one
+#   twice -- correctly only for as long as ``rhs_function`` happens to be
 #   declared before the index on :class:`~kustology.ir.query.LetBinding`.
-#   Clearing the index before the rename runs retires that dependency
-#   outright: there is no second path left to reach the node by.
+#   Clearing the index before the rename runs leaves no second path to reach
+#   the node by, so nothing hangs on declaration order.
 #
 # A future index field over query content belongs here, not above: the test is
 # whether the field's value is *recoverable* from what is already hashed.
@@ -288,8 +286,8 @@ _CLEARED_FIELDS = _VOLATILE_FIELDS | _DERIVED_INDEX_FIELDS
 # other volatile fields there is nothing to clear them *to*. A zero span is
 # the answer rather than ``None``: it keeps the copy a valid IR. Pydantic 2.13
 # does not object to serializing ``None`` through a ``Span``-typed field --
-# checked, it emits ``null`` with no warning -- but the payload it produces no
-# longer validates back, and the copy is a live IR that ``walk`` and
+# checked, it emits ``null`` with no warning -- but the payload it produces
+# fails to validate back, and the copy is a live IR that ``walk`` and
 # ``model_dump`` both traverse before it is thrown away. A real ``Span`` that
 # is identical at every node costs nothing and leaves no invalid state behind.
 #
@@ -300,14 +298,13 @@ _ZERO_SPAN = Span(text_start=0, width=0)
 
 
 def _normalize_raw_text(text: str) -> str:
-    """Fold line breaks (and their surrounding indent) in ``raw_text`` to a
-    single space. Nothing else is touched.
+    """Fold each line break in ``raw_text``, indent included, to one space.
 
-    The handful of operators the IR keeps as source text (``scan``,
-    ``top-nested``, the ``graph-*`` family, and the ``Unknown*`` fallbacks)
-    hash that text directly, so ``| top-nested 3 of a`` and
-    ``|   top-nested\\n3 of a`` were two different queries as far as the
-    digest was concerned.
+    Nothing else is touched. The operators the IR keeps as source text
+    (``scan``, ``top-nested``, the ``graph-*`` family, and the ``Unknown*``
+    fallbacks) hash that text directly, so without the fold
+    ``| top-nested 3 of a`` and ``|   top-nested\\n3 of a`` would be two
+    different queries as far as the digest is concerned.
 
     The rule is deliberately narrow, because ``raw_text`` is source text and
     two of the things that look like formatting in it are data:
@@ -315,8 +312,8 @@ def _normalize_raw_text(text: str) -> str:
     * **Interior spacing is not collapsed.** A run of spaces can be *inside a
       string literal*, where it is part of the value: a rule matching
       ``"error  occurred"`` (two spaces) and one matching ``"error occurred"``
-      are different predicates, and collapsing every whitespace run merged
-      them. Outside a literal there is nothing left to collapse anyway —
+      are different predicates, and collapsing every whitespace run would
+      merge them. Outside a literal there is nothing left to collapse anyway —
       ``IncludeTrivia.Minimal`` has already normalized it, and records
       ``top-nested 3  of  a`` as ``top-nested 3 of a``. Newlines are the safe
       case precisely because a KQL string literal cannot contain a raw one,
@@ -327,7 +324,7 @@ def _normalize_raw_text(text: str) -> str:
       ``//`` to end-of-line would truncate ``Url == "http://a"`` and
       ``Url == "http://b"`` to the same text.
 
-    Both boundaries are pinned by tests; widening this function back to
+    Both boundaries are pinned by tests; widening this function to
     ``" ".join(text.split())`` fails the first, and adding a comment strip
     fails the second.
     """
@@ -335,12 +332,12 @@ def _normalize_raw_text(text: str) -> str:
 
 
 def _clear_volatile(root: BaseModel) -> None:
-    """Clear every digest-excluded field on ``root`` and its descendants, in
-    place: :data:`_VOLATILE_FIELDS` (bind state and offsets) and
-    :data:`_DERIVED_INDEX_FIELDS` (values recoverable from the subtree that is
-    hashed anyway).
+    """Clear every digest-excluded field on ``root`` and its descendants.
 
-    Intended for the hash's private deep copy — it rewrites node state.
+    In place: :data:`_VOLATILE_FIELDS` (bind state and offsets) and
+    :data:`_DERIVED_INDEX_FIELDS` (values recoverable from the subtree that
+    is hashed anyway). Intended for the hash's private deep copy — it
+    rewrites node state.
     """
     for node in walk(root):
         fields = type(node).model_fields
@@ -374,7 +371,6 @@ def _clear_volatile(root: BaseModel) -> None:
 # to change, since ``_canonicalize_let_names`` renames by one isinstance
 # check against the whole tuple.
 #
-# ``LetValueRef`` is the reason the tuple was written to be extended.
 # ``ColumnRef`` deliberately is not a member and must not become one: a real
 # column named ``n`` is a different query from a ``let``-bound ``n``, so
 # renaming one would collapse the two. A *function parameter* is renamed
@@ -398,9 +394,9 @@ _LET_NAME_MODELS: tuple[type[BaseModel], ...] = (LetBinding, LetRef, LetValueRef
 # values and functions in separate namespaces. ``let abs = 5; T | extend y =
 # abs(x)`` binds a value called ``abs`` and still calls the *built-in* ``abs``,
 # and Microsoft's binder accepts it with no diagnostic at all -- ``abs(x) +
-# abs`` resolves both readings in one expression. A name-only gate therefore
-# renamed that call to the binding's ``$let<i>`` and merged the query with the
-# ``sqrt`` spelling of it, which computes something else. So only a ``let``
+# abs`` resolves both readings in one expression. A name-only gate would
+# therefore rename that call to the binding's ``$let<i>`` and merge the query
+# with the ``sqrt`` spelling of it, which computes something else. So only a ``let``
 # that bound a **function** (``rhs_function``) renames its call sites, and
 # everything else -- a built-in, a stored server-side function, a call whose
 # name a scalar binding happens to share -- is left exactly as written. Both
@@ -457,8 +453,8 @@ def _canonicalize_let_names(ir: QueryIR) -> None:
     ``rhs_function``. A visible ``let`` of the name is *not* sufficient,
     because KQL resolves values and functions in separate namespaces:
     ``let abs = 5; T | extend y = abs(x)`` calls the built-in and binds a
-    value, both cleanly, so renaming the call through the value binding merged
-    it with the ``sqrt`` spelling. Everything outside the narrowed gate -- a
+    value, both cleanly, so renaming the call through the value binding would
+    merge it with the ``sqrt`` spelling. Everything outside the narrowed gate -- a
     built-in, a stored server-side function, a call sharing a scalar
     binding's name -- is left exactly as written, so two queries calling two
     different functions still hash apart.
@@ -522,14 +518,13 @@ def _canonicalize_let_names(ir: QueryIR) -> None:
     deterministic walk order keeps every name in the query distinctly
     numbered.
 
-    A single ``seen`` id-set spans the whole traversal. It was load-bearing
-    while ``LetBinding.inner_time_exprs`` reached the digest -- that index
-    holds the *same* objects as the ``rhs_pipeline`` / ``rhs_function`` beside
-    it, so a node was approached twice and renamed correctly only because the
-    owning field is declared first. Both index fields are cleared before this
-    runs now (:data:`_DERIVED_INDEX_FIELDS`), so no alias survives to be
-    reached, and the set is a guard against a future one rather than the thing
-    that makes today's rename correct.
+    A single ``seen`` id-set spans the whole traversal, guarding against a
+    node two fields both reach being renamed twice. No such path exists in
+    the copy this runs on: ``LetBinding.inner_time_exprs``, the field that
+    aliases the ``rhs_pipeline`` / ``rhs_function`` beside it, is cleared
+    before this runs (:data:`_DERIVED_INDEX_FIELDS`), so the set is
+    insurance against a future aliasing field rather than something the
+    rename depends on.
     """
     # The early-out has to account for ``statements`` as well as bindings: a
     # ``declare pattern`` arm can declare a ``let`` of its own while the query
@@ -649,7 +644,7 @@ def _canonicalize_let_names(ir: QueryIR) -> None:
         The canonical names are handed out first and the map is built from the
         names as *written*, before any declaration is overwritten -- otherwise
         the second parameter of ``(a:int, b:int)`` would map from the name the
-        first one had just been given.
+        first one had been given.
 
         Declarations are renamed by position for the reason
         :func:`canon_scope`'s are: a duplicate name is a query KQL rejects but
@@ -690,7 +685,7 @@ def _canonicalize_let_names(ir: QueryIR) -> None:
 
     visible: dict[str, str] = {}
     canon_scope(ir.let_bindings, visible)
-    # Every tabular statement, not just the first: a ``let`` declared once is
+    # Every tabular statement, not only the first: a ``let`` declared once is
     # in scope for all of them, so a reference written after the second
     # semicolon has to be renamed too or the rename stops being one. The other
     # statement kinds are in the same position -- ``restrict access to (V)``
@@ -729,11 +724,11 @@ def _sort_commutative(root: BaseModel) -> None:
     only at the *first* path that reaches it. A node an index field aliases
     is positioned by whichever field is declared first, and if the index came
     first the node would be yielded above its real parent and sorted after
-    it. The IR's only aliasing fields are ``LetBinding.inner_time_exprs`` and
-    ``inner_tables``, which held the same objects as the ``rhs_pipeline`` /
-    ``rhs_function`` beside them -- and :func:`_clear_volatile` now empties
-    both before this runs (:data:`_DERIVED_INDEX_FIELDS`), so no alias
-    survives to be mispositioned. A new index field over
+    it. The IR's only aliasing field is ``LetBinding.inner_time_exprs``,
+    which holds the same objects as the ``rhs_pipeline`` / ``rhs_function``
+    beside it -- and :func:`_clear_volatile` empties it before this runs
+    (:data:`_DERIVED_INDEX_FIELDS`), so no alias survives to be
+    mispositioned. A new index field over
     ``And``/``Or``/``SetMembership`` that reached the digest would need a
     genuinely post-order traversal here rather than a reversed pre-order --
     or, better, to be excluded the same way these two are.
@@ -754,7 +749,7 @@ def _sort_commutative(root: BaseModel) -> None:
 
 
 def _operand_sort_key(child: BaseModel) -> str:
-    """Total order over IR subtrees: their own canonical JSON dump.
+    """Key an operand by its own canonical JSON dump, a total order.
 
     ``sort_keys=True`` makes it independent of field declaration order, and
     dumping the whole subtree rather than a rendered form means two operands
@@ -770,14 +765,14 @@ def _operand_sort_key(child: BaseModel) -> str:
 # ``IR_SCHEMA_VERSION`` in ``kustology.ir`` — bump together.
 #
 # The lockstep rule is about *released* versions. One tag covers one
-# unreleased window: ``v2`` accounts for every canonicalization change since
-# ``v0.1.0``, however many branches landed in between. Bumping per branch
-# would burn tags nobody ever saw and leave gaps in the released sequence
-# that a later reader has to go digging to explain. Bump on the first change
-# *after* a release, not on every change.
+# unreleased window: every canonicalization change that lands between two
+# releases shares one increment, however many branches carry them. Bumping
+# per branch would burn tags nobody ever saw and leave gaps in the released
+# sequence that a later reader has to go digging to explain. Bump on the
+# first change *after* a release, not on every change.
 #
 # The one thing never to do is reuse a tag for different rules: a stored hash
-# whose prefix no longer implies its canonicalization is exactly the silent
+# whose prefix stops implying its canonicalization is exactly the silent
 # wrong answer the prefix exists to prevent. Renumbering down into an
 # unreleased window is only safe while nothing has consumed the intermediate
 # value.
@@ -785,61 +780,61 @@ SEMANTIC_HASH_SCHEME = "kustology-sem-v2"
 
 
 def _strip_unwritten_fields(value: Any, kind: str, defaults: dict[str, Any]) -> None:
-    """Delete an operator dict's keys when every one is still at its
-    unwritten default, in place, on the *dumped* JSON structure.
+    """Delete an operator dict's keys when every one is at its unwritten default.
 
-    The sibling of :data:`_VOLATILE_FIELDS`/:func:`_clear_volatile` above,
-    for the opposite kind of field: one that is plain and non-volatile
-    (a written value must reach the digest -- clearing it to a canonical
-    default the way ``_clear_volatile`` clears bind state would hide real
-    differences) but that was *added* to an operator IR node with no field
-    for it before, the way :class:`~kustology.ir.query.EvaluateOp`'s
-    ``declared_schema``/``declared_schema_star`` were. A Pydantic field
+    Operates in place, on the *dumped* JSON structure. The sibling of
+    :data:`_VOLATILE_FIELDS`/:func:`_clear_volatile` above, for the opposite
+    kind of field: one that is plain and non-volatile (a written value must
+    reach the digest -- clearing it to a canonical default the way
+    ``_clear_volatile`` clears bind state would hide real differences) but
+    whose *unwritten* default must not move the digest of a query that never
+    uses it, the way :class:`~kustology.ir.query.EvaluateOp`'s
+    ``declared_schema``/``declared_schema_star`` must not. A Pydantic field
     cannot be conditionally *absent* from one ``model_dump`` call: the key
-    is always present at its default, so merely adding such a field moves
-    the digest of every query using that operator, written or not -- only
-    the written case is a real collision closing. Operating after the dump,
-    on the plain dict/list tree rather than the model, is what makes the
-    omission conditional: an operator dict whose fields are all still at
-    ``defaults`` dumps exactly as it did before those fields existed, and
-    only a dict with at least one written field keeps the new keys at all.
+    is always present at its default, so merely declaring such a field would
+    move the digest of every query using that operator, written or not --
+    and only the written case is a real collision closing. Operating after
+    the dump, on the plain dict/list tree rather than the model, is what
+    makes the omission conditional: an operator dict whose fields are all
+    still at ``defaults`` dumps exactly as if the fields were never
+    declared, and only a dict with at least one written field keeps the new
+    keys at all.
 
     ``defaults`` maps field name to its *exact* unwritten value, compared by
     identity (``is``) for a scalar -- evaluate's is ``None``/``False``, and
     ``0 == False`` would wrongly match a future int-typed field whose real
-    default is ``0`` under equality. A ``list``/``dict`` default (e.g.
-    ``ParseKvOp.properties``'s ``[]``) is compared by ``==`` instead: a
-    freshly dumped empty list is never the *same object* as a literal ``[]``
-    written at a call site, so ``is`` could never match one and the field
-    would never strip -- exactly the corpus-movement bug this call exists to
-    prevent, just moved from "wrong" to "silently does nothing". Equality
-    carries none of the ``0 == False`` risk here, because that risk is a
-    cross-type collision between scalars and no ``list``/``dict`` value
-    equals a bool, an int or ``None``. Every field in ``defaults`` must match
-    for the dict's keys to be dropped: a partially-written modifier (e.g.
-    only one of several flags set) keeps every key, so the digest still
-    reflects what was actually written. This is the reuse path
-    :class:`~kustology.ir.query.MvApplyOp`, :class:`~kustology.ir.query.ParseKvOp`,
-    :class:`~kustology.ir.query.GetSchemaOp` and :class:`~kustology.ir.query.ConsumeOp`
-    were built against when their last unmodelled modifiers were added in
-    0.2.0 -- reuse it again for the next such field rather than writing a
-    new one-off dict walk.
+    default is ``0`` under equality. A ``list``/``dict`` default
+    (``ParseKvOp.properties``'s ``[]``, for example) is compared by ``==``
+    instead: a freshly dumped empty list is never the *same object* as a
+    literal ``[]`` written at a call site, so ``is`` could never match one
+    and the field would never strip -- exactly the corpus-movement bug this
+    call exists to prevent, only moved from "wrong" to "silently does
+    nothing". Equality carries none of the ``0 == False`` risk here, because
+    that risk is a cross-type collision between scalars and no
+    ``list``/``dict`` value equals a bool, an int or ``None``. Every field
+    in ``defaults`` must match for the dict's keys to be dropped: a
+    partially-written modifier (only one of several flags set, for example)
+    keeps every key, so the digest still reflects what was actually written.
+    The modifier fields on :class:`~kustology.ir.query.MvApplyOp`,
+    :class:`~kustology.ir.query.ParseKvOp`,
+    :class:`~kustology.ir.query.GetSchemaOp` and
+    :class:`~kustology.ir.query.ConsumeOp` all flow through this same path
+    -- reuse it for the next such field rather than writing a new one-off
+    dict walk.
 
     The gate also requires ``field in value`` for every field, not merely
     ``value.get(field) is default``: a dict that lacks the keys entirely
-    dumps ``.get`` as ``None`` too, and for the current call that can never
-    pass -- ``declared_schema_star``'s default is ``False``, and a missing
-    key can only look like a missing ``None``. A future field set that is
-    ``None`` all the way down loses that protection, and without ``field in
-    value`` a *foreign* dict that merely lacks the keys (wrong shape, not an
-    unwritten instance of this one -- e.g. a nested ``properties`` dict that
-    happens to carry the same ``kind`` tag) would match the gate and then
-    crash on ``del``. Requiring the keys to be present keeps today's evaluate
-    dicts matching exactly as before (every real ``EvaluateOp`` dump always
-    carries both keys, written or not) while making a shape that never had
-    the keys at all fail the gate instead of being misread as "all defaults"
-    -- which is the correct read: a dict with nothing to strip is left alone,
-    not silently matched and then no-opped.
+    dumps ``.get`` as ``None`` too, and some of the field sets stripped here
+    are ``None`` all the way down (mv-apply's, for one), so without the
+    presence check a *foreign* dict that merely lacks the keys (wrong shape,
+    not an unwritten instance of this one -- say, a nested ``properties``
+    dict that happens to carry the same ``kind`` tag) would match the gate
+    and then crash on ``del``. Requiring the keys costs a genuine operator
+    dict nothing -- every real dump carries every declared key, written or
+    not -- while a shape that never had the keys at all fails the gate
+    instead of being misread as "all defaults". That is the correct read: a
+    dict with nothing to strip is left alone, not silently matched and then
+    no-opped.
     """
     def _at_default(actual: Any, default: Any) -> bool:
         if isinstance(default, (list, dict)):
@@ -861,7 +856,7 @@ def _strip_unwritten_fields(value: Any, kind: str, defaults: dict[str, Any]) -> 
 
 
 def compute_semantic_hash(node: BaseModel) -> str:
-    """SHA-256 of the canonical IR shape, prefixed with the scheme tag.
+    """Return the scheme-tagged SHA-256 of the IR's canonical shape.
 
     Accepts any IR ``BaseModel`` subtree — a full :class:`QueryIR`, a
     standalone :class:`Pipeline`, an :class:`Expr` subtree — and returns
@@ -966,9 +961,7 @@ def compute_semantic_hash(node: BaseModel) -> str:
     still on your own IR, populated as always; only the digest ignores them.
 
     **Equal digests are not a proof of equivalence.** What still merges is
-    listed here, and each entry is a decision rather than a gap — the last
-    gap, five statement kinds contributing nothing of their own, closed when
-    :attr:`~kustology.ir.query.QueryIR.statements` was modelled:
+    listed here, and each entry is a decision rather than a gap:
 
     * **Deliberate**, in literals — typed nulls and obfuscated strings; see
       :class:`~kustology.ir.expr.LiteralExpr` for why neither is a
@@ -1029,19 +1022,19 @@ def compute_semantic_hash(node: BaseModel) -> str:
     if isinstance(canonical, QueryIR):
         # Named field by field rather than dumping the whole model, so that
         # ``raw_text``, ``semantic_hash`` and ``schema_attached`` stay out of
-        # the digest. The cost of that choice is that a new field is invisible
-        # here until it is added -- ``additional_pipelines`` hashed to nothing
-        # at all while the builder filled it faithfully, so
-        # ``T | count; U | count`` and ``T | count; V | count`` were one
-        # digest. Add every field that carries query meaning.
+        # the digest. The cost of that choice is that a new ``QueryIR`` field
+        # is invisible here until it is added -- the builder can fill one
+        # faithfully while it hashes to nothing at all, and two queries
+        # differing only there become one digest. Add every field that
+        # carries query meaning.
         payload: Any = {
             "let_bindings": [lb.model_dump(mode="json") for lb in canonical.let_bindings],
-            # Present even when empty, the way ``additional_pipelines`` is.
-            # A key whose presence depended on its own contents would make
-            # the payload's shape data, and ``_strip_unwritten_fields`` is
-            # for a *field* that must dump as it did before it existed --
-            # this one never existed at all until 0.2.0, and adding it moved
-            # every digest once, deliberately and disclosed.
+            # Present even when empty, the way ``additional_pipelines`` is:
+            # a key whose presence depended on its own contents would make
+            # the payload's shape data. ``_strip_unwritten_fields`` is for
+            # an operator *field* whose unwritten default must dump as
+            # though undeclared; a top-level payload key is part of the
+            # payload's fixed shape and gets no such treatment.
             "statements": [s.model_dump(mode="json") for s in canonical.statements],
             "main_pipeline": canonical.main_pipeline.model_dump(mode="json"),
             "additional_pipelines": [
@@ -1051,14 +1044,14 @@ def compute_semantic_hash(node: BaseModel) -> str:
     else:
         payload = canonical.model_dump(mode="json")
     # See :func:`_strip_unwritten_fields` -- an unwritten evaluate schema
-    # clause must dump exactly as it did before EvaluateOp had fields for it.
+    # clause must dump as though ``EvaluateOp`` had no fields for it.
     _strip_unwritten_fields(
         payload, "evaluate", {"declared_schema": None, "declared_schema_star": False},
     )
-    # Same mechanism, for the operators that gained fields for their last
-    # unmodelled modifiers in 0.2.0: an unwritten one must dump exactly as
-    # it did before those fields existed, so the mv-apply corpus fixtures
-    # (none of which write a modifier) move nothing.
+    # Same mechanism for the other modeled-modifier fields: an unwritten
+    # one dumps as though undeclared, so a query that writes no modifier --
+    # every mv-apply corpus fixture, among others -- digests as the bare
+    # operator.
     _strip_unwritten_fields(
         payload, "mv_apply",
         {"to_typeof": None, "row_limit": None, "item_index": None},
