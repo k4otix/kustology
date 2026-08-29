@@ -36,12 +36,12 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        python: ["3.10", "3.11", "3.12", "3.13"]
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         include:
           - os: windows-latest
-            python: "3.12"  # Sanity check latest Python on Windows
+            python: "3.14"  # Sanity check latest Python on Windows
           - os: macos-14
-            python: "3.12"  # Sanity check latest Python on Apple Silicon
+            python: "3.14"  # Sanity check latest Python on Apple Silicon
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0

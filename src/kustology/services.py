@@ -6,7 +6,13 @@
 from collections.abc import Callable
 from typing import Any
 
-from .bridge import FormattingOptions, KustoCode, KustoCodeService
+from ._text import Utf16Offsets, check_utf16_encodable
+from .bridge import (
+    FormattingOptions,
+    KustoCode,
+    KustoCodeService,
+    ensure_invariant_culture,
+)
 
 # A schema is a mapping of table name to column spec. `str` is deliberately
 # not in the union: `build_global_state` raises `TypeError` on anything that
@@ -134,10 +140,17 @@ def parse(query_text: str, schema: SchemaLike = None):
     holds the *unbound* parse (``has_semantics`` is ``False``) and reports one
     extra ``Error`` diagnostic naming the .NET exception — see
     :func:`_analyze_guarded`.
+
+    Raises ``ValueError`` when ``query_text`` holds an unpaired surrogate,
+    which UTF-16 cannot encode — see
+    :func:`kustology._text.check_utf16_encodable` for why that has to be
+    caught here rather than at the CLR boundary.
     """
     from .core import KustoQuery
     from .utils.analysis import build_global_state
 
+    check_utf16_encodable(query_text)
+    ensure_invariant_culture()
     if schema is None:
         return KustoQuery(KustoCode.Parse(query_text))
     state = build_global_state(schema)
@@ -154,12 +167,20 @@ def format_query(query_text: str, options: FormattingOptions | None = None) -> s
     The .NET formatter emits ``Environment.NewLine`` for ``PlacementStyle.NewLine``
     (CRLF on Windows, LF elsewhere). Normalize to LF so output bytes are
     platform-consistent — the KQL canonical form is LF-only.
+
+    Raises ``ValueError`` on text UTF-16 cannot encode; see :func:`parse`.
     """
+    check_utf16_encodable(query_text)
+    ensure_invariant_culture()
     formatted = KustoCodeService(query_text).GetFormattedText(options)
     return str(formatted.Text).replace("\r\n", "\n")
 
 
-def _diagnostic_dicts(diagnostics, ignore_unknown_tables: bool = False) -> list[dict]:
+def _diagnostic_dicts(
+    diagnostics,
+    offsets: Utf16Offsets,
+    ignore_unknown_tables: bool = False,
+) -> list[dict]:
     """Render a .NET diagnostic list as this library's list-of-dicts shape.
 
     The one place that decides what a diagnostic looks like on the Python
@@ -167,16 +188,21 @@ def _diagnostic_dicts(diagnostics, ignore_unknown_tables: bool = False) -> list[
     go through it so the two cannot drift — they differ only in where the
     ``KustoCode`` came from, and the property's whole reason to exist is that
     it already has one and must not parse again.
+
+    ``start`` and ``length`` are translated to code points, so they index the
+    Python ``str`` the caller passed in. Microsoft reports them in UTF-16
+    code units, which differ as soon as the query holds an astral character.
     """
     results = []
     for d in diagnostics:
         code_str = str(d.Code)
         if ignore_unknown_tables and code_str == _UNKNOWN_TABLE_CODE:
             continue
+        start, length = offsets.span_to_codepoints(d.Start, d.Length)
         results.append(
             {
-                "start": d.Start,
-                "length": d.Length,
+                "start": start,
+                "length": length,
                 "message": str(d.Message),
                 "severity": str(d.Severity),
                 "category": str(d.Category),
@@ -207,19 +233,26 @@ def validate(
     A query that crashes Microsoft's analyzer returns the parser's own
     diagnostics plus one ``Error`` row naming the .NET exception, rather than
     raising it — see :func:`_analyze_guarded`.
+
+    ``start`` and ``length`` are code-point offsets into ``query_text``, so
+    they slice it directly.
+
+    Raises ``ValueError`` on text UTF-16 cannot encode; see :func:`parse`.
     """
     from .utils.analysis import build_global_state
 
+    offsets = Utf16Offsets(query_text, check_utf16_encodable(query_text))
+    ensure_invariant_culture()
     if schema is None:
         return _diagnostic_dicts(
-            KustoCode.Parse(query_text).GetDiagnostics(), ignore_unknown_tables,
+            KustoCode.Parse(query_text).GetDiagnostics(), offsets, ignore_unknown_tables,
         )
     state = build_global_state(schema)
     code, failure = _analyze_guarded(
         lambda: KustoCode.ParseAndAnalyze(query_text, state),
         lambda: KustoCode.Parse(query_text),
     )
-    results = _diagnostic_dicts(code.GetDiagnostics(), ignore_unknown_tables)
+    results = _diagnostic_dicts(code.GetDiagnostics(), offsets, ignore_unknown_tables)
     if failure is not None:
         results.append(failure)
     return results

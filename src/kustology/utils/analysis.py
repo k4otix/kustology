@@ -4,6 +4,7 @@
 import hashlib
 import warnings
 
+from .._text import Utf16Offsets
 from ..bridge import ColumnSymbol, FunctionSymbol, KustoFacts, TableSymbol
 from ..reflection import syntax_kinds as _syntax_kinds
 from .schema_state import build_global_state  # re-exported
@@ -711,6 +712,9 @@ def get_structural_hash(kusto_code) -> str:
 def find_time_expressions(kusto_code) -> list[tuple[str, int, int]]:
     """Return ``[(text, start, length), ...]`` for every time-related expression.
 
+    ``start`` and ``length`` are code-point offsets into the query text, so
+    ``query[start:start + length]`` is the reported ``text``.
+
     In source order: time-function calls (``ago``, ``now``, ``bin``, ...)
     plus standalone datetime/timespan literals not already inside a matched
     call.
@@ -789,7 +793,15 @@ def find_time_expressions(kusto_code) -> list[tuple[str, int, int]]:
         seen.add(key)
         deduped.append(entry)
     deduped.sort(key=lambda t: t[1])
-    return deduped
+    # Translated last, once the dedup and the nesting test are done: those
+    # compare .NET offsets against each other, where the unit cancels out.
+    # Sorting is unaffected too, since the two unit systems are monotonic in
+    # each other. Only the value handed back has to index a Python ``str``.
+    offsets = Utf16Offsets(str(kusto_code.Text))
+    return [
+        (text, *offsets.span_to_codepoints(start, width))
+        for text, start, width in deduped
+    ]
 
 
 def get_time_range(kusto_code) -> list[tuple[str, int, int]]:
@@ -878,6 +890,12 @@ def replace_table(kusto_code, old_name: str, new_name: str, force_syntactic: boo
         replacements.append(key)
 
     text = kusto_code.Text
+    offsets = Utf16Offsets(str(text))
     for start, length in sorted(replacements, key=lambda t: t[0], reverse=True):
+        # ``TextStart``/``Width`` count UTF-16 code units and ``text`` is a
+        # Python ``str``, indexed by code point. Splicing at the untranslated
+        # offset cuts the wrong characters as soon as the query holds an
+        # astral one.
+        start, length = offsets.span_to_codepoints(start, length)
         text = text[:start] + replacement + text[start + length:]
     return text

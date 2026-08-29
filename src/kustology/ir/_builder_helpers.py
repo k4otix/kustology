@@ -13,8 +13,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from .._text import Utf16Offsets
 from .spans import Span
 from .types import KustoType
+from .walk import find_all
 
 logger = logging.getLogger(__name__)
 
@@ -90,8 +92,37 @@ def map_semantic_info(node: Any, expr: Any) -> None:
 
 
 def to_span(node: Any) -> Span:
-    """Convert a .NET node's TextStart/Width into a :class:`Span`."""
+    """Convert a .NET node's TextStart/Width into a :class:`Span`.
+
+    The offsets are Microsoft's, so they count UTF-16 code units at this
+    point. :func:`retarget_spans_to_codepoints` converts the whole tree once
+    the build is finished. Translating per node would need the query text at
+    every call site and would save nothing.
+    """
     return Span(text_start=node.TextStart, width=node.Width)
+
+
+def retarget_spans_to_codepoints(root: Any, offsets: Utf16Offsets) -> None:
+    """Rewrite every :class:`Span` under ``root`` from UTF-16 to code points.
+
+    .NET counts string offsets in UTF-16 code units; a Python ``str`` is
+    indexed by code point. The two agree until an astral character appears,
+    after which every later offset is too large by one per astral character
+    before it, and ``Span.text(query)`` returns the wrong slice with no error.
+
+    The conversion needs the query text, which the builder holds and the
+    individual visit methods do not, so it runs as one pass over the finished
+    IR.
+
+    All-BMP text returns immediately, so the common case pays one length
+    comparison and no traversal.
+    """
+    if offsets.is_identity:
+        return
+    for span in find_all(root, Span):
+        span.text_start, span.width = offsets.span_to_codepoints(
+            span.text_start, span.width,
+        )
 
 
 def read_row_schema(node: Any) -> list[tuple[str, str]]:

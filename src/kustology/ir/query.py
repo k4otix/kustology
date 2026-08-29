@@ -1646,7 +1646,9 @@ class QueryIR(BaseModel):
     # :meth:`KustoQuery.get_structural_hash`, which hashes the AST node-kind
     # sequence only and is literal/identifier-blind. Computed once at build;
     # stale if you mutate the IR afterward — call
-    # :func:`kustology.ir.compute_semantic_hash` to refresh.
+    # :func:`kustology.ir.compute_semantic_hash` to refresh. Empty when the
+    # build skips it (``to_ir(semantic_hash=False)``): ``""`` means "not
+    # computed", and no query hashes to it.
     semantic_hash: str
     let_bindings: list[LetBinding]
     # Every statement that is neither a ``let`` nor a tabular expression, in

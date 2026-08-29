@@ -21,11 +21,11 @@ import to close all of them.
 These tests pass on an en-US machine even without the pin. Run them under
 ``LANG=de-DE`` to see them fail.
 
-They cover the pin as it stands after import. They do *not* — and cannot —
-cover a host that reassigns ``CultureInfo.DefaultThreadCurrentCulture``
-*after* importing kustology: ``LiteralValue`` is lazy, so that reopens the
-corruption for every literal read afterwards, and no code at this layer can
-prevent it. See ``bridge._pin_invariant_culture``.
+The pin covers the process as it stands after import. A host that assigns
+``CultureInfo.DefaultThreadCurrentCulture`` or
+``Thread.CurrentThread.CurrentCulture`` afterwards reopens the corruption for
+every ``LiteralValue`` not yet read. ``tests/test_culture_reassert.py`` covers
+that case, against ``bridge.ensure_invariant_culture``.
 """
 
 import pytest

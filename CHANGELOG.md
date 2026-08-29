@@ -6,6 +6,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-08-28
+
+### Fixed
+
+- **A lone surrogate in a query, or in a schema name, no longer aborts the process.** `parse`, `validate`, `format_query` and `build_global_state` raise `ValueError` instead of taking the CLR down with `SIGABRT`.
+- **Offsets kustology reports are code points, not UTF-16 code units.** `replace_table` rewrote the wrong characters, and `Span.text()` sliced the wrong ones, on any query holding an astral character before the target. `Span`, the `start`/`length` of a diagnostic dict, and `find_time_expressions` all report code points; raw `node.TextStart` stays UTF-16 — see [Node offsets count UTF-16 code units](docs/tier1-syntax-tree.md#node-offsets-count-utf-16-code-units).
+- **Entry points restore invariant culture before reading a literal.** A host that assigns .NET's culture after importing kustology no longer corrupts fractional literals in a query the library parses or lowers.
+
+### Added
+
+- **`ensure_invariant_culture()`** repairs the calling thread's .NET culture. Call it before reading `LiteralValue` off a raw syntax node.
+- **`utf16_to_codepoint()` / `codepoint_to_utf16()`** translate an offset between Microsoft's unit and Python's.
+- **`to_ir(semantic_hash=False)`** skips the digest, which is most of a build. The field stays `""`, meaning "not computed"; `compute_semantic_hash(ir)` fills it in later.
+- **Python 3.14 support.** `requires-python` drops its upper bound, so a new interpreter installs without waiting on a release. CI runs Linux 3.10 through 3.14, with the Windows and macOS cells on 3.14.
+
+### Changed
+
+- **`compute_semantic_hash` is faster** — one dispatched pass over the payload instead of five, and `walk` reads only fields that can hold a model. No digest moves; `IR_SCHEMA_VERSION` and `SEMANTIC_HASH_SCHEME` are unchanged.
+
 ## [0.2.0] — 2026-08-26
 
 First release since 0.1.0. Two themes: values the library reported wrongly (culture-corrupted literals, mis-assigned column provenance, conflated operators), and public surface that never worked (`LetBinding`'s fields, `LetRef`, `ExternalDataExpr`'s contents). Tier 2 breaks in several places, as its pre-1.0 policy permits — see **Upgrading from 0.1.0** and **Breaking** below.
@@ -222,6 +241,7 @@ Tier 1 (`kustology` top-level surface) is on a stabilization track: the package 
   - `find_all_demo.py` — generic IR traversal via `find_all`.
   - `llm_view.py` — LLM-tailored IR serialization via `to_llm_dict`.
 
-[Unreleased]: https://github.com/k4otix/kustology/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/k4otix/kustology/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/k4otix/kustology/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/k4otix/kustology/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/k4otix/kustology/releases/tag/v0.1.0
