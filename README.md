@@ -1,7 +1,7 @@
 # Kustology
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Python 3.10–3.13](https://img.shields.io/badge/python-3.10%20%E2%80%93%203.13-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![.NET 8.0+](https://img.shields.io/badge/.NET-8.0+-purple.svg)](https://dotnet.microsoft.com/download/dotnet/8.0)
 
 > **Not affiliated with Microsoft.** This is an independent open-source project
@@ -49,7 +49,7 @@ Both tiers use the same parser. Pick based on the shape of data your code wants.
 
 ## Prerequisites
 
-- **Python 3.10 – 3.13**
+- **Python 3.10 or later**
 - **[.NET 8.0+ runtime](https://dotnet.microsoft.com/download/dotnet/8.0)**
 
 If you installed `dotnet` through Homebrew, its runtime layout differs from

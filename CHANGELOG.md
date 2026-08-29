@@ -19,6 +19,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`ensure_invariant_culture()`** repairs the calling thread's .NET culture. Call it before reading `LiteralValue` off a raw syntax node.
 - **`utf16_to_codepoint()` / `codepoint_to_utf16()`** translate an offset between Microsoft's unit and Python's.
 - **`to_ir(semantic_hash=False)`** skips the digest, which is most of a build. The field stays `""`, meaning "not computed"; `compute_semantic_hash(ir)` fills it in later.
+- **Python 3.14 support.** `requires-python` drops its upper bound, so a new interpreter installs without waiting on a release. CI runs Linux 3.10 through 3.14, with the Windows and macOS cells on 3.14.
 
 ### Changed
 

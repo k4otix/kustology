@@ -7,7 +7,7 @@ name = "kustology"
 version = "0.2.1"
 description = "A Python wrapper for the Kusto.Language parser (Microsoft.Azure.Kusto.Language NuGet package). Not affiliated with Microsoft."
 readme = "README.md"
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.10"
 license = "Apache-2.0"
 authors = [{name = "Eddie Allan"}]
 # This handles the root-level files for the built wheel
@@ -24,6 +24,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Security",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",

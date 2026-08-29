@@ -40,8 +40,8 @@ runtime is not on a standard path.
    they mark what a consumer can observe rather than the project's internal
    history — several branches can land between releases and still share one
    increment.
-7. Open a PR. CI runs the same checks on Linux across Python 3.10–3.13,
-   with macOS and Windows sanity cells on 3.12. `test`, `test-ir`, and `lint`
+7. Open a PR. CI runs the same checks on Linux across Python 3.10–3.14,
+   with macOS and Windows sanity cells on 3.14. `test`, `test-ir`, and `lint`
    in `.github/workflows/test.yml` are the loop above; every other job in
    that workflow has no local counterpart and is listed below:
 

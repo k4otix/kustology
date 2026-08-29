@@ -109,6 +109,7 @@ def test_replace_table_is_unchanged_without_an_astral_character():
 
 
 def test_an_ir_span_slices_its_own_construct():
+    pytest.importorskip("pydantic")
     query = f'let e="{EMOJI}"; T | where X > 1'
     source = parse(query).to_ir(attach_schema=False).main_pipeline.source
     assert source.span.text(query) == "T"
@@ -116,6 +117,7 @@ def test_an_ir_span_slices_its_own_construct():
 
 def test_every_ir_span_slices_something_the_query_contains():
     """No span may run off the end or land mid-construct after translation."""
+    pytest.importorskip("pydantic")
     from kustology.ir import find_all
     from kustology.ir.spans import Span
 
@@ -149,10 +151,16 @@ def test_the_diagnostics_property_agrees_with_validate():
     assert parse(query, schema=schema).diagnostics == validate(query, schema=schema)
 
 
-def test_bmp_offsets_are_microsofts_own():
+def test_bmp_diagnostic_offsets_are_microsofts_own():
     """The fast path must not move anything for a query without astral text."""
     query = 'let e="ok"; NoSuchTable | count'
     diags = [d for d in validate(query, schema={"T": {"a": "long"}}) if d["code"] == "KS204"]
     assert diags[0]["start"] == query.index("NoSuchTable")
+
+
+def test_bmp_ir_spans_are_microsofts_own():
+    """Same fast path, on the Tier 2 side."""
+    pytest.importorskip("pydantic")
+    query = 'let e="ok"; NoSuchTable | count'
     source = parse(query).to_ir(attach_schema=False).main_pipeline.source
     assert source.span.text(query) == "NoSuchTable"
