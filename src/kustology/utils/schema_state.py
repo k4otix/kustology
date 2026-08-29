@@ -285,10 +285,10 @@ def build_global_state(schema):
     Wrong-typed input raises rather than reaching the CLR: a non-``str``
     table name, column name or type name is a ``TypeError``, a table value
     that is none of the three forms is a ``TypeError``, and an empty or
-    whitespace-only schema string is a ``ValueError``. A name, type or schema
-    string holding an unpaired surrogate is a ``ValueError`` too — UTF-16
+    whitespace-only schema string is a ``ValueError``. A name, type, or schema
+    string holding an unpaired surrogate is a ``ValueError`` too: UTF-16
     cannot encode one, and pythonnet's failure to marshal it aborts the
-    process. Every message names the position it is complaining about.
+    process. Every message names the position it rejects.
     """
     if not isinstance(schema, dict):
         raise TypeError(

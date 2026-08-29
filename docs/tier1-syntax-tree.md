@@ -145,7 +145,7 @@ operator over a positive one. Read the sign from the parent node. On
 syntax node count UTF-16 code units, because .NET strings are UTF-16. The
 Python `str` you passed to `parse()` is indexed by code point. The two agree
 across the whole Basic Multilingual Plane and diverge by one for each astral
-character — an emoji, a rare CJK ideograph, a historic script — earlier in
+character (an emoji, a rare CJK ideograph, or a historic script) earlier in
 the query.
 
 So slicing your own query text at a raw offset is correct for most input and
@@ -157,13 +157,13 @@ from kustology import parse, utf16_to_codepoint
 q = 'let e="😀"; T | where X > 1'
 tok = next(t for t in parse(q).syntax.GetTokens() if t.Text == "where")
 
-q[tok.TextStart:][:5]                        # 'here ' — off by one
+q[tok.TextStart:][:5]                        # 'here ' - off by one
 q[utf16_to_codepoint(q, tok.TextStart):][:5] # 'where'
 ```
 
 `utf16_to_codepoint` and `codepoint_to_utf16` index the text on each call.
-Translating more than a couple of offsets from one query is what
-`kustology._text.Utf16Offsets` is for — build one and reuse it.
+To translate more than a couple of offsets from one query, build a
+`kustology._text.Utf16Offsets` and reuse it.
 
 This applies to raw nodes only. Every offset kustology itself reports is
 already a code-point offset: the `start` and `length` of a diagnostic dict
@@ -202,18 +202,20 @@ computed on first access and cached, so only literals already read by that
 point keep their correct value.
 
 `ensure_invariant_culture()` restores the pin on the calling thread. Every
-kustology entry point — `parse`, `validate`, `format_query`, `to_ir` —
-calls it first, so a query the library parses and lowers reads its literals
-under invariant culture whatever the host did in between. Call it yourself
-before reading `LiteralValue` off a raw syntax node:
+kustology entry point (`parse`, `validate`, `format_query`, `to_ir`) calls it
+first, so a query the library parses and lowers reads its literals under
+invariant culture whatever the host did in between. Call it yourself before
+reading `LiteralValue` off a raw syntax node:
 
 ```python
 from kustology import ensure_invariant_culture, parse
+from kustology.utils.analysis import collect_nodes
 
 q = parse("T | where ts > ago(1.5h)")
+lit = collect_nodes(q.syntax, lambda n: "TimespanLiteral" in str(n.Kind))[0]
 ...                                  # a co-tenant switches to de-DE
 ensure_invariant_culture()
-node.LiteralValue                    # 1:30:00, not 15:00:00
+str(lit.LiteralValue)                # '01:30:00', not '15:00:00'
 ```
 
 The check is a reference comparison against the cached singleton, so a call

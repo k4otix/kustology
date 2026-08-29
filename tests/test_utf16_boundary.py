@@ -6,17 +6,17 @@
 A Python ``str`` can hold an unpaired surrogate; UTF-16 has no encoding for
 one. pythonnet marshals a ``str`` argument by encoding it to UTF-16, and the
 failure surfaces as an unhandled exception on the CLR side, which terminates
-the interpreter with ``SIGABRT``. Nothing in Python can catch that — not even
-``except BaseException`` — so every entry point checks the text before it
-crosses.
+the interpreter with ``SIGABRT``. No Python ``except`` clause intercepts
+that, including ``except BaseException``, so every entry point checks the
+text before it crosses.
 
-**Every probe runs in one child process, and that is not incidental.** An
-in-process ``pytest.raises(ValueError)`` here is worse than no test: it passes
-while the guard is present and, the moment the guard regresses, aborts the
-whole pytest session rather than failing. Control-tested by deleting the guard
-in ``services.parse`` — with these probes in-process the session died with no
-summary; run in a child, the parent reports which position regressed and the
-rest of the suite still runs.
+Every probe runs in one child process, because an in-process
+``pytest.raises(ValueError)`` here is worse than no test: it passes while the
+guard is present, and the moment the guard regresses it aborts the whole
+pytest session instead of failing. Delete the guard in ``services.parse`` and
+the difference shows: in-process, the session dies with no summary; in a
+child, the parent reports which position regressed and the rest of the suite
+still runs.
 
 The child reports one JSON record per position, so a single CLR startup covers
 all of them.

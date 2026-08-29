@@ -804,7 +804,7 @@ def _at_default(actual: Any, default: Any) -> bool:
     :data:`_UNWRITTEN_DEFAULTS`, so ``is`` could never match and the field
     would never strip. Equality carries none of the ``0 == False`` risk
     there: that risk is a cross-type collision between scalars, and no
-    ``list`` or ``dict`` equals a bool, an int or ``None``.
+    ``list`` or ``dict`` equals a bool, an int, or ``None``.
     """
     if isinstance(default, (list, dict)):
         return actual == default

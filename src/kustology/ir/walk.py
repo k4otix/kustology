@@ -44,18 +44,19 @@ _CONTAINER_ORIGINS = (list, tuple, set, frozenset, dict)
 def _cannot_hold_a_model(annotation: Any) -> bool:
     """Test whether an annotation rules out reaching a ``BaseModel``.
 
-    Answers conservatively: it returns ``True`` only for an annotation built
-    entirely from :data:`_SCALAR_LEAVES`, ``Enum`` subclasses, ``Literal``
-    values of those types, and :data:`_CONTAINER_ORIGINS` wrapping the same.
-    ``Any``, a bare container, an unresolved forward reference, a
-    ``BaseModel`` subclass and every unrecognized class all return ``False``.
+    This answers conservatively: it returns ``True`` only for an annotation
+    built entirely from :data:`_SCALAR_LEAVES`, ``Enum`` subclasses,
+    ``Literal`` values of those types, and :data:`_CONTAINER_ORIGINS`
+    wrapping the same. ``Any``, a bare container, an unresolved forward
+    reference, a ``BaseModel`` subclass and every unrecognized class all
+    return ``False``.
 
-    The asymmetry is the whole point. Answering ``False`` for something that
-    could never hold a model costs one wasted ``getattr`` per node.
-    Answering ``True`` for something that can drops those nodes from every
-    traversal in the library, silently -- the failure AGENTS.md records for
-    the hand-maintained field lists this cache replaces. Derive the answer
-    or decline to.
+    The two errors cost different amounts. ``False`` for something that can
+    never hold a model costs one wasted ``getattr`` per node. ``True`` for
+    something that can drops those nodes from every traversal in the library,
+    silently, which is the failure mode AGENTS.md records for a
+    hand-maintained field list. So err toward ``False`` for any annotation
+    this cannot read.
     """
     if annotation is None or annotation is Any:
         return False
@@ -93,10 +94,10 @@ def model_bearing_fields(model: type[BaseModel]) -> tuple[str, ...]:
     """Return the field names of ``model`` whose values can hold a ``BaseModel``.
 
     Derived once per class from ``model_fields`` annotations and cached, so
-    :func:`_walk` stops calling ``getattr`` and ``_models_in`` on the
-    ``str``, ``bool``, ``Literal`` and ``dict[str, str]`` fields that make up
-    much of the IR. Nothing here is hand-maintained: a new field is
-    classified by its own annotation the first time its class is walked.
+    :func:`_walk` skips ``getattr`` and ``_models_in`` on the ``str``,
+    ``bool``, ``Literal`` and ``dict[str, str]`` fields that make up much of
+    the IR. Nothing here is hand-maintained: a new field is classified by its
+    own annotation the first time its class is walked.
     """
     cached = _MODEL_BEARING_FIELDS.get(model)
     if cached is None:
@@ -107,7 +108,6 @@ def model_bearing_fields(model: type[BaseModel]) -> tuple[str, ...]:
         )
         _MODEL_BEARING_FIELDS[model] = cached
     return cached
-
 
 
 def walk(

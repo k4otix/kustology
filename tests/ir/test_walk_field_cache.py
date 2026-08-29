@@ -4,10 +4,10 @@
 """The walk's field cache must never skip a field that can hold a model.
 
 ``walk`` reads only the fields ``model_bearing_fields`` reports, derived from
-each class's annotations. Wrong in the safe direction that costs a wasted
-``getattr``. Wrong in the other direction it drops nodes from every traversal
-in the library, silently, which is the failure mode AGENTS.md records for the
-hand-maintained field lists this cache replaces.
+each class's annotations. Misclassifying a field as model-bearing costs one
+wasted ``getattr``. Misclassifying it the other way drops nodes from every
+traversal in the library, silently, which is the failure mode AGENTS.md
+records for a hand-maintained field list.
 
 So the tests below check the classification two ways: against the annotations
 directly, for shapes the corpus may not contain, and against real IR built

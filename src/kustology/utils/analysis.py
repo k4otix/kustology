@@ -895,8 +895,7 @@ def replace_table(kusto_code, old_name: str, new_name: str, force_syntactic: boo
         # ``TextStart``/``Width`` count UTF-16 code units and ``text`` is a
         # Python ``str``, indexed by code point. Splicing at the untranslated
         # offset cuts the wrong characters as soon as the query holds an
-        # astral one — ``let e="😀"; T | count`` renamed to ``Z`` came back
-        # as ``TZ| count``.
+        # astral one.
         start, length = offsets.span_to_codepoints(start, length)
         text = text[:start] + replacement + text[start + length:]
     return text

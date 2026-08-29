@@ -60,7 +60,7 @@ class KustoQuery:
     def syntax(self):
         """The root ``SyntaxNode`` of Microsoft's parse tree (a ``QueryBlock``).
 
-        Offsets on these nodes — ``TextStart``, ``Width``, ``End`` — count
+        Offsets on these nodes (``TextStart``, ``Width``, ``End``) count
         UTF-16 code units, not code points, so slicing :attr:`text` with one
         is wrong as soon as the query holds an astral character. Convert with
         :func:`kustology.utf16_to_codepoint`. Every offset kustology itself

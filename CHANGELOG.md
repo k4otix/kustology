@@ -11,7 +11,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - **A lone surrogate in a query, or in a schema name, no longer aborts the process.** `parse`, `validate`, `format_query` and `build_global_state` raise `ValueError` instead of taking the CLR down with `SIGABRT`.
-- **Offsets kustology reports are code points, not UTF-16 code units.** `replace_table` rewrote the wrong characters, and `Span.text()` sliced the wrong ones, on any query holding an astral character before the target. `Span`, `validate`'s and `KustoQuery.diagnostics`' `start`/`length`, and `find_time_expressions` all report code points. Raw `node.TextStart` stays UTF-16 — see [Node offsets count UTF-16 code units](docs/tier1-syntax-tree.md#node-offsets-count-utf-16-code-units).
+- **Offsets kustology reports are code points, not UTF-16 code units.** `replace_table` rewrote the wrong characters, and `Span.text()` sliced the wrong ones, on any query holding an astral character before the target. `Span`, the `start`/`length` of a diagnostic dict, and `find_time_expressions` all report code points; raw `node.TextStart` stays UTF-16 — see [Node offsets count UTF-16 code units](docs/tier1-syntax-tree.md#node-offsets-count-utf-16-code-units).
 - **Entry points restore invariant culture before reading a literal.** A host that assigns .NET's culture after importing kustology no longer corrupts fractional literals in a query the library parses or lowers.
 
 ### Added
@@ -23,7 +23,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- **`compute_semantic_hash` is faster** — one dispatched pass over the payload instead of five, and `walk` reads only fields that can hold a model. Measured 14% off `to_ir()` over the complex-query corpus. No digest moves; `IR_SCHEMA_VERSION` and `SEMANTIC_HASH_SCHEME` are unchanged.
+- **`compute_semantic_hash` is faster** — one dispatched pass over the payload instead of five, and `walk` reads only fields that can hold a model. No digest moves; `IR_SCHEMA_VERSION` and `SEMANTIC_HASH_SCHEME` are unchanged.
 
 ## [0.2.0] — 2026-08-26
 

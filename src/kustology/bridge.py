@@ -21,9 +21,9 @@ import pythonnet
 
 logger = logging.getLogger(__name__)
 
-# Bound by `_pin_invariant_culture` at import, so `ensure_invariant_culture`
-# compares against a cached object rather than importing `System.Globalization`
-# on every call.
+# `_pin_invariant_culture` binds these at import, so
+# `ensure_invariant_culture` compares against a cached object instead of
+# importing `System.Globalization` on every call.
 _INVARIANT: Any = None
 _OBJECT: Any = None
 _CULTURE_TYPE: Any = None
@@ -163,23 +163,23 @@ def _pin_invariant_culture() -> None:
 def ensure_invariant_culture() -> None:
     """Restore invariant culture on the calling thread if something changed it.
 
-    Importing kustology pins .NET's culture to invariant, but a host — or any
-    other .NET-interop library in the same process — can assign over that pin
+    Importing kustology pins .NET's culture to invariant, but a host, or any
+    other .NET-interop library in the same process, can assign over that pin
     afterwards. Kusto's ``LiteralValue`` reads the culture live at the moment
     of first property access, so a switch to a comma-decimal locale corrupts
     every fractional numeric literal not yet read. See
     :func:`_pin_invariant_culture` for the measured values.
 
-    Every kustology entry point calls this, so the library's own reads are
-    covered. Call it yourself before reading ``LiteralValue`` off a raw syntax
+    Every kustology entry point calls this, which covers the library's own
+    reads. Call it yourself before reading ``LiteralValue`` off a raw syntax
     node in a process where culture may have moved.
 
     The check is a reference comparison against the cached
     ``InvariantCulture`` singleton, and assignment happens only when it fails,
     so the common case is one interop property read. A culture object that
-    merely *equals* invariant fails the comparison and gets replaced, which is
-    the safe direction: a clone of invariant carrying a modified
-    ``NumberFormat`` compares equal by name while parsing differently.
+    merely *equals* invariant fails the comparison and is replaced: a clone of
+    invariant carrying a modified ``NumberFormat`` compares equal by name
+    while parsing differently.
     """
     if _INVARIANT is None:  # pragma: no cover - the bridge always initializes
         return

@@ -5,18 +5,19 @@
 
 .NET counts string offsets in UTF-16 code units; a Python ``str`` is indexed
 by code point. The two agree across the whole Basic Multilingual Plane and
-diverge by one per astral character — an emoji, a rare CJK ideograph, a
-historic script — that precedes the offset.
+diverge by one per astral character (an emoji, a rare CJK ideograph, or a
+historic script) that precedes the offset.
 
-That divergence is data-dependent and silent, which is what makes it worth a
-test file: a corpus containing no astral character reports every one of these
-surfaces as correct. So each test here pairs an astral query against the same
-query without one, and the assertion is that slicing the text at the reported
-offset returns the construct the offset names.
+That divergence is data-dependent and silent, so a corpus containing no
+astral character reports every one of these surfaces as correct. Each test
+here therefore pairs an astral query against the same query without one, and
+the assertion is that slicing the text at the reported offset returns the
+construct the offset names.
 
-Raw ``Kusto.Language`` nodes are excluded on purpose. ``node.TextStart`` is
-Microsoft's value and stays in UTF-16; :func:`kustology.utf16_to_codepoint` is
-the supported way across, and it is tested here too.
+Raw ``Kusto.Language`` nodes are out of scope. ``node.TextStart`` is
+Microsoft's value and counts UTF-16 code units;
+:func:`kustology.utf16_to_codepoint` is the supported way across, and it is
+tested here too.
 """
 
 import pytest
@@ -87,7 +88,7 @@ def test_the_public_helpers_round_trip():
 
 
 def test_the_helper_answers_the_documented_example():
-    """The case from the issue: slicing at a raw ``TextStart`` is off by one."""
+    """Slicing a Python ``str`` at a raw ``TextStart`` is off by one per emoji."""
     query = f"let e=\"{EMOJI}\"; T | where X > 1"
     token = next(t for t in parse(query).syntax.GetTokens() if t.Text == "where")
     assert query[token.TextStart:][:5] != "where"

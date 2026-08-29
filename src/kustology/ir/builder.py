@@ -599,8 +599,8 @@ class IRBuilder:
         hashes to it: pass the IR to ``compute_semantic_hash`` later to get
         the value an eager build would have produced.
         """
-        # Literal values are read below, and Kusto evaluates them against the
-        # culture live at the moment of access.
+        # Kusto evaluates a literal against the culture live at the moment of
+        # access, and the visits below read literal values.
         ensure_invariant_culture()
 
         raw_text = str(code.Text)

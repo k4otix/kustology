@@ -11,7 +11,8 @@ class Span(BaseModel):
     Both are **code-point** offsets, so they index the Python ``str`` passed
     to ``parse()`` directly. Microsoft reports UTF-16 code units; the builder
     translates the whole tree once, after the build. A raw syntax node's
-    ``TextStart`` is still UTF-16 — see :func:`kustology.utf16_to_codepoint`.
+    ``TextStart`` counts UTF-16 code units, so cross it with
+    :func:`kustology.utf16_to_codepoint`.
     """
 
     # ``extra="forbid"`` is the project-wide default for IR models: validation
