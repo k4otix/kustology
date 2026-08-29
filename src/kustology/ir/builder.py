@@ -17,7 +17,12 @@ from __future__ import annotations
 import logging
 from typing import Any, Literal
 
-from ..bridge import GlobalState, KustoCode  # re-export-friendly; also triggers CLR init
+from .._text import Utf16Offsets
+from ..bridge import (  # re-export-friendly; also triggers CLR init
+    GlobalState,
+    KustoCode,
+    ensure_invariant_culture,
+)
 
 # The diagnostic codes live in one module. Two spellings of "KS204" is
 # exactly the drift a DLL refresh turns into a silent behavior split -- and
@@ -47,6 +52,7 @@ from ._builder_helpers import (
     read_named_params,
     read_row_schema,
     read_to_typeof,
+    retarget_spans_to_codepoints,
     table_symbol_columns,
     to_span,
     visit_name,
@@ -507,7 +513,7 @@ class IRBuilder:
 
     # -- entry points ----------------------------------------------------
 
-    def build(self, query: str) -> QueryIR:
+    def build(self, query: str, *, semantic_hash: bool = True) -> QueryIR:
         """Parse and bind ``query``, then build its IR.
 
         Use :meth:`build_from_code` when the caller already has a
@@ -533,12 +539,17 @@ class IRBuilder:
         kustology's own naming the .NET exception. See
         :func:`kustology.services._analyze_guarded` for why that fallback is
         harmless for ``semantic_hash`` and what it costs everywhere else.
+
+        ``semantic_hash=False`` skips the digest — see
+        :meth:`build_from_code`.
         """
         code, failure = _analyze_guarded(
             lambda: KustoCode.ParseAndAnalyze(query, self.global_state),
             lambda: KustoCode.Parse(query),
         )
-        ir = self.build_from_code(code, ignore_unknown_tables=True)
+        ir = self.build_from_code(
+            code, ignore_unknown_tables=True, semantic_hash=semantic_hash,
+        )
         if failure is not None:
             # No span: the failure is a fault in the analyzer, not a region of
             # the query. ``diagnostics`` is not in the hash payload, so
@@ -552,7 +563,11 @@ class IRBuilder:
         return ir
 
     def build_from_code(
-        self, code: KustoCode, *, ignore_unknown_tables: bool = False,
+        self,
+        code: KustoCode,
+        *,
+        ignore_unknown_tables: bool = False,
+        semantic_hash: bool = True,
     ) -> QueryIR:
         """Build the IR from an already-parsed ``KustoCode``.
 
@@ -576,7 +591,18 @@ class IRBuilder:
 
         A parse the caller bound with their own schema keeps every one of
         them: there, a name the schema does not describe is a real error.
+
+        ``semantic_hash=False`` leaves :attr:`QueryIR.semantic_hash` as
+        ``""`` and never calls
+        :func:`~kustology.ir.transforms.compute_semantic_hash`, which is the
+        larger part of a build. ``""`` means "not computed", and no query
+        hashes to it: pass the IR to ``compute_semantic_hash`` later to get
+        the value an eager build would have produced.
         """
+        # Literal values are read below, and Kusto evaluates them against the
+        # culture live at the moment of access.
+        ensure_invariant_culture()
+
         raw_text = str(code.Text)
 
         diagnostics: list[Diagnostic] = []
@@ -688,7 +714,13 @@ class IRBuilder:
             additional_pipelines=additional_pipelines,
             diagnostics=diagnostics,
         )
-        ir.semantic_hash = compute_semantic_hash(ir)
+        # Every span above came from .NET and counts UTF-16 code units. The
+        # IR is a Python surface, so it reports code points; spans are
+        # volatile, so this cannot move ``semantic_hash`` whichever order the
+        # two run in.
+        retarget_spans_to_codepoints(ir, Utf16Offsets(raw_text))
+        if semantic_hash:
+            ir.semantic_hash = compute_semantic_hash(ir)
         return ir
 
     # -- statements that are neither ``let`` nor tabular ------------------

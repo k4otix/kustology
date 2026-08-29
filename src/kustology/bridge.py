@@ -15,10 +15,18 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import pythonnet
 
 logger = logging.getLogger(__name__)
+
+# Bound by `_pin_invariant_culture` at import, so `ensure_invariant_culture`
+# compares against a cached object rather than importing `System.Globalization`
+# on every call.
+_INVARIANT: Any = None
+_OBJECT: Any = None
+_CULTURE_TYPE: Any = None
 
 # The `opt` symlink, not a `Cellar/X.Y.Z/` path, so detection survives
 # `brew upgrade`.
@@ -121,8 +129,8 @@ def _pin_invariant_culture() -> None:
     duration errors, which is worse than the co-tenancy cost it would avoid.
 
     **Residual risk — a host that changes .NET's culture after importing
-    kustology re-opens the corruption, and nothing at this layer can stop it.**
-    The pin runs once, at import. Assigning
+    kustology re-opens the corruption for any literal not yet read.** The pin
+    runs once, at import. Assigning
     ``CultureInfo.DefaultThreadCurrentCulture`` or
     ``Thread.CurrentThread.CurrentCulture`` afterwards — directly, or via any
     other .NET-interop library in the same process — governs every
@@ -131,15 +139,57 @@ def _pin_invariant_culture() -> None:
     the pin was still in force but not yet touched; only literals already read
     keep their correct value. Measured after a post-import switch to
     ``de-DE``: an unread ``1.5h`` reads back as ``15:00:00``, ``1.5`` as
-    ``15.0``, ``decimal(1.5)`` as ``15``. A host doing this must restore
-    invariant culture before touching parsed values; kustology cannot detect
-    or defend against it.
+    ``15.0``, ``decimal(1.5)`` as ``15``.
+
+    :func:`ensure_invariant_culture` narrows that window. Every kustology
+    entry point calls it, so a query parsed and lowered through the library
+    reads its literals under invariant culture whatever the host did in
+    between. A caller reading ``LiteralValue`` off a raw syntax node calls it
+    directly.
     """
+    from System import Object
     from System.Globalization import CultureInfo
     from System.Threading import Thread
 
+    global _INVARIANT, _OBJECT, _CULTURE_TYPE
+    _INVARIANT = CultureInfo.InvariantCulture
+    _OBJECT = Object
+    _CULTURE_TYPE = CultureInfo
+
     CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture
     Thread.CurrentThread.CurrentCulture = CultureInfo.InvariantCulture
+
+
+def ensure_invariant_culture() -> None:
+    """Restore invariant culture on the calling thread if something changed it.
+
+    Importing kustology pins .NET's culture to invariant, but a host — or any
+    other .NET-interop library in the same process — can assign over that pin
+    afterwards. Kusto's ``LiteralValue`` reads the culture live at the moment
+    of first property access, so a switch to a comma-decimal locale corrupts
+    every fractional numeric literal not yet read. See
+    :func:`_pin_invariant_culture` for the measured values.
+
+    Every kustology entry point calls this, so the library's own reads are
+    covered. Call it yourself before reading ``LiteralValue`` off a raw syntax
+    node in a process where culture may have moved.
+
+    The check is a reference comparison against the cached
+    ``InvariantCulture`` singleton, and assignment happens only when it fails,
+    so the common case is one interop property read. A culture object that
+    merely *equals* invariant fails the comparison and gets replaced, which is
+    the safe direction: a clone of invariant carrying a modified
+    ``NumberFormat`` compares equal by name while parsing differently.
+    """
+    if _INVARIANT is None:  # pragma: no cover - the bridge always initializes
+        return
+
+    from System.Threading import Thread
+
+    thread = Thread.CurrentThread
+    if not _OBJECT.ReferenceEquals(thread.CurrentCulture, _INVARIANT):
+        thread.CurrentCulture = _INVARIANT
+        _CULTURE_TYPE.DefaultThreadCurrentCulture = _INVARIANT
 
 
 def _initialize_bridge() -> None:

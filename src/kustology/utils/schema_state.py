@@ -17,6 +17,7 @@ import os
 import sys
 import warnings
 
+from .._text import check_utf16_encodable
 from ..bridge import (
     ColumnSymbol,
     DatabaseSymbol,
@@ -120,6 +121,9 @@ def _resolve_scalar_type(type_name: str, *, column: str | None = None):
     folded = type_name.lower()
     if folded == _UNKNOWN_TYPE_NAME:
         return ScalarTypes.Unknown
+    check_utf16_encodable(
+        folded, f"Schema column type{f' for column {column!r}' if column else ''}",
+    )
     sym = ScalarTypes.GetSymbol(folded)
     if sym is None:
         warnings.warn(
@@ -179,6 +183,7 @@ def _check_column_name(column, table: str):
             f"{type(column).__name__} ({column!r}). Keys become the "
             "column symbol's name verbatim."
         )
+    check_utf16_encodable(column, f"Schema column name in table {table!r}")
     return column
 
 
@@ -189,6 +194,7 @@ def _build_table_symbol(name: str, cols):
             f"Schema table name must be a str; got {type(name).__name__} "
             f"({name!r}). Keys become the table symbol's name verbatim."
         )
+    check_utf16_encodable(name, "Schema table name")
     if isinstance(cols, str):
         # ``TableSymbol.From`` is permissive to a fault -- ``"("``, ``"junk"``
         # and ``"(a:long"`` are all accepted -- but it raises
@@ -202,6 +208,7 @@ def _build_table_symbol(name: str, cols):
                 "'(col:type, ...)', or the dict form {col: type}; for a "
                 "table with no columns pass an empty list, []."
             )
+        check_utf16_encodable(cols, f"Schema string for table {name!r}")
         table = TableSymbol.From(cols).WithName(name)
         _warn_on_untyped_schema_string_columns(name, table)
         return table
@@ -278,8 +285,10 @@ def build_global_state(schema):
     Wrong-typed input raises rather than reaching the CLR: a non-``str``
     table name, column name or type name is a ``TypeError``, a table value
     that is none of the three forms is a ``TypeError``, and an empty or
-    whitespace-only schema string is a ``ValueError``. Every message names
-    the position it is complaining about.
+    whitespace-only schema string is a ``ValueError``. A name, type or schema
+    string holding an unpaired surrogate is a ``ValueError`` too — UTF-16
+    cannot encode one, and pythonnet's failure to marshal it aborts the
+    process. Every message names the position it is complaining about.
     """
     if not isinstance(schema, dict):
         raise TypeError(

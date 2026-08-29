@@ -233,13 +233,29 @@ def _probed_member_names() -> dict[str, list[str]]:
 # an entry whose last probe disappears must be removed, and a wrong-member
 # read that one of these types happens to explain fails instead of passing
 # unnoticed. The effective admitted surface is these two names, not the tail.
-_INTEROP_TYPES = ("System.DateTime", "System.TimeSpan")
+_INTEROP_TYPES = (
+    "System.DateTime",
+    "System.TimeSpan",
+    "System.Object",
+    "System.Globalization.CultureInfo",
+    "System.Threading.Thread",
+)
 
 BCL_ONLY_MEMBERS: dict[str, str] = {
     "Ticks": "System.DateTime/TimeSpan — the lossless form of a datetime or "
              "timespan literal, read off LiteralValue in _builder_helpers.",
     "ToUniversalTime": "System.DateTime — normalizes a Local-kind datetime "
                        "literal to UTC before it is rendered or hashed.",
+    "CurrentCulture": "System.Threading.Thread — the culture Kusto reads a "
+                      "LiteralValue against; bridge.ensure_invariant_culture "
+                      "checks and repairs it.",
+    "DefaultThreadCurrentCulture": "System.Globalization.CultureInfo — the "
+                                   "culture threads created later inherit, "
+                                   "reassigned alongside CurrentCulture.",
+    "ReferenceEquals": "System.Object — identifies the InvariantCulture "
+                       "singleton. A clone of it compares equal by name "
+                       "while parsing differently, so the check is by "
+                       "reference.",
 }
 
 

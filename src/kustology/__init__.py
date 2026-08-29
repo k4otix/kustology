@@ -19,7 +19,8 @@ try:
 except _PackageNotFoundError:  # pragma: no cover — editable install without metadata
     __version__ = "0.0.0+unknown"
 
-from .bridge import KustoCode
+from ._text import codepoint_to_utf16, utf16_to_codepoint
+from .bridge import KustoCode, ensure_invariant_culture
 from .core import KustoQuery
 from .reflection import (
     aggregate_functions,
@@ -43,6 +44,13 @@ __all__ = [
     "format_query",
     "validate",
     "iter_elements",
+    # Offset translation — .NET reports UTF-16 code units, Python indexes
+    # code points; see :mod:`kustology._text`.
+    "utf16_to_codepoint",
+    "codepoint_to_utf16",
+    # Culture — importing pins .NET to invariant; this repairs a host that
+    # assigned over the pin. See :func:`kustology.bridge._pin_invariant_culture`.
+    "ensure_invariant_culture",
     # Reflection — always available; reflects the loaded Kusto.Language.dll
     "time_functions",
     "aggregate_functions",

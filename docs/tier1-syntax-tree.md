@@ -139,6 +139,38 @@ grammar; most languages parse a negative literal the same way, as a unary
 operator over a positive one. Read the sign from the parent node. On
 [Tier 2](tier2-ir.md), this is `UnaryOp(op="-", operand=LiteralExpr(...))`.
 
+## Node offsets count UTF-16 code units
+
+`node.TextStart`, `node.Width`, `node.End` and every other offset on a raw
+syntax node count UTF-16 code units, because .NET strings are UTF-16. The
+Python `str` you passed to `parse()` is indexed by code point. The two agree
+across the whole Basic Multilingual Plane and diverge by one for each astral
+character — an emoji, a rare CJK ideograph, a historic script — earlier in
+the query.
+
+So slicing your own query text at a raw offset is correct for most input and
+wrong for the rest, with no error either way:
+
+```python
+from kustology import parse, utf16_to_codepoint
+
+q = 'let e="😀"; T | where X > 1'
+tok = next(t for t in parse(q).syntax.GetTokens() if t.Text == "where")
+
+q[tok.TextStart:][:5]                        # 'here ' — off by one
+q[utf16_to_codepoint(q, tok.TextStart):][:5] # 'where'
+```
+
+`utf16_to_codepoint` and `codepoint_to_utf16` index the text on each call.
+Translating more than a couple of offsets from one query is what
+`kustology._text.Utf16Offsets` is for — build one and reuse it.
+
+This applies to raw nodes only. Every offset kustology itself reports is
+already a code-point offset: the `start` and `length` of a diagnostic dict
+from `validate()` or `KustoQuery.diagnostics`, the offsets from
+`find_time_expressions()`, and [Tier 2](tier2-ir.md)'s `Span`. `replace_table()`
+translates internally.
+
 ## Importing kustology pins .NET's culture to invariant
 
 Importing the package sets .NET's culture to invariant for the whole
@@ -167,6 +199,22 @@ another .NET-interop library sharing the process, the corruption reopens
 for every `LiteralValue` not yet read. This includes literals in a tree
 that was parsed while the pin was still in force: a `LiteralValue` is
 computed on first access and cached, so only literals already read by that
-point keep their correct value. Nothing at this layer detects or prevents a
-later culture change. Restore invariant culture before reading parsed
-values.
+point keep their correct value.
+
+`ensure_invariant_culture()` restores the pin on the calling thread. Every
+kustology entry point — `parse`, `validate`, `format_query`, `to_ir` —
+calls it first, so a query the library parses and lowers reads its literals
+under invariant culture whatever the host did in between. Call it yourself
+before reading `LiteralValue` off a raw syntax node:
+
+```python
+from kustology import ensure_invariant_culture, parse
+
+q = parse("T | where ts > ago(1.5h)")
+...                                  # a co-tenant switches to de-DE
+ensure_invariant_culture()
+node.LiteralValue                    # 1:30:00, not 15:00:00
+```
+
+The check is a reference comparison against the cached singleton, so a call
+on an already-invariant thread costs one interop property read.

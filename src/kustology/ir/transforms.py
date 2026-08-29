@@ -779,10 +779,44 @@ def _operand_sort_key(child: BaseModel) -> str:
 SEMANTIC_HASH_SCHEME = "kustology-sem-v2"
 
 
-def _strip_unwritten_fields(value: Any, kind: str, defaults: dict[str, Any]) -> None:
-    """Delete an operator dict's keys when every one is at its unwritten default.
+# Operator ``kind`` -> the fields whose *unwritten* defaults must dump as
+# though the field were never declared, mapped to those exact defaults. Add a
+# row here for the next modeled modifier rather than writing a fresh dict
+# walk; :func:`_strip_unwritten_fields` reads the whole table in one pass.
+_UNWRITTEN_DEFAULTS: dict[str, dict[str, Any]] = {
+    "evaluate": {"declared_schema": None, "declared_schema_star": False},
+    "mv_apply": {"to_typeof": None, "row_limit": None, "item_index": None},
+    "parse_kv": {"properties": []},
+    "getschema": {"output_kind": None},
+    "consume": {"decodeblocks": None},
+}
 
-    Operates in place, on the *dumped* JSON structure. The sibling of
+
+def _at_default(actual: Any, default: Any) -> bool:
+    """Test one field against its unwritten default, by identity or equality.
+
+    A scalar default is compared by identity (``is``): evaluate's are
+    ``None``/``False``, and ``0 == False`` would wrongly match a future
+    int-typed field whose real default is ``0`` under equality. A
+    ``list``/``dict`` default (:class:`~kustology.ir.query.ParseKvOp`'s
+    ``properties``, for one) is compared by ``==`` instead, because a freshly
+    dumped empty list is never the *same object* as the literal ``[]`` in
+    :data:`_UNWRITTEN_DEFAULTS`, so ``is`` could never match and the field
+    would never strip. Equality carries none of the ``0 == False`` risk
+    there: that risk is a cross-type collision between scalars, and no
+    ``list`` or ``dict`` equals a bool, an int or ``None``.
+    """
+    if isinstance(default, (list, dict)):
+        return actual == default
+    return actual is default
+
+
+def _strip_unwritten_fields(payload: Any) -> None:
+    """Delete an operator dict's modifier keys when every one is unwritten.
+
+    Operates in place, on the *dumped* JSON structure, in a single pass over
+    it that dispatches on each dict's ``kind`` against
+    :data:`_UNWRITTEN_DEFAULTS`. The sibling of
     :data:`_VOLATILE_FIELDS`/:func:`_clear_volatile` above, for the opposite
     kind of field: one that is plain and non-volatile (a written value must
     reach the digest -- clearing it to a canonical default the way
@@ -796,31 +830,16 @@ def _strip_unwritten_fields(value: Any, kind: str, defaults: dict[str, Any]) -> 
     and only the written case is a real collision closing. Operating after
     the dump, on the plain dict/list tree rather than the model, is what
     makes the omission conditional: an operator dict whose fields are all
-    still at ``defaults`` dumps exactly as if the fields were never
+    still at their defaults dumps exactly as if the fields were never
     declared, and only a dict with at least one written field keeps the new
     keys at all.
 
-    ``defaults`` maps field name to its *exact* unwritten value, compared by
-    identity (``is``) for a scalar -- evaluate's is ``None``/``False``, and
-    ``0 == False`` would wrongly match a future int-typed field whose real
-    default is ``0`` under equality. A ``list``/``dict`` default
-    (``ParseKvOp.properties``'s ``[]``, for example) is compared by ``==``
-    instead: a freshly dumped empty list is never the *same object* as a
-    literal ``[]`` written at a call site, so ``is`` could never match one
-    and the field would never strip -- exactly the corpus-movement bug this
-    call exists to prevent, only moved from "wrong" to "silently does
-    nothing". Equality carries none of the ``0 == False`` risk here, because
-    that risk is a cross-type collision between scalars and no
-    ``list``/``dict`` value equals a bool, an int or ``None``. Every field
-    in ``defaults`` must match for the dict's keys to be dropped: a
-    partially-written modifier (only one of several flags set, for example)
-    keeps every key, so the digest still reflects what was actually written.
-    The modifier fields on :class:`~kustology.ir.query.MvApplyOp`,
-    :class:`~kustology.ir.query.ParseKvOp`,
-    :class:`~kustology.ir.query.GetSchemaOp` and
-    :class:`~kustology.ir.query.ConsumeOp` all flow through this same path
-    -- reuse it for the next such field rather than writing a new one-off
-    dict walk.
+    Every field in a row must be at its default for that dict's keys to be
+    dropped: a partially-written modifier (only one of several flags set,
+    for example) keeps every key, so the digest still reflects what was
+    actually written. A dict carries one ``kind``, so at most one row of the
+    table can apply to it, and stripping a dict cannot change how any other
+    dict is read.
 
     The gate also requires ``field in value`` for every field, not merely
     ``value.get(field) is default``: a dict that lacks the keys entirely
@@ -836,23 +855,20 @@ def _strip_unwritten_fields(value: Any, kind: str, defaults: dict[str, Any]) -> 
     dict with nothing to strip is left alone, not silently matched and then
     no-opped.
     """
-    def _at_default(actual: Any, default: Any) -> bool:
-        if isinstance(default, (list, dict)):
-            return actual == default
-        return actual is default
-
-    if isinstance(value, dict):
-        if value.get("kind") == kind and all(
-            field in value and _at_default(value.get(field), default)
-            for field, default in defaults.items()
-        ):
-            for field in defaults:
-                del value[field]
-        for child in value.values():
-            _strip_unwritten_fields(child, kind, defaults)
-    elif isinstance(value, list):
-        for item in value:
-            _strip_unwritten_fields(item, kind, defaults)
+    stack: list[Any] = [payload]
+    while stack:
+        value = stack.pop()
+        if isinstance(value, dict):
+            defaults = _UNWRITTEN_DEFAULTS.get(value.get("kind"))
+            if defaults is not None and all(
+                field in value and _at_default(value[field], default)
+                for field, default in defaults.items()
+            ):
+                for field in defaults:
+                    del value[field]
+            stack.extend(value.values())
+        elif isinstance(value, list):
+            stack.extend(value)
 
 
 def compute_semantic_hash(node: BaseModel) -> str:
@@ -1043,22 +1059,10 @@ def compute_semantic_hash(node: BaseModel) -> str:
         }
     else:
         payload = canonical.model_dump(mode="json")
-    # See :func:`_strip_unwritten_fields` -- an unwritten evaluate schema
-    # clause must dump as though ``EvaluateOp`` had no fields for it.
-    _strip_unwritten_fields(
-        payload, "evaluate", {"declared_schema": None, "declared_schema_star": False},
-    )
-    # Same mechanism for the other modeled-modifier fields: an unwritten
-    # one dumps as though undeclared, so a query that writes no modifier --
-    # every mv-apply corpus fixture, among others -- digests as the bare
-    # operator.
-    _strip_unwritten_fields(
-        payload, "mv_apply",
-        {"to_typeof": None, "row_limit": None, "item_index": None},
-    )
-    _strip_unwritten_fields(payload, "parse_kv", {"properties": []})
-    _strip_unwritten_fields(payload, "getschema", {"output_kind": None})
-    _strip_unwritten_fields(payload, "consume", {"decodeblocks": None})
+    # See :func:`_strip_unwritten_fields` -- an unwritten modeled modifier
+    # must dump as though its operator had no fields for it, so a query
+    # writing no modifier digests as the bare operator.
+    _strip_unwritten_fields(payload)
     digest = hashlib.sha256(
         json.dumps(payload, sort_keys=True).encode()
     ).hexdigest()

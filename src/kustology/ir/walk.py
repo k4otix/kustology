@@ -14,13 +14,100 @@ object reachable by more than one path is yielded once.
 """
 
 from collections.abc import Callable, Iterator
-from typing import TypeVar
+from enum import Enum
+from types import UnionType
+from typing import (
+    Annotated,
+    Any,
+    Literal,
+    TypeVar,
+    Union,
+    get_args,
+    get_origin,
+)
 
 from pydantic import BaseModel
 
 T = TypeVar("T", bound=BaseModel)
 
 Predicate = Callable[[BaseModel], bool]
+
+# Leaf types that cannot hold a ``BaseModel``. A field annotated entirely
+# from these, and from the containers below, is skipped by :func:`_walk`.
+_SCALAR_LEAVES = (type(None), bool, int, float, complex, str, bytes)
+
+# Containers :func:`_models_in` descends. A field whose annotation nests only
+# these around scalar leaves still cannot reach a model.
+_CONTAINER_ORIGINS = (list, tuple, set, frozenset, dict)
+
+
+def _cannot_hold_a_model(annotation: Any) -> bool:
+    """Test whether an annotation rules out reaching a ``BaseModel``.
+
+    Answers conservatively: it returns ``True`` only for an annotation built
+    entirely from :data:`_SCALAR_LEAVES`, ``Enum`` subclasses, ``Literal``
+    values of those types, and :data:`_CONTAINER_ORIGINS` wrapping the same.
+    ``Any``, a bare container, an unresolved forward reference, a
+    ``BaseModel`` subclass and every unrecognized class all return ``False``.
+
+    The asymmetry is the whole point. Answering ``False`` for something that
+    could never hold a model costs one wasted ``getattr`` per node.
+    Answering ``True`` for something that can drops those nodes from every
+    traversal in the library, silently -- the failure AGENTS.md records for
+    the hand-maintained field lists this cache replaces. Derive the answer
+    or decline to.
+    """
+    if annotation is None or annotation is Any:
+        return False
+
+    origin = get_origin(annotation)
+
+    if origin is Literal:
+        return all(isinstance(arg, _SCALAR_LEAVES) for arg in get_args(annotation))
+
+    if origin is Annotated:
+        return _cannot_hold_a_model(get_args(annotation)[0])
+
+    if origin in (Union, UnionType):
+        return all(_cannot_hold_a_model(arg) for arg in get_args(annotation))
+
+    if origin in _CONTAINER_ORIGINS:
+        args = get_args(annotation)
+        if not args:
+            return False  # a bare ``list``/``dict`` says nothing about its items
+        return all(arg is Ellipsis or _cannot_hold_a_model(arg) for arg in args)
+
+    if origin is not None:
+        return False  # some other generic; not worth reasoning about
+
+    if not isinstance(annotation, type):
+        return False  # a string annotation or unresolved forward reference
+
+    return annotation in _SCALAR_LEAVES or issubclass(annotation, Enum)
+
+
+_MODEL_BEARING_FIELDS: dict[type[BaseModel], tuple[str, ...]] = {}
+
+
+def model_bearing_fields(model: type[BaseModel]) -> tuple[str, ...]:
+    """Return the field names of ``model`` whose values can hold a ``BaseModel``.
+
+    Derived once per class from ``model_fields`` annotations and cached, so
+    :func:`_walk` stops calling ``getattr`` and ``_models_in`` on the
+    ``str``, ``bool``, ``Literal`` and ``dict[str, str]`` fields that make up
+    much of the IR. Nothing here is hand-maintained: a new field is
+    classified by its own annotation the first time its class is walked.
+    """
+    cached = _MODEL_BEARING_FIELDS.get(model)
+    if cached is None:
+        cached = tuple(
+            name
+            for name, field in model.model_fields.items()
+            if not _cannot_hold_a_model(field.annotation)
+        )
+        _MODEL_BEARING_FIELDS[model] = cached
+    return cached
+
 
 
 def walk(
@@ -83,13 +170,16 @@ def _walk(
     builder does not produce one and this is not a license to introduce one
     — a cycle would still break ``model_dump`` and the hash — but the walk
     ends rather than recursing forever if one ever appears.
+
+    Only the fields :func:`model_bearing_fields` reports are read. A field
+    whose annotation rules out holding a model is not touched at all.
     """
     if id(node) in seen:
         return
     seen.add(id(node))
     if predicate is None or predicate(node):
         yield node
-    for name in type(node).model_fields:
+    for name in model_bearing_fields(type(node)):
         for item in _models_in(getattr(node, name)):
             yield from _walk(item, predicate, seen)
 

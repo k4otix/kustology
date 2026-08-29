@@ -5,6 +5,7 @@
 
 import json
 
+from ._text import Utf16Offsets
 from .bridge import GlobalState, KustoCode
 from .services import _analyze_guarded, _diagnostic_dicts
 from .utils.analysis import (
@@ -40,10 +41,31 @@ class KustoQuery:
         # :func:`kustology.services._analyze_guarded`'s record that the
         # analyzer crashed and the tree is the unbound parse.
         self._extra_diagnostics: list[dict] = list(extra_diagnostics or [])
+        self._utf16_offsets: Utf16Offsets | None = None
+
+    @property
+    def _offsets(self) -> Utf16Offsets:
+        """UTF-16 to code-point translation for this query's text, built once.
+
+        Every offset Microsoft reports counts UTF-16 code units; every offset
+        this class reports counts code points, so it indexes the ``str`` the
+        caller holds. Cached because the query text does not change and
+        indexing it is O(len(text)).
+        """
+        if self._utf16_offsets is None:
+            self._utf16_offsets = Utf16Offsets(self.text)
+        return self._utf16_offsets
 
     @property
     def syntax(self):
-        """The root ``SyntaxNode`` of Microsoft's parse tree (a ``QueryBlock``)."""
+        """The root ``SyntaxNode`` of Microsoft's parse tree (a ``QueryBlock``).
+
+        Offsets on these nodes — ``TextStart``, ``Width``, ``End`` — count
+        UTF-16 code units, not code points, so slicing :attr:`text` with one
+        is wrong as soon as the query holds an astral character. Convert with
+        :func:`kustology.utf16_to_codepoint`. Every offset kustology itself
+        reports is already a code-point offset.
+        """
         return self._code.Syntax
 
     @property
@@ -59,6 +81,8 @@ class KustoQuery:
     @property
     def diagnostics(self) -> list[dict]:
         """This query's diagnostics, in :func:`kustology.validate`'s dict shape.
+
+        ``start`` and ``length`` are code-point offsets into :attr:`text`.
 
         Read off the ``KustoCode`` this object already holds — no second
         parse — so on a bound query the binder's semantic diagnostics
@@ -78,7 +102,9 @@ class KustoQuery:
         unbound parse. :meth:`to_ir` does not repeat that row — it re-analyzes
         and records its own.
         """
-        return _diagnostic_dicts(self._code.GetDiagnostics()) + self._extra_diagnostics
+        return _diagnostic_dicts(
+            self._code.GetDiagnostics(), self._offsets,
+        ) + self._extra_diagnostics
 
     def get_referenced_tables(self, force_syntactic: bool = False) -> set[str]:
         """Return the set of tables referenced by the query.
@@ -229,7 +255,12 @@ class KustoQuery:
             self._code, old_name, new_name, force_syntactic=force_syntactic
         )
 
-    def to_ir(self, attach_schema: bool | dict | None = None):
+    def to_ir(
+        self,
+        attach_schema: bool | dict | None = None,
+        *,
+        semantic_hash: bool = True,
+    ):
         """Build the pydantic IR from this ``KustoCode``. Requires the ``[ir]`` extra.
 
         Reuses the already-parsed AST (no second parse). If bound with a
@@ -309,6 +340,12 @@ class KustoQuery:
           (``parse(q, schema=d).to_ir()``).
         * ``{}`` — falsy, so treated the same as ``False``: no re-bind,
           no attach pass.
+
+        ``semantic_hash=False`` skips the digest, which is the larger part
+        of a build. :attr:`QueryIR.semantic_hash` stays ``""``, which means
+        "not computed" — no query hashes to it. Call
+        :func:`kustology.ir.compute_semantic_hash` on the IR later to get
+        the same value an eager build would have produced.
         """
         from .ir.builder import IRBuilder  # local import: triggers the [ir] extra guard lazily
 
@@ -359,7 +396,9 @@ class KustoQuery:
                 lambda: self._code.Analyze(GlobalState.Default), lambda: self._code,
             )
         ir = IRBuilder(global_state=code.Globals).build_from_code(
-            code, ignore_unknown_tables=not bound_by_caller,
+            code,
+            ignore_unknown_tables=not bound_by_caller,
+            semantic_hash=semantic_hash,
         )
         if failure is not None:
             from .ir.query import Diagnostic
