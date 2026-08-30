@@ -21,6 +21,10 @@ Both IR tags move once per release. Several branches can land between
 releases and share one increment. The tags mark what a consumer can
 observe.
 
+`build_info()` returns all three plus the bundled `Kusto.Language.dll`
+version and SHA-256, and `__version__` now comes from the source tree, not
+from install metadata.
+
 ## Storing IR JSON
 
 Tag stored IR JSON with `IR_SCHEMA_VERSION` and refuse a payload whose tag

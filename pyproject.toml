@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kustology"
-version = "0.2.1"
+dynamic = ["version"]
 description = "A Python wrapper for the Kusto.Language parser (Microsoft.Azure.Kusto.Language NuGet package). Not affiliated with Microsoft."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -80,6 +80,9 @@ dev = [
 
 [tool.setuptools]
 include-package-data = true
+
+[tool.setuptools.dynamic]
+version = {attr = "kustology._version.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["src"]

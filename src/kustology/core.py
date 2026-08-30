@@ -5,9 +5,12 @@
 
 import json
 
+from . import lexical
 from ._text import Utf16Offsets
 from .bridge import GlobalState, KustoCode
+from .lexical import Token
 from .services import _analyze_guarded, _diagnostic_dicts
+from .spans import TextSpan, TimeExpr
 from .utils.analysis import (
     find_table_references,
     find_time_expressions,
@@ -212,15 +215,31 @@ class KustoQuery:
         """
         return get_structural_hash(self._code)
 
-    def find_time_expressions(self) -> list[tuple[str, int, int]]:
-        """Return ``[(text, start, length), ...]`` in source order.
+    def find_time_expressions(self) -> list[TimeExpr]:
+        """Return ``[TimeExpr(text, start, length), ...]`` in source order.
 
         A discovery aid, not a lookback extractor — see
         :func:`kustology.utils.analysis.find_time_expressions`.
         """
         return find_time_expressions(self._code)
 
-    def get_time_range(self) -> list[tuple[str, int, int]]:
+    def tokens(self) -> list[Token]:
+        """Microsoft's token stream with code-point spans. See :mod:`kustology.lexical`."""
+        return lexical.tokens(self._code)
+
+    def comment_spans(self) -> list[TextSpan]:
+        """Every ``//`` comment. See :func:`kustology.lexical.comment_spans`."""
+        return lexical.comment_spans(self._code)
+
+    def string_literal_spans(self, *, include_prefix: bool = True) -> list[TextSpan]:
+        """Every string literal. See :func:`kustology.lexical.string_literal_spans`."""
+        return lexical.string_literal_spans(self._code, include_prefix=include_prefix)
+
+    def statement_spans(self) -> list[TextSpan]:
+        """Top-level statements, separator excluded. See :func:`kustology.lexical.statement_spans`."""
+        return lexical.statement_spans(self._code)
+
+    def get_time_range(self) -> list[TimeExpr]:
         """Deprecated alias for :meth:`find_time_expressions`."""
         import warnings
 

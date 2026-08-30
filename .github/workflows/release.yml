@@ -53,7 +53,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          PROJECT=$(python -c 'import tomllib;print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')
+          PROJECT=$(python -c 'import re,pathlib;print(re.search(r"^__version__ = \"([^\"]+)\"$", pathlib.Path("src/kustology/_version.py").read_text(), re.M).group(1))')
           test "$VERSION" = "$PROJECT" || { echo "tag $GITHUB_REF_NAME != pyproject $PROJECT"; exit 1; }
           grep -q "^## \[$VERSION\]" CHANGELOG.md || { echo "CHANGELOG has no [$VERSION] section"; exit 1; }
 
