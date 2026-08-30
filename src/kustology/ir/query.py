@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
+from functools import cached_property
 from typing import Annotated, Any, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field, model_validator
 
 # Pydantic v2 resolves string forward refs in `AnyExpr` using the namespace of
 # the consuming module, so every name in AnyExpr must be importable here.
@@ -57,6 +58,8 @@ class Diagnostic(BaseModel):
     span: Span | None = None
     code: str | None = None
     category: str | None = None
+    # The .NET exception text of an analyzer crash (``KUSTOLOGY001``); parser diagnostics leave this ``None``.
+    detail: str | None = None
 
 
 class TabularSchema(BaseModel):
@@ -1640,16 +1643,6 @@ class QueryIR(BaseModel):
     model_config = {"extra": "forbid"}
     kind: Literal["query"] = "query"
     raw_text: str
-    # SHA-256 over the canonical IR shape (post merge_consecutive_filters +
-    # normalize_expressions, spans and bind-time annotations stripped) — two
-    # queries with the same semantic content collide. Distinct from Tier 1's
-    # :meth:`KustoQuery.get_structural_hash`, which hashes the AST node-kind
-    # sequence only and is literal/identifier-blind. Computed once at build;
-    # stale if you mutate the IR afterward — call
-    # :func:`kustology.ir.compute_semantic_hash` to refresh. Empty when the
-    # build skips it (``to_ir(semantic_hash=False)``): ``""`` means "not
-    # computed", and no query hashes to it.
-    semantic_hash: str
     let_bindings: list[LetBinding]
     # Every statement that is neither a ``let`` nor a tabular expression, in
     # source order. The order is semantic rather than cosmetic -- ``set``
@@ -1680,6 +1673,36 @@ class QueryIR(BaseModel):
     additional_pipelines: list[Pipeline] = []
     diagnostics: list[Diagnostic] = []
     schema_attached: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_stored_digest(cls, data: Any) -> Any:
+        # A dump carries ``semantic_hash`` as a computed field. On the way
+        # back in it is recomputed, so the stored value is dropped rather
+        # than rejected by ``extra="forbid"``. The same dict shape is what a
+        # keyword constructor call builds internally, so ``QueryIR(...,
+        # semantic_hash=<anything>)`` drops it identically rather than
+        # raising -- there is no way to accept a stored dump under
+        # ``extra="forbid"`` without also accepting the keyword.
+        if isinstance(data, dict) and "semantic_hash" in data:
+            return {k: v for k, v in data.items() if k != "semantic_hash"}
+        return data
+
+    @computed_field  # type: ignore[prop-decorator]
+    @cached_property
+    def semantic_hash(self) -> str:
+        """SHA-256 over the canonical IR shape, computed on first read and memoized.
+
+        Two queries with the same semantic content collide; see
+        ``docs/semantic-hash.md`` for what the digest ignores. Mutating the IR
+        afterwards leaves the memoized value stale — call
+        :func:`kustology.ir.compute_semantic_hash` for a fresh one. Distinct
+        from Tier 1's :meth:`KustoQuery.get_structural_hash`, which is
+        literal- and identifier-blind.
+        """
+        from .transforms import compute_semantic_hash
+
+        return compute_semantic_hash(self)
 
     def to_llm_dict(self) -> dict[str, Any]:
         """LLM-friendly serialization. See :mod:`kustology.ir.llm_view`."""

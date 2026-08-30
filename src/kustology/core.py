@@ -278,7 +278,7 @@ class KustoQuery:
         self,
         attach_schema: bool | dict | None = None,
         *,
-        semantic_hash: bool = True,
+        semantic_hash: bool = False,
     ):
         """Build the pydantic IR from this ``KustoCode``. Requires the ``[ir]`` extra.
 
@@ -360,11 +360,10 @@ class KustoQuery:
         * ``{}`` — falsy, so treated the same as ``False``: no re-bind,
           no attach pass.
 
-        ``semantic_hash=False`` skips the digest, which is the larger part
-        of a build. :attr:`QueryIR.semantic_hash` stays ``""``, which means
-        "not computed" — no query hashes to it. Call
-        :func:`kustology.ir.compute_semantic_hash` on the IR later to get
-        the same value an eager build would have produced.
+        ``semantic_hash=True`` computes the digest during the build, which
+        is the larger part of it. The default defers computing
+        :attr:`QueryIR.semantic_hash` to its first read, where it is
+        memoized.
         """
         from .ir.builder import IRBuilder  # local import: triggers the [ir] extra guard lazily
 
@@ -430,6 +429,7 @@ class KustoQuery:
                 severity=failure["severity"],
                 code=failure["code"],
                 category=failure["category"],
+                detail=failure.get("detail"),
             ))
 
         # Default: attach iff we have a bound parse to extract schemas from.

@@ -203,7 +203,6 @@ def test_gate_walks_let_bindings():
 
     ir = QueryIR(
         raw_text="",
-        semantic_hash="",
         let_bindings=bindings,
         main_pipeline=Pipeline(
             source=TableRef(name="Main", span=span), operators=[],

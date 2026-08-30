@@ -101,15 +101,31 @@ def _analyze_guarded(
     this shape already reads those two keys, so omitting them is not an
     option.
 
-    The ``except Exception`` is deliberately broad. A .NET exception reaches
-    Python through pythonnet as an ordinary ``Exception`` subclass, and there
-    is no shared base class for "the binder gave up" — the arity crash is an
-    ``IndexOutOfRangeException`` and the next one will be something else.
-    ``BaseException`` is *not* caught, so ``KeyboardInterrupt`` and
-    ``SystemExit`` still propagate.
+    ``detail`` carries ``str(exc)`` — the .NET exception's own message, which
+    for a CLR exception reaching Python through pythonnet includes its stack
+    trace and can run to thousands of characters across many lines.
+    ``message`` stays one short sentence naming only the exception's type, so
+    a caller who logs or displays diagnostics inline does not have a
+    multi-kilobyte stack trace land in that line; a caller who wants the
+    trace reads ``detail``.
+
+    ``MemoryError`` and ``RecursionError`` propagate rather than being
+    reported through this shape: both mean the *host* is out of a resource
+    the fallback build would need just as much as the analyze call that
+    triggered it, so building ``unbound()`` would fail the same way, and
+    reporting a resource exhaustion as a binder fault would misattribute it.
+
+    The remaining ``except Exception`` is deliberately broad. A .NET
+    exception reaches Python through pythonnet as an ordinary ``Exception``
+    subclass, and there is no shared base class for "the binder gave up" —
+    the arity crash is an ``IndexOutOfRangeException`` and the next one will
+    be something else. ``BaseException`` is *not* caught, so
+    ``KeyboardInterrupt`` and ``SystemExit`` still propagate.
     """
     try:
         return analyze(), None
+    except (MemoryError, RecursionError):
+        raise  # resource exhaustion is the host's problem, not a binder fault
     except Exception as exc:  # noqa: BLE001 — see the docstring's last paragraph
         return unbound(), {
             "start": 0,
@@ -118,11 +134,13 @@ def _analyze_guarded(
                 "Kusto.Language's analyzer raised "
                 f"{type(exc).__name__} on this query; it was built from the "
                 "unanalyzed parse instead, so no binder-supplied types, "
-                f"schemas or provenance are present. {exc}"
+                "schemas or provenance are present. The exception is in "
+                "'detail'."
             ),
             "severity": "Error",
             "category": "General",
             "code": ANALYZE_FAILED_CODE,
+            "detail": str(exc),
         }
 
 
