@@ -44,8 +44,8 @@ from kustology.ir import (
     subtree_hashes,
 )
 
-DF_CAP = 300          # inverted-index postings above this are near-universal; skip them
-SAMPLE_PAIRS = 500    # pairs sampled for sketch-vs-exact fidelity, per (min_size, k)
+DF_CAP_FRACTION = 0.07  # digests posted to a bigger share of the corpus are dropped (~300 postings at n=4467)
+SAMPLE_PAIRS = 500      # pairs sampled for sketch-vs-exact fidelity, per (min_size, k)
 
 FAMILY_DEFAULT = r"IPEntity_|DomainEntity_|URLEntity_|EmailEntity_|FileEntity_|FileHashEntity_"
 
@@ -157,29 +157,37 @@ def _ground_truth(
 
 
 def _idf_candidates(bags: list[frozenset[str]]) -> tuple[dict[int, dict[int, float]], dict[int, float]]:
-    """Weighted digest overlaps per pair, via an inverted index capped at ``DF_CAP`` postings.
+    """Weighted digest overlaps per pair, via an inverted index capped at a share of the corpus.
 
-    A digest posted to more documents than that is near-universal (its idf
-    weight is close to zero) and touching every pair sharing it would make
-    this quadratic in the corpus for no signal, so it is skipped.
+    A digest posted to more than ``DF_CAP_FRACTION`` of the corpus is
+    dropped -- not because its idf weight is negligible (it usually isn't:
+    at the cap boundary it can still be a third or more of the top idf
+    weight), but because accumulating every pair that shares it would make
+    this quadratic in corpus size for a shrinking marginal return. A
+    dropped digest is excluded from both the intersection (``neighbors``)
+    and the union (``weight``): it can never contribute to an intersection
+    once its postings are capped, so leaving it in the union denominator
+    would only deflate every score touching it for no compensating gain.
+    A digest posted to exactly one document is dropped the same way and
+    for the same reason -- no pair can ever share it either.
     """
     n = len(bags)
+    df_cap = max(2, round(DF_CAP_FRACTION * n))
     inverted: dict[str, list[int]] = defaultdict(list)
     for i, bag in enumerate(bags):
         for digest in bag:
             inverted[digest].append(i)
-    idf = {digest: math.log(n / len(docs)) for digest, docs in inverted.items()}
+    retained = {digest: docs for digest, docs in inverted.items() if 2 <= len(docs) <= df_cap}
+    idf = {digest: math.log(n / len(docs)) for digest, docs in retained.items()}
     neighbors: dict[int, dict[int, float]] = defaultdict(dict)
-    for digest, docs in inverted.items():
-        if not 2 <= len(docs) <= DF_CAP:
-            continue
+    for digest, docs in retained.items():
         w = idf[digest]
         for a in range(len(docs)):
             for b in range(a + 1, len(docs)):
                 i, j = docs[a], docs[b]
                 neighbors[i][j] = neighbors[i].get(j, 0.0) + w
                 neighbors[j][i] = neighbors[j].get(i, 0.0) + w
-    weight = {i: sum(idf[d] for d in bag) for i, bag in enumerate(bags)}
+    weight = {i: sum(idf[d] for d in bag if d in idf) for i, bag in enumerate(bags)}
     return neighbors, weight
 
 
@@ -245,6 +253,7 @@ def _sketch_fidelity(bags: list[frozenset[str]], k_values: list[int]) -> tuple[d
 
 def _report_min_size(parsed: list[Parsed], min_size: int, k_values: list[int], dup_queries, family_queries) -> None:
     bags = [frozenset(h.digest for h in subtree_hashes(p.ir, min_size=min_size)) for p in parsed]
+    mean_bag_size = statistics.fmean(len(bag) for bag in bags) if bags else 0.0
     neighbors, weight = _idf_candidates(bags)
 
     dup_1 = {i: (pos, 1) for i, pos in dup_queries.items()}
@@ -253,7 +262,7 @@ def _report_min_size(parsed: list[Parsed], min_size: int, k_values: list[int], d
     recall_5 = _mean_over(neighbors, weight, dup_5, _hit)
     precision = _mean_over(neighbors, weight, family_queries, _precision)
 
-    print(f"\n== min_size={min_size} ==")
+    print(f"\n== min_size={min_size} (mean bag size {mean_bag_size:.1f}) ==")
     print(f"  recall@1              (n={recall_1[1]:4d} dup/near-dup queries): {recall_1[0]:.3f}")
     print(f"  recall@5              (n={recall_5[1]:4d} dup/near-dup queries): {recall_5[0]:.3f}")
     print(f"  precision@(family-1)  (n={precision[1]:4d} family queries)     : {precision[0]:.3f}")

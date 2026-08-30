@@ -96,11 +96,12 @@ itself or stored IR JSON (see semantic-hash.md's "Storing hashes"), because
 the digests underneath it change.
 
 Neither `similarity` nor a sketch weights subtrees by how much they say
-about a query. Over a corpus, near-universal subtrees — `where
-TimeGenerated > ago(x)` shows up in nearly every Sentinel detection —
-inflate every pair's raw Jaccard score without distinguishing anything.
-Down-weighting a digest by how rare it is across the corpus fixes that,
-and it's the consumer's job: kustology has no notion of a corpus.
+about a query. Over a corpus, a filter such as `where TimeGenerated >
+ago(x)` recurs across a large share of any detection corpus and so
+carries little signal, but plain Jaccard counts it the same as a subtree
+two queries share by coincidence nowhere else. Down-weighting a digest by
+how common it is across the corpus fixes that, and it's the consumer's
+job: kustology has no notion of a corpus.
 
 ```python
 import math
@@ -126,10 +127,13 @@ behind `min_size=3` and `k=128`: it re-derives both against a public
 detection corpus, so a maintainer can rerun it rather than take these
 numbers on faith.
 
-`min_size=3` is the default because retrieval precision on that corpus was
-flat from `min_size=1` through `3` and fell from `4` upward, while the
-digest bag shrank by roughly a third over that same range — 3 keeps the
-signal and sheds the bag weight that buys nothing below it.
+`min_size=3` is the default because recall — finding a drifted copy's
+counterpart at all — stayed near-flat from `min_size=1` through `3` and
+then dropped sharply at `4`, while precision on the family grouping only
+declined gently across that same range, with no comparable break. 3 sits
+at the last point before the recall cliff. The script prints the mean
+digest-bag size alongside each table, so rerunning it shows directly how
+much bag weight a higher `min_size` sheds for that trade.
 
 `k=128` is the default because the sketch's mean absolute error against
 the exact Jaccard value stayed well under 0.01 at that `k` (measured on

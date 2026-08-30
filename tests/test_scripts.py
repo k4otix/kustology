@@ -430,6 +430,7 @@ def test_sample_sentinel_corpus_repo_with_no_strata_exits_nonzero(tmp_path):
 
 def test_eval_similarity_exits_2_without_a_sentinel_checkout(tmp_path):
     pytest.importorskip("yaml")
+    pytest.importorskip("pydantic")
     result = subprocess.run(
         [sys.executable, "scripts/eval_similarity.py", "--sentinel-repo", str(tmp_path)],
         capture_output=True, text=True, cwd=REPO_ROOT, check=False,

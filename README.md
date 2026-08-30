@@ -156,6 +156,7 @@ output prints as plain text.
 | [The Tier 2 IR](https://github.com/k4otix/kustology/blob/main/docs/tier2-ir.md) | How `let` names, operators, and function bodies lower into IR nodes |
 | [CLI reference](https://github.com/k4otix/kustology/blob/main/docs/cli.md) | Subcommands, flags, JSON output, exit codes |
 | [Versioning and `semantic_hash`](https://github.com/k4otix/kustology/blob/main/docs/semantic-hash.md) | Compatibility tags, and what the digest ignores |
+| [Graded similarity](https://github.com/k4otix/kustology/blob/main/docs/similarity.md) | Comparing queries by degree: subtree overlap, containment, and diffing |
 | [Architecture](https://github.com/k4otix/kustology/blob/main/ARCHITECTURE.md) | Code layout, for contributors |
 | [Contributing](https://github.com/k4otix/kustology/blob/main/CONTRIBUTING.md) | Setup and the development loop |
 
