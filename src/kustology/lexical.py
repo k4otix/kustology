@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Eddie Allan
+
 """Lexical helpers over Microsoft's token stream (Tier 1, pydantic-free).
 
 Each helper reports positions the lexer already decided — comments, string
@@ -16,6 +19,10 @@ from .spans import TextSpan
 from .utils.walker import iter_elements
 
 _STRING_PREFIX = re.compile(r"[hH]?@?")
+# Kusto's lexer ends a comment at CR, LF, U+2028 LINE SEPARATOR or U+2029
+# PARAGRAPH SEPARATOR — NEL (U+0085), VT and FF are not line terminators to
+# it and stay inside the comment.
+_LINE_BREAK = re.compile(r"[\n\r\u2028\u2029]")
 
 
 class Token(NamedTuple):
@@ -27,7 +34,13 @@ class Token(NamedTuple):
 
 
 def tokens(kusto_code: Any) -> list[Token]:
-    """Every token, including the final ``EndOfTextToken`` that owns trailing trivia."""
+    """Every token, including the final ``EndOfTextToken`` that owns trailing trivia.
+
+    On a malformed query the list also includes the zero-width placeholder
+    tokens the parser inserts for what it expected but did not find — empty
+    ``text``, no source of their own — for example the missing operand
+    ``IdentifierToken`` in ``T | where // c\\n``.
+    """
     offsets = Utf16Offsets(str(kusto_code.Text))
     return [
         Token(
@@ -37,8 +50,11 @@ def tokens(kusto_code: Any) -> list[Token]:
             trivia=str(tok.Trivia),
             trivia_span=TextSpan(*offsets.span_to_codepoints(tok.TriviaStart, tok.TriviaWidth)),
         )
-        # ``True`` is ``includeZeroWidthTokens``: the final ``EndOfTextToken``
-        # has zero width, so the default-arg call silently drops it.
+        # ``True`` is ``includeZeroWidthTokens`` (optional, default
+        # ``False``): a token is dropped only when both its own width and
+        # its trivia width are zero — an ``EndOfTextToken`` with no
+        # trailing comment, or a parser-inserted placeholder token that
+        # picked up no trivia — not every zero-width token.
         for tok in kusto_code.Syntax.GetTokens(True)
     ]
 
@@ -55,10 +71,8 @@ def comment_spans(kusto_code: Any) -> list[TextSpan]:
         trivia, base = tok.trivia, tok.trivia_span.start
         i = 0
         while (j := trivia.find("//", i)) >= 0:
-            k = trivia.find("\n", j)
-            end = len(trivia) if k < 0 else k
-            if end > j and trivia[end - 1] == "\r":
-                end -= 1
+            m = _LINE_BREAK.search(trivia, j)
+            end = m.start() if m else len(trivia)
             out.append(TextSpan(base + j, end - j))
             i = max(end, j + 2)
     return out

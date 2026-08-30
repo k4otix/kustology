@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Eddie Allan
+
 """Tier 1 span types.
 
 Pydantic-free on purpose: Tier 1 works without the ``[ir]`` extra, and

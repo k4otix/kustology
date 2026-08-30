@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Eddie Allan
+
 import kustology
 
 
@@ -19,6 +22,14 @@ def test_slashes_inside_a_string_are_not_a_comment():
 
 def test_crlf_comment_excludes_the_carriage_return():
     assert _spans("T // c\r\n| take 1", "comment_spans") == ["// c"]
+
+
+def test_bare_cr_comment_excludes_the_carriage_return_and_following_spaces():
+    assert _spans("T // c\r  | take 1", "comment_spans") == ["// c"]
+
+
+def test_unicode_line_separator_terminates_a_comment():
+    assert _spans("T // c" + chr(0x2028) + "| take 1", "comment_spans") == ["// c"]
 
 
 def test_comment_offsets_are_code_points():
@@ -44,3 +55,8 @@ def test_tokens_expose_kind_text_and_trivia():
     assert [t.kind for t in toks[:2]] == ["IdentifierToken", "BarToken"]
     assert toks[1].trivia == " " and toks[1].span.text(q) == "|"
     assert toks[-1].kind == "EndOfTextToken"
+
+
+def test_tokens_on_empty_query_is_just_end_of_text():
+    toks = kustology.parse("").tokens()
+    assert [t.kind for t in toks] == ["EndOfTextToken"]
