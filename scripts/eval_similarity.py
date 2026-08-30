@@ -44,7 +44,7 @@ from kustology.ir import (
     subtree_hashes,
 )
 
-DF_CAP_FRACTION = 0.07  # digests posted to a bigger share of the corpus are dropped (~300 postings at n=4467)
+DF_CAP_FRACTION = 0.07  # digests posted to a bigger share of the corpus are dropped (round(DF_CAP_FRACTION * n) postings)
 SAMPLE_PAIRS = 500      # pairs sampled for sketch-vs-exact fidelity, per (min_size, k)
 
 FAMILY_DEFAULT = r"IPEntity_|DomainEntity_|URLEntity_|EmailEntity_|FileEntity_|FileHashEntity_"
@@ -168,8 +168,10 @@ def _idf_candidates(bags: list[frozenset[str]]) -> tuple[dict[int, dict[int, flo
     and the union (``weight``): it can never contribute to an intersection
     once its postings are capped, so leaving it in the union denominator
     would only deflate every score touching it for no compensating gain.
-    A digest posted to exactly one document is dropped the same way and
-    for the same reason -- no pair can ever share it either.
+    A digest posted to exactly one document stays in the union weight --
+    it belongs in the denominator the way ``docs/similarity.md``'s IDF
+    snippet computes one -- but never appears in ``neighbors``, since a
+    posting list of length one has no pairs to accumulate.
     """
     n = len(bags)
     df_cap = max(2, round(DF_CAP_FRACTION * n))
@@ -177,10 +179,12 @@ def _idf_candidates(bags: list[frozenset[str]]) -> tuple[dict[int, dict[int, flo
     for i, bag in enumerate(bags):
         for digest in bag:
             inverted[digest].append(i)
-    retained = {digest: docs for digest, docs in inverted.items() if 2 <= len(docs) <= df_cap}
-    idf = {digest: math.log(n / len(docs)) for digest, docs in retained.items()}
+    below_cap = {digest: docs for digest, docs in inverted.items() if len(docs) <= df_cap}
+    idf = {digest: math.log(n / len(docs)) for digest, docs in below_cap.items()}
     neighbors: dict[int, dict[int, float]] = defaultdict(dict)
-    for digest, docs in retained.items():
+    for digest, docs in below_cap.items():
+        if len(docs) < 2:
+            continue
         w = idf[digest]
         for a in range(len(docs)):
             for b in range(a + 1, len(docs)):

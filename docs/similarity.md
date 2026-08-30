@@ -128,12 +128,13 @@ detection corpus, so a maintainer can rerun it rather than take these
 numbers on faith.
 
 `min_size=3` is the default because recall — finding a drifted copy's
-counterpart at all — stayed near-flat from `min_size=1` through `3` and
-then dropped sharply at `4`, while precision on the family grouping only
-declined gently across that same range, with no comparable break. 3 sits
-at the last point before the recall cliff. The script prints the mean
-digest-bag size alongside each table, so rerunning it shows directly how
-much bag weight a higher `min_size` sheds for that trade.
+counterpart at all — held within a few points of itself from `min_size=1`
+through `3` and then dropped sharply at `4`, while precision on the
+family grouping only declined gently across that same range, with no
+comparable break. 3 sits at the last point before the recall cliff. The
+script prints the mean digest-bag size alongside each table, so rerunning
+it shows directly how much bag weight a higher `min_size` sheds for that
+trade.
 
 `k=128` is the default because the sketch's mean absolute error against
 the exact Jaccard value stayed well under 0.01 at that `k` (measured on
