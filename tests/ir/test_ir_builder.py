@@ -112,7 +112,6 @@ def test_ir_serialization():
     span = Span(text_start=0, width=10)
     ir = QueryIR(
         raw_text="test",
-        semantic_hash="abc",
         let_bindings=[],
         main_pipeline=Pipeline(
             source=UnknownSource(raw_text="test", span=span),
@@ -122,6 +121,9 @@ def test_ir_serialization():
 
     json_data = ir.model_dump_json()
     ir_back = QueryIR.model_validate_json(json_data)
+    # A real recomputed digest survives the round trip -- not a coincidence
+    # of two defaults, since it carries the scheme prefix.
+    assert ir.semantic_hash.startswith("kustology-sem-v2:")
     assert ir.semantic_hash == ir_back.semantic_hash
     assert ir.main_pipeline.source.span.text_start == 0
 
@@ -136,7 +138,6 @@ def test_binder_enrichment(binder):
 
     ir = QueryIR(
         raw_text="...",
-        semantic_hash="...",
         let_bindings=[],
         main_pipeline=Pipeline(
             source=TableRef(name="DeviceProcessEvents", span=span),

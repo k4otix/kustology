@@ -1677,7 +1677,11 @@ class QueryIR(BaseModel):
     def _drop_stored_digest(cls, data: Any) -> Any:
         # A dump carries ``semantic_hash`` as a computed field. On the way
         # back in it is recomputed, so the stored value is dropped rather
-        # than rejected by ``extra="forbid"``.
+        # than rejected by ``extra="forbid"``. The same dict shape is what a
+        # keyword constructor call builds internally, so ``QueryIR(...,
+        # semantic_hash=<anything>)`` drops it identically rather than
+        # raising -- there is no way to accept a stored dump under
+        # ``extra="forbid"`` without also accepting the keyword.
         if isinstance(data, dict) and "semantic_hash" in data:
             return {k: v for k, v in data.items() if k != "semantic_hash"}
         return data
