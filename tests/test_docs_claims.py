@@ -108,7 +108,25 @@ def test_readme_points_at_every_runnable_example():
     assert not stale, f"README.md links {stale}, which are not in examples/"
 
 
-_NOT_GREENFIELD = re.compile(r"\b(previously|no longer|used to be|e\.g\.|i\.e\.)", re.IGNORECASE)
+# Markers of prose that narrates history instead of stating what is true, plus
+# the two Latin abbreviations AGENTS.md spells out. Every pattern was checked
+# against the whole tree before being added, so a hit is a real finding rather
+# than a phrase this repository happens to use.
+#
+# ``used to`` also catches the passive "X is used to build Y", which the style
+# guide's active-voice rule already rejects. Rephrase as "for".
+#
+# This is a tripwire, not a proof. "This was hardcoded ``False``", "the bare
+# ``ToString()`` this replaced", and "the drop stopped firing" all break the
+# same rule; only the third of those matches anything here, and phrasings like
+# the first are why a review still has to read the prose. Widen the pattern
+# when one gets past it.
+_NOT_GREENFIELD = re.compile(
+    r"\b(previously|formerly|originally|historically|no longer|used to"
+    r"|at one point|now that|(?:this|that|which|it) replaced"
+    r"|before this (?:change|commit|fix)|e\.g\.|i\.e\.)",
+    re.IGNORECASE,
+)
 # Anchored on ``REPO_ROOT`` like every other path here, not on the working
 # directory: this list is built at import time, so a CWD-relative ``Path`` both
 # fails collection from elsewhere and -- for the two globbed roots, which just
