@@ -39,8 +39,16 @@ hash computed under a different scheme carries a different prefix, so a
 stored hash never collides by accident with a freshly computed one from a
 different scheme.
 
-The digest is computed when first read and included in `model_dump()`;
-exclude it (`exclude={"semantic_hash"}`) for a cheap dump.
+The digest is computed when first read and memoized. `model_dump()` reads
+it, so a dump computes it; exclude it (`exclude={"semantic_hash"}`) for a
+cheap dump. `to_ir(semantic_hash=True)` computes it during the build
+instead, which is where an exception raised computing it surfaces.
+
+A copy computes its own digest. `model_copy()`, at either depth, and
+`copy.deepcopy` hand back an IR that reports the tree you have, so a copy
+you mutate reports the mutation. Loading a stored dump recomputes for the
+same reason: the stored value is dropped, so a dump whose digest was edited
+by hand reloads with a different one.
 
 Check the prefix before comparing hashes you deduplicate by. Schemes
 differ in which queries they merge: `kustology-sem-v2` distinguishes

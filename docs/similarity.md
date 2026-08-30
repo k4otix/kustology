@@ -46,7 +46,8 @@ Each entry carries:
 - `kind` — the node's `kind` field, or its class name when it has none.
 - `size` — model nodes in the subtree; a `Span` doesn't count.
 - `span` — the subtree's envelope in your IR, or `None` if nothing below
-  it carries one.
+  it carries one. It indexes the source text of the query the entry came
+  from, so `differing_subtrees(a, b)` returns spans into `a`.
 
 `min_size` floors what comes back, so a bag of digests isn't dominated by
 single-token matches (a bare column reference, a lone literal) that say
