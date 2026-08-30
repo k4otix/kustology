@@ -159,3 +159,49 @@ def sketch_similarity(s1: bytes, s2: bytes) -> float:
     if len(a) != len(b):
         raise ValueError("sketches have different k")
     return sum(x == y for x, y in zip(a, b, strict=True)) / len(a)
+
+
+def differing_subtrees(a: BaseModel, b: BaseModel, *, min_size: int = 3) -> list[SubtreeHash]:
+    """Return the smallest subtrees of ``a`` that are absent from ``b``.
+
+    A changed node changes every ancestor's digest, so "largest differing
+    subtree" is always the root; this reports the other end — nodes whose
+    qualifying children are all present in ``b``, so ancestors of a reported
+    node are not reported. A change below ``min_size`` surfaces at its
+    smallest qualifying ancestor. Swap the arguments for ``b``'s side.
+    """
+    if min_size < 1:
+        raise ValueError("min_size must be at least 1")
+    other = {h.digest for h in subtree_hashes(b, min_size=min_size)}
+    spans: dict[int, Span | None] = {}
+    canonical = _canonicalize(a, spans=spans)
+    out: list[SubtreeHash] = []
+    _collect_differing(canonical, min_size, spans, other, out, set())
+    return out
+
+
+def _collect_differing(
+    node: BaseModel,
+    min_size: int,
+    spans: dict[int, Span | None],
+    other: set[str],
+    out: list[SubtreeHash],
+    seen: set[int],
+) -> tuple[int, bool]:
+    """Return ``(size, differs)``; ``differs`` is true when this subtree or one below it is absent from ``other``."""
+    if id(node) in seen:
+        return 0, False
+    seen.add(id(node))
+    size, below_differs = 1, False
+    for child in _children(node):
+        child_size, child_differs = _collect_differing(child, min_size, spans, other, out, seen)
+        size += child_size
+        below_differs = below_differs or child_differs
+    if size < min_size:
+        return size, False
+    digest = _digest(_payload(node))
+    if digest in other:
+        return size, False
+    if not below_differs:
+        out.append(SubtreeHash(digest, _kind_of(node), size, spans.get(id(node))))
+    return size, True

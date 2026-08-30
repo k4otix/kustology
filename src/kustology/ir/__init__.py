@@ -70,6 +70,7 @@ from .walk import find_all, span_of, walk
 from .similarity import (
     SubtreeHash,
     containment,
+    differing_subtrees,
     similarity,
     similarity_sketch,
     sketch_similarity,
@@ -87,7 +88,7 @@ __all__ = [
     "merge_consecutive_filters", "normalize_expressions", "compute_semantic_hash",
     # Similarity
     "SubtreeHash", "subtree_hashes", "similarity", "containment",
-    "similarity_sketch", "sketch_similarity",
+    "similarity_sketch", "sketch_similarity", "differing_subtrees",
     # Analyzer protocol
     "Finding", "AnalyzerFn", "Severity",
     # Top-level / container

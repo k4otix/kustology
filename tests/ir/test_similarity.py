@@ -18,6 +18,7 @@ from kustology.ir import (
     SubtreeHash,
     compute_semantic_hash,
     containment,
+    differing_subtrees,
     similarity,
     similarity_sketch,
     sketch_similarity,
@@ -131,3 +132,19 @@ def test_sketch_rejects_mismatch_and_empty():
         similarity_sketch([])
     with pytest.raises(ValueError):
         sketch_similarity(b"nope", similarity_sketch(ir))
+
+
+def test_differing_subtrees_localizes_one_changed_operator():
+    qa = "T | where a == 1 | summarize count() by b | take 10"
+    qb = "T | where a == 1 | summarize count() by c | take 10"
+    diff = differing_subtrees(_ir(qa), _ir(qb))
+    assert [(h.kind, h.span.text(qa)) for h in diff] == [("summarize", "summarize count() by b")]
+
+
+def test_differing_subtrees_of_identical_queries_is_empty():
+    assert differing_subtrees(_ir("T | take 1"), _ir("T | take 1")) == []
+
+
+def test_leaf_change_reports_the_smallest_qualifying_ancestor():
+    diff = differing_subtrees(_ir("T | where a == 1 | take 1"), _ir("T | where a == 2 | take 1"))
+    assert [h.kind for h in diff] == ["bin_op"]
