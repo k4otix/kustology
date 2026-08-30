@@ -424,5 +424,19 @@ def test_sample_sentinel_corpus_repo_with_no_strata_exits_nonzero(tmp_path):
     assert rc != 0
 
 
+# ---------------------------------------------------------------------------
+# eval_similarity.py
+# ---------------------------------------------------------------------------
+
+def test_eval_similarity_exits_2_without_a_sentinel_checkout(tmp_path):
+    pytest.importorskip("yaml")
+    result = subprocess.run(
+        [sys.executable, "scripts/eval_similarity.py", "--sentinel-repo", str(tmp_path)],
+        capture_output=True, text=True, cwd=REPO_ROOT, check=False,
+    )
+    assert result.returncode == 2
+    assert "Solutions" in result.stderr
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

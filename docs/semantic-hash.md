@@ -41,6 +41,10 @@ differ in which queries they merge: `kustology-sem-v2` distinguishes
 `kustology-sem-v1` does not. When the schemes differ, rehash both queries
 from source and compare the new hashes.
 
+For anything short of exact equality — how much two queries overlap, or
+where two versions of a rule diverge — see
+[Graded similarity](similarity.md).
+
 ## What the digest ignores
 
 The digest is built to survive differences that do not change what a query
