@@ -164,15 +164,21 @@ def _merge_at_one_level(ops: list) -> list:
                         result_type=KustoType.BOOL,
                     )
                 j += 1
-            if merged is not op.predicate:
-                # Flatten any ``And(And(...), ...)`` introduced by the wrap.
-                normalize_in_place(merged)
-                op.predicate = merged
+            if j > i + 1:
+                # A run of more than one ``FilterOp`` merged -- whether by
+                # wrapping in a fresh ``And`` above or by appending onto
+                # ``op``'s own already-``And`` predicate in place, in which
+                # case ``merged is op.predicate`` stays true below. Either
+                # way the span must widen to the last merged ``where``.
                 last = ops[j - 1]
                 op.span = Span(
                     text_start=op.span.text_start,
                     width=last.span.text_end - op.span.text_start,
                 )
+            if merged is not op.predicate:
+                # Flatten any ``And(And(...), ...)`` introduced by the wrap.
+                normalize_in_place(merged)
+                op.predicate = merged
             out.append(op)
             i = j
         else:

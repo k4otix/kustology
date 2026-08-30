@@ -40,3 +40,19 @@ def test_merged_filter_span_covers_every_merged_where():
     merge_consecutive_filters(ir)
     (merged,) = [op for op in ir.main_pipeline.operators if isinstance(op, FilterOp)]
     assert merged.span.text(q) == "where a > 1 | where b > 2"
+
+
+def test_merged_filter_span_widens_when_the_first_predicate_is_already_an_and():
+    q = "T | where a > 1 and b > 2 | where c > 3 | take 1"
+    ir = _ir(q)
+    merge_consecutive_filters(ir)
+    (merged,) = [op for op in ir.main_pipeline.operators if isinstance(op, FilterOp)]
+    assert merged.span.text(q) == "where a > 1 and b > 2 | where c > 3"
+
+
+def test_merged_filter_span_widens_regardless_of_which_where_carries_the_and():
+    q = "T | where c > 3 | where a > 1 and b > 2 | take 1"
+    ir = _ir(q)
+    merge_consecutive_filters(ir)
+    (merged,) = [op for op in ir.main_pipeline.operators if isinstance(op, FilterOp)]
+    assert merged.span.text(q) == "where c > 3 | where a > 1 and b > 2"
