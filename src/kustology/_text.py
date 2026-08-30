@@ -25,9 +25,9 @@ _ASTRAL_FLOOR = 0x10000
 def check_utf16_encodable(text: str, what: str = "query text") -> bytes:
     r"""Return ``text`` encoded as UTF-16LE, or raise ``ValueError``.
 
-    A Python ``str`` can hold an unpaired surrogate (``"\\ud800"``), which no
+    A Python ``str`` can hold an unpaired surrogate (``"\ud800"``), which no
     UTF-16 byte sequence encodes. Ordinary input reaches this: a YAML file
-    containing ``query: "\\ud800"`` decodes to exactly one.
+    containing ``query: "\ud800"`` decodes to exactly one.
 
     Call this before handing text to ``Kusto.Language``. pythonnet marshals a
     ``str`` argument by encoding it to UTF-16, and when that fails it raises
@@ -143,7 +143,7 @@ def utf16_to_codepoint(text: str, offset: int) -> int:
     raw syntax node count UTF-16 code units:
 
         >>> from kustology import parse, utf16_to_codepoint
-        >>> q = 'let e="\\U0001F600"; T | where X > 1'
+        >>> q = 'let e="\U0001F600"; T | where X > 1'
         >>> tok = next(t for t in parse(q).syntax.GetTokens() if t.Text == "where")
         >>> q[tok.TextStart:][:5]
         'here '

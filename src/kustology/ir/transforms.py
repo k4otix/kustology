@@ -316,7 +316,7 @@ def _normalize_raw_text(text: str) -> str:
     Nothing else is touched. The operators the IR keeps as source text
     (``scan``, ``top-nested``, the ``graph-*`` family, and the ``Unknown*``
     fallbacks) hash that text directly, so without the fold
-    ``| top-nested 3 of a`` and ``|   top-nested\\n3 of a`` would be two
+    ``| top-nested 3 of a`` and ``|   top-nested\n3 of a`` would be two
     different queries as far as the digest is concerned.
 
     The rule is narrow because ``raw_text`` is source text and
@@ -889,15 +889,23 @@ def _strip_unwritten_fields(payload: Any) -> None:
 def _canonicalize(node: BaseModel, *, spans: dict[int, Span | None] | None = None) -> BaseModel:
     """Return the private canonical copy every digest is computed from.
 
-    Deep-copies ``node``, merges consecutive filters (:class:`Pipeline` and
-    :class:`QueryIR` roots only), normalizes expressions, clears volatile
-    fields, canonicalizes ``let`` names (:class:`QueryIR` roots only), and
-    sorts commutative operands, in that order. When ``spans`` is given,
+    Deep-copies ``node``, empties ``diagnostics`` (:class:`QueryIR` roots
+    only), merges consecutive filters (:class:`Pipeline` and :class:`QueryIR`
+    roots only), normalizes expressions, clears volatile fields,
+    canonicalizes ``let`` names (:class:`QueryIR` roots only), and sorts
+    commutative operands, in that order. When ``spans`` is given,
     records ``spans[id(n)] = span_of(n)`` for every non-``Span`` model in the
     copy, taken after normalization and before volatile fields are cleared —
     the last point at which the copy's spans still reflect source offsets.
     """
     canonical = node.model_copy(deep=True)
+    if isinstance(canonical, QueryIR):
+        # Digest-inert -- ``_payload``'s ``QueryIR`` branch never reads this
+        # field -- but every other consumer of this copy (``walk``,
+        # ``similarity._children``) would otherwise see the ``Diagnostic``
+        # nodes, splitting a bound query's subtree bag from its unbound twin
+        # at a low ``min_size`` even though their whole-query digests match.
+        canonical.diagnostics = []
     if isinstance(canonical, (Pipeline, QueryIR)):
         merge_consecutive_filters(canonical)
     # Rebind: a bare ``Not(Not(X))`` root is *replaced* by ``X``, and there is

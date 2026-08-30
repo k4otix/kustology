@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Eddie Allan
+
 from kustology import parse
 from kustology.ir import JoinOp, LetFunction, Pipeline, Span, find_all, span_of
 

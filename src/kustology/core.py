@@ -8,7 +8,6 @@ import json
 from . import lexical
 from ._text import Utf16Offsets
 from .bridge import GlobalState, KustoCode
-from .lexical import Token
 from .services import _analyze_guarded, _diagnostic_dicts
 from .spans import TextSpan, TimeExpr
 from .utils.analysis import (
@@ -223,7 +222,7 @@ class KustoQuery:
         """
         return find_time_expressions(self._code)
 
-    def tokens(self) -> list[Token]:
+    def tokens(self) -> list[lexical.Token]:
         """Return Microsoft's token stream with code-point spans. See :mod:`kustology.lexical`."""
         return lexical.tokens(self._code)
 

@@ -22,7 +22,7 @@ releases and share one increment. The tags mark what a consumer can
 observe.
 
 `build_info()` returns all three plus the bundled `Kusto.Language.dll`
-version and SHA-256, and `__version__` now comes from the source tree, not
+version and SHA-256, and `__version__` comes from the source tree, not
 from install metadata.
 
 ## Storing IR JSON

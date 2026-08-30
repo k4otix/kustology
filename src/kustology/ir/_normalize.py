@@ -129,13 +129,13 @@ _PREC_ARITHMETIC = {"+": 4, "-": 4, "*": 5, "/": 5, "%": 5}
 def _kql_string(value: str) -> str:
     r"""Render ``value`` as a KQL double-quoted string literal.
 
-    Escaping is the whole point. ``f("a\\", \\"b")`` is a call with **one**
+    Escaping is the whole point. ``f("a\", \"b")`` is a call with **one**
     argument whose value contains quotes and a comma; rendered raw it reads
     as ``f("a", "b")``, a call with two arguments -- a description of a
     tree that does not exist. Backslash goes first, or it would re-escape
     the backslashes the later replacements introduce.
 
-    ``\\r`` is escaped alongside ``\\n`` for the same reason: a raw control
+    ``\r`` is escaped alongside ``\n`` for the same reason: a raw control
     character inside the quotes makes the rendering unreadable and, for a
     consumer feeding it back to a parser, unparseable.
     """

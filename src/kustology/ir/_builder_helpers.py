@@ -138,8 +138,8 @@ def read_row_schema(node: Any) -> list[tuple[str, str]]:
     Sharing one reader is the point rather than a tidy-up: the column type
     is read with ``node_text`` (``IncludeTrivia.Minimal``), never a bare
     ``ToString()`` — which is ``IncludeTrivia.All`` and prepends the node's
-    leading trivia, so ``assert-schema (a: // note\\n long)`` would record
-    the type as ``"// note\\n long"`` and hash differently from the
+    leading trivia, so ``assert-schema (a: // note\n long)`` would record
+    the type as ``"// note\n long"`` and hash differently from the
     identical query without the comment. One reader keeps that rule in one
     place; a per-site copy is a copy free to lose it.
 
@@ -293,9 +293,9 @@ def read_external_data(
     only the field. The fallback uses ``node_text``
     (``IncludeTrivia.Minimal``) rather than ``ToString()``, which is
     ``IncludeTrivia.All``: the latter would record the URI of
-    ``externaldata(a:string)[// note\\n u]`` as ``"// note\\n u"``, hashing
+    ``externaldata(a:string)[// note\n u]`` as ``"// note\n u"``, hashing
     it apart from the same query without the comment. A comment
-    *interior* to the element -- ``strcat(// note\\n "https://","x")`` --
+    *interior* to the element -- ``strcat(// note\n "https://","x")`` --
     still reaches the text, because no ``IncludeTrivia`` mode strips
     interior trivia; that is the same accepted boundary as
     :attr:`~kustology.ir.query.UnknownSource.raw_text`, and it splits a

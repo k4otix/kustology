@@ -221,19 +221,11 @@ def _precision(top: list[int], positives: set[int], k: int) -> float:
     return sum(1 for j in top if j in positives) / k if k else 0.0
 
 
-def _sample_pairs(indices: list[int], count: int, seed: int) -> list[tuple[int, int]]:
-    rng = random.Random(seed)
-    n = len(indices)
-    if n < 2:
-        return []
-    count = min(count, n * (n - 1) // 2)
-    seen: set[tuple[int, int]] = set()
-    while len(seen) < count:
-        a, b = rng.randrange(n), rng.randrange(n)
-        if a != b:
-            i, j = indices[a], indices[b]
-            seen.add((i, j) if i < j else (j, i))
-    return sorted(seen)
+def _sample_pairs(pairs: list[tuple[int, int]], count: int, seed: int) -> list[tuple[int, int]]:
+    """Return up to ``count`` of ``pairs``, chosen deterministically under ``seed``."""
+    if len(pairs) <= count:
+        return sorted(pairs)
+    return sorted(random.Random(seed).sample(pairs, count))
 
 
 def _p95(values: list[float]) -> float:
@@ -243,9 +235,21 @@ def _p95(values: list[float]) -> float:
     return ordered[max(0, min(len(ordered) - 1, round(0.95 * (len(ordered) - 1))))]
 
 
-def _sketch_fidelity(bags: list[frozenset[str]], k_values: list[int]) -> tuple[dict[int, tuple[float, float]], int]:
-    """Return {k: (mean |exact - sketch|, p95 |exact - sketch|)} over sampled pairs."""
-    pairs = _sample_pairs([i for i, bag in enumerate(bags) if bag], SAMPLE_PAIRS, seed=0)
+def _sketch_fidelity(
+    bags: list[frozenset[str]], neighbors: dict[int, dict[int, float]], k_values: list[int]
+) -> tuple[dict[int, tuple[float, float]], int]:
+    """Return {k: (mean |exact - sketch|, p95 |exact - sketch|)} over sampled pairs.
+
+    Pairs are sampled from ``neighbors`` -- the candidates that share at
+    least one digest, the same pairs a ``similarity_sketch`` lookup ranks in
+    practice -- rather than uniformly at random over the corpus. A uniform
+    pair here is overwhelmingly disjoint (empty bag intersection, so both
+    the exact and the sketch similarity are trivially 0.0 and the error is
+    trivially 0.0 too), which would measure the estimator away from where a
+    caller reads it rather than on it.
+    """
+    edges = sorted({(i, j) if i < j else (j, i) for i, js in neighbors.items() for j in js})
+    pairs = _sample_pairs(edges, SAMPLE_PAIRS, seed=0)
     needed = {i for pair in pairs for i in pair}
     results: dict[int, tuple[float, float]] = {}
     for k in k_values:
@@ -271,7 +275,7 @@ def _report_min_size(parsed: list[Parsed], min_size: int, k_values: list[int], d
     print(f"  recall@5              (n={recall_5[1]:4d} dup/near-dup queries): {recall_5[0]:.3f}")
     print(f"  precision@(family-1)  (n={precision[1]:4d} family queries)     : {precision[0]:.3f}")
 
-    fidelity, n_pairs = _sketch_fidelity(bags, k_values)
+    fidelity, n_pairs = _sketch_fidelity(bags, neighbors, k_values)
     print(f"  sketch fidelity (exact vs. sketch, {n_pairs} sampled pairs):")
     print(f"    {'k':>5}  {'mean|err|':>10}  {'p95|err|':>10}")
     for k in k_values:

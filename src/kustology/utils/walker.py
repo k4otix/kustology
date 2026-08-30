@@ -143,7 +143,7 @@ def node_text(node) -> str:
 
     ``node.ToString()`` (no argument) is ``ToString(IncludeTrivia.All)``,
     which prepends whitespace *and comments* that precede the node — so
-    ``// lead\\nSecurityEvent`` reads back as the table name. ``Minimal``
+    ``// lead\nSecurityEvent`` reads back as the table name. ``Minimal``
     renders only the node's own text; interior comments collapse to a
     line break rather than vanishing, so this is a read, not a rewrite.
     """

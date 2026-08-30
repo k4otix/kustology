@@ -41,7 +41,7 @@ def tokens(kusto_code: Any) -> list[Token]:
     On a malformed query the list also includes the zero-width placeholder
     tokens the parser inserts for what it expected but did not find — empty
     ``text``, no source of their own — for example the missing operand
-    ``IdentifierToken`` in ``T | where // c\\n``.
+    ``IdentifierToken`` in ``T | where // c\n``.
     """
     offsets = Utf16Offsets(str(kusto_code.Text))
     return [

@@ -232,3 +232,8 @@ literals at different offsets still both surface.
 plain `list[str]`, a copy of table names rather than a hop to a shared
 node, so there is nothing for identity-based deduplication to do
 there.
+
+`prune` stops a path, not an object — a node reachable through another
+field (for example a `let`'s time expression through
+`LetBinding.inner_time_exprs`) is still yielded when the walk reaches it
+that way.

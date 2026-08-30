@@ -58,6 +58,23 @@ def test_min_size_floors_the_bag():
     assert len(subtree_hashes(ir, min_size=1)) > len(subtree_hashes(ir))
 
 
+def test_diagnostics_do_not_split_the_bound_and_unbound_bag(sample_schema):
+    """A bound copy's ``QueryIR.diagnostics`` (``T`` is not in ``sample_schema``, so
+    binding raises a real "table not found" diagnostic the schemaless parse never
+    gets) must not leak into the subtree bag at ``min_size=1`` — the same query
+    bound and unbound has to produce the same bag, since diagnostics never enter
+    the whole-query digest either."""
+    q = "T | where a == 1 | take 1"
+    bound = parse(q, schema=sample_schema).to_ir(semantic_hash=False)
+    unbound = parse(q).to_ir(semantic_hash=False)
+    assert bound.diagnostics and not unbound.diagnostics
+    bound_bag = subtree_hashes(bound, min_size=1)
+    unbound_bag = subtree_hashes(unbound, min_size=1)
+    assert {h.digest for h in bound_bag} == {h.digest for h in unbound_bag}
+    assert bound_bag[-1].size == unbound_bag[-1].size
+    assert differing_subtrees(bound, unbound, min_size=1) == []
+
+
 def test_shared_predicate_is_one_digest_in_both_queries():
     a, b = _ir("T | where a == 1 and b == 2 | take 1"), _ir("S | where b == 2 and a == 1 | summarize count()")
     shared = {h.digest for h in subtree_hashes(a)} & {h.digest for h in subtree_hashes(b)}
