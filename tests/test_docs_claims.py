@@ -14,7 +14,10 @@ rebuilt from the directory or file it claims to enumerate.
 
 from __future__ import annotations
 
+import ast
+import io
 import re
+import tokenize
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -129,11 +132,52 @@ _NOT_GREENFIELD = re.compile(
 # come back empty -- makes the gate vacuous without failing.
 _PROSE_FILES = [
     *(REPO_ROOT / "src").rglob("*.py"),
+    *(REPO_ROOT / "tests").rglob("*.py"),
     *(REPO_ROOT / "docs").glob("*.md"),
     REPO_ROOT / "README.md",
     REPO_ROOT / "ARCHITECTURE.md",
     REPO_ROOT / "CONTRIBUTING.md",
 ]
+
+# This file quotes the phrasings it bans, in the comment above
+# ``_NOT_GREENFIELD`` and in the pattern itself, so it cannot be its own
+# subject. Everything else under ``tests`` is in scope.
+_EXEMPT = {Path(__file__).resolve()}
+
+
+def _prose(path: Path):
+    """Yield ``(lineno, text)`` for the prose in one file.
+
+    A Markdown file is prose throughout. A Python file is scanned for comments
+    and docstrings only: an assertion message such as "the binder no longer
+    crashes on the repro" is test data the reader needs to see verbatim, and a
+    name such as ``test_shapes_that_used_to_collide`` is an identifier. Reading
+    whole lines would flag both, and the false positives are what makes a gate
+    get widened until it means nothing.
+
+    This narrows ``src`` too: the text of an exception message is out of scope
+    wherever it lives. Those are short and read at the call site, so the
+    explanatory prose around them is where the rule earns its keep.
+    """
+    text = path.read_text(encoding="utf-8")
+    if path.suffix != ".py":
+        yield from enumerate(text.splitlines(), 1)
+        return
+    for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+        if tok.type == tokenize.COMMENT:
+            yield tok.start[0], tok.string
+    # Docstrings come from the tree rather than the token stream, so a string
+    # that merely opens a line is not mistaken for one.
+    for node in ast.walk(ast.parse(text)):
+        for field in ("body", "orelse", "finalbody"):
+            block = getattr(node, field, None)
+            if not isinstance(block, list):
+                continue
+            for stmt in block:
+                if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant) \
+                        and isinstance(stmt.value.value, str):
+                    for offset, line in enumerate(ast.get_source_segment(text, stmt).splitlines()):
+                        yield stmt.lineno + offset, line
 
 
 def test_prose_is_greenfield_and_spells_out_latin():
@@ -141,7 +185,8 @@ def test_prose_is_greenfield_and_spells_out_latin():
     hits = [
         f"{path.relative_to(REPO_ROOT)}:{lineno}: {line.strip()}"
         for path in _PROSE_FILES
-        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if path.resolve() not in _EXEMPT
+        for lineno, line in _prose(path)
         if _NOT_GREENFIELD.search(line)
     ]
     assert hits == [], "\n".join(hits)
