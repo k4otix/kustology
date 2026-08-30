@@ -170,7 +170,6 @@ from .query import (
     UnknownSource,
 )
 from .spans import Span
-from .transforms import compute_semantic_hash
 
 logger = logging.getLogger(__name__)
 
@@ -513,7 +512,7 @@ class IRBuilder:
 
     # -- entry points ----------------------------------------------------
 
-    def build(self, query: str, *, semantic_hash: bool = True) -> QueryIR:
+    def build(self, query: str, *, semantic_hash: bool = False) -> QueryIR:
         """Parse and bind ``query``, then build its IR.
 
         Use :meth:`build_from_code` when the caller already has a
@@ -540,8 +539,9 @@ class IRBuilder:
         :func:`kustology.services._analyze_guarded` for why that fallback is
         harmless for ``semantic_hash`` and what it costs everywhere else.
 
-        ``semantic_hash=False`` skips the digest — see
-        :meth:`build_from_code`.
+        ``semantic_hash=True`` computes the digest during the build; the
+        default defers it to the first read of ``QueryIR.semantic_hash`` —
+        see :meth:`build_from_code`.
         """
         code, failure = _analyze_guarded(
             lambda: KustoCode.ParseAndAnalyze(query, self.global_state),
@@ -567,7 +567,7 @@ class IRBuilder:
         code: KustoCode,
         *,
         ignore_unknown_tables: bool = False,
-        semantic_hash: bool = True,
+        semantic_hash: bool = False,
     ) -> QueryIR:
         """Build the IR from an already-parsed ``KustoCode``.
 
@@ -592,12 +592,10 @@ class IRBuilder:
         A parse the caller bound with their own schema keeps every one of
         them: there, a name the schema does not describe is a real error.
 
-        ``semantic_hash=False`` leaves :attr:`QueryIR.semantic_hash` as
-        ``""`` and never calls
-        :func:`~kustology.ir.transforms.compute_semantic_hash`, which is the
-        larger part of a build. ``""`` means "not computed", and no query
-        hashes to it: pass the IR to ``compute_semantic_hash`` later to get
-        the value an eager build would have produced.
+        ``semantic_hash=True`` computes the digest during the build —
+        :func:`~kustology.ir.transforms.compute_semantic_hash`, the larger
+        part of a build. The default defers it to the first read of
+        :attr:`QueryIR.semantic_hash`, which computes and memoizes it then.
         """
         # Kusto evaluates a literal against the culture live at the moment of
         # access, and the visits below read literal values.
@@ -707,7 +705,6 @@ class IRBuilder:
 
         ir = QueryIR(
             raw_text=raw_text,
-            semantic_hash="",  # populated below from the canonical IR shape
             let_bindings=let_bindings,
             statements=statements,
             main_pipeline=main_pipeline,
@@ -720,7 +717,7 @@ class IRBuilder:
         # two run in.
         retarget_spans_to_codepoints(ir, Utf16Offsets(raw_text))
         if semantic_hash:
-            ir.semantic_hash = compute_semantic_hash(ir)
+            _ = ir.semantic_hash  # compute now rather than on first read
         return ir
 
     # -- statements that are neither ``let`` nor tabular ------------------

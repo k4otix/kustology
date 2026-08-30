@@ -35,6 +35,9 @@ hash computed under a different scheme carries a different prefix, so a
 stored hash never collides by accident with a freshly computed one from a
 different scheme.
 
+The digest is computed when first read and included in `model_dump()`;
+exclude it (`exclude={"semantic_hash"}`) for a cheap dump.
+
 Check the prefix before comparing hashes you deduplicate by. Schemes
 differ in which queries they merge: `kustology-sem-v2` distinguishes
 `in` / `in~` / `has_any` / `has_all` and `isnotnull` / `isnotempty`, where
