@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-08-30
+
+No IR JSON shape or digest change: `IR_SCHEMA_VERSION` stays `0.2` and `SEMANTIC_HASH_SCHEME` stays `kustology-sem-v2`; stored IR JSON and hashes from 0.2.x remain valid. `semantic_hash` is a computed field and `Diagnostic` gains an optional `detail` (see Changed and Added).
+
 ### Added
 
 - **`walk()` and `find_all()` take `prune=`** (tier 2). A node the callback accepts is yielded but not entered, so an outer pipeline can be analysed without its `join`/`lookup` subqueries. `predicate` still filters only what is yielded.
@@ -13,6 +17,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Lexical span helpers** (tier 1): `comment_spans()`, `string_literal_spans(include_prefix=...)`, `statement_spans()` and the underlying `tokens()` on `KustoQuery` and in `kustology.lexical`. They report what the lexer decided — several comments in one trivia run, the trailing comment, `//` inside a string — as code-point `TextSpan`s, with no pydantic. See [Lexical spans](docs/tier1-syntax-tree.md#lexical-spans).
 - **Graded similarity** (tier 2): `subtree_hashes()` digests every subtree of at least `min_size` nodes under the whole-query canonicalization; `similarity()` (Jaccard) and `containment()` compare bags; `similarity_sketch()`/`sketch_similarity()` estimate Jaccard from a 520-byte MinHash; `differing_subtrees()` names the smallest subtrees two queries do not share. IDF weighting, clustering and thresholds stay with the caller. See [docs/similarity.md](docs/similarity.md).
 - **`Diagnostic.detail`** (tier 2) carries the .NET exception text of an analyzer crash; parser diagnostics leave it `None`. Additive — 0.2.x IR JSON still loads.
+- **Docs: what the binder resolves without a schema** (tier 2) — `result_type` tells a `let`-bound `datetime` from a `timespan` on an unbound parse; `examples/lookback_window.py` shows it, together with `prune=` and `span_of`.
 
 ### Changed
 
@@ -260,7 +265,8 @@ Tier 1 (`kustology` top-level surface) is on a stabilization track: the package 
   - `find_all_demo.py` — generic IR traversal via `find_all`.
   - `llm_view.py` — LLM-tailored IR serialization via `to_llm_dict`.
 
-[Unreleased]: https://github.com/k4otix/kustology/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/k4otix/kustology/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/k4otix/kustology/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/k4otix/kustology/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/k4otix/kustology/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/k4otix/kustology/releases/tag/v0.1.0
