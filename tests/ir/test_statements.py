@@ -220,6 +220,22 @@ def test_restrict_carries_its_targets_and_properties():
     assert stmt.properties == [("a", "1"), ("b", "x")]
 
 
+def test_restrict_with_a_single_literal_property_keeps_it():
+    stmt = _only("restrict access to (T) with (a=1); T | count", RestrictStmt)
+    assert stmt.properties == [("a", "1")]
+
+
+def test_restrict_with_a_non_literal_property_keeps_it():
+    """The grammar admits only a literal or a bare name in this slot -- a
+    call, a parenthesized expression, or a timespan literal each diagnose
+    ``Missing value`` on a real parse. A bare name parses as a
+    ``NameDeclaration`` here, not the ``NameReference`` ``named_param_value``
+    special-cases, so it reaches the ``node_text`` fallback rather than the
+    literal branch, and still lands in ``properties``."""
+    stmt = _only("restrict access to (T) with (a=b); T | count", RestrictStmt)
+    assert ("a", "b") in stmt.properties
+
+
 def test_restrict_without_a_with_clause_has_no_properties():
     stmt = _only("restrict access to (T); T | count", RestrictStmt)
     assert stmt.properties == []
@@ -425,10 +441,18 @@ def test_validate_with_a_schema_survives_the_crash():
 
 def test_the_crash_diagnostic_names_the_dotnet_exception():
     """A guard that swallowed the cause would be worse than the crash: the
-    message carries the .NET exception so the failure is reportable upstream."""
-    (crash,) = _crashes(parse(ARITY_CRASH).to_ir().diagnostics)
-    assert "IndexOutOfRangeException" in crash.message
-    assert "VisitPatternDeclaration" in crash.message
+    exception reaches the diagnostic's ``detail`` key, so the failure stays
+    reportable upstream while ``message`` stays one short sentence.
+
+    Read through :func:`kustology.parse`'s schema seam rather than
+    ``to_ir()``'s: the fallback ``Diagnostic`` ``QueryIR.diagnostics`` builds
+    is a pydantic model with a fixed field set, so ``detail`` lives only on
+    the Tier 1 dict shape this seam returns.
+    """
+    (crash,) = _crashes(parse(ARITY_CRASH, schema={"T": {"a": "long"}}).diagnostics)
+    assert "IndexOutOfRangeException" in crash["message"]
+    assert "\n" not in crash["message"]
+    assert "VisitPatternDeclaration" in crash["detail"]
 
 
 def test_the_fallback_digest_is_the_bound_digest():
