@@ -51,7 +51,7 @@ from .query import (
 )
 from .spans import Span
 from .types import KustoType
-from .walk import _models_in, find_all, walk
+from .walk import _models_in, find_all, span_of, walk
 
 
 def merge_consecutive_filters(root: Pipeline | QueryIR) -> None:
@@ -61,9 +61,9 @@ def merge_consecutive_filters(root: Pipeline | QueryIR) -> None:
     in place on ``root`` and every ``Pipeline`` reachable from it — join and
     lookup right sides, union and fork branches, mv-apply bodies, and nested
     sub-pipelines such as ``toscalar(...)`` and ``materialize(...)``
-    arguments. The first ``FilterOp``'s span is preserved on the merged
-    result; the others' outer spans are dropped (inner predicate spans
-    survive unchanged).
+    arguments. The merged result's span widens to cover the whole run, from
+    the first ``FilterOp``'s start to the last one's end; the others' outer
+    spans are dropped (inner predicate spans survive unchanged).
 
     Build a deep copy via ``model_copy(deep=True)`` first if you need to
     keep the original pre-merge IR.
@@ -168,6 +168,11 @@ def _merge_at_one_level(ops: list) -> list:
                 # Flatten any ``And(And(...), ...)`` introduced by the wrap.
                 normalize_in_place(merged)
                 op.predicate = merged
+                last = ops[j - 1]
+                op.span = Span(
+                    text_start=op.span.text_start,
+                    width=last.span.text_end - op.span.text_start,
+                )
             out.append(op)
             i = j
         else:
@@ -871,6 +876,89 @@ def _strip_unwritten_fields(payload: Any) -> None:
             stack.extend(value)
 
 
+def _canonicalize(node: BaseModel, *, spans: dict[int, Span | None] | None = None) -> BaseModel:
+    """Return the private canonical copy every digest is computed from.
+
+    Deep-copies ``node``, merges consecutive filters (:class:`Pipeline` and
+    :class:`QueryIR` roots only), normalizes expressions, clears volatile
+    fields, canonicalizes ``let`` names (:class:`QueryIR` roots only), and
+    sorts commutative operands, in that order. When ``spans`` is given,
+    records ``spans[id(n)] = span_of(n)`` for every non-``Span`` model in the
+    copy, taken after normalization and before volatile fields are cleared —
+    the last point at which the copy's spans still reflect source offsets.
+    """
+    canonical = node.model_copy(deep=True)
+    if isinstance(canonical, (Pipeline, QueryIR)):
+        merge_consecutive_filters(canonical)
+    # Rebind: a bare ``Not(Not(X))`` root is *replaced* by ``X``, and there is
+    # no parent field for the replacement to be installed into.
+    canonical = normalize_expressions(canonical)
+    if spans is not None:
+        for n in walk(canonical):
+            if not isinstance(n, Span):
+                spans[id(n)] = span_of(n)
+    _clear_volatile(canonical)
+    if isinstance(canonical, QueryIR):
+        # Must run before ``_sort_commutative``: renaming changes the JSON
+        # sort key of any operand containing a ``LetValueRef`` / ``LetRef``,
+        # so sorted-then-renamed, two spellings of the same query order
+        # differently and split.
+        #
+        # The rename recurses into every ``LetFunction`` scope, so this
+        # ordering covers a function body as well as the top level: by the
+        # time ``_sort_commutative`` reaches ``let f = () { T | where a > $let0
+        # and b > 1 }``, the body's references are already canonical and key
+        # the same way whatever the query called the binding.
+        _canonicalize_let_names(canonical)
+    # After ``_clear_volatile``, so the sort key cannot see a span offset.
+    _sort_commutative(canonical)
+    return canonical
+
+
+def _payload(canonical: BaseModel) -> dict[str, Any]:
+    """Return ``canonical``'s digest payload, with unwritten fields stripped.
+
+    A :class:`QueryIR` dumps as a hand-built four-key dict rather than
+    ``model_dump()``; every other root dumps whole.
+    """
+    payload: Any
+    if isinstance(canonical, QueryIR):
+        # Named field by field rather than dumping the whole model, so that
+        # ``raw_text``, ``semantic_hash`` and ``schema_attached`` stay out of
+        # the digest. The cost of that choice is that a new ``QueryIR`` field
+        # is invisible here until it is added -- the builder can fill one
+        # faithfully while it hashes to nothing at all, and two queries
+        # differing only there become one digest. Add every field that
+        # carries query meaning.
+        payload = {
+            "let_bindings": [lb.model_dump(mode="json") for lb in canonical.let_bindings],
+            # Present even when empty, the way ``additional_pipelines`` is:
+            # a key whose presence depended on its own contents would make
+            # the payload's shape data. ``_strip_unwritten_fields`` is for
+            # an operator *field* whose unwritten default must dump as
+            # though undeclared; a top-level payload key is part of the
+            # payload's fixed shape and gets no such treatment.
+            "statements": [s.model_dump(mode="json") for s in canonical.statements],
+            "main_pipeline": canonical.main_pipeline.model_dump(mode="json"),
+            "additional_pipelines": [
+                p.model_dump(mode="json") for p in canonical.additional_pipelines
+            ],
+        }
+    else:
+        payload = canonical.model_dump(mode="json")
+    # See :func:`_strip_unwritten_fields` -- an unwritten modeled modifier
+    # must dump as though its operator had no fields for it, so a query
+    # writing no modifier digests as the bare operator.
+    _strip_unwritten_fields(payload)
+    return payload
+
+
+def _digest(payload: dict[str, Any]) -> str:
+    """Return the scheme-tagged SHA-256 of ``payload``."""
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    return f"{SEMANTIC_HASH_SCHEME}:{digest}"
+
+
 def compute_semantic_hash(node: BaseModel) -> str:
     """Return the scheme-tagged SHA-256 of the IR's canonical shape.
 
@@ -1014,56 +1102,4 @@ def compute_semantic_hash(node: BaseModel) -> str:
     you mutate ``node`` after computing the hash; call again for the
     current value.
     """
-    canonical = node.model_copy(deep=True)
-    if isinstance(canonical, (Pipeline, QueryIR)):
-        merge_consecutive_filters(canonical)
-    # Rebind: a bare ``Not(Not(X))`` root is *replaced* by ``X``, and there is
-    # no parent field for the replacement to be installed into.
-    canonical = normalize_expressions(canonical)
-    _clear_volatile(canonical)
-    if isinstance(canonical, QueryIR):
-        # Must run before ``_sort_commutative``: renaming changes the JSON
-        # sort key of any operand containing a ``LetValueRef`` / ``LetRef``,
-        # so sorted-then-renamed, two spellings of the same query order
-        # differently and split.
-        #
-        # The rename recurses into every ``LetFunction`` scope, so this
-        # ordering covers a function body as well as the top level: by the
-        # time ``_sort_commutative`` reaches ``let f = () { T | where a > $let0
-        # and b > 1 }``, the body's references are already canonical and key
-        # the same way whatever the query called the binding.
-        _canonicalize_let_names(canonical)
-    # After ``_clear_volatile``, so the sort key cannot see a span offset.
-    _sort_commutative(canonical)
-    if isinstance(canonical, QueryIR):
-        # Named field by field rather than dumping the whole model, so that
-        # ``raw_text``, ``semantic_hash`` and ``schema_attached`` stay out of
-        # the digest. The cost of that choice is that a new ``QueryIR`` field
-        # is invisible here until it is added -- the builder can fill one
-        # faithfully while it hashes to nothing at all, and two queries
-        # differing only there become one digest. Add every field that
-        # carries query meaning.
-        payload: Any = {
-            "let_bindings": [lb.model_dump(mode="json") for lb in canonical.let_bindings],
-            # Present even when empty, the way ``additional_pipelines`` is:
-            # a key whose presence depended on its own contents would make
-            # the payload's shape data. ``_strip_unwritten_fields`` is for
-            # an operator *field* whose unwritten default must dump as
-            # though undeclared; a top-level payload key is part of the
-            # payload's fixed shape and gets no such treatment.
-            "statements": [s.model_dump(mode="json") for s in canonical.statements],
-            "main_pipeline": canonical.main_pipeline.model_dump(mode="json"),
-            "additional_pipelines": [
-                p.model_dump(mode="json") for p in canonical.additional_pipelines
-            ],
-        }
-    else:
-        payload = canonical.model_dump(mode="json")
-    # See :func:`_strip_unwritten_fields` -- an unwritten modeled modifier
-    # must dump as though its operator had no fields for it, so a query
-    # writing no modifier digests as the bare operator.
-    _strip_unwritten_fields(payload)
-    digest = hashlib.sha256(
-        json.dumps(payload, sort_keys=True).encode()
-    ).hexdigest()
-    return f"{SEMANTIC_HASH_SCHEME}:{digest}"
+    return _digest(_payload(_canonicalize(node)))
