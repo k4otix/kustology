@@ -28,6 +28,8 @@ from typing import (
 
 from pydantic import BaseModel
 
+from .spans import Span
+
 T = TypeVar("T", bound=BaseModel)
 
 Predicate = Callable[[BaseModel], bool]
@@ -231,3 +233,23 @@ def find_all(node: BaseModel, type_: type[T], *, prune: Predicate | None = None)
     for n in walk(node, prune=prune):
         if isinstance(n, type_):
             yield n
+
+
+def span_of(node: BaseModel) -> Span | None:
+    """Return the smallest span covering ``node`` and every descendant that carries one.
+
+    Works for classes without a ``span`` field (``Pipeline``, ``QueryIR``,
+    the statement models) by folding over the spans below them. Zero-width
+    spans are ignored. Offsets are code points, like every other ``Span``.
+    Leading trivia is not included: the envelope starts at the first token.
+    """
+    start: int | None = None
+    end: int | None = None
+    for span in find_all(node, Span):
+        if span.width == 0:
+            continue
+        start = span.text_start if start is None else min(start, span.text_start)
+        end = span.text_end if end is None else max(end, span.text_end)
+    if start is None or end is None:
+        return None
+    return Span(text_start=start, width=end - start)
