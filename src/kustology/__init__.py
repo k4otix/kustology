@@ -22,6 +22,7 @@ except _PackageNotFoundError:  # pragma: no cover — editable install without m
 from ._text import codepoint_to_utf16, utf16_to_codepoint
 from .bridge import KustoCode, ensure_invariant_culture
 from .core import KustoQuery
+from .lexical import Token
 from .reflection import (
     aggregate_functions,
     all_function_names,
@@ -48,6 +49,7 @@ __all__ = [
     # Spans
     "TextSpan",
     "TimeExpr",
+    "Token",
     # Offset translation — .NET reports UTF-16 code units, Python indexes
     # code points; see :mod:`kustology._text`.
     "utf16_to_codepoint",
