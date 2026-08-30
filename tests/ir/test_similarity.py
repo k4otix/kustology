@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Eddie Allan
+
+"""Tests for ``subtree_hashes``.
+
+Pins that the root entry equals ``compute_semantic_hash``, that the digest
+set is invariant to ``let`` naming and to filter splitting the same way the
+whole-query hash is, that ``min_size`` floors the returned bag, and that
+each entry's span locates its subtree in the original source.
+"""
+
+from kustology import parse
+from kustology.ir import SubtreeHash, compute_semantic_hash, subtree_hashes
+
+
+def _ir(q):
+    return parse(q).to_ir(semantic_hash=False)
+
+
+def _bag(q, **kw):
+    return {h.digest for h in subtree_hashes(_ir(q), **kw)}
+
+
+def test_root_entry_equals_semantic_hash():
+    ir = _ir("let n = 5;\nT | where a > n | summarize count() by b")
+    hashes = subtree_hashes(ir)
+    assert hashes[-1].digest == compute_semantic_hash(ir)
+    assert hashes[-1].size == max(h.size for h in hashes)
+    assert all(isinstance(h, SubtreeHash) and h.digest.startswith("kustology-sem-v2:") for h in hashes)
+
+
+def test_bag_is_let_name_invariant():
+    assert _bag("let n = 5;\nT | where a > n | take 1") == _bag("let m = 5;\nT | where a > m | take 1")
+
+
+def test_bag_ignores_operand_order_and_filter_splitting():
+    assert _bag("T | where a == 1 and b == 2 | take 1") == _bag("T | where b == 2 | where a == 1 | take 1")
+
+
+def test_min_size_floors_the_bag():
+    ir = _ir("T | where a > 1 | take 1")
+    assert all(h.size >= 3 for h in subtree_hashes(ir))
+    assert len(subtree_hashes(ir, min_size=1)) > len(subtree_hashes(ir))
+
+
+def test_shared_predicate_is_one_digest_in_both_queries():
+    a, b = _ir("T | where a == 1 and b == 2 | take 1"), _ir("S | where b == 2 and a == 1 | summarize count()")
+    shared = {h.digest for h in subtree_hashes(a)} & {h.digest for h in subtree_hashes(b)}
+    assert "and" in {h.kind for h in subtree_hashes(a) if h.digest in shared}
+
+
+def test_span_locates_the_subtree_in_the_source():
+    q = "T | where a == 1 | summarize count() by b"
+    summarize = next(h for h in subtree_hashes(_ir(q)) if h.kind == "summarize")
+    assert summarize.span.text(q) == "summarize count() by b"
+
+
+def test_pipeline_gets_an_envelope_span():
+    q = "let n = 5;\nT | where a > n | take 1"
+    pipeline = next(h for h in subtree_hashes(_ir(q)) if h.kind == "pipeline")
+    assert pipeline.span.text(q) == "T | where a > n | take 1"
+
+
+def test_min_size_must_be_positive():
+    import pytest
+    with pytest.raises(ValueError):
+        subtree_hashes(_ir("T | take 1"), min_size=0)

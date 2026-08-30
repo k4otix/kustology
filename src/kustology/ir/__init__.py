@@ -67,6 +67,7 @@ from .transforms import (
     compute_semantic_hash, merge_consecutive_filters, normalize_expressions,
 )
 from .walk import find_all, span_of, walk
+from .similarity import SubtreeHash, subtree_hashes
 from .analyzers import AnalyzerFn, Finding, Severity
 
 __all__ = [
@@ -77,6 +78,8 @@ __all__ = [
     # Traversal & transforms
     "walk", "find_all", "span_of",
     "merge_consecutive_filters", "normalize_expressions", "compute_semantic_hash",
+    # Similarity
+    "SubtreeHash", "subtree_hashes",
     # Analyzer protocol
     "Finding", "AnalyzerFn", "Severity",
     # Top-level / container
