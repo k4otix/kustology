@@ -6,10 +6,11 @@ tree does not answer directly: which source table a column came from
 after joins, renames, and `let` aliases; what schema the pipeline
 produces at the end; whether two queries are the same modulo
 formatting; how to serialize the graph for a UI, a service, or a
-language model. This page covers three things you need to know before
-you walk the IR: how `let` names lower, what the operator vocabularies
-map to across the two tiers and the wire format, and where the IR's
-modeling stops.
+language model. This page covers what you need to know before you walk
+the IR: how `let` names lower, what the operator vocabularies map to
+across the two tiers and the wire format, what the binder resolves
+without a schema, where the IR's modeling stops, and how to traverse
+the tree with `walk` and `find_all`.
 
 ## How `let` names lower
 
@@ -92,6 +93,18 @@ a `FilterOperator`, and its `kind` is `filter`, not `where`. Read
 yourself. These are the discriminators `to_llm_dict` and
 `model_dump_json` emit, so they are part of the IR's versioned shape.
 
+## What the binder knows without a schema
+
+`to_ir()` binds an unbound parse against `GlobalState.Default`, which knows
+every built-in function but no table. So `result_type` is populated for
+anything the built-ins decide: `ago(2h)` is `datetime`, `8h` is `timespan`,
+and `end - 8h` is `datetime` when `end` was bound to `ago(2h)` — even though
+every column stays `unresolved`. A resolver that keeps one `dict[str,
+timedelta]` for `let` bindings conflates the two and reads `end - 8h` as
+`2h - 8h`; dispatching on `binding.rhs_expr.result_type` does not.
+[`examples/lookback_window.py`](../examples/lookback_window.py) computes a
+detection's outer lookback that way.
+
 ## Where Tier 2 stops
 
 Eight operators are recorded as their own source text rather than
@@ -145,3 +158,77 @@ let n = 5; let f = (n:int) { T | where a > n }
 ```
 
 the body's `n` is a `ColumnRef`, not a `LetValueRef`.
+
+## Traversal
+
+`walk(node)` yields `node` and every pydantic `BaseModel` under it,
+depth-first and pre-order. Writing a custom analyzer over the IR usually
+means answering two separate questions, and `walk` keeps them as two
+separate parameters instead of folding them into one:
+
+* **What should come back?** `predicate` filters what `walk` *yields*.
+  A node `predicate` rejects is not returned, but `walk` still descends
+  into its children — a `FilterOp` your predicate skips does not hide
+  the `ColumnRef`s inside its own predicate.
+* **Where should the walk go?** `prune` filters what `walk` *descends
+  into*. A node `prune` accepts is still yielded, but none of its
+  descendants are visited. Use it to read an outer pipeline without the
+  subqueries a `join` or `lookup` carries:
+
+  ```python
+  from kustology.ir import JoinOp, LookupOp, walk
+
+  outer = walk(ir.main_pipeline, prune=lambda n: isinstance(n, (JoinOp, LookupOp)))
+  ```
+
+  The `JoinOp` itself is still in `outer`; its `right` pipeline — the
+  subquery's own source, filters, and time literals — is not.
+  [`examples/lookback_window.py`](../examples/lookback_window.py) uses
+  exactly this `prune` to compute a detection's *outer* lookback window
+  without the wider time range a joined lookup table reads.
+
+`find_all(node, SomeType, prune=...)` is the wrapper most analyzers
+actually reach for: it calls `walk` and keeps only the instances of
+`SomeType`, which covers the majority case of "give me every `BinOp`" /
+"every `TableRef`" plus attribute access. `prune` passes straight
+through to the underlying `walk`.
+
+### `span_of`
+
+Every `Operator` and `Expr` node carries its own `span` field, but
+`Pipeline`, `QueryIR`, and the statement models do not — they are pure
+containers built out of other nodes, with no token range of their own.
+`span_of(node)` answers "where in the source is this?" for those
+classes anyway: it folds over `find_all(node, Span)`, skips zero-width
+spans, and returns the smallest span covering everything it found (or
+`None` if the subtree carries none). It is how
+`examples/lookback_window.py` prints the outer pipeline's own source
+text — `span_of(ir.main_pipeline).text(ir.raw_text)` — with no
+`Pipeline.span` to read directly.
+
+### `walk` yields `Span` objects too
+
+`Span` is itself a pydantic `BaseModel`, so an unfiltered `walk(node)`
+yields every node's `span` field alongside the operators and
+expressions that own them, interleaved with everything else in
+depth-first order. Filter them out with `isinstance(n, Span)` when a
+predicate needs to see only structural nodes, or reach for
+`find_all(node, SomeType)` in the first place — a type filter for
+anything other than `Span` already excludes them.
+
+### The IR is a DAG in one place
+
+`walk` deduplicates by identity (`id(node)`), not equality, because one
+corner of the IR is a DAG rather than a tree:
+`LetBinding.inner_time_exprs` holds the *same* `AnyExpr` objects that
+also sit inside that binding's `rhs_pipeline` or `rhs_function` — not
+copies of them. So `ago(1h)` inside a `let`'s pipeline is one object
+reachable through two fields, and an un-deduplicated walk would report
+it twice. `walk` and `find_all` yield it once, keyed on the object's
+identity rather than its structure, so two separately-written `ago(1h)`
+literals at different offsets still both surface.
+
+`LetBinding.inner_tables` does not raise the same question: it is a
+plain `list[str]`, a copy of table names rather than a hop to a shared
+node, so there is nothing for identity-based deduplication to do
+there.

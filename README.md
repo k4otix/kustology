@@ -143,6 +143,7 @@ library without CI noticing.
 | [examples/llm_view.py](https://github.com/k4otix/kustology/blob/main/examples/llm_view.py) | IR serialization for language models |
 | [examples/semantic_hash_demo.py](https://github.com/k4otix/kustology/blob/main/examples/semantic_hash_demo.py) | What `semantic_hash` merges and what it splits |
 | [examples/query_similarity.py](https://github.com/k4otix/kustology/blob/main/examples/query_similarity.py) | Graded similarity, containment, and diffing between related queries |
+| [examples/lookback_window.py](https://github.com/k4otix/kustology/blob/main/examples/lookback_window.py) | Outer lookback via `result_type`, `prune` and `span_of` |
 
 The IR examples need the `[ir]` extra. The rest run on the base install. Add
 the `[examples]` extra for colour and syntax highlighting; without it the same

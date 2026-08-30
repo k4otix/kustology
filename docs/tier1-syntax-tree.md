@@ -171,6 +171,50 @@ from `validate()` or `KustoQuery.diagnostics`, the offsets from
 `find_time_expressions()`, and [Tier 2](tier2-ir.md)'s `Span`. `replace_table()`
 translates internally.
 
+## Lexical spans
+
+`kustology.lexical` reports positions the lexer already decided —
+comments, string literals, statements, the tokens themselves — as
+code-point spans, with no pydantic and no dependency on Tier 2. Every
+`KustoQuery` exposes the same four helpers as methods.
+
+`TextSpan` is the plain type they all return: a `start`/`length`
+`NamedTuple` with an `end` property and a `text(query)` method that
+slices the original string. `TimeExpr`, `find_time_expressions()`'s
+result type, is the same shape with a `text`/`start`/`length` layout
+for tuple-unpacking compatibility, plus a `.span` property that returns
+the equivalent `TextSpan`. `Token`, `tokens()`'s result type, pairs a
+token's own `kind`/`text`/`span` with the `trivia`/`trivia_span`
+(whitespace and comments) that precede it.
+
+`tokens(kusto_code)` returns every token, including the final
+`EndOfTextToken`, which owns the query's trailing trivia. On a
+malformed query, the list also includes the zero-width placeholder
+tokens the parser inserts for what it expected but did not find —
+empty `text`, no source of their own — for example the missing operand
+`IdentifierToken` in `T | where // c\n`.
+
+`comment_spans(kusto_code)` finds every `//` comment by scanning each
+token's trivia. KQL has no block comments, so `//` to end of line is
+the complete rule. A comment ends at `\n`, `\r`, U+2028 LINE SEPARATOR,
+or U+2029 PARAGRAPH SEPARATOR — the line terminator itself is not part
+of the span.
+
+`string_literal_spans(kusto_code, include_prefix=True)` finds every
+string literal token. Microsoft's token text includes the `@` and `h`
+prefixes (verbatim and obfuscated strings); pass
+`include_prefix=False` to start the span at the opening quote or
+backtick instead.
+
+`statement_spans(kusto_code)` finds the top-level statements in source
+order. The `;` separator between statements is excluded from every
+span.
+
+Everything above is code points, like every other span kustology
+reports — see [Node offsets count UTF-16 code
+units](#node-offsets-count-utf-16-code-units) — and none of it needs
+the `[ir]` extra: Tier 1 stays usable on the base install.
+
 ## Importing kustology pins .NET's culture to invariant
 
 Importing the package sets .NET's culture to invariant for the whole
