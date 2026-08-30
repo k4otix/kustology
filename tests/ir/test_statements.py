@@ -441,18 +441,13 @@ def test_validate_with_a_schema_survives_the_crash():
 
 def test_the_crash_diagnostic_names_the_dotnet_exception():
     """A guard that swallowed the cause would be worse than the crash: the
-    exception reaches the diagnostic's ``detail`` key, so the failure stays
-    reportable upstream while ``message`` stays one short sentence.
-
-    Read through :func:`kustology.parse`'s schema seam rather than
-    ``to_ir()``'s: the fallback ``Diagnostic`` ``QueryIR.diagnostics`` builds
-    is a pydantic model with a fixed field set, so ``detail`` lives only on
-    the Tier 1 dict shape this seam returns.
-    """
-    (crash,) = _crashes(parse(ARITY_CRASH, schema={"T": {"a": "long"}}).diagnostics)
-    assert "IndexOutOfRangeException" in crash["message"]
-    assert "\n" not in crash["message"]
-    assert "VisitPatternDeclaration" in crash["detail"]
+    exception reaches the diagnostic's ``detail`` field, so the failure stays
+    reportable upstream through ``to_ir()`` while ``message`` stays one short
+    sentence."""
+    (crash,) = _crashes(parse(ARITY_CRASH).to_ir().diagnostics)
+    assert "IndexOutOfRangeException" in crash.message
+    assert "\n" not in crash.message
+    assert "VisitPatternDeclaration" in crash.detail
 
 
 def test_the_fallback_digest_is_the_bound_digest():

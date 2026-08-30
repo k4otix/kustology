@@ -559,6 +559,7 @@ class IRBuilder:
                 severity=failure["severity"],
                 code=failure["code"],
                 category=failure["category"],
+                detail=failure.get("detail"),
             ))
         return ir
 

@@ -410,6 +410,7 @@ class KustoQuery:
                 severity=failure["severity"],
                 code=failure["code"],
                 category=failure["category"],
+                detail=failure.get("detail"),
             ))
 
         # Default: attach iff we have a bound parse to extract schemas from.

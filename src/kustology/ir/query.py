@@ -58,6 +58,8 @@ class Diagnostic(BaseModel):
     span: Span | None = None
     code: str | None = None
     category: str | None = None
+    # The .NET exception text of an analyzer crash (``KUSTOLOGY001``); parser diagnostics leave this ``None``.
+    detail: str | None = None
 
 
 class TabularSchema(BaseModel):
