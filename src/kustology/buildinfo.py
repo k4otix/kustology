@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-"""What this install is made of, readable at runtime."""
+"""Describe what this install is made of, readable at runtime."""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ from ._version import __version__
 
 
 class BuildInfo(NamedTuple):
+    """The library version, the bundled ``Kusto.Language.dll`` pin, and the two IR tags."""
+
     version: str
     kusto_language_version: str
     kusto_language_sha256: str
@@ -20,8 +22,10 @@ class BuildInfo(NamedTuple):
 
 
 def build_info() -> BuildInfo:
-    """The library version, the bundled ``Kusto.Language.dll`` pin, and the
-    two IR tags — the values a consumer should gate behaviour on."""
+    """Return the library version, the bundled ``Kusto.Language.dll`` pin, and the two IR tags.
+
+    These are the values a consumer should gate behaviour on.
+    """
     pin = _read_pin()
     schema: str | None = None
     scheme: str | None = None
@@ -35,6 +39,7 @@ def build_info() -> BuildInfo:
 
 
 def _read_pin() -> dict[str, str]:
+    """Parse ``key=value`` lines from the bundled ``VERSION.txt`` pin file."""
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin", "VERSION.txt")
     with open(path, encoding="utf-8") as fh:
         return dict(line.strip().split("=", 1) for line in fh if "=" in line)

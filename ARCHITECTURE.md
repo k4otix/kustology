@@ -134,7 +134,7 @@ a downstream consumer can design against it before discovering it never fills.
    position is a `LetValueRef` (`let n = 5; T | where a > n`), a
    `let`-bound table in source position is a `LetRef`, and a row-scope
    name is a `ColumnRef`. `LetValueRef` is the pattern to copy for any
-   name that is neither a table nor a column: it is deliberately *not* a
+   name that is neither a table nor a column: it is *not* a
    `ColumnRef` subclass, because the binder places columns by
    `isinstance` and a subclass would inherit the resolution the node
    exists to prevent. Which of the three a name becomes is decided in

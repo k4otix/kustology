@@ -26,6 +26,8 @@ _LINE_BREAK = re.compile(r"[\n\r\u2028\u2029]")
 
 
 class Token(NamedTuple):
+    """One lexical token: its kind, text, span, and preceding trivia."""
+
     kind: str            # SyntaxKind name, for example "StringLiteralToken"
     text: str
     span: TextSpan       # the token's own text
@@ -34,7 +36,7 @@ class Token(NamedTuple):
 
 
 def tokens(kusto_code: Any) -> list[Token]:
-    """Every token, including the final ``EndOfTextToken`` that owns trailing trivia.
+    r"""Return every token, including the final ``EndOfTextToken`` that owns trailing trivia.
 
     On a malformed query the list also includes the zero-width placeholder
     tokens the parser inserts for what it expected but did not find — empty
@@ -60,7 +62,7 @@ def tokens(kusto_code: Any) -> list[Token]:
 
 
 def comment_spans(kusto_code: Any) -> list[TextSpan]:
-    """Every ``//`` comment in source order.
+    """Return the span of every ``//`` comment in source order.
 
     KQL has no block comments, so ``//`` to end of line inside trivia is the
     complete rule. A trivia run can hold several comments; the trailing one
@@ -79,8 +81,11 @@ def comment_spans(kusto_code: Any) -> list[TextSpan]:
 
 
 def string_literal_spans(kusto_code: Any, *, include_prefix: bool = True) -> list[TextSpan]:
-    """Every string literal. Microsoft's token includes the ``@`` and ``h``
-    prefixes; ``include_prefix=False`` starts at the opening quote or backtick."""
+    """Return the span of every string literal.
+
+    Microsoft's token includes the ``@`` and ``h`` prefixes;
+    ``include_prefix=False`` starts at the opening quote or backtick.
+    """
     out: list[TextSpan] = []
     for tok in tokens(kusto_code):
         if tok.kind != "StringLiteralToken":
@@ -95,7 +100,7 @@ def string_literal_spans(kusto_code: Any, *, include_prefix: bool = True) -> lis
 
 
 def statement_spans(kusto_code: Any) -> list[TextSpan]:
-    """Top-level statements in source order, the ``;`` separator excluded."""
+    """Return the span of each top-level statement in source order, the ``;`` separator excluded."""
     offsets = Utf16Offsets(str(kusto_code.Text))
     return [
         TextSpan(*offsets.span_to_codepoints(stmt.TextStart, stmt.Width))

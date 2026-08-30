@@ -74,7 +74,7 @@ def main() -> None:
     for name in QUERIES:
         print(f"  {name}: {digests[name]}")
     if len(set(digests.values())) != len(digests):
-        raise AssertionError("two demo queries share a semantic_hash -- they no longer make the point")
+        raise AssertionError("two demo queries share a semantic_hash -- they fail to make the point")
     note("semantic_hash is exact and whole-query. similarity() below is graded and per-subtree.")
 
     section(

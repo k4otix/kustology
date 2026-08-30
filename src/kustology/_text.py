@@ -23,7 +23,7 @@ _ASTRAL_FLOOR = 0x10000
 
 
 def check_utf16_encodable(text: str, what: str = "query text") -> bytes:
-    """Return ``text`` encoded as UTF-16LE, or raise ``ValueError``.
+    r"""Return ``text`` encoded as UTF-16LE, or raise ``ValueError``.
 
     A Python ``str`` can hold an unpaired surrogate (``"\\ud800"``), which no
     UTF-16 byte sequence encodes. Ordinary input reaches this: a YAML file
@@ -136,7 +136,7 @@ class Utf16Offsets:
 
 
 def utf16_to_codepoint(text: str, offset: int) -> int:
-    """Convert a UTF-16 offset into ``text`` to a code-point offset.
+    r"""Convert a UTF-16 offset into ``text`` to a code-point offset.
 
     Use this to index a Python ``str`` with an offset ``Kusto.Language``
     reported. ``node.TextStart``, ``node.Width`` and every other offset on a

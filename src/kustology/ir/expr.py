@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
+"""Expression-position IR nodes: literals, operators, references, and calls."""
+
 from typing import TYPE_CHECKING, Annotated, Literal, Union
 
 from pydantic import BaseModel, Field
@@ -34,6 +36,8 @@ AnyExpr = Annotated[Union[
 # ``AnyExpr`` included, and what ``ir.llm_view.to_llm_dict`` reads via
 # ``model_fields["kind"].default`` to lead every emitted dict.
 class Expr(BaseModel):
+    """Base class for every expression-position IR node."""
+
     # ``extra="forbid"`` propagates to every Expr subclass — see
     # ``query.Operator`` for the matching policy on operator nodes.
     model_config = {"extra": "forbid"}
@@ -62,7 +66,7 @@ class Expr(BaseModel):
 class LiteralExpr(Expr):
     """A literal value, with the KQL kind that produced it.
 
-    **Two spellings collapse here on purpose, and both collapse the
+    **Two spellings collapse here, and both collapse the
     ``semantic_hash`` with them.** They are recorded rather than fixed
     because in each case the distinction is not a difference in what the
     query returns:
@@ -98,6 +102,8 @@ class LiteralExpr(Expr):
 
 
 class ColumnRef(Expr):
+    """A column reference: ``T.Column`` or a bare column name."""
+
     kind: Literal["column_ref"] = "column_ref"
     name: str
     # A real table name, a scope name (a `let` alias), or None -- never the
@@ -137,7 +143,7 @@ class LetValueRef(Expr):
     reason: a name a ``let`` bound is neither a table nor a column, and
     saying it is either one is a wrong answer rather than a missing one.
 
-    Deliberately **not** a ``ColumnRef`` subclass. The binder places columns
+    **Not** a ``ColumnRef`` subclass. The binder places columns
     by ``isinstance``, so a subclass would inherit exactly the resolution
     this node exists to stop. Nothing types it but ``map_semantic_info``,
     which copies the .NET ``ResultType`` the parser already computed.
@@ -168,7 +174,7 @@ class LetValueRef(Expr):
     operator creates mid-pipeline: ``let a = 5; T | extend a = 1 | where a >
     0`` classifies the ``where``'s ``a`` as a ``LetValueRef`` too.
 
-    This is deliberate, not an oversight. Getting it right needs the binder:
+    This is not an oversight. Getting it right needs the binder:
     the .NET parser resolves the shadowed name to a ``ColumnSymbol`` and the
     non-shadowed one to a ``VariableSymbol``, but *only on a bound parse* --
     an unbound ``KustoCode.Parse`` leaves ``ReferencedSymbol`` ``None`` on
@@ -219,6 +225,8 @@ class TypedNameDecl(Expr):
 
 
 class FuncCall(Expr):
+    """A function call: ``name(args...)``."""
+
     kind: Literal["func_call"] = "func_call"
     name: str
     args: list[AnyExpr]
@@ -226,6 +234,8 @@ class FuncCall(Expr):
 
 
 class BinOp(Expr):
+    """A binary operation: ``left op right``."""
+
     kind: Literal["bin_op"] = "bin_op"
     op: str
     # ``None`` on the arithmetic operators (``+ - * / %``), where neither
@@ -241,6 +251,8 @@ class BinOp(Expr):
 
 
 class SetMembership(Expr):
+    """A set-membership test: ``column in (values)``."""
+
     kind: Literal["set_membership"] = "set_membership"
     # The literal KQL operator: in, !in, in~, !in~, has_any, has_all.
     # Source of truth, as on ``BinOp`` -- ``polarity`` and ``case_sensitive``
@@ -260,6 +272,8 @@ class SetMembership(Expr):
 
 
 class Between(Expr):
+    """A range test: ``target between (low .. high)``."""
+
     kind: Literal["between"] = "between"
     target: AnyExpr
     low: AnyExpr
@@ -268,21 +282,29 @@ class Between(Expr):
 
 
 class And(Expr):
+    """A conjunction of operands: ``a and b and ...``."""
+
     kind: Literal["and"] = "and"
     operands: list[AnyExpr]
 
 
 class Or(Expr):
+    """A disjunction of operands: ``a or b or ...``."""
+
     kind: Literal["or"] = "or"
     operands: list[AnyExpr]
 
 
 class Not(Expr):
+    """A negation: ``not (operand)``."""
+
     kind: Literal["not"] = "not"
     operand: AnyExpr
 
 
 class RegexMatch(Expr):
+    """A regular-expression match: ``target matches regex pattern``."""
+
     kind: Literal["regex_match"] = "regex_match"
     target: AnyExpr
     pattern: str
@@ -317,46 +339,62 @@ class Exists(Expr):
 
 
 class CaseExpr(Expr):
+    """A ``case(cond1, val1, ..., default)`` expression."""
+
     kind: Literal["case"] = "case"
     branches: list[tuple[AnyExpr, AnyExpr]]
     default: AnyExpr | None = None
 
 
 class PathExpr(Expr):
+    """A dotted path access: ``expression.selector``."""
+
     kind: Literal["path"] = "path"
     expression: AnyExpr
     selector: AnyExpr
 
 
 class ElementExpr(Expr):
+    """An indexed access: ``expression[selector]``."""
+
     kind: Literal["element"] = "element"
     expression: AnyExpr
     selector: AnyExpr
 
 
 class StarExpr(Expr):
+    """A wildcard: ``*``."""
+
     kind: Literal["star"] = "star"
 
 
 class NamedExpr(Expr):
+    """A named expression: ``name = expression``."""
+
     kind: Literal["named"] = "named"
     name: str
     expression: AnyExpr
 
 
 class CompoundNamedExpr(Expr):
+    """A multi-name expression: ``(name1, name2) = expression``."""
+
     kind: Literal["compound_named"] = "compound_named"
     names: list[str]
     expression: AnyExpr
 
 
 class UnaryOp(Expr):
+    """A unary operation: ``op operand``."""
+
     kind: Literal["unary_op"] = "unary_op"
     op: str
     operand: AnyExpr
 
 
 class BracketedExpr(Expr):
+    """A parenthesized expression: ``(expression)``."""
+
     kind: Literal["bracketed"] = "bracketed"
     expression: AnyExpr
 
@@ -452,6 +490,8 @@ class DataTableExpr(Expr):
 
 
 class UnknownExpr(Expr):
+    """An expression the builder does not model, kept as raw source text."""
+
     kind: Literal["unknown_expr"] = "unknown_expr"
     raw_text: str
     ast_kind: str

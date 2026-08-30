@@ -38,6 +38,7 @@ class KustoQuery:
     def __init__(
         self, kusto_code: KustoCode, *, extra_diagnostics: list[dict] | None = None,
     ):
+        """Wrap an already-parsed ``KustoCode``; use :func:`kustology.parse` instead of calling this directly."""
         self._code = kusto_code
         # Diagnostics kustology raised about this parse rather than ones
         # Microsoft's parser or binder produced — carrying
@@ -144,8 +145,7 @@ class KustoQuery:
         }
 
     def find_table_references(self, force_syntactic: bool = False):
-        """Return [(name, node), ...] for every table reference in the query,
-        in source order.
+        """Return ``[(name, node), ...]`` for every table reference in the query, in source order.
 
         On a bound query this is the binder's references plus the syntactic
         ones it left unresolved — see
@@ -224,23 +224,26 @@ class KustoQuery:
         return find_time_expressions(self._code)
 
     def tokens(self) -> list[Token]:
-        """Microsoft's token stream with code-point spans. See :mod:`kustology.lexical`."""
+        """Return Microsoft's token stream with code-point spans. See :mod:`kustology.lexical`."""
         return lexical.tokens(self._code)
 
     def comment_spans(self) -> list[TextSpan]:
-        """Every ``//`` comment. See :func:`kustology.lexical.comment_spans`."""
+        """Return the span of every ``//`` comment. See :func:`kustology.lexical.comment_spans`."""
         return lexical.comment_spans(self._code)
 
     def string_literal_spans(self, *, include_prefix: bool = True) -> list[TextSpan]:
-        """Every string literal. See :func:`kustology.lexical.string_literal_spans`."""
+        """Return the span of every string literal. See :func:`kustology.lexical.string_literal_spans`."""
         return lexical.string_literal_spans(self._code, include_prefix=include_prefix)
 
     def statement_spans(self) -> list[TextSpan]:
-        """Top-level statements, separator excluded. See :func:`kustology.lexical.statement_spans`."""
+        """Return the span of each top-level statement, separator excluded.
+
+        See :func:`kustology.lexical.statement_spans`.
+        """
         return lexical.statement_spans(self._code)
 
     def get_time_range(self) -> list[TimeExpr]:
-        """Deprecated alias for :meth:`find_time_expressions`."""
+        """Return :meth:`find_time_expressions`'s result under this deprecated name."""
         import warnings
 
         warnings.warn(
@@ -447,9 +450,11 @@ class KustoQuery:
         return ir
 
     def __str__(self):
+        """Return the query's source text."""
         return self.text
 
     def __repr__(self):
+        """Return a debug summary: character count, operator count, and bind state."""
         n_ops = len(self.get_operator_chain())
         return (
             f"<KustoQuery {len(self.text)} chars, {n_ops} ops, "

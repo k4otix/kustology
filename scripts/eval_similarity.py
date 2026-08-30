@@ -196,7 +196,7 @@ def _idf_candidates(bags: list[frozenset[str]]) -> tuple[dict[int, dict[int, flo
 
 
 def _ranked(neighbors, weight, i: int, top_n: int) -> list[int]:
-    """The up-to-``top_n`` candidates for ``i`` with the highest weighted Jaccard score."""
+    """Return up to ``top_n`` candidates for ``i``, ranked by weighted Jaccard score."""
     def score(j: int, inter: float) -> float:
         union = weight[i] + weight[j] - inter
         return inter / union if union else 0.0

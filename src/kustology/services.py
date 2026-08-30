@@ -14,8 +14,8 @@ from .bridge import (
     ensure_invariant_culture,
 )
 
-# A schema is a mapping of table name to column spec. `str` is deliberately
-# not in the union: `build_global_state` raises `TypeError` on anything that
+# A schema is a mapping of table name to column spec. `str` is not in the
+# union: `build_global_state` raises `TypeError` on anything that
 # isn't a dict, so admitting `parse(q, schema="(a:string)")` would type-check
 # a call that can only fail at runtime. The single-table string form is a
 # *value* inside the mapping — `{"T": "(a:string)"}` — not a substitute for
@@ -41,7 +41,7 @@ _UNKNOWN_TABLE_CODE = "KS204"
 # it from ``Kusto.Language.DiagnosticFacts`` and fails if a DLL refresh moves
 # or adds one, which is the drift AGENTS.md warns about by name.
 #
-# **Deliberately not what ``validate(ignore_unknown_tables=True)`` waives.**
+# **Not what ``validate(ignore_unknown_tables=True)`` waives.**
 # The two flags answer different questions. ``validate`` only reaches the
 # binder when the caller passed a schema, so there the caller owns every name
 # in the query and is waiving exactly one dimension of it — tables outside
@@ -55,7 +55,7 @@ _UNKNOWN_NAME_CODES = frozenset({
     "KS210", "KS211", "KS247", "KS248", "KS260", "KS261",
 })
 
-# kustology's own diagnostic code, deliberately outside Microsoft's ``KS***``
+# kustology's own diagnostic code, outside Microsoft's ``KS***``
 # space: it reports a failure of *our* call into their binder, not a defect in
 # the query. A consumer filtering on ``KS`` codes will not mistake it for one,
 # and a consumer gating on ``severity == "Error"`` still sees it — which is
@@ -115,7 +115,7 @@ def _analyze_guarded(
     triggered it, so building ``unbound()`` would fail the same way, and
     reporting a resource exhaustion as a binder fault would misattribute it.
 
-    The remaining ``except Exception`` is deliberately broad. A .NET
+    The remaining ``except Exception`` is broad. A .NET
     exception reaches Python through pythonnet as an ordinary ``Exception``
     subclass, and there is no shared base class for "the binder gave up" —
     the arity crash is an ``IndexOutOfRangeException`` and the next one will

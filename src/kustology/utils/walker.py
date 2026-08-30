@@ -67,6 +67,7 @@ class KustoWalker:
     """
 
     def visit(self, node, depth: int = 0):
+        """Walk ``node`` and its children pre-order, up to :data:`MAX_AST_DEPTH`."""
         if node is None:
             return
         self.pre_visit(node)
@@ -78,10 +79,10 @@ class KustoWalker:
         self.post_visit(node)
 
     def pre_visit(self, node):
-        pass
+        """Run before ``node``'s children are visited. Override to act on the way down."""
 
     def post_visit(self, node):
-        pass
+        """Run after ``node``'s children are visited. Override to act on the way up."""
 
 
 def iter_elements(syntax_list):
@@ -108,6 +109,7 @@ def iter_elements(syntax_list):
         >>> project = collect_nodes(syntax, lambda n: str(n.Kind) == "ProjectOperator")[0]
         >>> [str(e.Kind) for e in iter_elements(project.Expressions)]
         ['NameReference', 'NameReference']
+
     """
     for i in range(syntax_list.Count):
         item = syntax_list[i]
@@ -137,7 +139,7 @@ def node_to_dict(node, depth: int = 0, max_depth: int = MAX_AST_DEPTH):
 
 
 def node_text(node) -> str:
-    """Return ``node``'s own source text, without leading trivia.
+    r"""Return ``node``'s own source text, without leading trivia.
 
     ``node.ToString()`` (no argument) is ``ToString(IncludeTrivia.All)``,
     which prepends whitespace *and comments* that precede the node — so

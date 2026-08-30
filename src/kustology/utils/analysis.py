@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
+"""Syntactic and semantic query analysis over Microsoft's ``KustoCode`` (Tier 1)."""
+
 import hashlib
 import warnings
 
@@ -50,6 +52,7 @@ def collect_nodes(syntax, predicate) -> list:
     Example:
         # every FilterOperator in the query, in source order
         filters = collect_nodes(syntax, lambda n: str(n.Kind) == "FilterOperator")
+
     """
     results = []
 
@@ -71,7 +74,7 @@ def collect_nodes(syntax, predicate) -> list:
 # Twelve of the entries below are invisible to `time_functions()` for that
 # reason -- the rest overlap it and are listed anyway so this set reads as
 # the intended list rather than as a diff against whatever reflection
-# currently returns. Deliberately hand-curated and deliberately visible: no
+# currently returns. Hand-curated and visible: no
 # property on a FunctionSymbol says "temporal", so this is a judgement about
 # what a reader of a detection rule cares about and it should be reviewable.
 _TEMPORAL_RELEVANT = frozenset({
@@ -95,7 +98,7 @@ _TEMPORAL_RELEVANT = frozenset({
 # `time_functions()` is right to list them — it answers "what can this
 # return", and `abs(1h)` really does return a timespan — but the question
 # both consumers here ask is "is this call about time", and for `abs` the
-# answer is no in every usage. `floor` is deliberately NOT in this set:
+# answer is no in every usage. `floor` is NOT in this set:
 # `floor(TimeGenerated, 1h)` is a real bucketing idiom, which is why it is
 # hand-listed above. Add a name here only when its temporal claim is purely
 # an artifact of an overload; see ``reflection._safe_return_type_name``.
@@ -711,7 +714,7 @@ def get_structural_hash(kusto_code) -> str:
 
 
 def find_time_expressions(kusto_code) -> list[TimeExpr]:
-    """Return ``[(text, start, length), ...]`` for every time-related expression.
+    """Return one :class:`~kustology.spans.TimeExpr` per time-related expression.
 
     ``start`` and ``length`` are code-point offsets into the query text, so
     ``query[start:start + length]`` is the reported ``text``.
@@ -735,13 +738,13 @@ def find_time_expressions(kusto_code) -> list[TimeExpr]:
     rather than on this list.
 
     The match is on the callee's *name*, so a function that is temporal in its
-    usual usage is reported in all of them. ``floor`` is the deliberate case:
-    ``floor(TimeGenerated, 1h)`` buckets time exactly as ``bin`` does and is
-    hand-listed for that reason, so numeric ``floor(x, 1)`` is over-reported
-    too. ``abs`` is the deliberate *exclusion* — reflection lists it as
-    returning a timespan because of its ``abs(timespan)`` overload, but no
-    usage of it is about time, so it is subtracted. Everything here is a
-    candidate to read, not a fact about the query's time window.
+    usual usage is reported in all of them. ``floor`` is hand-listed because
+    ``floor(TimeGenerated, 1h)`` buckets time exactly as ``bin`` does, so
+    numeric ``floor(x, 1)`` is over-reported too. ``abs`` is excluded even
+    though reflection lists it as returning a timespan, because of its
+    ``abs(timespan)`` overload — no usage of it is about time, so it is
+    subtracted. Everything here is a candidate to read, not a fact about the
+    query's time window.
     """
     fn_ranges: list[tuple[int, int]] = []  # (start, end) of matched time-function calls
     out = []
@@ -806,7 +809,7 @@ def find_time_expressions(kusto_code) -> list[TimeExpr]:
 
 
 def get_time_range(kusto_code) -> list[TimeExpr]:
-    """Deprecated alias for :func:`find_time_expressions`.
+    """Return :func:`find_time_expressions`'s result under this deprecated name.
 
     The name promises a resolved range but returns a discovery list, which
     leads callers to use it as a lookback extractor and get wrong answers.
@@ -867,7 +870,7 @@ def replace_table(kusto_code, old_name: str, new_name: str, force_syntactic: boo
     never wrote over a pattern they did, silently narrowing which tables the
     query reads as soon as a second ``T…`` table exists. The reference is
     still *reported* (``get_referenced_tables`` says ``{'T1'}``, which is
-    true); it just cannot be retargeted this way.
+    true); it cannot be retargeted this way.
     """
     for label, value in (("old_name", old_name), ("new_name", new_name)):
         if not isinstance(value, str):

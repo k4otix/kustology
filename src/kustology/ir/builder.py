@@ -26,7 +26,7 @@ from ..bridge import (  # re-export-friendly; also triggers CLR init
 
 # The diagnostic codes live in one module. Two spellings of "KS204" is
 # exactly the drift a DLL refresh turns into a silent behavior split -- and
-# the two sets are deliberately different sizes; ``services`` documents why.
+# the two sets are different sizes; ``services`` documents why.
 from ..services import _UNKNOWN_NAME_CODES, _analyze_guarded
 
 # The walker helpers live in Tier 1 so consumers walking the .NET tree can
@@ -498,6 +498,7 @@ class IRBuilder:
     })
 
     def __init__(self, global_state: GlobalState | None = None):
+        """Bind against ``global_state``, or ``GlobalState.Default`` if none is given."""
         self.global_state = global_state or GlobalState.Default
         # Names bound by ``let`` statements already visited in the current
         # build. Reset per build so a reused builder cannot leak names
@@ -1212,7 +1213,7 @@ class IRBuilder:
         return pipeline
 
     def _visit_table_ref(self, node: Any) -> TableRef | LetRef:
-        """A table named in a *naming* position, wherever the grammar puts one.
+        """Read a table named in a *naming* position, wherever the grammar puts one.
 
         Three positions share this reading, and reading them apart would
         treat them three different ways: the pipeline's own source,
@@ -1347,7 +1348,7 @@ class IRBuilder:
     def _visit_operator(self, node: Any) -> Operator | None:
         """Dispatch one operator and stamp the ``hint.*`` parameters on it.
 
-        The hints are read here rather than in each branch on purpose. Many
+        The hints are read here rather than in each branch. Many
         operators admit them (``join``, ``summarize``, ``mv-expand``,
         ``partition``, ``evaluate``, …), the reading is identical for all of
         them, and a per-branch call is a list to maintain -- the shape
@@ -2120,8 +2121,8 @@ class IRBuilder:
         recover the same way.
 
         Checking membership in ``allowed`` rather than ``IsMissing`` is the
-        deliberate choice: it is the same check the ``Literal`` will apply,
-        so nothing can get past here that pydantic would then reject, and it
+        same check the ``Literal`` will apply, so nothing can get past here
+        that pydantic would then reject, and it
         holds for a recovery shape that keeps the garbage text as well as for
         one that blanks it. It is applied to the direction keyword too. The
         argument that a bad direction cannot happen — ``ascending`` and
@@ -2545,8 +2546,8 @@ class IRBuilder:
         - ``mode="grouping"``: the symbol read applies here too
           (``bin(TG, 1h)`` -> ``TG``, ``gettype(x)`` -> ``type_x``), falling
           back to the first column argument's own name when the symbol does
-          not resolve to one. **Deliberate divergence:** when a grouping
-          function's ``ResultNameKind`` is itself ``None`` -- ``tolower``,
+          not resolve to one. **Diverges from Microsoft's naming:** when a
+          grouping function's ``ResultNameKind`` is itself ``None`` -- ``tolower``,
           ``toupper``, ``hash``, ``endofday``, ``dayofweek``, ``substring``,
           ``strcat``, ``isempty``, ``array_length``, ``coalesce``,
           ``extract`` (DLL-confirmed) -- Microsoft's ``ColumnN`` counter is
@@ -2554,8 +2555,8 @@ class IRBuilder:
           tables included; resets in function bodies; carries across
           statements), which cannot be reproduced bind-stably and would make
           ``Assignment.name`` — a hashed field — shift under unrelated edits.
-          Deterministic first-bare-column naming is the deliberate choice,
-          applied wherever ``_visit_assignment`` names an unnamed call
+          Deterministic first-bare-column naming applies instead, wherever
+          ``_visit_assignment`` names an unnamed call
           (``extend tolower(s)`` → ``tolower_s``).
         """
         kind = str(type(node).__name__)

@@ -189,7 +189,7 @@ def _merge_at_one_level(ops: list) -> list:
 
 # Cleared on the hash's deep copy before it is dumped. Keyed by **model field
 # name**, matched against ``type(node).model_fields`` at every node — not by
-# key path, and deliberately not by key name in the dumped JSON. Dropping
+# key path, and not by key name in the dumped JSON. Dropping
 # dictionary keys from the payload would be both too broad and too narrow:
 # too broad because ``AssertSchemaOp.columns`` is a ``dict[str, str]`` of the
 # user's own column names, so ``assert-schema (a:long, table:long)`` would
@@ -209,10 +209,12 @@ def _merge_at_one_level(ops: list) -> list:
 # ``result_schema`` (the whole bound schema per pipeline). All four are
 # inferred from the caller's schema, not stated by the query, so leaving any
 # of them in makes the same query text hash two ways depending on whether a
-# schema was passed. That only bites through ``compute_semantic_hash`` --
-# ``QueryIR.semantic_hash`` is computed at build time, before the binder runs
-# -- but that call is exactly what the field's own docstring tells consumers
-# to make after mutating the IR.
+# schema was passed. ``QueryIR.semantic_hash`` computes and memoizes on first
+# read rather than at build time, so it can run before or after
+# :class:`~kustology.ir.binder.SchemaAttacher` enriches the tree depending on
+# when a caller first reads it. Clearing these fields is what keeps the
+# digest the same either way, for both the property and a direct
+# ``compute_semantic_hash`` call.
 #
 # ``hints`` is the one member of this set the binder does *not* write: it is
 # source-derived, read straight off the query's ``hint.*`` named parameters.
@@ -225,7 +227,7 @@ def _merge_at_one_level(ops: list) -> list:
 # from. A future field only belongs here if the query would return identical
 # rows without it.
 #
-# ``join_side`` is deliberately *not* stripped, and is why it exists as a
+# ``join_side`` is *not* stripped, and is why it exists as a
 # field at all. It keeps ``table`` to a single job -- the table the binder
 # resolves (see ``SchemaAttacher._fill``) -- so the source-derived ``$left``
 # / ``$right`` side never rides in a binder-written field. Carried there and
@@ -309,7 +311,7 @@ _ZERO_SPAN = Span(text_start=0, width=0)
 
 
 def _normalize_raw_text(text: str) -> str:
-    """Fold each line break in ``raw_text``, indent included, to one space.
+    r"""Fold each line break in ``raw_text``, indent included, to one space.
 
     Nothing else is touched. The operators the IR keeps as source text
     (``scan``, ``top-nested``, the ``graph-*`` family, and the ``Unknown*``
@@ -317,7 +319,7 @@ def _normalize_raw_text(text: str) -> str:
     ``| top-nested 3 of a`` and ``|   top-nested\\n3 of a`` would be two
     different queries as far as the digest is concerned.
 
-    The rule is deliberately narrow, because ``raw_text`` is source text and
+    The rule is narrow because ``raw_text`` is source text and
     two of the things that look like formatting in it are data:
 
     * **Interior spacing is not collapsed.** A run of spaces can be *inside a
@@ -382,7 +384,7 @@ def _clear_volatile(root: BaseModel) -> None:
 # to change, since ``_canonicalize_let_names`` renames by one isinstance
 # check against the whole tuple.
 #
-# ``ColumnRef`` deliberately is not a member and must not become one: a real
+# ``ColumnRef`` is not a member and must not become one: a real
 # column named ``n`` is a different query from a ``let``-bound ``n``, so
 # renaming one would collapse the two. A *function parameter* is renamed
 # through those very classes, and that is not an exception to this rule but a
@@ -424,8 +426,9 @@ _PARAM_NAME_MODELS: tuple[type[BaseModel], ...] = (ColumnRef, TableRef)
 
 
 def _canonicalize_let_names(ir: QueryIR) -> None:
-    """Rename every ``let`` binding to ``$let<i>``, and every function
-    parameter to ``$param<i>``, in scope-walk order.
+    """Rename every ``let`` binding to ``$let<i>`` and every function parameter to ``$param<i>``.
+
+    Renaming follows scope-walk order.
 
     A ``let`` name is a local label with no meaning outside the query, so
     ``let X = …; X | take 1`` and ``let Y = …; Y | take 1`` are the same
@@ -602,7 +605,7 @@ def _canonicalize_let_names(ir: QueryIR) -> None:
                 rename(item, visible)
 
     def canon_scope(bindings: list[LetBinding], visible: dict[str, str]) -> None:
-        """Number one scope's declarations in order, extending ``visible``."""
+        """Assign canonical names to one scope's ``let`` declarations in order, extending ``visible``."""
         for binding in bindings:
             written = binding.name
             # The right-hand side is resolved *before* this binding enters
@@ -619,9 +622,10 @@ def _canonicalize_let_names(ir: QueryIR) -> None:
         decls: list[TypedNameDecl],
         visible: dict[str, str],
     ) -> None:
-        """Walk one declaration's body as a child scope: parameters numbered,
-        then the body's own ``let``s, then the tail -- and finally the
-        parameter map applied over the whole body subtree.
+        """Walk one declaration's body as a child scope, applying the parameter map last.
+
+        Number the parameters, then the body's own ``let``s, then the tail --
+        and finally apply the parameter map over the whole body subtree.
 
         Shared by both constructs that own a ``FunctionBody``, which is what
         keeps a body reached through a ``declare pattern`` arm scoped exactly
@@ -650,7 +654,7 @@ def _canonicalize_let_names(ir: QueryIR) -> None:
             apply_params(sub, param_map)
 
     def canon_params(decls: list[TypedNameDecl]) -> dict[str, str]:
-        """Number one declaration's parameters, returning the body-local map.
+        """Assign canonical names to one declaration's parameters, returning the body-local map.
 
         The canonical names are handed out first and the map is built from the
         names as *written*, before any declaration is overwritten -- otherwise
@@ -1006,7 +1010,7 @@ def compute_semantic_hash(node: BaseModel) -> str:
       filters become one ``And`` and that ``And``'s operands are then sorted,
       so the order of a run of filters stops mattering as well as its
       grouping. This falls out of the two rules above rather than being a
-      rule of its own, which is why it is easy to miss.
+      rule of its own.
 
     Two subtrees with different literal values, operators, identifiers,
     or operator sequences do *not* collide. Nor do the near-misses of the
@@ -1036,7 +1040,7 @@ def compute_semantic_hash(node: BaseModel) -> str:
       position in a second query-global ``$param<i>`` sequence, and its
       references are rewritten within that one body only. The names are
       labels and the wiring is not (:func:`_canonicalize_let_names`). Two
-      kinds of name are deliberately outside both rules: a ``declare
+      kinds of name are outside both rules: a ``declare
       pattern``'s own parameters, which name an arm's match slots rather than
       anything an arm's body reads, and a ``declare query_parameters`` name,
       which is a caller-facing API name.
@@ -1073,7 +1077,7 @@ def compute_semantic_hash(node: BaseModel) -> str:
     **Equal digests are not a proof of equivalence.** What still merges is
     listed here, and each entry is a decision rather than a gap:
 
-    * **Deliberate**, in literals — typed nulls and obfuscated strings; see
+    * **Typed nulls and obfuscated strings, in literals.** See
       :class:`~kustology.ir.expr.LiteralExpr` for why neither is a
       difference in what a query returns.
     * **A ``let``-declared function's call sites.** ``let f = () { … }; f();

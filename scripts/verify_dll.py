@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
-"""
-Verify that the bundled Kusto.Language.dll matches what nuget.org publishes.
+"""Verify that the bundled Kusto.Language.dll matches what nuget.org publishes.
 
 This script downloads the Microsoft.Azure.Kusto.Language NuGet package at the
 pinned version, extracts the Kusto.Language.dll for the pinned TFM

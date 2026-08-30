@@ -116,7 +116,7 @@ def _resolve_scalar_type(type_name: str, *, column: str | None = None):
         raise TypeError(
             f"Schema column type{where} must be a KQL scalar type name as a "
             f"str; got {type(type_name).__name__}. The typed-column form is "
-            "{table: {column: 'type'}} — e.g. {'T': {'c': 'long'}}."
+            "{table: {column: 'type'}}, for example {'T': {'c': 'long'}}."
         )
     folded = type_name.lower()
     if folded == _UNKNOWN_TYPE_NAME:

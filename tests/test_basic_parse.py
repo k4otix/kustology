@@ -262,14 +262,13 @@ def test_unknown_scalar_type_warning_survives_extra_library_frames():
 
 
 def test_package_namespace_does_not_leak_its_version_lookup_imports():
-    """Guards against ``kustology.PackageNotFoundError`` leaking into the
-    top-level namespace, where it would mean nothing to a caller.
+    """Confirm the package namespace exports nothing beyond ``__version__`` itself.
 
-    The name is an implementation detail of reading ``__version__`` from the
-    installed metadata; exported by accident it reads as part of this
-    library's API, shows up in ``dir()`` and in generated documentation, and
-    invites `from kustology import PackageNotFoundError`. ``__all__`` never
-    lists it, which is exactly why nothing else catches it.
+    ``__version__`` is a plain literal in ``_version.py``; the namespace
+    carries no version-lookup helper (an ``importlib.metadata`` exception
+    type, for example) that would read as part of this library's public API
+    were it exported by accident, showing up in ``dir()`` and in generated
+    documentation and inviting ``from kustology import PackageNotFoundError``.
     """
     import kustology
 

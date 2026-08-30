@@ -118,8 +118,7 @@ def walk(
     *,
     prune: Predicate | None = None,
 ) -> Iterator[BaseModel]:
-    """Yield every ``BaseModel`` descendant of ``node`` (including the
-    root) in depth-first, pre-order.
+    """Yield every ``BaseModel`` descendant of ``node`` (including the root) in depth-first, pre-order.
 
     Descends into list-, tuple- and dict-valued fields, and through
     nested containers such as ``list[tuple[Expr, Expr]]``.
@@ -156,6 +155,7 @@ def walk(
     ``is False`` rather than ``not``: ``BinOp.case_sensitive`` is ``None``
     on the arithmetic operators, where the question does not apply, and
     ``not None`` is true.
+
     """
     yield from _walk(node, predicate, prune, set())
 
@@ -229,6 +229,7 @@ def find_all(node: BaseModel, type_: type[T], *, prune: Predicate | None = None)
     Example:
         >>> from kustology.ir import find_all, FilterOp
         >>> filters = list(find_all(ir, FilterOp))
+
     """
     for n in walk(node, prune=prune):
         if isinstance(n, type_):

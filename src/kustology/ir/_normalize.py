@@ -127,7 +127,7 @@ _PREC_ARITHMETIC = {"+": 4, "-": 4, "*": 5, "/": 5, "%": 5}
 
 
 def _kql_string(value: str) -> str:
-    """Render ``value`` as a KQL double-quoted string literal.
+    r"""Render ``value`` as a KQL double-quoted string literal.
 
     Escaping is the whole point. ``f("a\\", \\"b")`` is a call with **one**
     argument whose value contains quotes and a comma; rendered raw it reads

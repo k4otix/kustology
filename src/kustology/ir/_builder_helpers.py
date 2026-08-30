@@ -63,7 +63,7 @@ def map_net_type(type_name: str) -> KustoType:
 def map_semantic_info(node: Any, expr: Any) -> None:
     """Copy ResultType and the dynamic-element type from the binder.
 
-    Nullability is deliberately absent: no type in ``Kusto.Language``
+    Nullability is absent: no type in ``Kusto.Language``
     exposes it, and a ``getattr`` probe for a member like ``IsNullable``
     returns its default silently -- a field fed that way keeps its declared
     default on every node ever built while reading as implemented.
@@ -126,7 +126,7 @@ def retarget_spans_to_codepoints(root: Any, offsets: Utf16Offsets) -> None:
 
 
 def read_row_schema(node: Any) -> list[tuple[str, str]]:
-    """Read a ``RowSchema``-bearing node into ``[(column_name, type), …]``.
+    r"""Read a ``RowSchema``-bearing node into ``[(column_name, type), …]``.
 
     The one reader for every ``name:type`` declaration list in the grammar:
     ``datatable(a:int, b:string)``, ``externaldata(a:string)``,
@@ -144,8 +144,8 @@ def read_row_schema(node: Any) -> list[tuple[str, str]]:
     place; a per-site copy is a copy free to lose it.
 
     ``node`` may be either the ``RowSchema`` itself or the node that owns
-    one -- the operator or expression -- and the ambiguity is deliberate,
-    because the owning member has two names: ``Schema`` on ``datatable``,
+    one -- the operator or expression -- because the owning member has two
+    names: ``Schema`` on ``datatable``,
     ``externaldata`` and ``assert-schema``, ``Keys`` on ``ParseKvOperator``.
     A caller that pre-extracts either one is right, and so is a caller that
     passes the owner.
@@ -273,7 +273,7 @@ def extract_qualified_table_ref(
 def read_external_data(
     node: Any,
 ) -> tuple[list[tuple[str, str]], list[str], str | None, dict[str, str]]:
-    """Read an ``ExternalDataExpression`` into ``(columns, uris, format, props)``.
+    r"""Read an ``ExternalDataExpression`` into ``(columns, uris, format, props)``.
 
     Shared by the source-position (:class:`ExternalDataSource`) and
     expression-position (:class:`ExternalDataExpr`) branches of the builder,

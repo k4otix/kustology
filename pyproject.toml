@@ -96,6 +96,12 @@ where = ["src"]
 line-length = 120
 target-version = "py310"
 
+[tool.ruff.lint]
+extend-select = ["D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
 [tool.ruff.lint.per-file-ignores]
 # Re-exports — F401 unused imports are intentional in __init__.py.
 # __all__ and the import block are ordered by tier, not alphabetically.
@@ -114,6 +120,14 @@ target-version = "py310"
 "src/kustology/cli.py" = ["BLE001"]
 # Best-effort dev tooling — a malformed sample is skipped, not fatal.
 "scripts/*.py" = ["BLE001", "S112"]
+# Runnable demos and dev scripts: docstrings on every helper add no value a
+# reader does not already get from the function name and the file's own
+# narrative comments.
+"scripts/**" = ["D100", "D101", "D102", "D103", "D104", "D105", "D106", "D107"]
+"examples/**" = ["D100", "D101", "D102", "D103", "D104", "D105", "D106", "D107"]
+# Style-guide rules govern prose; pydocstyle's docstring-shape rules do not
+# apply to test code.
+"tests/**" = ["D"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

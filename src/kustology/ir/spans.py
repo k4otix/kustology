@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
+"""Define ``Span``, the code-point text range shared by every IR node."""
 
 from pydantic import BaseModel
 
@@ -25,6 +26,7 @@ class Span(BaseModel):
 
     @property
     def text_end(self) -> int:
+        """Return the code-point offset one past the span's last character."""
         return self.text_start + self.width
 
     def text(self, raw: str) -> str:

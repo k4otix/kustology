@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
-"""
-Refresh the bundled Kusto.Language.dll.
+"""Refresh the bundled Kusto.Language.dll.
 
 Resolves Microsoft.Azure.Kusto.Language from NuGet via the dotnet CLI, copies
 the resulting Kusto.Language.dll into src/kustology/bin/, and writes
@@ -203,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
     if not version:
         parser.error(
             "No version provided and no pin found in pyproject.toml. "
-            "Pass --version, e.g. `--version 12.3.2`."
+            "Pass --version, for example `--version 12.3.2`."
         )
 
     if shutil.which("dotnet") is None:

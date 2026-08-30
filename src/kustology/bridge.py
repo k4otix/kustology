@@ -120,11 +120,11 @@ def _pin_invariant_culture() -> None:
 
     ``DefaultThreadCurrentCulture`` covers threads created after import;
     ``CurrentThread.CurrentCulture`` covers the importing thread, which the
-    default does not retroactively affect. ``CurrentUICulture`` is deliberately
-    left alone: it selects exception and diagnostic message language, not value
+    default does not retroactively affect. ``CurrentUICulture`` is left
+    alone: it selects exception and diagnostic message language, not value
     parsing.
 
-    This is a deliberate process-global effect of importing kustology, with no
+    This is a process-global effect of importing kustology, with no
     opt-out. An escape hatch would let a host silently reintroduce 10x and 100x
     duration errors, which is worse than the co-tenancy cost it would avoid.
 

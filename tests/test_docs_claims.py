@@ -106,3 +106,24 @@ def test_readme_points_at_every_runnable_example():
     linked = set(re.findall(r"examples/([A-Za-z0-9_]+\.py)", readme))
     stale = sorted(linked - on_disk)
     assert not stale, f"README.md links {stale}, which are not in examples/"
+
+
+_NOT_GREENFIELD = re.compile(r"\b(previously|no longer|used to be|e\.g\.|i\.e\.)", re.IGNORECASE)
+_PROSE_FILES = [
+    *Path("src").rglob("*.py"),
+    *Path("docs").glob("*.md"),
+    Path("README.md"),
+    Path("ARCHITECTURE.md"),
+    Path("CONTRIBUTING.md"),
+]
+
+
+def test_prose_is_greenfield_and_spells_out_latin():
+    """AGENTS.md's documentation-style rules; CHANGELOG.md and AGENTS.md are exempt."""
+    hits = [
+        f"{path}:{lineno}: {line.strip()}"
+        for path in _PROSE_FILES
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if _NOT_GREENFIELD.search(line)
+    ]
+    assert hits == [], "\n".join(hits)

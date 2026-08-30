@@ -1,7 +1,7 @@
 # Contributing
 
 Thanks for your interest in Kustology. This project is small; the
-contribution loop is intentionally short.
+contribution loop is short.
 
 ## Setup
 

@@ -94,8 +94,10 @@ _MAX_LLM_DATATABLE_ROWS = 20
 
 
 def to_llm_dict(node: Any) -> Any:
-    """Render ``node`` (a pydantic IR model, list, or primitive) into an
-    LLM-optimized dict. See module docstring for the shape contract."""
+    """Render ``node`` (a pydantic IR model, list, or primitive) into an LLM-optimized dict.
+
+    See the module docstring for the shape contract.
+    """
     out = _convert(node)
     # Lazy imports: ``ir/__init__`` imports this module, and ``query``
     # participates in the expr <-> query cycle.
@@ -178,9 +180,10 @@ def _is_default(value: Any, default: Any) -> bool:
 
 
 def _drop_redundant_canonical_form(out: dict[str, Any], cls: type) -> None:
-    """Remove ``canonical_form`` on leaf nodes where it duplicates ``name`` or
-    ``value``. Higher-level expressions (BinOp, And, …) keep theirs because
-    the canonical form summarizes a subtree the LLM would otherwise walk.
+    """Remove ``canonical_form`` on leaf nodes where it duplicates ``name`` or ``value``.
+
+    Higher-level expressions (BinOp, And, …) keep theirs because the
+    canonical form summarizes a subtree the LLM would otherwise walk.
 
     For ColumnRef the bare-name match covers unbound nodes; bound nodes
     canonicalize to ``"table.name"``, which is also a literal restatement
@@ -200,8 +203,10 @@ def _drop_redundant_canonical_form(out: dict[str, Any], cls: type) -> None:
 
 
 def _canonical_literal_repr(value: Any) -> str:
-    """Reproduce the KQL canonical form for a primitive literal: strings get
-    double-quoted, bools/None lowercase, numbers stringified.
+    """Reproduce the KQL canonical form for a primitive literal.
+
+    Strings get double-quoted, bools and ``None`` render lowercase, and
+    numbers are stringified.
 
     The quoting is delegated to ``_normalize._kql_string`` rather than
     re-spelled here. This function only exists to answer "is

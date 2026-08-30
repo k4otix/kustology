@@ -4,7 +4,8 @@
 """Tests for the generic IR walker.
 
 Covers root-first yield, list and dict descent, scalar skipping, optional
-None handling, type filtering, and nested descent through sub-pipelines.
+None handling, type filtering, nested descent through sub-pipelines, and
+pruning descent at a predicate-matched node.
 """
 
 

@@ -46,7 +46,7 @@ from .services import format_query, parse, validate
 from .utils.walker import MAX_AST_DEPTH, node_to_dict
 
 # Bound the bytes we'll read from stdin or a file. KQL queries are not large;
-# a 10 MB ceiling means a deliberately oversized payload (CI webhook abuse,
+# a 10 MB ceiling means an oversized payload (CI webhook abuse,
 # misrouted log dump) fails fast instead of OOM-ing the host. Override with
 # ``KUSTOLOGY_MAX_INPUT_BYTES`` for legitimate edge cases.
 _DEFAULT_MAX_INPUT_BYTES = 10 * 1024 * 1024
@@ -400,6 +400,7 @@ def _silence_broken_stdout() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the ``kustology`` command line and return its exit code."""
     # KQL is arbitrary Unicode, and this CLI's contract is to emit UTF-8 on
     # every platform. Left alone, a Windows console attaches `sys.stdout`
     # with the OS charmap codepage, which cannot encode most of Unicode —

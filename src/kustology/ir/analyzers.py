@@ -9,7 +9,7 @@ hierarchy, no registration machinery, no rule engine. The point of
 declaring this shape now is to give the v2 analyzer ecosystem a common
 ``Finding`` vocabulary so independently-developed analyzers compose.
 
-Example
+Example:
 -------
 
 .. code-block:: python
@@ -35,9 +35,10 @@ Example
     ir = parse("DeviceProcessEvents | where tolower(FileName) == 'cmd.exe'").to_ir()
     # After normalize_expressions, the tolower== folds to =~. Run the analyzer.
 
-The :class:`Finding` shape is intentionally minimal. ``extra`` exists for
+The :class:`Finding` shape is minimal. ``extra`` exists for
 rule-specific structured data without forcing the core schema to evolve
 every time a new analyzer wants a side-channel field.
+
 """
 
 from __future__ import annotations

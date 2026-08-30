@@ -3,13 +3,13 @@
 
 """``semantic_hash`` must not depend on whether a schema was supplied.
 
-``QueryIR.semantic_hash`` is computed at build time, before
-``SchemaAttacher`` runs, so the shipped value is bind-invariant by
-accident of ordering. ``QueryIR.semantic_hash``'s own docstring tells
-consumers to call :func:`compute_semantic_hash` again after mutating the
-IR — and *that* path sees the binder's output. Every field the binder
-populates must therefore be volatile, or the same query text hashes two
-ways depending on whether the caller happened to pass a schema.
+``QueryIR.semantic_hash`` computes and memoizes on first read, which can
+happen before or after ``SchemaAttacher`` runs depending on when a caller
+first reads it — so bind-invariance cannot rest on ordering. It rests on
+``compute_semantic_hash`` running ``_clear_volatile`` first, which strips
+every field the binder populates. Every field the binder populates must
+therefore be volatile, or the same query text hashes two ways depending on
+whether the caller happened to pass a schema.
 
 The one accepted exception is the ``let``-aliases-a-table shape
 divergence, pinned in ``test_let_bindings.py`` — that is a difference in

@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
+"""Source-position and pipeline-stage IR nodes, plus the top-level ``QueryIR`` model."""
+
 from functools import cached_property
 from typing import Annotated, Any, Literal, Optional, Union
 
@@ -63,8 +65,7 @@ class Diagnostic(BaseModel):
 
 
 class TabularSchema(BaseModel):
-    """Tabular result type: ``{column_name: kusto_type_string}``, in the order
-    the engine emits them.
+    """Tabular result type: ``{column_name: kusto_type_string}``, in the order the engine emits them.
 
     Carried by :class:`Operator` and :class:`Pipeline`. Present only when the
     parse was bound and Microsoft's binder answered for that step, captured
@@ -106,6 +107,8 @@ class Assignment(BaseModel):
 
 
 class Operator(BaseModel):
+    """Base class for every pipeline-stage IR node."""
+
     # ``extra="forbid"`` is load-bearing for round-trip safety: without it,
     # Union resolution silently absorbs unknown fields, so a FilterOp JSON
     # could validate as a fields-less GetSchemaOp (predicate dropped). The
@@ -156,22 +159,30 @@ class Operator(BaseModel):
 
 
 class FilterOp(Operator):
+    """``where predicate``."""
+
     kind: Literal["filter"] = "filter"
     predicate: AnyExpr
 
 
 class ExtendOp(Operator):
+    """``extend name = expression, ...``."""
+
     kind: Literal["extend"] = "extend"
     assignments: list[Assignment]
 
 
 class SummarizeOp(Operator):
+    """``summarize aggregations by columns``."""
+
     kind: Literal["summarize"] = "summarize"
     aggregations: list[Assignment]
     by: list[ColumnRef | AnyExpr | Assignment]
 
 
 class ProjectOp(Operator):
+    """``project columns``."""
+
     kind: Literal["project"] = "project"
     columns: list[ColumnRef | Assignment | AnyExpr]
 
@@ -252,20 +263,26 @@ class UnknownSource(BaseModel):
 
 
 class ImplicitSource(BaseModel):
-    """Source whose rows come from a parent context (union-at-root subqueries,
-    ``mv-apply``/``partition``/``fork`` inner pipelines, parenthesized
-    ``join``/``lookup`` RHS). Distinct from :class:`UnknownSource`, which means
-    the source couldn't be determined.
+    """A source whose rows come from a parent context, not a named table.
+
+    Covers union-at-root subqueries, ``mv-apply``/``partition``/``fork``
+    inner pipelines, and parenthesized ``join``/``lookup`` right-hand sides.
+    Distinct from :class:`UnknownSource`, which means the source could not
+    be determined.
     """
+
     model_config = {"extra": "forbid"}
     kind: Literal["implicit_source"] = "implicit_source"
     span: Span
 
 
 class FuncCallSource(BaseModel):
-    """Function-call-as-pipeline-source — a user-defined function that returns
-    a table, as in ``findAnomalies('foo') | summarize ...``.
+    """A function-call pipeline source.
+
+    A user-defined function that returns a table, as in
+    ``findAnomalies('foo') | summarize ...``.
     """
+
     model_config = {"extra": "forbid"}
     kind: Literal["func_call_source"] = "func_call_source"
     name: str
@@ -336,11 +353,15 @@ class ExternalDataSource(BaseModel):
 
 
 class DistinctOp(Operator):
+    """``distinct columns``."""
+
     kind: Literal["distinct"] = "distinct"
     columns: list[ColumnRef | Assignment | AnyExpr]
 
 
 class TakeOp(Operator):
+    """``take count`` (equivalently ``limit count``)."""
+
     kind: Literal["take"] = "take"
     # KQL allows any scalar expression here (`let n = 10; T | take n`,
     # `take toscalar(U | count)`), not only an integer literal, so the field
@@ -359,8 +380,8 @@ class SortKey(BaseModel):
     ``OrderedExpression`` cannot be unwrapped to its inner expression
     without dropping the half that decides the order.
 
-    ``direction`` is **required and has no default**, which is deliberate and
-    is not the same statement as "the query always writes it". KQL's
+    ``direction`` is **required and has no default**, which is not the same
+    statement as "the query always writes it". KQL's
     unwritten default is ``desc``, so a bare ``sort by x`` records
     ``direction="desc"`` — the *effective* value, never ``None``. Declaring
     it required is what makes that value visible: ``ir.llm_view.to_llm_dict``
@@ -408,17 +429,23 @@ class SortKey(BaseModel):
 
 
 class SortOp(Operator):
+    """``sort by expressions`` (equivalently ``order by expressions``)."""
+
     kind: Literal["sort"] = "sort"
     expressions: list[SortKey]
 
 
 class TopOp(Operator):
+    """``top count by expression``."""
+
     kind: Literal["top"] = "top"
     count: int | AnyExpr
     by: SortKey
 
 
 class TopHittersOp(Operator):
+    """``top-hitters count of column [by weight]``."""
+
     kind: Literal["top_hitters"] = "top_hitters"
     count: int | AnyExpr
     # ``top-hitters N of C [by V]`` has two column operands, not one: ``of``
@@ -439,6 +466,8 @@ class TopHittersOp(Operator):
 
 
 class SampleOp(Operator):
+    """``sample count``."""
+
     kind: Literal["sample"] = "sample"
     count: int | AnyExpr
 
@@ -510,7 +539,7 @@ class MakeSeriesAggregate(BaseModel):
     would drop it and fold all three of ``default=0``, ``default=1`` and no
     default into one node.
 
-    ``name`` and ``expr`` are spelled as on :class:`Assignment` deliberately:
+    ``name`` and ``expr`` are spelled as on :class:`Assignment`:
     the binder reads ``a.name`` / ``a.expr`` over this list without caring
     which of the two element types it is holding.
     """
@@ -524,6 +553,8 @@ class MakeSeriesAggregate(BaseModel):
 
 
 class MakeSeriesOp(Operator):
+    """``make-series aggregations on_column from range_from to range_to step step by by``."""
+
     kind: Literal["make_series"] = "make_series"
     aggregations: list[MakeSeriesAggregate]
     by: list[Assignment]
@@ -618,11 +649,15 @@ class RenderOp(Operator):
 
 
 class ProjectAwayOp(Operator):
+    """``project-away columns``."""
+
     kind: Literal["project_away"] = "project_away"
     columns: list[ColumnRef | AnyExpr]
 
 
 class ProjectKeepOp(Operator):
+    """``project-keep columns``."""
+
     kind: Literal["project_keep"] = "project_keep"
     columns: list[ColumnRef | AnyExpr]
 
@@ -657,16 +692,22 @@ class ReorderKey(BaseModel):
 
 
 class ProjectReorderOp(Operator):
+    """``project-reorder columns``."""
+
     kind: Literal["project_reorder"] = "project_reorder"
     columns: list[ReorderKey]
 
 
 class ProjectRenameOp(Operator):
+    """``project-rename new_name = old_name, ...``."""
+
     kind: Literal["project_rename"] = "project_rename"
     columns: list[Assignment]
 
 
 class ProjectByNamesOp(Operator):
+    """``project-by-names names``."""
+
     kind: Literal["project_by_names"] = "project_by_names"
     names: list[AnyExpr]
 
@@ -775,21 +816,29 @@ class EvaluateOp(Operator):
 
 
 class CountOp(Operator):
+    """``count`` (optionally ``count as as_name``)."""
+
     kind: Literal["count"] = "count"
     as_name: str | None = None
 
 
 class PrintOp(Operator):
+    """``print columns``."""
+
     kind: Literal["print"] = "print"
     columns: list[Assignment | AnyExpr]
 
 
 class AsOp(Operator):
+    """``as name`` — binds the pipeline's current result under a name."""
+
     kind: Literal["as"] = "as"
     name: str
 
 
 class RangeOp(Operator):
+    """``range column from start to end step step``."""
+
     kind: Literal["range"] = "range"
     column: str
     start: AnyExpr
@@ -816,12 +865,16 @@ class LookupOp(Operator):
 
 
 class PartitionOp(Operator):
+    """``partition by column (subquery)``."""
+
     kind: Literal["partition"] = "partition"
     by: AnyExpr
     right: "Pipeline"
 
 
 class FacetOp(Operator):
+    """``facet by columns [with (subquery)]``."""
+
     kind: Literal["facet"] = "facet"
     columns: list[AnyExpr] = []
     with_pipeline: Optional["Pipeline"] = None
@@ -847,6 +900,8 @@ class GetSchemaOp(Operator):
 
 
 class InvokeOp(Operator):
+    """``invoke func(...)``."""
+
     kind: Literal["invoke"] = "invoke"
     func: FuncCall
 
@@ -967,6 +1022,8 @@ class ScanOp(Operator):
 
 
 class SerializeOp(Operator):
+    """``serialize [assignments]`` — marks the stream as row-ordered."""
+
     kind: Literal["serialize"] = "serialize"
     assignments: list[Assignment] = []
 
@@ -988,11 +1045,15 @@ class ConsumeOp(Operator):
 
 
 class AssertSchemaOp(Operator):
+    """``assert-schema columns``."""
+
     kind: Literal["assert_schema"] = "assert_schema"
     columns: dict[str, str] = {}
 
 
 class ExecuteAndCacheOp(Operator):
+    """``__executeAndCache`` — cache the pipeline's result set for reuse."""
+
     kind: Literal["execute_and_cache"] = "execute_and_cache"
 
 
@@ -1021,6 +1082,8 @@ class ParseKvOp(Operator):
 
 
 class SampleDistinctOp(Operator):
+    """``sample-distinct count of column``."""
+
     kind: Literal["sample_distinct"] = "sample_distinct"
     count: int | AnyExpr
     of: AnyExpr
@@ -1156,6 +1219,7 @@ class UnknownOp(Operator):
     instead of a bare ``Operator(span=...)`` so analyzers can detect
     coverage gaps and the coverage audit has something to grow against.
     """
+
     kind: Literal["unknown_op"] = "unknown_op"
     raw_text: str
     ast_kind: str
@@ -1396,7 +1460,7 @@ class LetBinding(BaseModel):
 # five would be fifteen places for a new kind to go silently unhashed.
 #
 # None of them carries a ``span``. Operator and expression nodes all do, and
-# these deliberately do not: a span is volatile (stripped before the digest)
+# these do not: a span is volatile (stripped before the digest)
 # and these nodes have no consumer that triangulates back to source text the
 # way an operator or an expression does. :attr:`PatternMatch.body_span` is the
 # single exception, and it is there for the same reason
@@ -1430,8 +1494,7 @@ class SetOptionStmt(BaseModel):
 
 
 class QueryParametersStmt(BaseModel):
-    """``declare query_parameters(p:long = 1, q:string)`` — the query's own
-    declared parameters.
+    """``declare query_parameters(p:long = 1, q:string)`` — the query's own declared parameters.
 
     ``parameters`` reuses :class:`LetFunctionParameter`, and not for
     convenience: the .NET node's ``Parameters`` is the identical
@@ -1442,8 +1505,8 @@ class QueryParametersStmt(BaseModel):
     may be omitted is a different contract from one that may not, and two
     defaults are two different queries for every caller that omits the value.
 
-    **A parameter name here is never alpha-canonicalized, and that is a
-    deliberate asymmetry with ``let``.** A ``let`` name is a local label with
+    **A parameter name here is never alpha-canonicalized -- an asymmetry
+    with ``let``.** A ``let`` name is a local label with
     no meaning outside the query, so ``compute_semantic_hash`` replaces it
     with its position (:func:`~kustology.ir.transforms._canonicalize_let_names`).
     A ``declare query_parameters`` name is the opposite: it is the
@@ -1477,8 +1540,7 @@ class QueryParametersStmt(BaseModel):
 
 
 class PatternMatch(BaseModel):
-    """One arm of a ``declare pattern`` body: the values it matches, and what
-    it expands to.
+    """One arm of a ``declare pattern`` body: the values it matches, and what it expands to.
 
     ``("Kusto").["Info"] = { T | take 1 }`` is reached by
     ``P("Kusto").["Info"]`` and by nothing else, so ``values`` and
@@ -1523,9 +1585,9 @@ class PatternStmt(BaseModel):
     ``parameters`` and ``path_parameter`` are the pattern's call shape --
     ``(a:string)[L:string]`` -- read as :class:`~kustology.ir.expr.TypedNameDecl`
     through the same path every other ``name:type`` position in the grammar
-    uses. Their names are recorded **verbatim**, not alpha-canonicalized, and
-    that is a deliberate asymmetry with a ``let``-declared function's
-    parameters, which *are* renamed to ``$param<i>``. The difference is what the name
+    uses. Their names are recorded **verbatim**, not alpha-canonicalized -- an
+    asymmetry with a ``let``-declared function's parameters, which *are*
+    renamed to ``$param<i>``. The difference is what the name
     binds. A function parameter is bound inside the body: the builder shadows
     it there (see :class:`LetFunctionParameter`), so every reference to it is
     identifiable and renaming the declaration and its references together is
@@ -1557,8 +1619,7 @@ class PatternStmt(BaseModel):
 
 
 class AliasStmt(BaseModel):
-    """``alias database db1 = cluster('c').database('d')`` — a local name for
-    a database.
+    """``alias database db1 = cluster('c').database('d')`` — a local name for a database.
 
     ``expression`` is what the alias points at, and it is the whole point of
     the statement: two aliases naming different databases send every
@@ -1574,8 +1635,7 @@ class AliasStmt(BaseModel):
 
 
 class RestrictStmt(BaseModel):
-    """``restrict access to (database("d"), T) with (a=1)`` — narrow what the
-    rest of the query can see.
+    """``restrict access to (database("d"), T) with (a=1)`` — narrow what the rest of the query can see.
 
     ``expressions`` is the entity list, built after the ``let`` sweep so a
     name an earlier ``let`` bound resolves to that binding rather than to a
@@ -1611,7 +1671,7 @@ class UnknownStmt(BaseModel):
     lands somewhere visible instead of vanishing.
 
     It is the **one** statement model that carries ``raw_text``, and that is
-    a deliberate exception rather than an oversight. Recorded source text
+    an exception rather than an oversight. Recorded source text
     hashes as text, so a node carrying it discriminates on formatting and
     would let a test pair pass for a reason unrelated to the field it claims
     to guard -- which is why
@@ -1691,7 +1751,7 @@ class QueryIR(BaseModel):
     @computed_field  # type: ignore[prop-decorator]
     @cached_property
     def semantic_hash(self) -> str:
-        """SHA-256 over the canonical IR shape, computed on first read and memoized.
+        """Return the SHA-256 digest of the canonical IR shape, computed on first read and memoized.
 
         Two queries with the same semantic content collide; see
         ``docs/semantic-hash.md`` for what the digest ignores. Mutating the IR

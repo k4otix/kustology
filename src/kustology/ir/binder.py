@@ -51,7 +51,7 @@ from .walk import _models_in, find_all
 
 
 def _renamed_columns(op: Operator) -> dict[str, str]:
-    """``{new name: old name}`` for a ``project-rename``, empty otherwise.
+    """Map new to old column names for a ``project-rename``; return ``{}`` otherwise.
 
     ``project-rename kk = k`` is the one operator that says, in the query
     itself, that an output column *is* an input column under another name.
@@ -142,7 +142,7 @@ class ScopeEntry:
     origins: dict[str, str | None] = field(default_factory=dict)
 
     def origin_of(self, name: str) -> str | None:
-        """The table ``name`` came from, or None if unknown/invented."""
+        """Return the table ``name`` came from, or ``None`` if unknown or invented."""
         if name in self.origins:
             return self.origins[name]
         return self.table
@@ -161,9 +161,9 @@ class SchemaAttacher:
     binder closed the symbol, and that is the only thing this class will
     publish as a schema. It does not re-derive operator outputs: no
     ``project`` narrowing, no join-collision suffixes, no ``arg_max(t, *)``
-    expansion, no union type-conflict splitting. Those rules lived here once
-    and were, one by one, found to disagree with the engine; the answer is
-    to ask rather than to guess. So:
+    expansion, no union type-conflict splitting. A hand-derived rule for any
+    of these disagrees with the engine sooner or later, so this class asks
+    Microsoft's binder instead of guessing:
 
     * ``result_schema`` present → Microsoft's names, types and column order,
       overlaid onto the walked scope so provenance survives (see
@@ -230,16 +230,12 @@ class SchemaAttacher:
       instead would be a claim about the operator's output, which is
       Microsoft's to make.
 
-    ``project-rename`` is deliberately *not* in this list: its target is a
-    name no scope entry holds, but the query states outright which input
-    column it renames, so :func:`_renamed_columns` threads that through and
-    the provenance survives. The distinction is whether the fact is written
+    ``project-rename`` is *not* in this list: its target is a name no scope
+    entry holds, but the query states outright which input column it
+    renames, so :func:`_renamed_columns` threads that through and the
+    provenance survives. The distinction is whether the fact is written
     down anywhere — where it is, the walk carries it; where it is only
     inferable from a rule about what the engine does, it does not.
-
-    The old rules knew the first two answers by construction, because they
-    invented the names themselves — which is the same reason they kept
-    disagreeing with the engine about what the names were.
 
     ``tests/ir/test_binder_oracle.py`` compares ``result_schema`` against
     ``ResultType`` over an operator matrix and the corpus, on both entry
@@ -247,6 +243,7 @@ class SchemaAttacher:
     """
 
     def __init__(self, schemas: dict[str, dict[str, str]] | None = None):
+        """Seed the walk's starting scope with ``{table_name: {column_name: kusto_type_string}}``."""
         self.schemas: dict[str, dict[str, str]] = dict(schemas or {})
         # {let name: {column: type}} for the enrich() call in progress.
         # Reset per call, not per instance: a reused attacher must not carry
@@ -485,7 +482,7 @@ class SchemaAttacher:
         return self.schemas.get(name, {})
 
     def _entry_table(self, name: str | None) -> str | None:
-        """The label a bare-name :class:`ScopeEntry` is honestly entitled to.
+        """Return the label a bare-name :class:`ScopeEntry` is honestly entitled to.
 
         ``_table_schema`` already answers ``{}`` for a masked name, but a
         ``ScopeEntry`` built straight from a name -- ``_source_entry``'s
@@ -505,7 +502,7 @@ class SchemaAttacher:
         return None if name in self._masked_tables else name
 
     def _let_alias_entry(self, name: str) -> ScopeEntry:
-        """The scope entry a ``let`` alias is honestly entitled to.
+        """Return the scope entry a ``let`` alias is honestly entitled to.
 
         Shared by ``_source_entry``'s ``LetRef`` branch (a pipeline's own
         source) and ``search``/``find``'s table seeding -- both name a
@@ -526,7 +523,7 @@ class SchemaAttacher:
         return ScopeEntry(table=None, columns={})
 
     def _source_entry(self, pipeline: Pipeline) -> ScopeEntry:
-        """The scope a pipeline starts from, derived from its source.
+        """Return the scope a pipeline starts from, derived from its source.
 
         Schema lookups are keyed on the **bare** table name, and stay that
         way for a qualified source: ``database('d').T`` resolves against
@@ -757,7 +754,7 @@ class SchemaAttacher:
     def _walk_operator_provenance(
         self, op: Operator, scope: list[ScopeEntry],
     ) -> None:
-        """The scope structure provenance needs; never the output columns.
+        """Extend ``scope`` with the structure provenance needs; never the output columns.
 
         Four operator families get a branch, because they bring *sources*
         into scope and the overlay cannot recover where a column came from

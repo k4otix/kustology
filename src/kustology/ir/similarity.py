@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-"""Graded similarity between queries: every subtree gets the digest
-``compute_semantic_hash`` would give it in the context of its root, and two
-queries are compared by the overlap of those digest sets.
+"""Compute graded similarity between queries.
+
+Every subtree gets the digest ``compute_semantic_hash`` would give it in
+the context of its root, and two queries are compared by the overlap of
+those digest sets.
 
 See ``docs/similarity.md``. Corpus-level concerns — IDF weighting,
 clustering, LSH indexing, thresholds — stay with the consumer.
@@ -25,6 +27,8 @@ from .walk import _models_in, model_bearing_fields
 
 
 class SubtreeHash(NamedTuple):
+    """One subtree's digest, kind, size, and source span, as returned by :func:`subtree_hashes`."""
+
     digest: str        # same scheme and prefix as ``semantic_hash``
     kind: str          # the node's ``kind`` value, or its class name
     size: int          # model nodes in the subtree; ``Span`` not counted
@@ -44,6 +48,10 @@ def subtree_hashes(node: BaseModel, *, min_size: int = 3) -> list[SubtreeHash]:
     are renamed and consecutive filters merged exactly as for the whole-query
     digest — which is why a subtree's entry here can differ from
     ``compute_semantic_hash`` called on that subtree by itself.
+
+    Returns ``[]`` when ``node`` itself has fewer than ``min_size`` nodes —
+    including the root, since it is entry ``[-1]`` rather than a guaranteed
+    one. Index the result with ``[-1]`` only after checking it is non-empty.
     """
     if min_size < 1:
         raise ValueError("min_size must be at least 1")
@@ -75,6 +83,11 @@ def _collect(
     out: list[SubtreeHash],
     seen: set[int],
 ) -> int:
+    # Correct only because ``_clear_volatile`` empties
+    # ``LetBinding.inner_time_exprs`` on the canonical copy first: that field
+    # aliases nodes already reachable through ``rhs_pipeline``/``rhs_function``,
+    # so an uncleared index could be visited before a node's real structural
+    # position and short-circuit it there with the wrong subtree size.
     if id(node) in seen:
         return 0
     seen.add(id(node))

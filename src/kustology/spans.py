@@ -3,7 +3,7 @@
 
 """Tier 1 span types.
 
-Pydantic-free on purpose: Tier 1 works without the ``[ir]`` extra, and
+Pydantic-free: Tier 1 works without the ``[ir]`` extra, and
 ``kustology.ir.Span`` is a pydantic model. Offsets are code points into the
 Python ``str`` the query was parsed from.
 """
@@ -21,9 +21,11 @@ class TextSpan(NamedTuple):
 
     @property
     def end(self) -> int:
+        """Return the code-point offset one past the span's last character."""
         return self.start + self.length
 
     def text(self, query: str) -> str:
+        """Slice the code points this span covers out of ``query``."""
         return query[self.start : self.end]
 
 
@@ -36,4 +38,5 @@ class TimeExpr(NamedTuple):
 
     @property
     def span(self) -> TextSpan:
+        """Return this expression's location as a :class:`TextSpan`."""
         return TextSpan(self.start, self.length)
