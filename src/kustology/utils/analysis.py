@@ -7,6 +7,7 @@ import warnings
 from .._text import Utf16Offsets
 from ..bridge import ColumnSymbol, FunctionSymbol, KustoFacts, TableSymbol
 from ..reflection import syntax_kinds as _syntax_kinds
+from ..spans import TimeExpr
 from .schema_state import build_global_state  # re-exported
 from .walker import (  # re-exported
     KustoWalker,
@@ -709,7 +710,7 @@ def get_structural_hash(kusto_code) -> str:
     return hashlib.sha256("".join(parts).encode()).hexdigest()
 
 
-def find_time_expressions(kusto_code) -> list[tuple[str, int, int]]:
+def find_time_expressions(kusto_code) -> list[TimeExpr]:
     """Return ``[(text, start, length), ...]`` for every time-related expression.
 
     ``start`` and ``length`` are code-point offsets into the query text, so
@@ -799,12 +800,12 @@ def find_time_expressions(kusto_code) -> list[tuple[str, int, int]]:
     # each other. Only the value handed back has to index a Python ``str``.
     offsets = Utf16Offsets(str(kusto_code.Text))
     return [
-        (text, *offsets.span_to_codepoints(start, width))
+        TimeExpr(text, *offsets.span_to_codepoints(start, width))
         for text, start, width in deduped
     ]
 
 
-def get_time_range(kusto_code) -> list[tuple[str, int, int]]:
+def get_time_range(kusto_code) -> list[TimeExpr]:
     """Deprecated alias for :func:`find_time_expressions`.
 
     The name promises a resolved range but returns a discovery list, which

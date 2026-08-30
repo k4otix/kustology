@@ -32,6 +32,7 @@ from .reflection import (
     time_functions,
 )
 from .services import format_query, parse, validate
+from .spans import TextSpan, TimeExpr
 from .utils.walker import iter_elements
 
 __all__ = [
@@ -44,6 +45,9 @@ __all__ = [
     "format_query",
     "validate",
     "iter_elements",
+    # Spans
+    "TextSpan",
+    "TimeExpr",
     # Offset translation — .NET reports UTF-16 code units, Python indexes
     # code points; see :mod:`kustology._text`.
     "utf16_to_codepoint",

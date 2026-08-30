@@ -8,6 +8,7 @@ import json
 from ._text import Utf16Offsets
 from .bridge import GlobalState, KustoCode
 from .services import _analyze_guarded, _diagnostic_dicts
+from .spans import TimeExpr
 from .utils.analysis import (
     find_table_references,
     find_time_expressions,
@@ -212,15 +213,15 @@ class KustoQuery:
         """
         return get_structural_hash(self._code)
 
-    def find_time_expressions(self) -> list[tuple[str, int, int]]:
-        """Return ``[(text, start, length), ...]`` in source order.
+    def find_time_expressions(self) -> list[TimeExpr]:
+        """Return ``[TimeExpr(text, start, length), ...]`` in source order.
 
         A discovery aid, not a lookback extractor — see
         :func:`kustology.utils.analysis.find_time_expressions`.
         """
         return find_time_expressions(self._code)
 
-    def get_time_range(self) -> list[tuple[str, int, int]]:
+    def get_time_range(self) -> list[TimeExpr]:
         """Deprecated alias for :meth:`find_time_expressions`."""
         import warnings
 
