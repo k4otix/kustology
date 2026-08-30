@@ -11,9 +11,11 @@ None handling, type filtering, and nested descent through sub-pipelines.
 import pytest
 from pydantic import BaseModel
 
+from kustology import parse
 from kustology.ir import (
     ColumnRef,
     FilterOp,
+    FuncCall,
     IRBuilder,
     JoinOp,
     SortOp,
@@ -181,3 +183,34 @@ def test_walk_yields_a_shared_node_once():
     # And the general invariant, not just this one query: no object twice.
     ids = [id(n) for n in walk(ir)]
     assert len(ids) == len(set(ids))
+
+
+JOIN_QUERY = "T | where TimeGenerated > ago(5m) | join (S | where TimeGenerated > ago(99d)) on X"
+
+
+def _ago_args(nodes, query):
+    return [n.args[0].span.text(query) for n in nodes if isinstance(n, FuncCall) and n.name == "ago"]
+
+
+def test_prune_stops_descent_at_join():
+    ir = parse(JOIN_QUERY).to_ir(semantic_hash=False)
+    seen = list(walk(ir.main_pipeline, prune=lambda n: isinstance(n, JoinOp)))
+    assert _ago_args(seen, JOIN_QUERY) == ["5m"]
+
+
+def test_predicate_alone_still_descends():
+    ir = parse(JOIN_QUERY).to_ir(semantic_hash=False)
+    seen = list(walk(ir.main_pipeline, lambda n: not isinstance(n, JoinOp)))
+    assert _ago_args(seen, JOIN_QUERY) == ["5m", "99d"]
+
+
+def test_pruned_node_is_yielded_but_not_entered():
+    ir = parse(JOIN_QUERY).to_ir(semantic_hash=False)
+    seen = list(walk(ir.main_pipeline, prune=lambda n: isinstance(n, JoinOp)))
+    assert sum(isinstance(n, JoinOp) for n in seen) == 1
+
+
+def test_find_all_accepts_prune():
+    ir = parse(JOIN_QUERY).to_ir(semantic_hash=False)
+    outer = list(find_all(ir.main_pipeline, FuncCall, prune=lambda n: isinstance(n, JoinOp)))
+    assert [f.name for f in outer] == ["ago"]
