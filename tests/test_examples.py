@@ -35,7 +35,7 @@ EXAMPLES_DIR = REPO_ROOT / "examples"
 # Examples that touch ``kustology.ir.*`` need the [ir] extra.
 IR_EXAMPLES = {
     "analyzer_demo", "find_all_demo", "linter", "llm_view",
-    "semantic_hash_demo", "walk_ir",
+    "query_similarity", "semantic_hash_demo", "walk_ir",
 }
 
 _HAS_RICH = importlib.util.find_spec("rich") is not None

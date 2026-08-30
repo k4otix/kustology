@@ -333,7 +333,7 @@ changes can shift diagnostic codes (`KS204` etc.) or rename AST kinds.
 ## Tier 2 IR (`kustology.ir`)
 
 ### Walkers: prefer `walk` / `find_all` / `collect_nodes` over bespoke recursion
-- IR side: `kustology.ir.walk(node[, predicate])` yields every Pydantic
+- IR side: `kustology.ir.walk(node[, predicate], prune=...)` yields every Pydantic
   `BaseModel` descendant; `find_all(node, type_)` filters by type. Use
   these for "every X across the whole IR" patterns. Bespoke recursion is
   appropriate when the analyzer's structure mirrors the IR's nesting

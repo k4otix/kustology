@@ -28,6 +28,8 @@ from typing import (
 
 from pydantic import BaseModel
 
+from .spans import Span
+
 T = TypeVar("T", bound=BaseModel)
 
 Predicate = Callable[[BaseModel], bool]
@@ -113,6 +115,8 @@ def model_bearing_fields(model: type[BaseModel]) -> tuple[str, ...]:
 def walk(
     node: BaseModel,
     predicate: Predicate | None = None,
+    *,
+    prune: Predicate | None = None,
 ) -> Iterator[BaseModel]:
     """Yield every ``BaseModel`` descendant of ``node`` (including the
     root) in depth-first, pre-order.
@@ -136,6 +140,13 @@ def walk(
     that's case-insensitive" / "every operator with a span past
     position X" / cross-cutting filters that don't reduce to a type.
 
+    ``predicate`` filters what is yielded; ``prune`` limits where the walk
+    goes. A node for which ``prune`` returns ``True`` is still yielded when
+    ``predicate`` accepts it, but none of its descendants are visited. To
+    analyse an outer pipeline without its subqueries::
+
+        walk(ir.main_pipeline, prune=lambda n: isinstance(n, (JoinOp, LookupOp)))
+
     Example:
         >>> for n in walk(ir):
         ...     ...
@@ -146,19 +157,20 @@ def walk(
     on the arithmetic operators, where the question does not apply, and
     ``not None`` is true.
     """
-    yield from _walk(node, predicate, set())
+    yield from _walk(node, predicate, prune, set())
 
 
 def _walk(
     node: BaseModel,
     predicate: Predicate | None,
+    prune: Predicate | None,
     seen: set[int],
 ) -> Iterator[BaseModel]:
     """Recursive half of :func:`walk`, threading the visited set.
 
-    Kept private so the public signature stays two arguments: the set is an
-    implementation detail of one traversal, and a caller who supplied their
-    own could silently suppress nodes.
+    Kept private so the public signature stays a fixed set of parameters:
+    the set is an implementation detail of one traversal, and a caller who
+    supplied their own could silently suppress nodes.
 
     Re-entering an already-visited object prunes its whole subtree, not only
     the yield — descending a second time can only re-yield what the first
@@ -179,9 +191,11 @@ def _walk(
     seen.add(id(node))
     if predicate is None or predicate(node):
         yield node
+    if prune is not None and prune(node):
+        return
     for name in model_bearing_fields(type(node)):
         for item in _models_in(getattr(node, name)):
-            yield from _walk(item, predicate, seen)
+            yield from _walk(item, predicate, prune, seen)
 
 
 def _models_in(value: object) -> Iterator[BaseModel]:
@@ -205,16 +219,37 @@ def _models_in(value: object) -> Iterator[BaseModel]:
         yield from _models_in(item)
 
 
-def find_all(node: BaseModel, type_: type[T]) -> Iterator[T]:
+def find_all(node: BaseModel, type_: type[T], *, prune: Predicate | None = None) -> Iterator[T]:
     """Yield every descendant of ``node`` that is an instance of ``type_``.
 
     The 90%-case wrapper around :func:`walk`. Custom analyzers typically
-    reduce to a single ``find_all`` call plus attribute access.
+    reduce to a single ``find_all`` call plus attribute access. ``prune``
+    is passed through to :func:`walk`.
 
     Example:
         >>> from kustology.ir import find_all, FilterOp
         >>> filters = list(find_all(ir, FilterOp))
     """
-    for n in walk(node):
+    for n in walk(node, prune=prune):
         if isinstance(n, type_):
             yield n
+
+
+def span_of(node: BaseModel) -> Span | None:
+    """Return the smallest span covering ``node`` and every descendant that carries one.
+
+    Works for classes without a ``span`` field (``Pipeline``, ``QueryIR``,
+    the statement models) by folding over the spans below them. Zero-width
+    spans are ignored. Offsets are code points, like every other ``Span``.
+    Leading trivia is not included: the envelope starts at the first token.
+    """
+    start: int | None = None
+    end: int | None = None
+    for span in find_all(node, Span):
+        if span.width == 0:
+            continue
+        start = span.text_start if start is None else min(start, span.text_start)
+        end = span.text_end if end is None else max(end, span.text_end)
+    if start is None or end is None:
+        return None
+    return Span(text_start=start, width=end - start)

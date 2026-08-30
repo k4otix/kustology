@@ -66,7 +66,16 @@ from .transforms import (
     SEMANTIC_HASH_SCHEME,
     compute_semantic_hash, merge_consecutive_filters, normalize_expressions,
 )
-from .walk import find_all, walk
+from .walk import find_all, span_of, walk
+from .similarity import (
+    SubtreeHash,
+    containment,
+    differing_subtrees,
+    similarity,
+    similarity_sketch,
+    sketch_similarity,
+    subtree_hashes,
+)
 from .analyzers import AnalyzerFn, Finding, Severity
 
 __all__ = [
@@ -75,8 +84,11 @@ __all__ = [
     # Builder / serialization views
     "IRBuilder", "to_llm_dict",
     # Traversal & transforms
-    "walk", "find_all",
+    "walk", "find_all", "span_of",
     "merge_consecutive_filters", "normalize_expressions", "compute_semantic_hash",
+    # Similarity
+    "SubtreeHash", "subtree_hashes", "similarity", "containment",
+    "similarity_sketch", "sketch_similarity", "differing_subtrees",
     # Analyzer protocol
     "Finding", "AnalyzerFn", "Severity",
     # Top-level / container

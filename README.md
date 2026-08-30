@@ -30,8 +30,9 @@ Tier 2 builds a typed Pydantic model of the parsed query, with classes like
 `FilterOp`, `BinOp`, and `ColumnRef`. It suits the questions an analyzer asks:
 which source table a column came from after joins, renames, and `let` aliases;
 what schema the pipeline produces; whether two queries mean the same thing
-despite formatting; and how to serialize the whole graph for a UI, a service,
-or a language model.
+despite formatting; how much two queries overlap or where two versions of a
+rule diverge; and how to serialize the whole graph for a UI, a service, or a
+language model.
 
 ## Choosing a tier
 
@@ -141,6 +142,7 @@ library without CI noticing.
 | [examples/linter.py](https://github.com/k4otix/kustology/blob/main/examples/linter.py) | A working KQL linter built on the IR |
 | [examples/llm_view.py](https://github.com/k4otix/kustology/blob/main/examples/llm_view.py) | IR serialization for language models |
 | [examples/semantic_hash_demo.py](https://github.com/k4otix/kustology/blob/main/examples/semantic_hash_demo.py) | What `semantic_hash` merges and what it splits |
+| [examples/query_similarity.py](https://github.com/k4otix/kustology/blob/main/examples/query_similarity.py) | Graded similarity, containment, and diffing between related queries |
 
 The IR examples need the `[ir]` extra. The rest run on the base install. Add
 the `[examples]` extra for colour and syntax highlighting; without it the same
@@ -154,6 +156,7 @@ output prints as plain text.
 | [The Tier 2 IR](https://github.com/k4otix/kustology/blob/main/docs/tier2-ir.md) | How `let` names, operators, and function bodies lower into IR nodes |
 | [CLI reference](https://github.com/k4otix/kustology/blob/main/docs/cli.md) | Subcommands, flags, JSON output, exit codes |
 | [Versioning and `semantic_hash`](https://github.com/k4otix/kustology/blob/main/docs/semantic-hash.md) | Compatibility tags, and what the digest ignores |
+| [Graded similarity](https://github.com/k4otix/kustology/blob/main/docs/similarity.md) | Comparing queries by degree: subtree overlap, containment, and diffing |
 | [Architecture](https://github.com/k4otix/kustology/blob/main/ARCHITECTURE.md) | Code layout, for contributors |
 | [Contributing](https://github.com/k4otix/kustology/blob/main/CONTRIBUTING.md) | Setup and the development loop |
 
