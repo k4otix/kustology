@@ -3,18 +3,16 @@
 
 """``QueryIR.semantic_hash`` is a computed field over a lazy, memoized property.
 
-Computing the digest is the larger part of a build, and a caller who only
-wants the tree pays for it on every query. The default build leaves the
-digest uncomputed until something reads ``QueryIR.semantic_hash``, at which
-point it is computed once and memoized. ``to_ir(semantic_hash=True)`` (and
-``IRBuilder.build(..., semantic_hash=True)``) compute it during the build
-instead, for a caller who wants to fail fast or pre-warm the value before
-handing the IR to other threads.
+The digest is the larger part of a build, so the default build leaves it
+uncomputed until something reads ``QueryIR.semantic_hash``, then computes and
+memoizes it once. ``to_ir(semantic_hash=True)`` and
+``IRBuilder.build(..., semantic_hash=True)`` compute it during the build, for
+a caller who wants to fail fast or pre-warm the value before handing the IR to
+other threads.
 
-The field stays present in ``model_dump()`` either way, and a stored dump
-carrying the key still loads under ``extra="forbid"``: a ``mode="before"``
-validator drops the stored key so the value is recomputed on load rather
-than rejected as an unrecognized field.
+The field stays in ``model_dump()`` either way, and a stored dump carrying the
+key still loads under ``extra="forbid"``: a ``mode="before"`` validator drops
+the stored key, so the value is recomputed on load.
 """
 
 import pytest

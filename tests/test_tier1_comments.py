@@ -3,20 +3,17 @@
 
 """Leading comments must not corrupt Tier 1 syntactic analysis.
 
-Microsoft's ``SyntaxNode.ToString()`` includes leading trivia — whitespace
-*and comments* — so an analyzer that reads a node name that way picks up any
-comment sitting immediately before a table, column, or function name. Real
-Sentinel detection rules are full of leading comments, so that corruption
-lands on exactly the queries this library exists to analyse.
+Microsoft's ``SyntaxNode.ToString()`` includes leading trivia, comments among
+it, so an analyzer that reads a node name that way picks up any comment
+sitting immediately before a table, column, or function name. Real Sentinel
+detection rules are full of leading comments, so that corruption lands on the
+queries this library exists to analyse.
 
-``test_analyzers_ignore_comments`` pins that inserting comments before names
-must not change what the analyzers report. ``test_replace_table_after_leading_comment``
-pins the trickier case: the *name* must be read without trivia while the
-*replacement span* (``TextStart``/``Width``, still offset-based) covers only
-the identifier, leaving the leading comment intact in the output.
-``test_fixture_tables_are_identifiers`` sweeps the real Sentinel-derived
-corpus and asserts no extracted table name contains a newline or ``//`` —
-the tell-tale signature of trivia leaking into a name.
+``replace_table`` is the tricky case: the name is read without trivia while
+the replacement span (``TextStart``/``Width``, still offset-based) covers only
+the identifier, so the leading comment survives in the output. A newline or
+``//`` inside an extracted table name is the signature of trivia leaking,
+which is what the sweep over the Sentinel-derived corpus looks for.
 """
 
 from pathlib import Path

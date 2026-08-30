@@ -3,14 +3,13 @@
 
 """Pipeline-source fidelity: datatable, externaldata, qualifiers, wildcards.
 
-Without a dedicated node per source shape, the source position becomes the
-lossiest slot in the IR: four genuinely different queries collapse onto
-indistinguishable nodes -- two ``datatable`` literals onto the same
-argument-less ``FuncCallSource``, two ``externaldata`` URI sets onto the
-same ``ExternalDataExpr`` holding only the first URI, ``database('d1').T``
-and ``database('d2').T`` onto the same bare ``TableRef``, and a wildcard
-``T*`` onto a ``TableRef`` no consumer could tell from a literal table
-called ``T*``. Every assertion below is on a real parse.
+Each source shape needs its own node. Without one, different queries
+collapse together: two ``datatable`` literals onto one argument-less
+``FuncCallSource``, two ``externaldata`` URI sets onto one
+``ExternalDataExpr`` holding the first URI, ``database('d1').T`` and
+``database('d2').T`` onto one bare ``TableRef``, and ``T*`` onto a
+``TableRef`` no consumer can tell from a table literally named ``T*``.
+Every assertion below is on a real parse.
 """
 
 from __future__ import annotations
@@ -53,9 +52,8 @@ def _row_values(source: DataTableSource) -> list[list[object]]:
 def test_datatable_source_records_columns_and_reshaped_rows(builder):
     """``datatable`` is an inline table literal; its values *are* the query.
 
-    Guards against a bare ``FuncCallSource(name="datatable", args=[])``
-    lowering, which would discard the schema and every row and collapse two
-    different literals onto the same IR node.
+    A bare ``FuncCallSource(name="datatable", args=[])`` lowering discards
+    the schema and every row, collapsing two different literals onto one node.
     """
     ir = builder.build('datatable(a:int, b:string)[1,"x",2,"y"] | take 1')
     source = ir.main_pipeline.source
@@ -77,11 +75,10 @@ def test_datatable_columns_seed_the_binder_scope(builder):
 def test_datatable_in_expression_position_is_modeled():
     """`in ((datatable(...)))` parses clean and must not fall to UnknownExpr.
 
-    Guards a coverage-audit blind spot: ``HANDLED_EXPR_KINDS`` claims the
-    kind "only ever occupies source position," so an audit built on that
-    claim alone misses this shape lowering to
-    ``UnknownExpr(ast_kind="DataTableExpression")`` and hashing the raw
-    text instead of the ``datatable``'s columns and rows.
+    ``HANDLED_EXPR_KINDS`` claims the kind "only ever occupies source
+    position", so a coverage audit built on that claim alone misses this
+    shape lowering to ``UnknownExpr(ast_kind="DataTableExpression")``, which
+    hashes the raw text in place of the columns and rows.
     """
     from kustology.ir import DataTableExpr, UnknownExpr, find_all
     q = 'T | where a in ((datatable(x:string)["v", "w"]))'
@@ -98,7 +95,7 @@ def test_datatable_in_expression_position_is_modeled():
 
 
 def test_externaldata_at_source_position_is_an_external_data_source(builder):
-    """``externaldata`` in source position is a table, not an expression."""
+    """``externaldata`` in source position builds a table source."""
     ir = builder.build(
         'externaldata(a:string)[h"https://x"] with (format="csv") | where a == "x"'
     )
@@ -113,25 +110,20 @@ def test_externaldata_at_source_position_is_an_external_data_source(builder):
 
 
 def test_externaldata_keeps_every_with_clause_property(builder):
-    """Guards against reading only `format` from the `with (...)` clause.
+    """Every property in the ``with (...)`` clause reaches ``properties``.
 
-    ``with (...)`` on ``externaldata`` is not decoration.
     ``ignoreFirstRecord=true`` skips the CSV header, so the feed yields one
-    fewer row and a header line is not matched as data. A builder that reads
-    only ``format`` out of that clause and drops every other property loses
-    that distinction: because a source node has no ``raw_text`` to fall
-    back on, the dropped text reaches nothing -- two feeds parsed
-    differently would build one node and share one ``semantic_hash``.
+    fewer row and a header line is not matched as data. A source node has no
+    ``raw_text`` fallback, so a builder that keeps only ``format`` drops that
+    text entirely and two differently parsed feeds share one
+    ``semantic_hash``.
 
-    Property *names* are kept verbatim, in the same ``dict[str, str]`` shape
-    ``RenderOp.properties`` already uses for the same job -- via the same
-    ``read_named_params`` reader, so the two positions cannot drift. Values
-    come back through ``LiteralValue``, which renders a KQL ``true`` as
-    ``"True"``; that is the shared reader's normalization rather than
-    anything specific to ``externaldata``
-    (``render … with (accumulate=true)`` records ``"True"`` too), and it is
-    asserted here rather than worked around so that changing it has to be a
-    deliberate change to both.
+    Names are kept verbatim, in the ``dict[str, str]`` shape
+    ``RenderOp.properties`` uses, through the same ``read_named_params``
+    reader, so the two positions cannot drift. Values come back through
+    ``LiteralValue``, which renders a KQL ``true`` as ``"True"``; that is the
+    shared reader's normalization, and ``render … with (accumulate=true)``
+    records ``"True"`` too.
     """
     ir = builder.build(
         'externaldata(a:string)["https://x"] '
@@ -140,9 +132,8 @@ def test_externaldata_keeps_every_with_clause_property(builder):
     source = ir.main_pipeline.source
     assert isinstance(source, ExternalDataSource)
     assert source.properties == {"format": "csv", "ignoreFirstRecord": "True"}
-    # `format` stays promoted: it is the one property the rest of the
-    # library reads, and it is matched case-insensitively where the dict
-    # keeps whatever casing the query wrote.
+    # ``format`` is promoted because the rest of the library reads it. The
+    # promotion matches case-insensitively; the dict keeps the query's casing.
     assert source.format == "csv"
 
 
@@ -172,10 +163,9 @@ def test_externaldata_source_keeps_every_uri(builder):
 def test_uris_hold_source_text_when_an_element_is_not_a_literal(builder):
     """Documented boundary: a ``uris`` entry need not be a URI.
 
-    A Sentinel rule that binds its feed URL to a ``let``, or builds it with
-    ``strcat``, hands the parser an element with no ``LiteralValue``. The
-    field records that element's source text rather than inventing a URI or
-    dropping it, so the query stays reconstructible from the IR.
+    A feed URL bound to a ``let``, or built with ``strcat``, has no
+    ``LiteralValue``. The field records the element's source text, so the
+    query stays reconstructible from the IR.
     """
     bound = builder.build(
         'let u = "https://x"; externaldata(a:string)[u] | take 1'
@@ -186,13 +176,12 @@ def test_uris_hold_source_text_when_an_element_is_not_a_literal(builder):
 
 
 def test_a_comment_before_a_non_literal_uri_does_not_reach_the_hash(builder):
-    """Guards the URI fallback against the same comment leak column-type
-    reads are exposed to.
+    """The URI fallback meets the same comment leak as column-type reads.
 
     ``el.ToString()`` is ``IncludeTrivia.All``, so an unguarded read of
-    ``externaldata(a:string)[// note<newline>u]`` would record the URI as
-    ``"// note\\nu"``. The branch is reachable on exactly the queries the
-    test above describes, which is why it is not a dead path.
+    ``externaldata(a:string)[// note<newline>u]`` records the URI as
+    ``"// note\\nu"``. The branch is live on the queries the test above
+    describes.
     """
     commented = builder.build(
         'let u = "https://x"; externaldata(a:string)[// note\nu] | take 1'
@@ -207,10 +196,9 @@ def test_a_comment_before_a_non_literal_uri_does_not_reach_the_hash(builder):
 def test_let_externaldata_rhs_is_a_pipeline(builder):
     """D12. ``externaldata`` is tabular in KQL, so the binding is tabular.
 
-    Without a source class to build a pipeline around, the binding would
-    land on ``rhs_expr`` instead, making ``rhs_pipeline is not None`` an
-    unreliable "is this binding tabular" test. ``ExternalDataSource`` is
-    that class.
+    ``ExternalDataSource`` is the source class the pipeline is built around.
+    Without it the binding lands on ``rhs_expr`` and ``rhs_pipeline is not
+    None`` stops being a reliable "is this binding tabular" test.
     """
     ir = builder.build(
         'let X = externaldata(a:string)["https://x","https://y"]; X | take 1'
@@ -228,9 +216,8 @@ def test_let_externaldata_rhs_is_a_pipeline(builder):
 def test_externaldata_columns_seed_the_binder_scope(builder):
     """The declared schema is the feed's schema; no table lookup applies.
 
-    A tabular ``let`` whose right-hand side is an ``externaldata`` therefore
-    registers real columns under its name, because the binding takes the
-    ``rhs_pipeline`` shape rather than ``rhs_expr``.
+    A ``let`` whose right-hand side is an ``externaldata`` takes the
+    ``rhs_pipeline`` shape, so it registers real columns under its name.
     """
     ir = builder.build(
         'let Feed = externaldata(id:string, n:long)["https://x"]; Feed | project id'
@@ -294,11 +281,9 @@ def test_qualified_wildcard_keeps_the_database(builder):
 
 
 def test_all_three_table_ref_fields_land_on_one_composite(builder):
-    """``cluster('c').database('d').T*`` is the only shape exercising all three.
-
-    It needs both halves working together: the left-spine walk for the two
-    qualifiers, and the name node's ``Kind`` for the flag.
-    """
+    """``cluster('c').database('d').T*`` is the only shape exercising all
+    three: the left-spine walk for the two qualifiers, and the name node's
+    ``Kind`` for the flag."""
     ir = builder.build("union cluster('c').database('d').T*")
     inner = ir.main_pipeline.operators[0].pipelines[0].source
     assert (inner.cluster, inner.database, inner.name, inner.is_wildcard) == (
@@ -307,15 +292,13 @@ def test_all_three_table_ref_fields_land_on_one_composite(builder):
 
 
 def test_a_wildcard_source_is_expanded_by_the_binder_not_by_the_walk():
-    """A wildcard names a *set* of tables, and matching them is not the
-    walk's job.
+    """A wildcard names a *set* of tables; matching them is Microsoft's job.
 
-    ``_source_entry`` still refuses to put any columns in scope for one --
-    picking a member of the set would be a guess, and the walk has no
-    pattern matcher. What answers instead is Microsoft: give the dict the
-    real tables and ``union T*`` expands against them and closes, so the
-    schema is right while the *provenance* of a column read through the
-    wildcard is honestly ``None`` -- it came from a set, not from a table.
+    ``_source_entry`` puts no columns in scope for a wildcard: the walk has
+    no pattern matcher, and picking one member of the set would be a guess.
+    Give the schema dict the real tables and ``union T*`` expands against
+    them, so the result schema is right while a column read through the
+    wildcard has ``None`` provenance, having come from a set.
     """
     ir = parse("union T* | where a > 1").to_ir(
         attach_schema={"T1": {"a": "long"}, "T2": {"a": "long"}},
@@ -327,11 +310,10 @@ def test_a_wildcard_source_is_expanded_by_the_binder_not_by_the_walk():
 def test_qualified_table_still_looks_up_on_the_bare_name(builder):
     """Documented boundary: schema keys are bare table names.
 
-    ``database('d').T`` resolves against ``schemas["T"]`` -- there is no
-    ``"d.T"`` key convention, and inventing one would silently stop
-    resolving every qualified query. What that buys is provenance and the
-    type on the node: the *schema* is Microsoft's to state and it leaves a
-    qualified source it does not know open, on either entry point.
+    ``database('d').T`` resolves against ``schemas["T"]``; there is no
+    ``"d.T"`` key convention. The column still gets its provenance and its
+    type, while Microsoft leaves the result schema ``None`` for a qualified
+    source it does not know, on either entry point.
     """
     ir = builder.build("database('d').T | project a")
     SchemaAttacher({"T": {"a": "long"}}).enrich(ir)
@@ -344,11 +326,10 @@ def test_qualified_table_still_looks_up_on_the_bare_name(builder):
 
 
 def test_unknown_source_records_the_real_source_text(builder):
-    """Guards ``raw_text`` against collapsing to the literal string
-    "unknown" on every node.
+    """``raw_text`` carries the source text, never the literal "unknown".
 
-    Every unmodeled source would then hash the same, which is the exact
-    failure mode ``UnknownExpr``/``UnknownOp`` avoid by carrying their text.
+    A constant would hash every unmodeled source alike, the failure mode
+    ``UnknownExpr`` and ``UnknownOp`` avoid by carrying their own text.
     """
     a = builder.build("let x = 1;")
     b = builder.build("let y = 2;")
@@ -378,11 +359,7 @@ def test_llm_view_caps_datatable_rows(builder):
 
 @pytest.mark.parametrize("n", [3, 20, 21])
 def test_llm_view_row_cap_boundary(builder, n):
-    """Exactly at the cap nothing is omitted; one over, one is.
-
-    An off-by-one here would either announce an omission that did not happen
-    or hide one that did.
-    """
+    """Exactly at the cap nothing is omitted; one over, one is."""
     source = to_llm_dict(builder.build(_big_datatable(n)))["main_pipeline"]["source"]
     assert len(source["rows"]) == min(n, 20)
     assert source.get("rows_omitted") == (n - 20 if n > 20 else None)
@@ -415,12 +392,11 @@ def test_model_dump_json_keeps_every_datatable_row(builder):
     ],
 )
 def test_column_type_reads_do_not_carry_comments(builder, commented, plain):
-    """``ToString()`` is ``IncludeTrivia.All`` -- it prepends the comment.
+    """``ToString()`` is ``IncludeTrivia.All``, so it prepends the comment.
 
-    These column dicts are load-bearing for ``semantic_hash``, so reading
-    them with ``ToString()`` would let a ``//`` comment between the colon
-    and the type name change the digest. ``node_text``
-    (``IncludeTrivia.Minimal``) reads the node's own source instead.
+    These column dicts feed ``semantic_hash``, so reading them that way lets
+    a ``//`` comment between the colon and the type name change the digest.
+    ``node_text`` (``IncludeTrivia.Minimal``) reads the node's own source.
     """
     assert builder.build(commented).semantic_hash == builder.build(plain).semantic_hash
 
@@ -428,12 +404,10 @@ def test_column_type_reads_do_not_carry_comments(builder, commented, plain):
 def test_read_row_schema_accepts_the_schema_and_its_owner():
     """The one reader takes either the ``RowSchema`` or the node holding it.
 
-    The two are easy to confuse -- the owning member is ``Schema`` on three
-    of the four call sites and ``Keys`` on ``parse-kv`` -- and the failure
-    mode of confusing them is an empty column list and no exception, which
-    is the silent dropped-schema collapse extracting this reader was meant
-    to end. Pinning both shapes is what keeps the contract from living only
-    in a docstring, where a wrong direction has nothing to catch it.
+    The owning member is ``Schema`` on three of the four call sites and
+    ``Keys`` on ``parse-kv``, and confusing the two gives an empty column
+    list with no exception. Both shapes are pinned so the contract does not
+    live only in a docstring.
     """
     from kustology import parse
     from kustology.ir._builder_helpers import read_row_schema
@@ -456,10 +430,9 @@ def test_read_row_schema_accepts_the_schema_and_its_owner():
 
 
 def test_func_call_name_reads_agree_across_positions():
-    """One reader, two positions. The expression path resolves through the
-    binder (safe: both bind states start from GlobalState.Default); the
-    source path stays syntactic. Pinned so the shared reader cannot
-    silently change either."""
+    """One reader, two positions: the expression path resolves through the
+    binder (safe, since both bind states start from ``GlobalState.Default``)
+    and the source path stays syntactic. Pinned so neither can drift."""
     ir = parse("materialized_view('MV') | where tostring(a) == 'x'").to_ir()
     (src,) = find_all(ir, FuncCallSource)
     assert src.name == "materialized_view"

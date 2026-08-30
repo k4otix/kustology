@@ -4,30 +4,25 @@
 """Nested pipelines are typed, so a JSON round-trip keeps the subtree.
 
 ``ToScalarExpr.pipeline`` and ``SubqueryExpr.pipeline`` are typed as
-:class:`~kustology.ir.Pipeline`, not ``Any`` — the escape hatch available for
-the ``expr`` ↔ ``query`` import cycle. ``Any`` would tell pydantic nothing
-about the field, so an in-memory IR built with a real ``Pipeline`` there
-would still look right and every ``find_all`` would still reach inside, but
-``QueryIR.model_validate_json(ir.model_dump_json())`` would validate against
-no type at all and reload the whole nested query as a **plain dict**.
+:class:`~kustology.ir.Pipeline`, not ``Any`` — the escape hatch available
+for the ``expr`` ↔ ``query`` import cycle. Under ``Any`` pydantic knows
+nothing about the field: an in-memory IR built with a real ``Pipeline``
+still looks right and ``find_all`` still reaches inside, while
+``QueryIR.model_validate_json(ir.model_dump_json())`` validates against no
+type and reloads the whole nested query as a **plain dict**.
 
-That failure shape has two consequences, and this suite guards both, because
-neither is visible from a dump alone:
+Neither consequence is visible from a dump alone, so this suite guards both.
+The reloaded IR does not equal the one it came from, breaking the round-trip
+contract ``tests/ir/test_ir_roundtrip.py`` asserts for every other shape.
+``walk`` yields ``BaseModel`` descendants only, so the inner query vanishes
+from ``walk`` and ``find_all`` after a round-trip: an analyzer over stored
+IR sees an empty ``toscalar(...)``, and since ``compute_semantic_hash``
+strips volatile fields by walking, every span inside the nested pipeline
+stays in the digest and rehashing stored IR does not reproduce its own hash.
 
-* The reloaded IR would not equal the one it came from, breaking the
-  round-trip contract ``tests/ir/test_ir_roundtrip.py`` asserts for every
-  other shape.
-* ``walk`` yields ``BaseModel`` descendants only, and a dict of primitives
-  has none — so the entire inner query would vanish from
-  ``walk``/``find_all`` after a round-trip even though the same query walks
-  fine before it. An analyzer run on stored IR would see a ``toscalar(...)``
-  with nothing in it, and because ``compute_semantic_hash`` strips volatile
-  fields by walking, every span inside the nested pipeline would stay in the
-  digest, so rehashing stored IR would not reproduce its own hash.
-
-The assertion that proves the subtree survived is the ``walk`` count, not
-just the equality: two dicts can compare equal while holding no models at
-all. Both are checked, in both bind states.
+The ``walk`` count is what proves the subtree survived, because two dicts
+can compare equal while holding no models. Both are checked, in both bind
+states.
 """
 
 import pytest
@@ -103,10 +98,9 @@ def test_the_reloaded_nested_pipeline_is_a_pipeline(query, schema):
 
 @pytest.mark.parametrize("schema", MODES, ids=MODE_IDS)
 def test_find_all_still_reaches_inside_after_a_round_trip(schema):
-    """The regression a consumer would hit: an analyzer over stored IR.
-
-    ``Suspicious`` and ``U`` are named only inside nested pipelines, and
-    ``max(a)`` is the only place ``a`` appears in the ``toscalar``."""
+    """What a consumer hits: an analyzer over stored IR. ``Suspicious`` and
+    ``U`` are named only inside nested pipelines, and ``max(a)`` is the only
+    place ``a`` appears in the ``toscalar``."""
     query = QUERIES[2]
     ir = _ir(query, schema)
     reloaded = QueryIR.model_validate_json(ir.model_dump_json())
@@ -125,14 +119,10 @@ def test_find_all_still_reaches_inside_after_a_round_trip(schema):
 def test_the_hash_of_a_reloaded_ir_matches(schema):
     """Rehashing stored IR must reproduce the digest it was stored with.
 
-    Guards ``compute_semantic_hash`` against the failure mode above: it
-    strips volatile fields by walking the tree, and ``walk`` cannot enter a
-    dict of primitives, so every span inside a round-tripped nested pipeline
-    would survive into the digest and the same query would hash two ways
-    depending on whether it had gone through JSON. ``QueryIR.semantic_hash``
-    is computed at build time, so a stale shipped value would hide this; the
-    field's own docstring tells consumers to call ``compute_semantic_hash``
-    again after mutating the IR, which is exactly the path this guards.
+    ``QueryIR.semantic_hash`` is computed at build time, so a stale shipped
+    value would hide the failure mode above. The field's own docstring tells
+    consumers to call ``compute_semantic_hash`` again after mutating the IR,
+    which is the path this guards.
     """
     from kustology.ir import compute_semantic_hash
 
@@ -147,10 +137,10 @@ def test_the_forward_reference_really_resolved(cls):
 
     ``Pipeline`` is a ``TYPE_CHECKING``-only name in ``expr.py``; the classes
     are rebuilt at the bottom of ``query.py``, which resolves the reference
-    from *that* module's namespace. If a pydantic change stopped reaching the
-    calling module, the model would fall back to an unresolved annotation and
-    every symptom above would return quietly — an in-memory IR would still
-    look right. This fails instead.
+    from *that* module's namespace. A pydantic change that stopped reaching
+    the calling module would leave the model on an unresolved annotation and
+    every symptom above would follow quietly, while an in-memory IR still
+    looked right. This fails instead.
     """
     assert cls.__pydantic_complete__
     assert cls.model_fields["pipeline"].annotation == Pipeline | None

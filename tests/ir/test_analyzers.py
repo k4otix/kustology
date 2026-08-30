@@ -3,9 +3,8 @@
 
 """Analyzer-protocol smoke tests.
 
-The protocol is intentionally minimal — these tests pin the wire shape
-of ``Finding`` and exercise the canonical compose-by-iteration pattern
-so it can't drift silently.
+The protocol is minimal, so these tests pin the wire shape of ``Finding`` and
+exercise the compose-by-iteration pattern.
 """
 
 from __future__ import annotations
@@ -51,17 +50,16 @@ def test_finding_rejects_unknown_fields():
 def test_analyzer_protocol_composes():
     """Exercise the documented compose pattern.
 
-    Each analyzer returns an ``Iterable[Finding]``; callers chain them with a
-    flat list comprehension. No registry, no base class — function composition
-    only.
+    Each analyzer returns an ``Iterable[Finding]`` and callers chain them with
+    a flat list comprehension. No registry and no base class.
     """
     ir = parse(
         "DeviceProcessEvents "
         "| where tolower(FileName) == 'cmd.exe' "  # normalize_expressions folds to =~
         "| where AccountName == 'svc'"
     ).to_ir()
-    # The IR is faithful by default — apply the opt-in normalize transform
-    # so the case-insensitive analyzer below has something to match on.
+    # The IR is faithful by default, so normalize to give the case-insensitive
+    # analyzer below something to match on.
     normalize_expressions(ir)
 
     def detect_case_insensitive_eq(qir) -> list[Finding]:

@@ -3,13 +3,11 @@
 
 """The unwritten-default strip is one table-driven pass over the dumped payload.
 
-``compute_semantic_hash`` drops an operator's modifier keys when every one is
+``compute_semantic_hash`` drops an operator's modifier keys while every one is
 still at its unwritten default, so declaring a modifier does not move the
 digest of a query that never writes one. ``tests/ir/test_hash_battery.py``
-covers that end to end. These tests pin the helper's own contract, which is
-subtle in three places the end-to-end tests cannot isolate: the gate is
-all-or-nothing, a dict missing the keys is left alone rather than crashing,
-and a list-valued default has to compare by equality.
+covers that end to end; these tests pin the helper's own contract, down to the
+parts an end-to-end test cannot isolate.
 """
 
 import pytest

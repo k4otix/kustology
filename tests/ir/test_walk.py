@@ -46,15 +46,14 @@ def test_walk_yields_root_first(simple_ir):
 
 
 def test_walk_descends_into_list_fields(simple_ir):
-    # Pipeline.operators is a list — every FilterOp inside must surface.
+    # Pipeline.operators is a list, so every FilterOp inside must surface.
     op_types = {type(n).__name__ for n in walk(simple_ir)}
     assert "FilterOp" in op_types
 
 
 def test_walk_descends_into_dict_values():
-    # Synthetic model with a dict[str, BaseModel] field to exercise dict
-    # descent (the IR doesn't currently use this shape but the walker
-    # must handle it).
+    # The IR carries no dict[str, BaseModel] field, and the walker must still
+    # descend one.
     class Leaf(BaseModel):
         name: str
 
@@ -100,7 +99,7 @@ def test_find_all_finds_nested(joined_ir):
 
 
 def test_find_all_returns_empty_for_absent_type(simple_ir):
-    # The query has no sort — find_all should yield nothing.
+    # The query has no sort, so find_all yields nothing.
     assert list(find_all(simple_ir, SortOp)) == []
     # And no JoinOp either.
     assert list(find_all(simple_ir, JoinOp)) == []
@@ -124,11 +123,9 @@ def test_walk_with_predicate_filters_yielded_nodes():
 def test_walk_descends_tuple_valued_fields():
     """``CaseExpr.branches`` is ``list[tuple[Expr, Expr]]``.
 
-    Guards tuple descent: a walker that descends list- and dict-valued
-    fields but not tuples leaves every expression inside a ``case(...)``
-    arm invisible to ``walk``/``find_all`` — including whole sub-pipelines,
-    were one nested there — reaching only the ``default`` arm, a plain
-    field.
+    A walker that descends list- and dict-valued fields but not tuples reaches
+    only the ``default`` arm, leaving every expression inside a ``case(...)``
+    arm invisible to ``walk``/``find_all``, whole sub-pipelines included.
     """
     from kustology.ir import CaseExpr
 
@@ -149,11 +146,8 @@ def test_walk_descends_tuple_valued_fields():
 
 
 def test_walk_descends_tuples_of_non_models_without_error():
-    """``ExternalDataExpr.columns`` is ``list[tuple[str, str]]``.
-
-    Tuple descent must skip plain values the same way list descent does,
-    rather than tripping over a tuple that holds no models.
-    """
+    """``ExternalDataExpr.columns`` is ``list[tuple[str, str]]``, so tuple
+    descent must skip plain values the way list descent does."""
     ir = IRBuilder().build(
         'DeviceProcessEvents | where FileName in '
         '((externaldata(n:string, v:string) [@"https://example/x.csv"]))'
@@ -165,14 +159,12 @@ def test_walk_descends_tuples_of_non_models_without_error():
 
 
 def test_walk_yields_a_shared_node_once():
-    """A node reachable by two paths must be yielded once, not twice.
+    """A node reachable by two paths is yielded once.
 
-    ``LetBinding.inner_time_exprs`` holds the *same* ``FuncCall`` objects
-    that already sit inside ``rhs_pipeline`` -- it is an index into the
-    subtree, not a copy of it. Without a visited set ``walk`` reached each
-    one twice, so ``find_all(ir, FuncCall)`` reported ``ago`` and ``now``
-    two times each and every caller counting occurrences (column lineage,
-    "how many time functions does this query call") double-counted them.
+    ``LetBinding.inner_time_exprs`` indexes the same ``FuncCall`` objects that
+    sit inside ``rhs_pipeline``. Without the visited set, ``find_all(ir,
+    FuncCall)`` returns ``ago`` and ``now`` twice each and every caller
+    counting occurrences double-counts them.
     """
     from kustology.ir import FuncCall
 
@@ -181,7 +173,7 @@ def test_walk_yields_a_shared_node_once():
     )
     assert [f.name for f in find_all(ir, FuncCall)] == ["ago", "now"]
 
-    # And the general invariant, not just this one query: no object twice.
+    # The general invariant, beyond this one query: no object twice.
     ids = [id(n) for n in walk(ir)]
     assert len(ids) == len(set(ids))
 

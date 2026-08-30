@@ -14,9 +14,8 @@ swallowed and the digits are concatenated:
   ``| where CpuPct > 1.5`` is silently ten times too strict.
 * ``decimal`` — ``decimal(1.5)`` yields ``15``.
 
-Durations are the loudest case, not the only one: every fractional numeric
-literal kind is affected the same way. The bridge pins InvariantCulture at
-import to close all of them.
+Every fractional numeric literal kind is affected the same way, and the
+bridge pins InvariantCulture at import to close all of them.
 
 These tests pass on an en-US machine even without the pin. Run them under
 ``LANG=de-DE`` to see them fail.
@@ -88,11 +87,10 @@ def test_integer_timespan_literal_unaffected(literal, expected_ticks):
 
 @pytest.mark.parametrize("literal,expected", REAL_CASES)
 def test_fractional_real_literal_is_culture_independent(literal, expected):
-    """`real` corrupts exactly like `timespan` — `1.5` reads back as `15.0`.
+    """`real` corrupts exactly like `timespan`: `1.5` reads back as `15.0`.
 
-    Pinned separately because the defect is easy to read as a duration-only
-    problem, which would let a consumer writing ``| where CpuPct > 1.5``
-    conclude they are unaffected.
+    Pinned separately because the defect reads as duration-only, which lets a
+    consumer writing ``| where CpuPct > 1.5`` conclude they are unaffected.
     """
     value = _single_literal(f"T | where CpuPct > {literal}", "RealLiteralExpression")
     assert value == expected
@@ -102,9 +100,8 @@ def test_fractional_real_literal_is_culture_independent(literal, expected):
 def test_fractional_decimal_literal_is_culture_independent(literal, expected):
     """`decimal` corrupts the same way.
 
-    Rendered through InvariantCulture so this asserts on the *parsed* value
-    rather than on how the ambient culture happens to format it — the two
-    failure modes are distinct and only the former is a data corruption.
+    Rendering through InvariantCulture asserts on the *parsed* value, not on
+    how the ambient culture formats it. Only the parse is a data corruption.
     """
     from System.Globalization import CultureInfo
 
@@ -129,34 +126,33 @@ def test_pin_survives_a_thread_created_after_import():
     assert result["ticks"] == 54_000_000_000
 
 
-# The locale CI matrix (LANG=de_DE.UTF-8 / fr_FR.UTF-8) is what proves the pin
-# is load-bearing. It is only meaningful if .NET actually has data for those
-# cultures — and .NET fails soft here in two different ways. In
-# globalization-invariant mode (DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1, or an
-# image with no ICU) constructing the culture raises; for a name it merely
-# lacks data for, it silently returns invariant separators. Either way every
-# fractional literal parses correctly, the locale job goes green, and it has
-# tested nothing.
+# The locale CI matrix (LANG=de_DE.UTF-8 / fr_FR.UTF-8) proves the pin is
+# load-bearing, and only if .NET has data for those cultures. .NET fails soft
+# two ways: in globalization-invariant mode
+# (DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1, or an image with no ICU)
+# constructing the culture raises, and for a name it merely lacks data for it
+# returns invariant separators. Either way every fractional literal parses
+# correctly and the locale job goes green having tested nothing.
 #
-# Across every culture .NET exposes, the outcome for a fractional literal is
-# decided entirely by the decimal separator: '.' parses correctly, ',' or '٫'
-# corrupts. Group separator never matters — a KQL literal contains none. So the
-# two matrix cultures are one representative per failure mode, and asserting
-# their decimal separator is exactly the check that they still exercise it.
+# Across every culture .NET exposes, the decimal separator alone decides the
+# outcome for a fractional literal: '.' parses correctly, ',' or '٫' corrupts.
+# Group separator never matters, since a KQL literal contains none. So each
+# matrix culture represents one failure mode, and asserting its decimal
+# separator checks that it still exercises that mode.
 CORRUPTING_MATRIX_CULTURES = [
     ("de-DE", ",", "."),      # digits concatenate: 1.5h -> 15:00:00
-    # NARROW NO-BREAK SPACE (U+202F), written as an escape on purpose:
-    # as a literal it is invisible and reads like a plain space.
+    # NARROW NO-BREAK SPACE (U+202F), written as an escape: as a literal it
+    # is invisible and reads like a plain space.
     ("fr-FR", ",", "\u202f"),  # parse fails outright: 1.5h -> 00:00:00
 ]
 
 
 @pytest.mark.parametrize("name,decimal_sep,group_sep", CORRUPTING_MATRIX_CULTURES)
 def test_ci_matrix_culture_still_corrupts_fractional_literals(name, decimal_sep, group_sep):
-    """Guard the guard: the locale matrix must not be able to pass vacuously.
+    """Guard the guard: the locale matrix must not pass vacuously.
 
-    Asserts on the culture constructed by name, not on the ambient one, so this
-    holds under the import-time pin and in every job — not only the locale ones.
+    The assertion is on the culture constructed by name, not the ambient one,
+    so it holds under the import-time pin and in every job.
     """
     from System.Globalization import CultureInfo, CultureNotFoundException
 

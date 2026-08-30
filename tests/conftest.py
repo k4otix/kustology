@@ -4,9 +4,8 @@
 """Shared test setup for kustology.
 
 Mirrors the bridge's DOTNET_ROOT cascade so `pytest` works on a fresh clone
-without requiring users to set DOTNET_ROOT manually. The bridge's own cascade
-runs at import time, so this module only sets DOTNET_ROOT when the user has not
-set one and the auto-detection would otherwise probe a non-default location.
+with no DOTNET_ROOT set by hand. An environment that already carries one is
+left alone.
 """
 
 from __future__ import annotations

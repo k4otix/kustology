@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-"""The to_ir() seam must reuse the already-parsed KustoCode — not re-parse.
+"""The to_ir() seam reuses the already-parsed KustoCode.
 
-Re-parsing would (a) double the cost of `parse().to_ir()` and (b) discard the
-binder's symbol resolution from the original `parse(..., schema=...)` call.
-This test wraps ``KustoCode.Parse`` and ``KustoCode.ParseAndAnalyze`` to count
-invocations and asserts the count stays at 1 across the full flow.
+Re-parsing would double the cost of `parse().to_ir()` and discard the binder's
+symbol resolution from the `parse(..., schema=...)` call. These tests wrap
+``KustoCode.Parse`` and ``KustoCode.ParseAndAnalyze`` to count invocations and
+assert the count stays at 1 across the full flow.
 """
 
 from __future__ import annotations
@@ -44,9 +44,8 @@ def parse_counter(monkeypatch):
     _Counter.count = 0
     monkeypatch.setattr(_services, "KustoCode", _Counter)
     monkeypatch.setattr(_builder, "KustoCode", _Counter)
-    # ``core`` binds ``KustoCode`` at module scope too, and ``core.to_ir``
-    # is the function every test in this file is actually about. Leaving it
-    # out points the instrument away from the code under test; see
+    # ``core`` binds ``KustoCode`` at module scope too, and ``core.to_ir`` is
+    # the function under test; see
     # ``test_the_counter_is_wired_to_every_module_to_ir_parses_through``.
     monkeypatch.setattr(_core, "KustoCode", _Counter)
     yield _Counter
@@ -80,12 +79,8 @@ def test_to_ir_does_not_reparse_semantic(parse_counter):
 
 
 def test_to_ir_default_attaches_when_schema_available():
-    """Default ``to_ir()`` on a bound query auto-runs ``SchemaAttacher``.
-
-    Without the default, a caller who wants table provenance writes
-    ``parse(query, schema=schema).to_ir(attach_schema=True)`` — the schema
-    appears twice in the call chain even though only one schema is in play.
-    """
+    """Default ``to_ir()`` on a bound query auto-runs ``SchemaAttacher``, so
+    table provenance costs no second mention of the one schema in play."""
     schema = {
         "DeviceProcessEvents": {
             "FileName": "string",
@@ -115,7 +110,7 @@ def test_to_ir_default_skips_attach_when_no_schema():
 
 
 def test_to_ir_explicit_attach_schema_true_still_works():
-    """``attach_schema=True`` keeps its original meaning (force-attach)."""
+    """``attach_schema=True`` force-attaches, matching the bound-query default."""
     schema = {"DeviceProcessEvents": {"FileName": "string"}}
     ir = parse(
         "DeviceProcessEvents | where FileName == 'cmd.exe'",
@@ -127,10 +122,9 @@ def test_to_ir_explicit_attach_schema_true_still_works():
 def test_a_dict_attach_reaches_microsofts_binder():
     """`attach_schema=dict` must bind through build_global_state + Analyze.
 
-    `scan declare` adds columns (`v`, `match_id`) that only Microsoft's
-    binder computes -- ScanOp is modeled as raw text and the hand rules
-    never answered for it -- so their presence proves the dict reached
-    Microsoft rather than the mirror."""
+    `scan declare` adds columns (`v`, `match_id`) that only Microsoft's binder
+    computes, since ScanOp is modeled as raw text and the hand rules do not
+    answer for it. Their presence proves the dict reached Microsoft."""
     q = "T | scan declare (v: long = 0) with (step s1: true => v = 1;)"
     ir = parse(q).to_ir(attach_schema={"T": {"a": "long"}})
     cols = list(ir.main_pipeline.result_schema.columns)
@@ -140,8 +134,8 @@ def test_a_dict_attach_reaches_microsofts_binder():
 
 def test_the_dict_path_equals_the_parse_time_binding():
     """`to_ir(attach_schema=d)` and `parse(q, schema=d).to_ir()` are the same
-    computation, shape included: `let A = T` lowers to rhs_pipeline in both.
-    An unbound build produces rhs_expr instead — the divergence this pins."""
+    computation, shape included: `let A = T` lowers to rhs_pipeline in both,
+    where an unbound build produces rhs_expr."""
     schema = {"T": {"a": "long"}}
     q = "let A = T; A | project a"
     via_dict = parse(q).to_ir(attach_schema=schema)
@@ -150,8 +144,8 @@ def test_the_dict_path_equals_the_parse_time_binding():
 
 
 def test_a_dict_override_on_a_bound_parse_rebinds():
-    """A dict on an already-bound parse re-binds against the dict, rather
-    than overlaying the parse-time answer — which would keep its types."""
+    """A dict on an already-bound parse re-binds against the dict; overlaying
+    the parse-time answer would keep the parse-time types."""
     ir = parse("T | project a", schema={"T": {"a": "long"}}).to_ir(
         attach_schema={"T": {"a": "real"}}
     )
@@ -182,12 +176,11 @@ def test_an_empty_dict_means_no_attach_and_no_rebind():
 
 
 def test_schemaless_to_ir_analyzes_without_a_second_parse(parse_counter):
-    """Schemaless ``to_ir()`` must analyze with ``Analyze``, not a re-parse.
+    """Schemaless ``to_ir()`` analyzes with ``Analyze`` instead of re-parsing.
 
-    ``KustoCode.Analyze(globals)`` binds the tree already in hand and returns
-    a new bound ``KustoCode``; ``ParseAndAnalyze`` would throw the tree away
-    and lex the text again. The counter cannot tell the two apart from the
-    IR, which is exactly why it is asserted here.
+    ``KustoCode.Analyze(globals)`` binds the tree already in hand and returns a
+    new bound ``KustoCode``; ``ParseAndAnalyze`` discards the tree and lexes the
+    text again. The IR is identical either way, so the counter is the assertion.
     """
     query = parse("DeviceProcessEvents | where FileName == 'cmd.exe'")
     assert parse_counter.count == 1
@@ -202,12 +195,11 @@ def test_schemaless_to_ir_analyzes_without_a_second_parse(parse_counter):
 
 
 def test_result_schema_survives_an_opted_out_attach_on_a_bound_parse():
-    """``attach_schema=False`` skips provenance, not Microsoft's shape.
+    """``attach_schema=False`` skips provenance and keeps Microsoft's shape.
 
-    ``result_schema`` comes from the binder, which already knows it;
-    ``SchemaAttacher`` adds only the ``ColumnRef.table`` provenance pass. A
-    caller who wants the output columns and not the provenance does not pay
-    for both.
+    ``result_schema`` comes from the binder; ``SchemaAttacher`` adds only the
+    ``ColumnRef.table`` provenance pass, so the output columns cost nothing
+    extra.
     """
     schema = {"DeviceProcessEvents": {"FileName": "string", "DeviceName": "string"}}
     ir = parse(
@@ -221,19 +213,18 @@ def test_result_schema_survives_an_opted_out_attach_on_a_bound_parse():
 def test_a_schemaless_parse_still_has_no_result_schema():
     """Default-globals analysis must not fabricate an output schema.
 
-    Default globals know no tables, so the symbol is *open* and Microsoft
-    declines. The columns an open symbol does list are the ones the query
-    named, typed ``unknown`` — publishing those as the result schema would
-    be a guess wearing the binder's authority.
+    Default globals know no tables, so the table symbol is open. An open
+    symbol lists only the columns the query named, typed ``unknown``, and
+    publishing those as the result schema would be a guess.
     """
     ir = parse("DeviceProcessEvents | project FileName").to_ir()
     assert ir.main_pipeline.result_schema is None
 
 
 def test_a_partial_dict_keeps_the_receivers_diagnostic_leniency():
-    """The dict path binds like parse(q, schema=...) for schemas, types and
-    shape -- but diagnostics follow the receiver: an unbound receiver stays
-    lenient about unknown names, a bound receiver keeps them."""
+    """The dict path binds like parse(q, schema=...) for schemas, types, and
+    shape. Diagnostics follow the receiver: an unbound receiver stays lenient
+    about unknown names, a bound receiver keeps them."""
     q = "Unknown | where x > 1"
     d = {"T": {"a": "long"}}
     lenient = parse(q).to_ir(attach_schema=d)
@@ -245,13 +236,11 @@ def test_a_partial_dict_keeps_the_receivers_diagnostic_leniency():
 def test_the_counter_is_wired_to_every_module_to_ir_parses_through(parse_counter):
     """The fixture must patch ``core``, or the tests above guard nothing.
 
-    ``core.to_ir`` is where the reuse decision lives, and ``core`` binds
-    ``KustoCode`` at module scope (``from .bridge import GlobalState,
-    KustoCode``). Patching ``services`` and ``ir.builder`` leaves that
-    binding pointing at the real class, so a re-parse introduced *there* --
-    the one place a re-parse would actually be introduced -- would not move
-    the counter and every assertion in this file would stay green through
-    it. The invariant is real; without this the instrument is not.
+    ``core.to_ir`` holds the reuse decision, and ``core`` binds ``KustoCode``
+    at module scope (``from .bridge import GlobalState, KustoCode``). Patching
+    only ``services`` and ``ir.builder`` leaves that binding on the real class,
+    so a re-parse added there would not move the counter and every assertion in
+    this file would stay green through it.
     """
     import kustology.bridge
 

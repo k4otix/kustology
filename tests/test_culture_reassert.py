@@ -3,20 +3,18 @@
 
 """Entry points restore invariant culture when a host has assigned over it.
 
-``tests/test_culture.py`` covers the import-time pin. These tests cover what
-happens after it: a host, or any other .NET-interop library sharing the
-process, assigns ``Thread.CurrentThread.CurrentCulture`` and every
-``LiteralValue`` read from that point on is parsed under the new culture.
-``bridge.ensure_invariant_culture`` repairs the thread, and every kustology
-entry point calls it.
+``tests/test_culture.py`` covers the import-time pin. Here, a host or another
+.NET-interop library in the same process assigns
+``Thread.CurrentThread.CurrentCulture``, and every ``LiteralValue`` read after
+that parses under the new culture. ``bridge.ensure_invariant_culture`` repairs
+the thread, and every kustology entry point calls it.
 
 Culture is process-global, so a test that sets it and dies leaves every later
-test running under a comma-decimal locale. The ``hostile_culture`` fixture
-restores invariant culture in teardown unconditionally.
+test on a comma-decimal locale. The ``hostile_culture`` fixture restores
+invariant culture in teardown unconditionally.
 
-Each test states the culture it is asserting against, because a machine
-already running under ``de-DE`` would pass a test that merely forgot to
-switch.
+Each test names the culture it switches to, since a machine already running
+``de-DE`` would pass a test that forgot to switch.
 """
 
 import pytest
@@ -32,10 +30,9 @@ TICKS_PER_HOUR = 36_000_000_000
 def hostile_culture():
     """Assign a comma-decimal culture over the pin, and undo it afterwards.
 
-    Teardown assigns ``InvariantCulture`` directly rather than calling
-    ``ensure_invariant_culture``. A fixture that cleans up through the code
-    under test leaks a comma-decimal culture into every later test the moment
-    that code regresses, turning one failure into a cascade.
+    Teardown assigns ``InvariantCulture`` directly. Cleaning up through
+    ``ensure_invariant_culture`` would leak the hostile culture into every
+    later test the moment that code regresses.
     """
     from System.Globalization import CultureInfo
     from System.Threading import Thread
@@ -127,11 +124,8 @@ def test_format_query_restores_culture(hostile_culture, locale):
 
 
 def test_the_hostile_culture_fixture_really_corrupts_literals(hostile_culture):
-    """Prove the fixture bites, so the tests above are not passing vacuously.
-
-    Without this, every test in this file would still pass if
-    ``hostile_culture`` silently failed to change anything.
-    """
+    """Prove the fixture bites. Every test above would pass anyway if
+    ``hostile_culture`` silently changed nothing."""
     hostile_culture("de-DE")
 
     from Kusto.Language import KustoCode
@@ -156,10 +150,9 @@ def test_ensure_invariant_culture_is_idempotent():
 
 
 def test_a_culture_that_only_equals_invariant_is_replaced(hostile_culture):
-    """A clone of invariant carrying a comma separator parses differently.
+    """A clone of invariant with a comma separator parses differently.
 
-    It compares equal to ``InvariantCulture`` by name, so a name comparison
-    would accept it. The guard compares by reference.
+    Its name matches ``InvariantCulture``, so the guard compares by reference.
     """
     from System.Globalization import CultureInfo
     from System.Threading import Thread

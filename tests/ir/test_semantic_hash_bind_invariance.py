@@ -3,18 +3,15 @@
 
 """``semantic_hash`` must not depend on whether a schema was supplied.
 
-``QueryIR.semantic_hash`` computes and memoizes on first read, which can
-happen before or after ``SchemaAttacher`` runs depending on when a caller
-first reads it — so bind-invariance cannot rest on ordering. It rests on
-``compute_semantic_hash`` running ``_clear_volatile`` first, which strips
-every field the binder populates. Every field the binder populates must
-therefore be volatile, or the same query text hashes two ways depending on
-whether the caller happened to pass a schema.
+``QueryIR.semantic_hash`` memoizes on first read, which can land before or
+after ``SchemaAttacher`` runs, so bind-invariance cannot rest on ordering. It
+rests on ``compute_semantic_hash`` calling ``_clear_volatile`` first: every
+field the binder populates has to be volatile, or one query text hashes two
+ways.
 
-The one accepted exception is the ``let``-aliases-a-table shape
-divergence, pinned in ``test_let_bindings.py`` — that is a difference in
-which node the builder emits, not in a field's value, and no amount of
-field-stripping can hide it.
+The accepted exception is the ``let``-aliases-a-table divergence pinned in
+``test_let_bindings.py``. That changes which node the builder emits, so
+field-stripping cannot reach it.
 """
 
 import pytest
@@ -56,9 +53,8 @@ SCHEMA = {
     ],
 )
 def test_recomputed_hash_is_the_same_bound_and_unbound(query):
-    """Guards the consumer-visible failure: following ``semantic_hash``'s own
-    advice to refresh the hash must not make it depend on whether a schema
-    was passed."""
+    """Refreshing the hash, as ``semantic_hash`` advises, must not make it
+    depend on whether a schema was passed."""
     bound = parse(query, schema=SCHEMA).to_ir()
     unbound = parse(query).to_ir()
 
@@ -66,11 +62,11 @@ def test_recomputed_hash_is_the_same_bound_and_unbound(query):
 
 
 def test_join_side_is_recorded_separately_from_resolved_table():
-    """``table`` alone cannot carry the join side: it never holds the
-    ``$left`` / ``$right`` syntax at all (an unresolved side is honestly
-    ``None`` there), and a resolved side overwrites it with the concrete
-    table, so either way the side itself is gone from ``table`` on a bound
-    parse. It needs its own field."""
+    """``table`` cannot carry the join side, so the side gets its own field.
+
+    ``table`` never holds the ``$left`` / ``$right`` syntax: unresolved it is
+    ``None``, and resolving overwrites it with the concrete table.
+    """
     query = "T | join U on $left.a == $right.b"
 
     unbound = {c.name: c for c in find_all(parse(query).to_ir(), ColumnRef)}
@@ -88,11 +84,10 @@ def test_join_side_is_recorded_separately_from_resolved_table():
 
 
 def test_join_side_keeps_semantically_different_join_keys_apart():
-    """Regression guard for the cost of making ``table`` volatile.
+    """``table`` is volatile, so the side is what keeps these two apart.
 
-    ``$left.a == $left.b`` compares two columns of the left table to each
-    other; ``$left.a == $right.b`` is an actual join key. Nothing else in
-    the IR distinguishes them, so if the side is not hashed they collide.
+    ``$left.a == $left.b`` compares two columns of the left table; ``$left.a
+    == $right.b`` is a join key. Nothing else in the IR distinguishes them.
     """
     same_side = parse("T | join U on $left.a == $left.b").to_ir()
     across = parse("T | join U on $left.a == $right.b").to_ir()
@@ -101,16 +96,13 @@ def test_join_side_keeps_semantically_different_join_keys_apart():
 
 
 def test_a_column_named_table_is_not_erased_from_the_hash():
-    """Volatile fields are stripped by *model field*, not by key name.
+    """Volatile fields are stripped by model field, so a key name is safe.
 
-    Guards against stripping by key name: a strip that runs over the dumped
-    JSON and deletes every key called ``table`` / ``span`` / ``result_schema``
-    at any depth catches more than the volatile fields. ``AssertSchemaOp``
-    carries its declaration as ``dict[str, str]``, so a column a query
-    literally names ``table`` is a key at exactly that depth -- a
-    key-name-based strip erases it, and the asserted schema
-    ``(a:long, table:long)`` would hash the same as ``(a:long)``, a
-    different assertion about the data.
+    ``AssertSchemaOp`` carries its declaration as ``dict[str, str]``, so a
+    column a query names ``table`` is a plain key in the dumped JSON. A strip
+    that deleted every ``table`` / ``span`` / ``result_schema`` key by name
+    would hash ``(a:long, table:long)`` the same as ``(a:long)``, two
+    different assertions about the data.
     """
     with_extra = parse("T | assert-schema (a:long, table:long)").to_ir()
     without = parse("T | assert-schema (a:long)").to_ir()

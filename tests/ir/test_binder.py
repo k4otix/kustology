@@ -3,20 +3,16 @@
 
 """Test the provenance and honesty contracts of ``SchemaAttacher``.
 
-Two contracts are under test and they are deliberately separate.
+Provenance is this walk's own: every ``ColumnRef`` gets the table it came
+from, across ``project``, ``summarize``, joins, unions, ``search``, and
+``let`` threading. Nothing else in the library supplies it, and most of this
+file covers it.
 
-**Provenance** is this walk's own: every ``ColumnRef`` gets the table it came
-from, across ``project`` / ``summarize`` / joins / unions / ``search`` /
-``let`` threading, and nothing else in the library can supply it. Most of the
-file is that.
-
-**Honesty** is the other half: ``Pipeline.result_schema`` is Microsoft's
-``ResultType`` or it is ``None`` — there are no hand-rolled per-operator
-schema rules. The *schemas* are pinned in ``tests/ir/test_binder_oracle.py``
-against the binder rather than against a hand-written expectation. What is
-pinned here is the shape of the contract — where an answer appears, where
-``None`` appears, and that ``None`` and an empty ``TabularSchema`` stay
-distinguishable.
+Honesty is the other contract: ``Pipeline.result_schema`` is Microsoft's
+``ResultType`` or ``None``, with no hand-rolled per-operator schema rules.
+``tests/ir/test_binder_oracle.py`` pins the schemas themselves against the
+binder; this file pins where an answer appears, where ``None`` appears, and
+that ``None`` and an empty ``TabularSchema`` stay distinguishable.
 """
 
 import pytest
@@ -58,9 +54,8 @@ def attacher(schema):
 
 
 def test_an_open_symbol_gets_no_invented_schema():
-    """Partial schemas are the norm; where Microsoft declines to type an
-    operator (open symbol -- the table is not in the dict), the IR says
-    result_schema=None rather than a hand-computed guess."""
+    """Partial schemas are the norm. Where the table is not in the dict,
+    Microsoft leaves the symbol open and ``result_schema`` is ``None``."""
     ir = parse("Unknown | project a, b").to_ir(attach_schema={"T": {"a": "long"}})
     (op,) = ir.main_pipeline.operators
     assert op.result_schema is None
@@ -68,9 +63,8 @@ def test_an_open_symbol_gets_no_invented_schema():
 
 
 def test_provenance_still_fills_under_an_open_symbol():
-    """Honesty must not cost provenance: a column read from a table the
-    dict does describe keeps its table even when a later operator is
-    open."""
+    """Honesty must not cost provenance: a column read from a table the dict
+    describes keeps its table even when a later operator is open."""
     q = "T | where a > 1 | lookup Unknown on a | project a"
     ir = parse(q).to_ir(attach_schema={"T": {"a": "long"}})
     from kustology.ir import FilterOp
@@ -82,11 +76,8 @@ def test_provenance_still_fills_under_an_open_symbol():
 
 
 def test_a_datatable_root_closes_with_no_schema_dict_at_all():
-    """Closure does not need a schema: a ``datatable`` declares its own.
-
-    ``to_ir()`` with no ``attach_schema`` still lands a real schema here,
-    because the symbol was never open -- there is nothing for a dict to add.
-    """
+    """A ``datatable`` declares its own schema, so ``to_ir()`` with no
+    ``attach_schema`` still lands a real one: the symbol is never open."""
     ir = parse("datatable(a:long)[1] | project a").to_ir()
     assert ir.main_pipeline.result_schema.columns == {"a": "long"}
 
@@ -95,10 +86,9 @@ def test_a_symbol_can_close_mid_pipeline_over_an_undescribed_table():
     """``IsOpen`` is per node, not per query.
 
     ``T | count`` returns ``Count:long`` whatever ``T`` is, so the binder
-    closes the symbol there even though the source is unknown, and the
-    answer survives with no schema dict at all. ``getschema`` answers the
-    same way: its four columns *describe* the input's shape rather than
-    passing it through, so they can be named without knowing it.
+    closes the symbol there with no schema dict at all. ``getschema``
+    answers the same way: its four columns describe the input's shape, so
+    they can be named without knowing it.
     """
     assert parse("T | count").to_ir().main_pipeline.result_schema.columns == {
         "Count": "long",
@@ -112,13 +102,12 @@ def test_a_symbol_can_close_mid_pipeline_over_an_undescribed_table():
 
 
 def test_really_emitting_nothing_and_not_knowing_are_different_answers():
-    """``columns={}`` is a claim: "this emits no columns". ``None`` is not.
+    """``columns={}`` claims "this emits no columns"; ``None`` claims nothing.
 
-    ``project-away *`` genuinely produces an empty schema, and only
-    Microsoft says so -- the bound symbol closes empty and the stamp carries
-    it. Without a schema the same query is open, and stamping ``{}`` there
-    would make a query over an undescribed table indistinguishable from one
-    that really returns nothing.
+    ``project-away *`` produces a genuinely empty schema: the bound symbol
+    closes empty and the stamp carries it. Without a schema the same query
+    is open, and stamping ``{}`` there would make a query over an
+    undescribed table indistinguishable from one that returns nothing.
     """
     closed = _dict_path("T | project-away *")
     assert closed.main_pipeline.result_schema is not None
@@ -127,8 +116,7 @@ def test_really_emitting_nothing_and_not_knowing_are_different_answers():
 
 
 def test_pipeline_result_schema_populated_after_enrich(schema):
-    """The ``TabularSchema`` plumbing itself: an answer arrives, and it is
-    Microsoft's."""
+    """The ``TabularSchema`` plumbing itself: Microsoft's answer arrives."""
     from kustology.ir import TabularSchema
 
     ir = parse("DeviceProcessEvents | project FileName, AccountName").to_ir(
@@ -148,14 +136,13 @@ def test_pipeline_result_schema_populated_after_enrich(schema):
     (["a"], "string"),                # untyped columns, treated as string
 ])
 def test_every_documented_schema_value_shape_reaches_the_walk(value, expect_type):
-    """``parse(schema=…)`` documents three value shapes and so does
-    ``build_global_state``, so ``to_ir(attach_schema=…)`` has to take all
-    three -- it is the same schema argument on a different entry point.
+    """``to_ir(attach_schema=…)`` takes all three value shapes that
+    ``parse(schema=…)`` and ``build_global_state`` document: it is the same
+    schema argument on a different entry point.
 
     ``SchemaAttacher`` reads ``schemas[table][column]`` and takes only the
     first shape, so the other two are normalized before they reach it. Both
-    halves are asserted: Microsoft's schema (the binder saw the columns) and
-    the walk's provenance (the attacher did too).
+    halves are asserted: Microsoft's schema and the walk's provenance.
     """
     ir = parse("T | project a | where a > 1").to_ir(attach_schema={"T": value})
     assert ir.main_pipeline.result_schema.columns == {"a": expect_type}
@@ -163,14 +150,13 @@ def test_every_documented_schema_value_shape_reaches_the_walk(value, expect_type
 
 
 def test_a_schema_string_does_not_crash_the_walks_type_fallback():
-    """A string-valued schema entry must ride the public path unharmed.
+    """A string-valued schema entry rides the public path unharmed.
 
-    ``core.to_ir`` normalizes every schema shape (dict/string/list) through
-    ``build_global_state`` before ``SchemaAttacher`` ever runs, so a raw
-    string never reaches ``_fill``'s type fallback -- whose
+    ``core.to_ir`` normalizes every schema shape through
+    ``build_global_state`` before ``SchemaAttacher`` runs, so a raw string
+    never reaches ``_fill``'s type fallback, whose
     ``schemas[table].get(name)`` read raises ``AttributeError`` against a
-    string value. This pins the public path rather than exercising the
-    fallback directly.
+    string value.
     """
     import warnings
 
@@ -185,11 +171,8 @@ def test_a_schema_string_does_not_crash_the_search_seeding():
     """The second crash site for a string-valued schema entry.
 
     ``search`` seeds ``ScopeEntry(columns=dict(...))`` from the schema
-    value, and ``dict("(a:long)")`` is a ``ValueError``. ``core.to_ir``
-    normalizes the schema shape before ``SchemaAttacher`` ever runs, so the
-    raw string never reaches the seeding code on the public path either --
-    a different crash site from the one above, pinned the same way, against
-    a perfectly ordinary type.
+    value, and ``dict("(a:long)")`` raises ``ValueError``. Normalization in
+    ``core.to_ir`` keeps the raw string away from this site too.
     """
     ir = parse("search in (T) 'x'").to_ir(attach_schema={"T": "(a:long)"})
     assert ir.main_pipeline.result_schema.columns == {
@@ -224,10 +207,9 @@ def test_make_series_step_only_populates_step(builder, attacher):
 
 # --- traversal completeness: every Expr child, every nested Pipeline --------
 #
-# These four shapes all failed the same way before the walker was derived
-# from model_fields: a ColumnRef the binder never visited keeps table=None,
-# so the *same* column resolves inconsistently within one query. Any lineage
-# analyzer reading ColumnRef.table gets a silently wrong answer.
+# The walker is derived from model_fields, so no subtree is skipped. A
+# ColumnRef the walk misses keeps table=None, and the same column then
+# resolves two ways in one query.
 
 
 def _refs(ir):
@@ -243,9 +225,8 @@ def _refs(ir):
 def test_columns_resolve_inside_toscalar(schema):
     """A pipeline nested in an expression resolves against its own source.
 
-    ``_fill`` recursed a hardcoded attribute tuple that had no ``pipeline``
-    entry, so ToScalarExpr / MaterializeExpr / SubqueryExpr subtrees were
-    never entered.
+    ``_fill`` recurses through every model field, so ToScalarExpr,
+    MaterializeExpr, and SubqueryExpr subtrees are entered.
     """
     ir = parse(
         "DeviceProcessEvents "
@@ -257,7 +238,7 @@ def test_columns_resolve_inside_toscalar(schema):
 
 
 def test_columns_resolve_inside_case_arms(schema):
-    """``CaseExpr.branches`` is tuple-nested and ``default`` was unlisted."""
+    """``CaseExpr.branches`` is tuple-nested and ``default`` is its own field."""
     ir = parse(
         "DeviceProcessEvents "
         "| extend Risk = iif(ProcessId > 100, AccountName, DeviceName)"
@@ -269,10 +250,11 @@ def test_columns_resolve_inside_case_arms(schema):
 
 
 def test_columns_resolve_under_operators_without_a_scope_rule(schema):
-    """`sort` and `top` carry expressions but reshape nothing.
+    """``sort`` and ``top`` carry expressions but reshape nothing.
 
-    ``_walk_operator`` was an isinstance chain over 17 of 53 operator types
-    with no fallback -- it fell off the end, so the other 36 filled nothing.
+    ``_walk_operator_provenance`` fills every operator's expressions whatever
+    its type; only the four source-bringing families get a scope branch of
+    their own.
     """
     ir = parse(
         "DeviceProcessEvents "
@@ -289,11 +271,10 @@ def test_columns_resolve_under_operators_without_a_scope_rule(schema):
 def test_columns_resolve_through_a_nested_pipeline_source(schema):
     """``Pipeline.source`` may itself be a ``Pipeline``.
 
-    ``let M = materialize(T | where X)`` is the shape that produces one --
-    ``materialize(...)`` at the head of a bare statement is not accepted by
-    Microsoft's parser at all. ``_source_entry`` returned an empty anonymous
-    scope for the nested case and never walked the inner pipeline, so the
-    outer pipeline started from nothing.
+    ``let M = materialize(T | where X)`` is the shape that produces one;
+    Microsoft's parser does not accept ``materialize(...)`` at the head of a
+    bare statement. ``_source_entry`` walks the inner pipeline so the outer
+    one starts from its scope.
     """
     from kustology.ir.query import Pipeline
 
@@ -314,9 +295,8 @@ def test_columns_resolve_through_a_nested_pipeline_source(schema):
 
 
 def test_let_pipeline_is_enriched(schema):
-    """``enrich`` walked ``main_pipeline`` only, so a tabular binding's
-    ``result_schema`` stayed None and the ColumnRefs inside it kept
-    ``table=None`` even on a fully bound parse."""
+    """``enrich`` walks every tabular binding, so a binding's
+    ``result_schema`` and the ColumnRefs inside it are both filled."""
     ir = parse(
         "let Base = DeviceProcessEvents | where ProcessId > 1; Base | count"
     ).to_ir(attach_schema=schema)
@@ -350,14 +330,13 @@ def test_let_threading_follows_a_chain(schema):
 
 
 def test_let_threading_is_gated_on_microsoft_closing_the_binding():
-    """A binding only threads once something says what it emits.
+    """A binding threads only once something says what it emits.
 
     ``_let_schemas`` is filled from each binding pipeline's own
     ``result_schema``, which is Microsoft's answer or nothing. On the dict
     path the binding closes and the alias carries its columns. On a raw
-    unbound IR handed to an attacher, the binding is open, so the alias
-    registers nothing and a column read through it is honestly unresolved --
-    rather than resolved from a shape nobody vouched for.
+    unbound IR the binding is open, the alias registers nothing, and a
+    column read through it stays unresolved.
     """
     schemas = {"T": {"a": "long", "s": "string"}}
     query = "let Base = T | where a > 1; Base | project s"
@@ -375,12 +354,11 @@ def test_let_threading_is_gated_on_microsoft_closing_the_binding():
 
 
 def test_let_threading_does_not_resolve_a_forward_reference(schema):
-    """A binding naming one declared later is not a LetRef at all, so there
-    is nothing to thread -- it stays an opaque table.
+    """A binding naming one declared later is not a ``LetRef``, so it stays
+    an opaque table with nothing to thread.
 
-    Its ``result_schema`` is ``None``: nothing determined what the binding
-    emits. An empty ``TabularSchema`` would state that it emits no columns,
-    which is a different and false claim.
+    Its ``result_schema`` is ``None``: nothing determined what it emits. An
+    empty ``TabularSchema`` would claim it emits no columns, which is false.
     """
     ir = parse(
         "let Early = Later | take 1; "
@@ -398,22 +376,20 @@ def test_scalar_binding_is_untouched_by_threading(builder, attacher):
 
 
 def test_let_names_do_not_leak_between_enrich_calls(schema):
-    """The let scope is per-call state; a reused attacher must not carry
-    one query's binding names into the next.
+    """The let scope is per-call state: a reused attacher must not carry one
+    query's binding names into the next.
 
-    Asserted on ``_let_schemas`` itself rather than on a downstream column,
-    because a downstream column cannot see the leak: a second query's
-    ``Base`` is a plain ``TableRef``, and ``_source_entry`` only consults
-    ``_let_schemas`` for a ``LetRef``, which the builder emits only for a
-    name an earlier ``let`` *in that query* bound. Reading the registry is
-    what makes this falsifiable -- drop the reset at the top of ``enrich``
-    and the second call's registry holds both names.
+    The assertion reads ``_let_schemas`` directly, because a downstream
+    column cannot see the leak. A second query's ``Base`` is a plain
+    ``TableRef``, and ``_source_entry`` consults ``_let_schemas`` only for a
+    ``LetRef``, which the builder emits only for a name that query's own
+    ``let`` bound. Reading the registry makes the test falsifiable: drop the
+    reset at the top of ``enrich`` and the second call's registry holds both
+    names.
 
-    The IRs are bound and enriched by hand (``attach_schema=False``, then
-    one shared attacher) because that is the only way to reuse an attacher
-    across two queries -- and because a binding registers a name only once
-    Microsoft closes it, so an unbound pair would leave the registry empty
-    either way and prove nothing.
+    Binding and enriching by hand is the only way to reuse one attacher
+    across two queries, and a binding registers a name only once Microsoft
+    closes it, so an unbound pair would leave the registry empty.
     """
     attacher = SchemaAttacher(schema)
 
@@ -445,12 +421,10 @@ def test_let_names_do_not_leak_between_enrich_calls(schema):
 
 def test_builder_schemas_snapshot_reaches_body_pipelines(schema):
     """Precondition, not behavior: ``find_all(ir, Pipeline)`` is a generic
-    walk, so it already reaches a let-function's ``body_pipeline`` -- the
-    ``_builder_schemas`` snapshot ``enrich`` takes at entry covers it before
-    ``_walk_function_body`` exists to consume it. Pinned directly rather
-    than inferred from downstream provenance, so a regression here reads as
-    this assertion failing, not as a mystifying resolution gap two layers
-    away."""
+    walk, so the ``_builder_schemas`` snapshot ``enrich`` takes at entry
+    already covers a let-function's ``body_pipeline``. Pinning it directly
+    makes a regression here read as this assertion failing instead of as a
+    resolution gap two layers away."""
     ir = parse(
         "let f = (n:long) { DeviceProcessEvents | where ProcessId > n }; "
         "DeviceProcessEvents | count",
@@ -462,10 +436,9 @@ def test_builder_schemas_snapshot_reaches_body_pipelines(schema):
 
 
 def test_a_function_bodys_columns_acquire_table_from_a_real_table_it_reads(schema):
-    """The body is walked as its own scope: a column the body reads off a
-    real table gets that table's provenance, the same as any other
-    pipeline. The scalar parameter ``n`` names no table's column, so it
-    stays honestly unresolved rather than borrowing one."""
+    """The body is walked as its own scope, so a column it reads off a real
+    table gets that table's provenance. The scalar parameter ``n`` names no
+    table's column and stays unresolved."""
     ir = parse(
         "let f = (n:long) { "
         "DeviceProcessEvents | where ProcessId > n | project AccountName "
@@ -480,30 +453,26 @@ def test_a_function_bodys_columns_acquire_table_from_a_real_table_it_reads(schem
 
 
 def test_a_tabular_parameters_columns_answer_no_table_rather_than_the_callers(schema):
-    """A tabular parameter's ``TableRef`` masks to an empty scope: nothing
+    """A tabular parameter's ``TableRef`` masks to an empty scope. Nothing
     says what columns it carries, so a column read off it stays
-    ``table=None`` rather than resolving through the parameter's bare name
-    as though it were a real, schema-described table.
+    ``table=None`` instead of resolving through the parameter's bare name.
 
-    Probed and pinned rather than assumed: the alternative honest-looking
-    answer was ``table="X"`` (the parameter's own name, still labeling the
-    source even though no columns are known). Through this test's own
-    resolution path -- an ordinary bare ``ColumnRef``, filled by
-    ``_resolve_column_table``/``_column_origins`` -- that never happens:
-    those only ever answer from a scope entry's *known* columns, so an
-    unknown column of a masked entry resolves to ``None`` the same way an
-    unknown column of any other schema-less table would. This is **not**
-    the whole story, though: ``_resolve_side``'s single-entry fallback (a
-    *different* resolution path, reached only from inside a join's ``on``
-    clause) reads ``ScopeEntry.table`` directly, so it needs its own guard,
-    ``_entry_table``, covered separately by
+    This test's resolution path is an ordinary bare ``ColumnRef``, filled by
+    ``_resolve_column_table`` and ``_column_origins``. Those answer only
+    from a scope entry's known columns, so an unknown column of a masked
+    entry resolves to ``None`` the same way an unknown column of any other
+    schema-less table does. The other candidate answer, ``table="X"`` (the
+    parameter's own name), never arises here. It can arise on a second path:
+    ``_resolve_side``'s single-entry fallback, reached only from inside a
+    join's ``on`` clause, reads ``ScopeEntry.table`` directly and needs its
+    own guard, ``_entry_table``, covered by
     ``test_a_masked_tabular_parameters_own_name_does_not_surface_inside_a_joins_on_clause``.
 
-    The parameter is named after a real schema table on purpose, and ``a``
-    is a real column of that table's schema: without the mask, ``_table_
-    schema`` would answer the real table's columns for this name and this
-    same reference would resolve to ``DeviceProcessEvents`` -- a genuine
-    leak of the caller's table into a value the body never actually reads.
+    The parameter is named after a real schema table so the mask is
+    observable. Without it, ``_table_schema`` would answer that table's
+    columns for this name and the reference would resolve to
+    ``DeviceProcessEvents``, leaking the caller's table into a value the
+    body never reads.
     """
     ir = parse(
         "let f = (DeviceProcessEvents:(*)) { "
@@ -518,20 +487,17 @@ def test_a_tabular_parameters_columns_answer_no_table_rather_than_the_callers(sc
 def test_a_masked_tabular_parameters_own_name_does_not_surface_inside_a_joins_on_clause(
     schema,
 ):
-    """Guards a second, separate resolution path to the same masked name.
+    """Guards a second resolution path to the same masked name.
 
-    ``$left.AccountName`` has no known column to resolve by name here (the
-    left side's one entry is masked to ``columns={}``), so it falls through
-    to ``_resolve_side``'s single-entry fallback -- built for an
-    honestly-unknown table, where one entry unambiguously names the side
-    even with no columns to confirm it. That fallback reads
-    ``entries[0].table``, so ``_entry_table`` guards it directly: a masked
-    name never becomes a ``ScopeEntry.table`` label in the first place, so
-    this fallback answers ``None`` rather than the parameter's own
-    (colliding) name.
+    ``$left.AccountName`` has no known column to resolve by name (the left
+    side's one entry is masked to ``columns={}``), so it falls through to
+    ``_resolve_side``'s single-entry fallback, which is built for an unknown
+    table whose one entry still names the side. That fallback reads
+    ``entries[0].table``, and ``_entry_table`` guards it: a masked name
+    never becomes a ``ScopeEntry.table`` label, so the fallback answers
+    ``None``.
 
-    The real right-hand table is a plain, unmasked reference and is
-    unaffected -- only the masked left side is at risk here.
+    The right-hand table is a plain, unmasked reference and is unaffected.
     """
     ir = parse(
         "let f = (DeviceProcessEvents:(*)) { "
@@ -550,8 +516,7 @@ def test_a_masked_tabular_parameters_own_name_does_not_surface_inside_a_joins_on
 
 def test_body_lets_chain_inside_a_function_body(schema):
     """A tabular body ``let`` threads into the tail exactly as a top-level
-    one threads into the main pipeline -- the whole point of walking the
-    body as its own scope rather than leaving it opaque."""
+    one threads into the main pipeline."""
     ir = parse(
         "let f = (n:long) { "
         "let Filtered = DeviceProcessEvents | where ProcessId > n; "
@@ -568,10 +533,10 @@ def test_body_lets_chain_inside_a_function_body(schema):
 
 def test_a_scalar_parameter_colliding_with_a_schema_table_does_not_leak_it(schema):
     """A scalar parameter named after a real schema table masks that table
-    for the length of the body -- a reference to the parameter must not
-    resolve against the table it merely shares a name with -- and the mask
-    is gone once the body is done: the main pipeline's own reference to the
-    real table resolves normally right after."""
+    for the length of the body, so a reference to the parameter does not
+    resolve against the table it shares a name with. The mask lifts when the
+    body ends: the main pipeline's reference to the real table resolves
+    normally."""
     ir = parse(
         "let f = (DeviceProcessEvents:long) { "
         "DeviceFileEvents | where TimeGenerated > DeviceProcessEvents "
@@ -591,20 +556,17 @@ def test_a_scalar_parameter_colliding_with_a_schema_table_does_not_leak_it(schem
 
 def test_a_nested_function_bodys_own_let_function_is_recursed_into(schema):
     """A ``let`` written inside a function body can itself be a
-    ``FunctionDeclaration`` -- ``_walk_function_body``'s own ``body_lets``
-    loop gets the same three-way dispatch ``enrich``'s top-level loop does,
-    so a nested function's body is walked (and masked) too, not silently
-    skipped.
+    ``FunctionDeclaration``. ``_walk_function_body``'s ``body_lets`` loop
+    gets the same three-way dispatch ``enrich``'s top-level loop does, so a
+    nested function's body is walked and masked too.
 
-    Both maskings apply, and independently, during the nested walk:
-    ``inner``'s own tabular parameter (``DeviceFileEvents``, colliding with
-    a real schema table) is masked while ``inner``'s body runs, and
-    ``outer``'s tabular parameter (``DeviceProcessEvents``, also colliding)
-    is *still* masked throughout -- unioned in when entering ``inner``, not
-    replaced. Restored correctly on the way back out: ``outer``'s own tail
-    still can't see through its own mask after ``inner`` returns, and the
-    main pipeline's real-table reference resolves normally once ``enrich``
-    is done with both.
+    Both maskings apply independently during the nested walk. ``inner``'s
+    tabular parameter (``DeviceFileEvents``) is masked while ``inner``'s
+    body runs, and ``outer``'s (``DeviceProcessEvents``) stays masked
+    throughout, unioned in on the way into ``inner``. Both names collide
+    with real schema tables. On the way back out, ``outer``'s tail still
+    cannot see through its own mask, and the main pipeline's real-table
+    reference resolves normally.
     """
     walked_ids: set[int] = set()
     attacher = SchemaAttacher(schema)
@@ -645,11 +607,10 @@ def test_a_nested_function_bodys_own_let_function_is_recursed_into(schema):
 
 
 def test_masking_is_restored_even_if_the_body_walk_raises(schema):
-    """``_masked_tables``/``_let_schemas`` are restored in ``finally``
-    inside ``_walk_function_body``, not only on the happy path -- a bug (or
-    a future exception) partway through one function's body must not leave
-    the attacher permanently masking a real table, or permanently holding a
-    stale let, for every query it enriches afterwards."""
+    """``_walk_function_body`` restores ``_masked_tables`` and
+    ``_let_schemas`` in ``finally``, so an exception partway through one
+    body cannot leave the attacher masking a real table, or holding a stale
+    let, for every query it enriches after."""
     attacher = SchemaAttacher(schema)
     ir = parse(
         "let f = (DeviceProcessEvents:long) { "
@@ -677,29 +638,24 @@ def test_masking_is_restored_even_if_the_body_walk_raises(schema):
 def test_a_masked_search_tables_own_name_does_not_surface_through_a_later_join(
     schema,
 ):
-    """The same ``_entry_table`` fix also closes ``search``/``find``'s table
-    seeding (``_walk_operator_provenance``'s ``SearchOp``/``FindOp`` branch),
-    which built its ``ScopeEntry`` the same unmasked-label way
-    ``_source_entry`` did -- confirmed exploitable, not just consistent for
-    its own sake.
+    """``_entry_table`` also guards ``search``/``find``'s table seeding
+    (``_walk_operator_provenance``'s ``SearchOp``/``FindOp`` branch), which
+    builds its ``ScopeEntry`` the same way ``_source_entry`` does.
 
-    A ``join`` *right after* a masked ``search`` does not reproduce it:
+    A ``join`` right after a masked ``search`` does not reach the gap:
     Microsoft always closes ``SearchOp.result_schema`` with at least a
-    ``$table`` marker column (even over an open ``(*)`` parameter), so
-    ``_overlay_result_schema`` always adds a second, anonymous entry
-    alongside the masked one -- which defeats ``_resolve_side``'s
-    *single*-entry fallback before masking ever needs to.
+    ``$table`` marker column, even over an open ``(*)`` parameter, so
+    ``_overlay_result_schema`` adds a second anonymous entry beside the
+    masked one and defeats ``_resolve_side``'s single-entry fallback.
 
-    Putting the masked ``search`` on the **right** side of a join does
-    reproduce it: ``_flatten_side`` collapses a join's whole right-hand
-    scope into one entry, and it decides that entry's ``table`` by reading
-    every contributing entry's ``.table`` directly (not its columns) --
-    "keeps a table when every contributing entry named the same one". A
-    masked search-seeded entry with an unmasked label contributed its
-    (colliding) name there, `_flatten_side` gave the merged right side that
-    name outright, and ``_resolve_side``'s single-entry fallback (always
-    reached for a join's right side, which is one entry by construction)
-    read it straight back for an otherwise-unresolvable ``$right`` column.
+    The masked ``search`` on the right side of a join does reach it.
+    ``_flatten_side`` collapses the whole right-hand scope into one entry
+    and reads every contributing entry's ``.table`` to label it, keeping a
+    table when all of them named the same one. Without the guard, a masked
+    search-seeded entry hands its colliding name to the merged right side,
+    and ``_resolve_side``'s single-entry fallback (always reached for a
+    join's right side, one entry by construction) reads it back for an
+    otherwise unresolvable ``$right`` column.
     """
     ir = parse(
         "let f = (DeviceProcessEvents:(*)) { "
@@ -720,20 +676,18 @@ def test_a_search_over_a_non_tabular_let_alias_does_not_surface_through_a_later_
     schema,
 ):
     """The sibling of the masking test above, for the other half of the same
-    ``ScopeEntry(table=..., columns={})`` fallback: ``search``/``find``'s
-    ``LetRef`` seeding must answer ``table=None``, not ``table=alias``, when
-    ``alias`` never reached ``_let_schemas`` (a scalar ``let``, a function
-    binding, a tabular ``let`` the binder could not close) -- the one case
-    ``_source_entry`` already gets right for a pipeline's own source
-    position (see ``_source_entry``'s ``LetRef`` branch).
+    ``ScopeEntry(table=..., columns={})`` fallback. ``search``/``find``'s
+    ``LetRef`` seeding answers ``table=None`` when ``alias`` never reached
+    ``_let_schemas`` (a scalar ``let``, a function binding, or a tabular
+    ``let`` the binder could not close), matching ``_source_entry``'s
+    ``LetRef`` branch for a pipeline's own source position.
 
-    Unreachable through the columns path directly -- an empty-columns entry
-    contributes nothing to ``_column_origins`` -- but ``_flatten_side``
-    reads every contributing entry's ``.table`` regardless of its columns,
-    so the same right-side-of-a-join reproduction as the masking test above
-    surfaces it: with ``A`` a scalar (no schema, never registered in
-    ``_let_schemas``), a naive seeding would hand ``$right.Unknown`` the
-    label ``"A"`` -- a table the query never actually read from.
+    The columns path cannot show it, since an empty-columns entry
+    contributes nothing to ``_column_origins``. ``_flatten_side`` reads
+    every contributing entry's ``.table`` whatever its columns, so the same
+    right-side-of-a-join shape surfaces it: with ``A`` a scalar, never
+    registered in ``_let_schemas``, a naive seeding would label
+    ``$right.Unknown`` with ``"A"``, a table the query never read.
     """
     ir = parse(
         "let A = 5; DeviceFileEvents | join (search in (A) 'x') "
@@ -749,9 +703,7 @@ def test_a_search_over_a_non_tabular_let_alias_does_not_surface_through_a_later_
 
 def test_a_pattern_arms_body_is_walked_through_the_same_helper(schema):
     """``declare pattern`` reuses ``_walk_function_body`` with no parameters
-    to mask: the arm's own columns still get their table, even though the
-    arm has no parameters of its own and the call site acquires nothing
-    from it either way."""
+    to mask, so the arm's own columns still get their table."""
     ir = parse(
         'declare pattern P = (a:string) { '
         '("x") = { DeviceProcessEvents | where ProcessId > 1 '
@@ -772,10 +724,9 @@ def test_provenance_survives_an_authoritative_result_schema():
     """Taking names and types from the binder must not cost ``ColumnRef.table``.
 
     Microsoft's ``ResultType`` says which columns exist and how they are
-    typed; it does not say which table each came from, and this walk is the
-    only thing in the library that can. Replacing the scope with one
-    anonymous entry carrying Microsoft's columns — the obvious shortcut —
-    would silently drop provenance for every operator the binder can type.
+    typed, not which table each came from; only this walk can say that.
+    Replacing the scope with one anonymous entry carrying Microsoft's
+    columns would drop provenance for every operator the binder can type.
     """
     from kustology import parse
     from kustology.ir import ColumnRef, ProjectOp, SortOp, find_all
@@ -789,7 +740,7 @@ def test_provenance_survives_an_authoritative_result_schema():
         schema=schemas,
     ).to_ir()
 
-    # The shortcut really did fire — otherwise this proves nothing.
+    # Premise: the binder typed every operator, so the overlay ran.
     assert all(op.result_schema is not None for op in ir.main_pipeline.operators)
 
     project = next(op for op in ir.main_pipeline.operators if isinstance(op, ProjectOp))
@@ -799,14 +750,13 @@ def test_provenance_survives_an_authoritative_result_schema():
 
 
 def test_join_provenance_survives_an_authoritative_result_schema():
-    """The per-side scope entries a join builds are still built.
+    """A join builds its per-side scope entries even where Microsoft answered.
 
-    ``$left`` / ``$right`` resolve against a scope that has both sides in it,
-    and a right-hand column has a table only because the join walk appended
-    an entry for it. Both are things the overlay cannot reconstruct, so
-    ``join`` / ``lookup`` / ``union`` / ``search`` keep a structural branch
-    even where Microsoft answered — one that brings the sources into scope
-    and derives no columns of its own.
+    ``$left`` and ``$right`` resolve against a scope holding both sides, and
+    a right-hand column has a table only because the join walk appended an
+    entry for it. The overlay cannot reconstruct either, so ``join``,
+    ``lookup``, ``union``, and ``search`` keep a structural branch that
+    brings the sources into scope and derives no columns of its own.
     """
     from kustology import parse
     from kustology.ir import ColumnRef, ProjectOp, find_all
@@ -834,11 +784,10 @@ def test_join_provenance_survives_an_authoritative_result_schema():
 def test_microsoft_declining_is_not_an_invitation_to_answer(builder, attacher):
     """``IRBuilder().build`` binds against globals with no tables at all.
 
-    Every symbol it produces is open, so nothing is recorded — and nothing
-    fills in for it. The schema is Microsoft's to state and it declined, so
-    the pipeline says ``None``. What the caller's dict still buys is the
-    other contract: every column reference is placed, from the dict the
-    binder never saw.
+    Every symbol it produces is open, so the pipeline says ``None`` and
+    nothing fills in for it. The caller's dict still buys the other
+    contract: every column reference is placed, from a dict the binder
+    never saw.
     """
     ir = builder.build(
         "DeviceProcessEvents | project FileName, AccountName "
@@ -854,9 +803,8 @@ def test_count_closes_a_symbol_even_from_an_unknown_table(builder):
     """``IsOpen`` is per node, not per query, and ``count`` is the proof.
 
     ``T | count`` returns exactly ``Count:long`` whatever ``T`` is, so
-    Microsoft closes the symbol there even though the source is unknown --
-    which is why the decline is read off each operator rather than decided
-    once for the whole parse.
+    Microsoft closes the symbol there even though the source is unknown.
+    The IR therefore reads the answer off each operator.
     """
     ir = builder.build("Whatever | where x > 1 | count")
     where_op, count_op = ir.main_pipeline.operators
@@ -865,12 +813,12 @@ def test_count_closes_a_symbol_even_from_an_unknown_table(builder):
 
 
 def test_microsoft_decides_the_column_order_not_the_scope_grouping():
-    """A join's output is ordered by the engine, not by which side it came from.
+    """The engine orders a join's output columns.
 
     ``ScopeEntry`` groups columns by originating table so provenance
-    survives, which means merging the scope orders a join's output
-    left-side-first. Microsoft emits ``DeviceId, FileName, DeviceId1,
-    TimeGenerated`` — the pipeline schema has to be its list, in its order.
+    survives, which orders a merged scope left-side-first. Microsoft emits
+    ``DeviceId, FileName, DeviceId1, TimeGenerated``, and the pipeline
+    schema has to be that list in that order.
     """
     from kustology import parse
 
@@ -892,10 +840,9 @@ def test_microsoft_decides_the_column_order_not_the_scope_grouping():
 # --- the dict entry point -------------------------------------------------
 #
 # ``parse(q).to_ir(attach_schema=dict)`` is the public path for a caller who
-# has a schema and no cluster to bind against. Since the reroute it re-binds
-# through ``build_global_state`` + ``Analyze``, so Microsoft answers for every
-# symbol it can close and this walk supplies provenance over the top. That is
-# what the rest of this file exercises.
+# has a schema and no cluster to bind against. It re-binds through
+# ``build_global_state`` + ``Analyze``, so Microsoft answers for every symbol
+# it can close and this walk supplies provenance over the top.
 
 DICT_SCHEMA = {
     "L": {"k": "string", "a": "long", "shared": "string"},
@@ -911,9 +858,9 @@ DICT_SCHEMA = {
 def _dict_path(query: str, schemas: dict | None = None):
     """``parse(query).to_ir(attach_schema=…)`` with the collision-heavy dict.
 
-    ``L`` and ``R`` share ``k`` and ``shared``, which is what makes join
-    collisions observable, and ``U`` types ``a`` differently from ``T`` so a
-    union conflict has to split.
+    ``L`` and ``R`` share ``k`` and ``shared``, which makes join collisions
+    observable, and ``U`` types ``a`` differently from ``T`` so a union
+    conflict has to split.
     """
     return parse(query).to_ir(
         attach_schema=DICT_SCHEMA if schemas is None else schemas,
@@ -934,9 +881,8 @@ def _tables(ir) -> dict[str, set]:
 
 
 def test_project_carries_provenance_into_a_later_operator():
-    """``project`` replaced the scope with a table-less entry, so every
-    column reference *after* it lost its table -- the same column resolved
-    to ``T`` before the project and to ``None`` after it, in one query."""
+    """``project`` keeps the source table in scope, so a column reference
+    after it resolves the same way one before it does."""
     ir = _dict_path("T | project a, k | where a > 1")
     assert _tables(ir)["a"] == {"T"}
 
@@ -956,10 +902,9 @@ def test_distinct_carries_provenance():
 def test_project_rename_carries_provenance_under_the_new_name():
     """The renamed column is still the source table's column.
 
-    ``kk`` is a name no scope entry holds, which is the shape that files
-    anonymously for a join collision or a union split variant. It does not
-    here, and the difference is that the query *says so*:
-    ``project-rename kk = k`` names the input column outright, so
+    ``kk`` is a name no scope entry holds, the shape that files anonymously
+    for a join collision or a union split variant. Here the query names the
+    input column outright, so
     :func:`~kustology.ir.binder._renamed_columns` threads ``kk -> k`` into
     the overlay and ``T`` survives the rename.
     """
@@ -970,12 +915,11 @@ def test_project_rename_carries_provenance_under_the_new_name():
 
 
 def test_project_rename_provenance_needs_a_real_column_on_the_right():
-    """The thread is only followed where there is an input name to follow.
+    """The thread is followed only where there is an input name to follow.
 
     Every ``project-rename`` term the parser accepts has a ``ColumnRef`` on
-    the right, so this guards a hand-built or unmodeled IR rather than a
-    query: with no column to carry from, the target files anonymously
-    instead of borrowing a neighbor's table.
+    the right, so this guards a hand-built or unmodeled IR. With no column
+    to carry from, the target files anonymously.
     """
     from kustology.ir.binder import _renamed_columns
     from kustology.ir.expr import LiteralExpr
@@ -1014,9 +958,8 @@ def test_summarize_keys_keep_provenance_and_aggregates_do_not():
 def test_an_ambiguous_unqualified_column_resolves_to_no_table():
     """``T | union U`` puts ``k`` in two scope entries with different tables.
 
-    Picking the most recently appended side was a guess: KQL's own answer is
-    that the unqualified name is ambiguous, so the honest provenance is
-    "unknown", not "U".
+    KQL treats the unqualified name as ambiguous, so the honest provenance
+    is unknown.
     """
     ir = _dict_path("T | union U | where k == 'x'")
     assert _tables(ir)["k"] == {None}
@@ -1026,12 +969,12 @@ def test_an_ambiguous_unqualified_column_resolves_to_no_table():
 
 
 def test_a_right_side_only_column_reports_the_right_table():
-    """The entry the join walk appends is what gives a right-hand column a
-    table at all.
+    """The entry the join walk appends is what gives a right-hand column its
+    table.
 
     ``kind=rightsemi`` emits the right side's columns only, and ``b`` is
-    ``R``'s alone, so it places there even though the operator that produced
-    it is on the left of the pipeline.
+    ``R``'s alone, so it places there even though the operator producing it
+    sits on the left of the pipeline.
     """
     from kustology.ir import FilterOp
 
@@ -1041,17 +984,13 @@ def test_a_right_side_only_column_reports_the_right_table():
 
 
 def test_a_post_join_collision_is_ambiguous_and_says_so():
-    """The accepted narrowing that came with retiring the renaming rule.
+    """An unqualified name that both join sides carry has no provenance.
 
-    Microsoft emits ``shared`` and ``shared1`` for ``L | join (R) on k``, and
-    both sides are in scope with a ``shared`` of their own, so the walk
-    cannot say which is which: the honest provenance for an unqualified name
-    is ``None``. The old hand rule renamed the right side itself and so knew
-    the answer by construction — it also had to invent the name, which is
-    the part that kept disagreeing with the engine.
-
-    A qualified reference is unaffected: ``$left`` / ``$right`` name a side
-    outright, and that is what the sides are kept for.
+    Microsoft emits ``shared`` and ``shared1`` for ``L | join (R) on k``,
+    and both sides are in scope with a ``shared`` of their own, so the walk
+    cannot say which is which and reports ``None``. A qualified reference is
+    unaffected: ``$left`` and ``$right`` name a side outright, which is what
+    the per-side entries are kept for.
     """
     from kustology.ir import JoinOp
 
@@ -1083,10 +1022,9 @@ def _on_refs(ir, index: int = -1) -> list:
 def test_dollar_left_resolves_by_name_across_the_whole_left_side():
     """``$left`` is the accumulated left row set, not the last entry in it.
 
-    The rule read ``scope[-2]``, which is the entry appended by the *previous*
-    join. After ``L | join (R) …`` a second join's ``$left.a`` therefore
-    reported ``R`` — a table that does not have an ``a`` at all — while the
-    column plainly comes from ``L``.
+    After ``L | join (R) …``, a second join's ``$left.a`` resolves to ``L``.
+    Reading only the entry the previous join appended would answer ``R``,
+    which has no ``a`` at all.
     """
     ir = _dict_path("L | join (R) on k | join (T) on $left.a == $right.a")
     left, right = _on_refs(ir)
@@ -1103,12 +1041,11 @@ def test_dollar_right_resolves_against_the_appended_right_entry():
 
 def test_dollar_right_resolves_through_the_right_pipelines_own_operators():
     """The right side is a pipeline, so its scope may be anonymous with the
-    provenance carried in ``origins`` -- ``$right.b`` is still ``R``'s.
+    provenance carried in ``origins``. ``$right.b`` is still ``R``'s.
 
     A union on the right is the same question with several entries to
-    reconcile: it is one row set and a join has one right side, so
-    ``_flatten_side`` merges them and ``b``, which only one arm carries,
-    keeps that arm's table.
+    reconcile. A join has one right side, so ``_flatten_side`` merges them
+    and ``b``, which only one arm carries, keeps that arm's table.
     """
     ir = _dict_path("L | join (R | project b) on $left.k == $right.b")
     _left, right = _on_refs(ir)
@@ -1123,9 +1060,8 @@ def test_dollar_right_resolves_through_the_right_pipelines_own_operators():
 
 
 def test_an_unresolvable_dollar_side_answers_none_and_keeps_its_side():
-    """The sentinel never reaches `.table` anymore: an unresolvable side is
-    honestly None, and `join_side` -- set by the builder even unbound -- is
-    the side's carrier."""
+    """An unresolvable side answers ``table=None``. ``join_side``, which the
+    builder sets even on an unbound parse, carries the side."""
     ir = _dict_path("L | join (datatable(z:long)[1]) on $left.k == $right.z")
     _left, right = _on_refs(ir)
     assert right.table is None
@@ -1140,18 +1076,16 @@ def test_an_unenriched_dollar_ref_has_no_sentinel_either():
 
 def test_a_bare_on_key_resolves_against_the_left_side():
     """``on k`` is shorthand for ``$left.k == $right.k``, and both sides have
-    a ``k``. The scope holds the right side too at that point, so the general
-    ambiguity rule would answer ``None``; the left is the side the engine
-    keeps the column from."""
+    a ``k``. The general ambiguity rule would answer ``None`` because the
+    right side is in scope too; the engine keeps the column from the left."""
     ir = _dict_path("L | join (R) on k")
     (key,) = _on_refs(ir)
     assert key.table == "L"
 
 
 def test_lookups_bare_on_key_resolves_to_the_left_side_too():
-    """``lookup`` drops the right side's key outright, so the left is the
-    only side whose column survives -- the same answer for a stronger
-    reason."""
+    """``lookup`` drops the right side's key, so the left is the only side
+    whose column survives."""
     from kustology.ir import ColumnRef, LookupOp, find_all
 
     ir = _dict_path("L | lookup (R) on k")
@@ -1166,15 +1100,13 @@ def test_lookups_bare_on_key_resolves_to_the_left_side_too():
 
 
 def test_enriching_twice_does_not_change_result_schema():
-    """Guards re-enriching an already-bound IR as a no-op on
-    ``result_schema``.
+    """Re-enriching an already-bound IR is a no-op on ``result_schema``.
 
-    ``enrich`` only ever writes back a copy of what Microsoft stamped, never
-    recomputing the shape, so a second call with a different dict leaves
-    ``result_schema`` unchanged no matter what dict it carries -- only
-    *re-binding* changes a schema. The operator-less branch is the one that
-    reads the pipeline's own field back, so it is the one that has to be
-    pinned.
+    ``enrich`` writes back a copy of what Microsoft stamped and never
+    recomputes the shape, so a second call leaves ``result_schema``
+    unchanged whatever dict it carries. Only re-binding changes a schema.
+    The operator-less branch reads the pipeline's own field back, so it is
+    the one pinned here.
     """
     ir = parse("T").to_ir(attach_schema={"T": {"a": "long", "s": "string"}})
     assert not ir.main_pipeline.operators, "premise: the operator-less branch"
@@ -1188,12 +1120,12 @@ def test_enriching_twice_does_not_change_result_schema():
 
 
 def test_enriching_twice_does_not_wipe_an_operator_less_let_binding():
-    """Guards the regression the unconditional snapshot prevents.
+    """The snapshot of the builder's value is unconditional.
 
     ``enrich`` reads each binding's ``result_schema`` to register what the
     alias holds. With no operators there is nothing else to read the shape
-    off, so skipping the snapshot of the builder's value on a second call
-    would send the binding and everything resolving through it to ``None``.
+    off, so skipping the snapshot on a second call would send the binding,
+    and everything resolving through it, to ``None``.
     """
     ir = parse("let M = materialize(T); M | project a").to_ir(
         attach_schema={"T": {"a": "long"}},
@@ -1219,15 +1151,12 @@ def test_enriching_twice_with_an_operator_present_is_also_a_no_op():
 
 
 def test_union_split_columns_are_names_no_arm_ever_had():
-    """The second accepted narrowing.
+    """A type-conflict split produces names no arm's scope entry carries.
 
     ``T.a`` is a long and ``U.a`` a string, so the engine emits ``a_long``
     and ``a_string`` and no unsuffixed ``a`` at all. Those names exist only
-    in Microsoft's answer -- neither arm's scope entry carries one -- so the
-    overlay files them anonymously and they report ``None``. The old rule
-    synthesised the split itself and could therefore keep a side per
-    variant; it also had to guess when *not* to split, which is where it
-    kept diverging.
+    in Microsoft's answer, so the overlay files them anonymously and they
+    report ``None``.
     """
     ir = _dict_path("T | union U | where a_string == 'x' and a_long > 1")
     assert list(ir.main_pipeline.result_schema.columns)[:3] == [
@@ -1264,11 +1193,9 @@ def test_search_columns_keep_their_table():
 def test_a_search_predicate_resolves_against_the_tables_being_searched():
     """``search`` has an implicit source, so the scope *before* it is empty.
 
-    Its own predicate was filled against that empty scope, so
-    ``search in (T) a > 1`` left ``a`` with no table while the same column one
-    operator later (``search in (T) 'x' | where a > 1``) resolved to ``T``.
-    The walk has the searched entries in hand; filling the predicate after it
-    seeds them is what makes the two agree.
+    The walk fills the predicate after seeding the searched entries, so
+    ``search in (T) a > 1`` places ``a`` in ``T``, the same as the column
+    one operator later in ``search in (T) 'x' | where a > 1``.
     """
     from kustology.ir import ColumnRef, SearchOp, find_all
 
@@ -1283,10 +1210,10 @@ def test_search_provenance_survives_an_authoritative_result_schema():
     """``search`` keeps its structural branch on a bound parse, as ``join``
     does.
 
-    It has an implicit source, so the pre-operator scope is empty and the
-    overlay would file every column it emits as anonymous -- a following
-    ``where a > 1`` would report no table for a column that plainly comes
-    from ``T``.
+    Its source is implicit, so the pre-operator scope is empty and the
+    overlay alone would file every column it emits as anonymous, leaving a
+    following ``where a > 1`` with no table for a column that comes from
+    ``T``.
     """
     from kustology import parse
     from kustology.ir import ColumnRef, FilterOp, find_all
@@ -1305,8 +1232,8 @@ def test_search_provenance_survives_an_authoritative_result_schema():
 
 
 def test_find_seeds_its_tables_like_search():
-    """`find in (T) where a > 1`'s predicate resolves against T -- the fourth
-    source-bringing operator finally has its branch."""
+    """``find`` is the fourth source-bringing operator: the predicate of
+    ``find in (T) where a > 1`` resolves against ``T``."""
     ir = parse("find in (T) where a > 1").to_ir(attach_schema={"T": {"a": "long"}})
     from kustology.ir import ColumnRef, FindOp, find_all
     (op,) = [o for o in ir.main_pipeline.operators if isinstance(o, FindOp)]
@@ -1329,10 +1256,9 @@ def test_a_find_or_search_over_a_let_alias_resolves_through_it():
 
 
 def test_a_search_over_a_let_alias_resolves_through_it_too():
-    """The sibling gap the map identified: `search`'s branch resolved a
-    `LetRef` table's schema against nothing, even though `_source_entry`
-    (a pipeline's own source position) has always threaded it through
-    ``_let_schemas``."""
+    """``search``'s branch resolves a ``LetRef`` table's schema through
+    ``_let_schemas``, the same as ``_source_entry`` does at a pipeline's own
+    source position."""
     q = "let A = T | where a > 1; search in (A) a > 5"
     ir = parse(q).to_ir(attach_schema={"T": {"a": "long"}})
     from kustology.ir import ColumnRef, SearchOp, find_all
@@ -1344,24 +1270,22 @@ def test_a_search_over_a_let_alias_resolves_through_it_too():
 
 
 def test_a_pipeline_the_walk_learned_nothing_about_has_no_result_schema():
-    """``result_schema = {}`` is a claim: "this emits no columns".
+    """``result_schema = {}`` claims "this emits no columns".
 
     A query over a table nobody described emits an unknown set of columns,
-    which is a different statement, and stamping ``{}`` made the two
-    indistinguishable to a consumer.
+    a different statement, so it reports ``None``.
     """
     ir = _dict_path("Unknown | take 1", {"T": {"a": "long"}})
     assert ir.main_pipeline.result_schema is None
 
 
 def test_an_unmodelled_sub_pipeline_does_not_inherit_the_enclosing_scope():
-    """A branch the builder could not model is not a branch that emits the
-    input unchanged, so it gets no schema rather than the caller's.
+    """A branch the builder could not model gets no schema.
 
-    ``UnknownSource`` with no operators is the builder's "I could not model
-    this at all"; every other implicit-source sub-pipeline (``mv-apply``,
-    ``partition``, ``fork``, ``facet``) does run against the enclosing rows
-    and does inherit.
+    ``UnknownSource`` with no operators marks a branch the builder could not
+    model at all, which is not a branch that emits its input unchanged.
+    Every other implicit-source sub-pipeline (``mv-apply``, ``partition``,
+    ``fork``, ``facet``) runs against the enclosing rows and inherits.
     """
     from kustology.ir.binder import ScopeEntry
     from kustology.ir.query import Pipeline, UnknownSource
@@ -1380,10 +1304,9 @@ def test_enrich_does_not_clobber_a_type_the_binder_already_resolved():
     """The walk is not the only thing that knows a column's type.
 
     ``evaluate`` opens the symbol, so ``project`` gets no authoritative
-    schema and the pipeline honestly reports ``None`` -- but the binder
-    still typed the ``ColumnRef`` from the parse-time schema, and that is on
-    the node whatever the pipeline says. An ``enrich`` that knows nothing
-    about ``T`` must leave it alone rather than reset it.
+    schema and the pipeline reports ``None``. The binder still typed the
+    ``ColumnRef`` from the parse-time schema, and that type stays on the
+    node. An ``enrich`` that knows nothing about ``T`` leaves it alone.
     """
     from kustology import parse
     from kustology.ir import ColumnRef, KustoType, ProjectOp, find_all
@@ -1399,8 +1322,7 @@ def test_enrich_does_not_clobber_a_type_the_binder_already_resolved():
     (ref,) = find_all(project, ColumnRef)
     assert ref.result_type == KustoType.LONG, "premise: the binder typed it"
 
-    # An attacher that knows nothing about ``T`` -- the schema is on the IR,
-    # not in this dict.
+    # The schema is on the IR; this attacher knows nothing about ``T``.
     SchemaAttacher({}).enrich(ir)
     assert ref.result_type == KustoType.LONG
     assert ir.main_pipeline.result_schema is None
@@ -1410,9 +1332,8 @@ def test_enrich_does_not_clobber_a_type_the_binder_already_resolved():
 
 
 def test_schema_attached_stays_false_when_no_schema_was_available():
-    """``enrich`` set the flag unconditionally, so an attacher with no
-    schemas, over an IR the binder could not type either, still reported the
-    IR as enriched -- the flag said "these types are real" about nothing."""
+    """The flag claims "these types are real", so an attacher with no
+    schemas, over an IR the binder could not type either, leaves it false."""
     ir = IRBuilder().build("Unknown | take 1")
     SchemaAttacher().enrich(ir)
     assert ir.schema_attached is False
@@ -1437,13 +1358,12 @@ def test_schema_attached_is_true_when_the_binder_answered():
 
 
 def _syntactic(query: str, schemas: dict | None = None):
-    """Enrich an IR built from a *syntactic-only* parse.
+    """Enrich an IR built from a syntactic-only parse.
 
-    ``KustoCode.Parse`` produces a tree with no semantics at all, so every
-    ``Expr.result_type`` starts ``UNRESOLVED`` and ``_fill``'s own type
-    fallback is the only thing that can set one. That is what makes it the
-    harness for the fallback: on any bound path the binder has already
-    answered and the fallback never runs.
+    ``KustoCode.Parse`` produces a tree with no semantics, so every
+    ``Expr.result_type`` starts ``UNRESOLVED`` and only ``_fill``'s type
+    fallback can set one. On a bound path the binder has already answered
+    and the fallback never runs, so this is its harness.
     """
     from kustology.bridge import KustoCode
 
@@ -1457,13 +1377,11 @@ def _syntactic(query: str, schemas: dict | None = None):
 
 
 def test_arithmetic_is_not_typed_as_a_boolean():
-    """Every ``BinOp`` was typed ``bool``, arithmetic included.
+    """The type fallback answers ``bool`` for a comparison only.
 
-    ``extend n = a + 1`` recorded ``n:bool`` -- the same answer the node
-    gives for ``a > 1``, which is a predicate and this is not. ``bool`` is a
-    wrong answer where "unresolved" is merely an incomplete one; the
-    fallback does not do numeric promotion, and saying so is the honest
-    position.
+    ``a > 1`` is a predicate and types ``bool``. ``a + 1`` is arithmetic on
+    the same ``BinOp`` node; the fallback does no numeric promotion, so it
+    stays ``UNRESOLVED``.
     """
     from kustology.ir import ExtendOp, KustoType
 
@@ -1482,9 +1400,8 @@ def test_arithmetic_is_not_typed_as_a_boolean():
 def test_an_unparseable_query_gets_no_result_schema():
     """``UnknownSource`` with no operators is reachable from a real string.
 
-    The builder emits it for anything it cannot model as a source at all, and
-    the pipeline then claims nothing about its own output -- where before it
-    claimed, with ``columns={}``, that the query emits no columns.
+    The builder emits it for anything it cannot model as a source, and the
+    pipeline then claims nothing about its own output.
     """
     ir = IRBuilder().build("not a query at all")
     from kustology.ir.query import UnknownSource
@@ -1496,25 +1413,19 @@ def test_an_unparseable_query_gets_no_result_schema():
 
 
 @pytest.mark.parametrize("schema,query,expect", [
-    # Two separate effects.
+    # Two effects, both of which cost provenance as ambiguity: a name two
+    # entries disagree about answers `None`.
     #
-    # (1) An *unqualified* `search` seeds every table the dict describes --
-    #     the dict standing in for "every table in the database". Cases 2
-    #     and 3 exercise it.
+    # (1) An unqualified `search` seeds every table the dict describes, the
+    #     dict standing in for every table in the database. Cases 2 and 3.
+    # (2) The seeded entries are appended to the scope the operator
+    #     inherited. Replacing it wholesale would be a statement about the
+    #     operator's output, which Microsoft already makes. This applies to
+    #     a qualified `search in (U)` too, which is case 1.
     #
-    # (2) The seeded entries are *appended* to whatever scope the operator
-    #     inherited, rather than replacing it wholesale (`scope[:] =
-    #     [...]`) -- it applies to a qualified `search in (U)` just as much
-    #     as an unqualified one, case 1 being qualified. Replacing the scope
-    #     would be a statement about the operator's *output*, which is
-    #     Microsoft's to make and which it does make; appending keeps the
-    #     walk to what it is for.
-    #
-    # Both cost provenance only, and cost it as ambiguity rather than as a
-    # wrong table: a name two entries disagree about answers `None`. Case 1
-    # is (2) alone -- `T` (inherited) and `U` (searched) both have an `a`.
-    # Case 3 is (1) and (2) together. Case 2 is the one where neither bites,
-    # because only the inherited `T` has an `a` at all.
+    # Case 1 is (2) alone: `T` (inherited) and `U` (searched) both have an
+    # `a`. Case 3 is (1) and (2) together. Case 2 is where neither bites,
+    # because only the inherited `T` has an `a`.
     ({"T": {"a": "long", "k": "string"}, "U": {"a": "long"}},
      "T | partition by k (search in (U) a > 1)", {"k": "T", "a": None}),
     ({"T": {"a": "long", "k": "string"}, "U": {"z": "long"}},
@@ -1530,22 +1441,19 @@ def test_search_inside_partition_resolves_scope(schema, query, expect):
 
 
 def test_the_unknown_column_sentinel_is_microsofts_word_and_only_microsofts():
-    """``TabularSchema.columns`` maps a column to a type *string*, and the
-    string for "no type known" is ``"unknown"`` — not
-    ``KustoType.UNRESOLVED.value``, which is ``"unresolved"``.
+    """``TabularSchema.columns`` maps a column to a type string, and the
+    string for "no type known" is ``"unknown"``. ``KustoType.UNRESOLVED``
+    spells the same idea ``"unresolved"``.
 
-    Two sentinels for one idea, and nothing said which lived where: a
-    consumer reading ``Expr.result_type`` learns to test against
-    ``KustoType.UNRESOLVED`` and then finds the *other* spelling one field
-    away, in a plain ``dict[str, str]`` a ``KustoType`` never validates. The
-    reason for the split is that ``columns`` values are Microsoft's type
-    *names*: ``ScalarTypes.Unknown.Name`` is literally ``"unknown"``.
+    The split exists because ``columns`` values are Microsoft's type names:
+    ``ScalarTypes.Unknown.Name`` is literally ``"unknown"``. A consumer
+    reading ``Expr.result_type`` tests against ``KustoType.UNRESOLVED`` and
+    finds the other spelling one field away, in a plain ``dict[str, str]``
+    a ``KustoType`` never validates.
 
-    Only one thing produces that dict — the builder, copying the binder's
-    stamp — so the two spellings cannot meet in one field by accident. Both
-    halves are pinned: Microsoft's word arrives, and ``enrich`` cannot
-    introduce a second spelling over the top of it, because it writes no
-    type strings at all.
+    Only the builder produces that dict, copying the binder's stamp. Both
+    halves are pinned: Microsoft's word arrives, and ``enrich`` writes no
+    type strings at all, so it cannot introduce a second spelling.
     """
     import warnings
 
@@ -1566,16 +1474,14 @@ def test_the_unknown_column_sentinel_is_microsofts_word_and_only_microsofts():
     assert bound.main_pipeline.result_schema.columns == {"n": "unknown", "m": "unknown"}
 
 
-# Task 3 hash-silence: table/result_type are volatile, join_side is not -----
+# Hash silence: table and result_type are volatile, join_side is not --------
 
 
 def test_enrichment_is_hash_silent_for_a_join_and_a_find_query():
-    """Both of this task's changes -- the sentinel's retirement and find's
-    new seeding branch -- touch only ``ColumnRef.table`` (and, for find,
-    ``result_type``), and both are stripped from the hash payload before
-    ``semantic_hash`` is computed (``transforms.py``'s ``_VOLATILE_FIELDS``).
-    ``join_side`` is written by the builder, not this walk, so enriching
-    must not move either query's hash at all."""
+    """Enrichment writes ``ColumnRef.table`` and ``result_type``, both
+    stripped from the hash payload by ``transforms.py``'s
+    ``_VOLATILE_FIELDS``. ``join_side`` comes from the builder, not this
+    walk, so enriching moves neither query's hash."""
     from kustology.ir import compute_semantic_hash
     from kustology.ir.binder import SchemaAttacher
 

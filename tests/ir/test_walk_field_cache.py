@@ -4,15 +4,14 @@
 """The walk's field cache must never skip a field that can hold a model.
 
 ``walk`` reads only the fields ``model_bearing_fields`` reports, derived from
-each class's annotations. Misclassifying a field as model-bearing costs one
-wasted ``getattr``. Misclassifying it the other way drops nodes from every
-traversal in the library, silently, which is the failure mode AGENTS.md
-records for a hand-maintained field list.
+each class's annotations. A field wrongly called model-bearing costs one
+wasted ``getattr``; a field wrongly skipped drops nodes from every traversal
+in the library, silently, the failure mode AGENTS.md records for a
+hand-maintained field list.
 
-So the tests below check the classification two ways: against the annotations
-directly, for shapes the corpus may not contain, and against real IR built
-from every corpus fixture, where every skipped field on every node must in
-fact hold no model.
+The tests check the classification twice: against the annotations, for shapes
+the corpus may not contain, and against IR built from every corpus fixture,
+where a skipped field must hold no model.
 """
 
 import pathlib

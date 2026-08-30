@@ -1,23 +1,20 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-"""Every offset kustology reports indexes the Python ``str``, not the .NET one.
+"""Every offset kustology reports indexes the Python ``str``.
 
 .NET counts string offsets in UTF-16 code units; a Python ``str`` is indexed
-by code point. The two agree across the whole Basic Multilingual Plane and
-diverge by one per astral character (an emoji, a rare CJK ideograph, or a
-historic script) that precedes the offset.
+by code point. They agree across the whole Basic Multilingual Plane and
+diverge by one per preceding astral character, such as an emoji, a rare CJK
+ideograph, or a historic script. The divergence is data-dependent and silent,
+so a corpus with no astral character reports every surface below as correct.
+Each test therefore pairs an astral query with the same query without one and
+slices the text at the reported offset.
 
-That divergence is data-dependent and silent, so a corpus containing no
-astral character reports every one of these surfaces as correct. Each test
-here therefore pairs an astral query against the same query without one, and
-the assertion is that slicing the text at the reported offset returns the
-construct the offset names.
-
-Raw ``Kusto.Language`` nodes are out of scope. ``node.TextStart`` is
-Microsoft's value and counts UTF-16 code units;
-:func:`kustology.utf16_to_codepoint` is the supported way across, and it is
-tested here too.
+Raw ``Kusto.Language`` nodes are out of scope: ``node.TextStart`` is
+Microsoft's value and counts UTF-16 code units.
+:func:`kustology.utf16_to_codepoint` is the supported way across, tested here
+too.
 """
 
 import pytest
@@ -30,7 +27,7 @@ ASTRAL_CJK = "\U00020000"
 
 
 def reference_utf16_offset(text: str, codepoint_offset: int) -> int:
-    """Independent answer, by encoding the prefix rather than by bisection."""
+    """Independent oracle for the UTF-16 offset, by encoding the prefix."""
     return len(text[:codepoint_offset].encode("utf-16-le")) // 2
 
 

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-"""Let bindings carry their right-hand side, not just a name and a span."""
+"""Let bindings carry their right-hand side alongside the name and span."""
 
 import pytest
 
@@ -50,11 +50,9 @@ def test_parenthesized_tabular_binding_populates_rhs_pipeline():
     """`let X = ( T | where … );` — the dominant Sentinel idiom.
 
     The right-hand side arrives as a ``ParenthesizedExpression`` wrapping the
-    ``PipeExpression``, so the builder must unwrap it before dispatching.
-    Dispatching on the wrapper's own class instead would drop the entire
-    subtree into ``rhs_expr`` as an ``UnknownExpr``, even though the
-    unparenthesized spelling of the same query builds a pipeline — the exact
-    "looks implemented, isn't" shape this suite exists to catch.
+    ``PipeExpression``. The builder unwraps it before dispatching; dispatching
+    on the wrapper's own class drops the whole subtree into ``rhs_expr`` as an
+    ``UnknownExpr`` while the unparenthesized spelling builds a pipeline.
     """
     lb = _binding(
         'let ADFS_Servers = (\n'
@@ -71,10 +69,10 @@ def test_parenthesized_tabular_binding_populates_rhs_pipeline():
 
 
 def test_parenthesized_and_bare_tabular_bindings_agree():
-    """Parentheses are formatting; the two spellings must build the same IR.
+    """Parentheses are formatting, so the two spellings build the same IR.
 
-    Compared by semantic hash, which strips the spans that legitimately shift
-    by one character between the two spellings.
+    Semantic hash comparison strips the spans that shift by one character
+    between the spellings.
     """
     from kustology.ir import compute_semantic_hash
 
@@ -97,7 +95,7 @@ def test_nested_parentheses_are_unwrapped():
 
 def test_parenthesized_scalar_binding_is_still_scalar():
     """Unwrapping parens must not push a scalar right-hand side into the
-    tabular branch — ``_visit_expr`` unwraps them itself."""
+    tabular branch; ``_visit_expr`` unwraps them itself."""
     lb = _binding(
         "let m = (toscalar(SecurityEvent | summarize max(EventID))); T | where X == m",
         "m",
@@ -108,7 +106,7 @@ def test_parenthesized_scalar_binding_is_still_scalar():
 
 
 def test_union_rooted_binding_populates_rhs_pipeline():
-    """An operator-rooted right-hand side is tabular with no pipe in sight."""
+    """An operator-rooted right-hand side is tabular with no pipe present."""
     lb = _binding("let U = union SigninLogs, AuditLogs; U | count", "U")
     assert isinstance(lb.rhs_pipeline, Pipeline)
     assert lb.inner_tables == ["SigninLogs", "AuditLogs"]
@@ -150,8 +148,8 @@ def test_binder_resolved_table_alias_populates_rhs_pipeline():
 
     With a schema the ``NameReference`` carries a ``TableSymbol``, so the
     binding becomes a pipeline over a ``TableRef``. This branch drives the
-    documented ``semantic_hash`` divergence between a bound and an unbound
-    parse — see the note on ``transforms._VOLATILE_FIELDS``.
+    bound-versus-unbound ``semantic_hash`` divergence documented on
+    ``transforms._VOLATILE_FIELDS``.
     """
     lb = _binding(
         "let A = OtherTable; A | count",
@@ -164,17 +162,17 @@ def test_binder_resolved_table_alias_populates_rhs_pipeline():
 
 
 def test_unbound_table_alias_stays_an_expression():
-    """Without a schema there is nothing to prove the name is a table, and the
-    builder does not guess one into existence."""
+    """Without a schema nothing proves the name is a table, so the right-hand
+    side stays an expression."""
     lb = _binding("let A = OtherTable; A | count", "A")
     assert lb.rhs_pipeline is None
     assert type(lb.rhs_expr).__name__ == "ColumnRef"
 
 
 def test_semantic_hash_diverges_across_bind_state_for_a_table_alias():
-    """Documented, accepted divergence — not a bug, and not fixable by
-    stripping fields: the IR *shape* differs. Pinned so a future change to
-    the let dispatch cannot silently alter it."""
+    """Documented, accepted divergence: the IR *shape* differs, so stripping
+    fields cannot close it. Pinned so a change to the let dispatch cannot
+    alter it silently."""
     query = "let A = OtherTable; A | count"
     unbound = parse(query).to_ir()
     bound = parse(query, schema={"OtherTable": {"EventID": "int"}}).to_ir()
@@ -189,10 +187,8 @@ def test_semantic_hash_diverges_across_bind_state_for_a_table_alias():
 
 
 def test_let_pipeline_result_schema_is_populated():
-    """``SchemaAttacher`` walks ``let`` bindings too, threading their names
-    so a bound pipeline's result schema populates the same way a table's
-    would.
-    """
+    """``SchemaAttacher`` walks ``let`` bindings and threads their names, so a
+    bound pipeline's result schema populates the way a table's does."""
     ir = parse(
         "let Base = OtherTable | where EventID == 1; Base | count",
         schema={"OtherTable": {"EventID": "int"}},
@@ -205,8 +201,8 @@ def test_let_pipeline_result_schema_is_populated():
 
 
 def test_let_bound_columns_carry_the_alias_as_provenance():
-    """Reading through a let alias reports the alias, not the base table --
-    the alias is the step the query actually wrote."""
+    """A column read through a let alias reports the alias as its table. The
+    alias is the step the query wrote."""
     from kustology.ir import ColumnRef, find_all
 
     ir = parse(
@@ -221,9 +217,8 @@ def test_tabular_binding_is_reachable_by_generic_traversal():
     """``find_all`` descends into the binding, so a lineage analyzer sees the
     let's source tables through ordinary traversal.
 
-    ``Base`` itself is a ``LetRef``, not a ``TableRef`` -- asking for every
-    ``TableRef`` answers "which tables does this query read", which is what
-    a lineage analyzer wants, rather than mixing in the alias.
+    ``Base`` is a ``LetRef``, so asking for every ``TableRef`` answers "which
+    tables does this query read" without mixing in the alias.
     """
     from kustology.ir import LetRef, TableRef, find_all
 
@@ -264,19 +259,16 @@ def test_function_binding_populates_rhs_function():
 
 
 def test_a_function_body_is_reachable_from_both_tiers():
-    """Guards agreement between the two lineage tiers on a query whose only
-    table read lives inside a function body.
+    """Both lineage tiers must agree on a query whose only table read lives
+    inside a function body.
 
-    Tier 1 walks Microsoft's tree directly, body included, so
+    Tier 1 walks Microsoft's tree, body included, so
     `get_referenced_tables`/`get_referenced_columns` see through the call.
-    Tier 2 walks the IR with `find_all`, which depends on `LetFunction`
-    carrying the body rather than just the parameter names and a
-    `body_span` -- otherwise a caller doing lineage on Tier 2 gets an empty
-    answer for a query that plainly reads a table, with no diagnostic to
-    signal it.
-
-    What the model states narrower: call sites are not expanded, so the body
-    is reachable *once*, through the declaration, rather than at each call.
+    Tier 2 walks the IR with `find_all` and needs `LetFunction` to carry the
+    body: with only the parameter names and a `body_span`, Tier 2 lineage
+    answers empty for a query that reads a table, and nothing diagnoses it.
+    Call sites are not expanded, so the body is reachable once, through the
+    declaration.
     """
     query = 'let f = () { SecurityEvent | where Account=="root" | project Computer }; f()'
     parsed = parse(query)
@@ -292,8 +284,7 @@ def test_a_function_body_is_reachable_from_both_tiers():
     ir = parsed.to_ir()
     assert [t.name for t in find_all(ir, TableRef)] == ["SecurityEvent"]
     assert {c.name for c in find_all(ir, ColumnRef)} == {"Account", "Computer"}
-    # The binding's lineage index answers for the function too, not just for a
-    # tabular right-hand side.
+    # The binding's lineage index answers for a function body too.
     assert ir.let_bindings[0].inner_tables == ["SecurityEvent"]
     # The node carries the whole declaration: signature, body, and the span.
     (fn,) = find_all(ir, LetFunction)
@@ -313,8 +304,7 @@ def _function(query: str, name: str) -> LetFunction:
 
 
 def test_a_tabular_function_body_becomes_a_pipeline():
-    """Guards the headline claim of body-modeling: a function body's tables
-    are reachable, not invisible to the IR.
+    """A function body's tables are reachable from the IR.
 
     The tail dispatches by the same rule a ``let`` right-hand side does, so a
     pipe chain lands on ``body_pipeline`` and the tables it reads are ordinary
@@ -330,8 +320,8 @@ def test_a_tabular_function_body_becomes_a_pipeline():
 
 
 def test_a_scalar_function_body_becomes_an_expression():
-    """The other half of the dispatch, and the exclusivity between the two:
-    a scalar tail is an expression, never a one-source pipeline."""
+    """The other half of the dispatch: a scalar tail lands on ``body_expr``
+    and ``body_pipeline`` stays ``None``."""
     fn = _function("let S = (w:int) { w + 1 }; T | extend y = S(1)", "S")
     assert isinstance(fn.body_expr, BinOp)
     assert fn.body_expr.op == "+"
@@ -339,13 +329,11 @@ def test_a_scalar_function_body_becomes_an_expression():
 
 
 def test_a_body_nested_let_is_scoped_to_the_body():
-    """Guards a ``let`` inside a function body staying scoped there, not
-    hoisted to top level.
+    """A ``let`` inside a function body stays scoped to the body.
 
-    ``GetDescendants[LetStatement]`` is recursive, so a naive top-level sweep
-    would reach the body's own binding as though the query had declared it —
-    doubly, once the body itself is built. The binding belongs to the body,
-    and the body's reference to it resolves there.
+    ``GetDescendants[LetStatement]`` is recursive, so a top-level sweep with
+    no ancestor filter reaches the body's own binding as though the query had
+    declared it, and declares it twice once the body is built.
     """
     ir = parse("let f = (w:int) { let z = 5; T | take z }; T | where a > 1").to_ir()
     assert [lb.name for lb in ir.let_bindings] == ["f"]
@@ -387,8 +375,8 @@ def test_a_parameter_shadows_an_outer_let_in_expression_position():
 
 def test_a_parameter_shadows_an_outer_let_in_source_position():
     """The same rule at the other reading site: a tabular parameter naming an
-    earlier ``let`` reads the parameter, so the body's source is a
-    ``TableRef``, not the ``LetRef`` the same text produces outside."""
+    earlier ``let`` reads the parameter. The body's source is a ``TableRef``
+    where the same text outside the body gives a ``LetRef``."""
     ir = parse(
         "let A = T | take 1; let f = (A:(x:long)) { A | count }; A | count"
     ).to_ir()
@@ -400,14 +388,11 @@ def test_a_parameter_shadows_an_outer_let_in_source_position():
 
 # -- the pattern-body twin of the function-body scoping above --------------
 #
-# A ``declare pattern`` body is a ``FunctionBody`` too, owned by a
-# ``PatternMatch`` rather than by a ``FunctionDeclaration``. The top-level
-# ``let`` sweep's ancestor filter names only ``FunctionDeclaration``, so it
-# leaves a ``let`` written inside a pattern body alone rather than
-# *hoisting* it into ``QueryIR.let_bindings`` — a scope the query never
-# wrote it in. ``PatternMatch.body_lets`` owns the binding instead; hoisting
-# it as well would declare it twice. These tests assert scoping against
-# ``body_lets``, the pattern-body counterpart of ``let_bindings``.
+# A ``declare pattern`` body is a ``FunctionBody`` owned by a
+# ``PatternMatch``. The top-level ``let`` sweep's ancestor filter names only
+# ``FunctionDeclaration``, so a ``let`` written inside a pattern body is not
+# hoisted into ``QueryIR.let_bindings``; ``PatternMatch.body_lets`` owns it,
+# and these tests assert scoping against that field.
 
 def test_a_pattern_body_let_is_scoped_to_the_body():
     ir = parse(
@@ -441,8 +426,8 @@ def test_a_pattern_body_let_does_not_leak_past_the_statement():
 
 
 def test_a_pattern_body_sees_the_querys_own_let_bindings():
-    """Scoping the body's own declarations there does not close the body off
-    from the enclosing query: an outer binding is still visible inside."""
+    """Scoping the body's own declarations there leaves an outer binding
+    visible inside."""
     ir = parse(
         "let n = 5; "
         'declare pattern P = (a:string) { ("x") = { T | take n }; }; T | take 1'
@@ -477,17 +462,16 @@ def test_a_parameter_without_a_default_records_none():
     ],
 )
 def test_the_view_keyword_is_recorded(query, expected):
-    """``view`` decides whether ``union *`` picks the function up, so it is a
-    difference in which rows a query returns, not a spelling."""
+    """``view`` decides whether ``union *`` picks the function up, so it
+    changes which rows a query returns."""
     assert _function(query, "S").is_view is expected
 
 
 def test_a_call_site_is_still_not_expanded():
     """Modeling the body does not inline it: ``S(5)`` stays a call.
 
-    The body is reachable through the declaration, once, rather than copied
-    into every call site — so a two-call query does not report its tables
-    twice and the digest does not grow with the call count.
+    The body is reachable once, through the declaration, so a two-call query
+    reports its tables once and the digest does not grow with the call count.
     """
     from kustology.ir import FuncCallSource
 
@@ -508,8 +492,7 @@ def test_invoke_of_a_let_function_is_unaffected():
 
 def test_an_empty_function_body_builds_with_neither_tail():
     """``let f = (x:long);`` — the parser recovers a ``FunctionBody`` with no
-    statements and no expression. Both tail fields stay ``None`` rather than
-    one of them being populated with a placeholder."""
+    statements and no expression, so both tail fields stay ``None``."""
     fn = _function("let f = (x:long); T | count", "f")
     assert fn.body_pipeline is None
     assert fn.body_expr is None
@@ -556,13 +539,12 @@ def test_rejects_stored_json_carrying_the_removed_field():
 
 
 def test_let_bound_name_at_source_position_is_a_let_ref():
-    """Guards ``LetRef`` actually getting constructed at a source position,
-    not just declared in the ``Pipeline.source`` union and exported.
+    """``LetRef`` is constructed at a source position, not only declared in
+    the ``Pipeline.source`` union and exported.
 
     A consumer branching on ``isinstance(src, LetRef)`` to tell a table from
-    an alias depends on the builder emitting ``LetRef`` for a source-position
-    name bound by an earlier ``let``, rather than leaving every such name a
-    ``TableRef``.
+    an alias depends on the builder emitting it for a source-position name
+    bound by an earlier ``let``.
     """
     from kustology.ir import IRBuilder, LetRef, TableRef
 
@@ -625,18 +607,14 @@ def test_inner_tables_reports_real_tables_only():
 
 
 def test_let_ref_classification_is_bind_independent():
-    """``LetRef`` is decided from the ``let`` statements, not the binder.
+    """``LetRef`` is decided from the ``let`` statements, so the use site
+    classifies the same with or without a schema.
 
-    The name is bound by a ``let`` in the same query text, which is true
-    with or without a schema -- so the use site classifies identically
-    either way, and no schema is needed to tell an alias from a table.
-
-    This does *not* remove the bind-state divergence documented in
-    ``transforms._VOLATILE_FIELDS``: that one is on the binding's *own*
-    right-hand side. ``let A = OtherTable`` still yields ``rhs_expr:
-    ColumnRef`` unbound and ``rhs_pipeline: Pipeline(TableRef)`` bound,
-    because only the binder can prove ``OtherTable`` is a table. Pinned
-    here so the two are not confused.
+    The bind-state divergence documented in ``transforms._VOLATILE_FIELDS``
+    is a separate thing, on the binding's *own* right-hand side:
+    ``let A = OtherTable`` yields ``rhs_expr: ColumnRef`` unbound and
+    ``rhs_pipeline: Pipeline(TableRef)`` bound, because only the binder can
+    prove ``OtherTable`` is a table. Pinned so the two are not confused.
     """
     from kustology import parse
     from kustology.ir import LetRef
@@ -650,7 +628,7 @@ def test_let_ref_classification_is_bind_independent():
     assert isinstance(unbound.main_pipeline.source, LetRef)
     assert isinstance(bound.main_pipeline.source, LetRef)
 
-    # The RHS divergence is unchanged and unfixable without a schema.
+    # The RHS still diverges by bind state; only a schema closes it.
     assert unbound.let_bindings[0].rhs_expr is not None
     assert bound.let_bindings[0].rhs_pipeline is not None
 
@@ -659,10 +637,9 @@ def test_externaldata_let_rhs_is_tabular():
     """``rhs_pipeline is not None`` is a reliable "is tabular" test, with no
     special case for ``externaldata``.
 
-    ``externaldata`` is tabular in KQL, and ``ExternalDataSource`` gives it a
-    real source class, so the binding takes the same shape as every other
-    tabular one -- callers need no
-    ``rhs_expr``-might-be-an-``ExternalDataExpr`` branch.
+    ``externaldata`` is tabular in KQL and ``ExternalDataSource`` is its
+    source class, so the binding takes the same shape as every other tabular
+    one. Callers need no ``rhs_expr``-might-be-an-``ExternalDataExpr`` branch.
     """
     from kustology.ir import ExternalDataSource, IRBuilder
 

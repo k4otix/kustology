@@ -7,20 +7,17 @@ KQL lets a query hold more than one tabular statement, separated by ``;``::
 
     T | count; U | count
 
-Guards against under-lowering: a builder that reads only ``expr_stmts[0]``
-discards everything after the first semicolon, so ``T | count; U | count``
-would collapse onto the IR of ``T | count`` — same ``semantic_hash``, and
-nothing in the second statement reachable through ``walk``/``find_all``.
-That is the lossy lowering shape AGENTS.md describes — the node is fully
-populated, so nothing looks stubbed, while two different queries produce
-identical IR.
+A builder that reads only ``expr_stmts[0]`` discards everything after the
+first semicolon: ``T | count; U | count`` collapses onto the IR of
+``T | count``, with the same ``semantic_hash`` and nothing in the second
+statement reachable through ``walk``/``find_all``. That is the lossy lowering
+AGENTS.md describes, where a fully populated node hides two different queries.
 
 ``QueryIR.additional_pipelines`` holds the second and later statements in
-source order. The hash payload names it explicitly (``compute_semantic_hash``
-builds a ``{let_bindings, main_pipeline, additional_pipelines}`` dict rather
-than dumping the whole model), so a field left out of that dict would be
-invisible to the digest however well the builder populated it — which is what
-the hash tests below pin.
+source order. ``compute_semantic_hash`` builds a ``{let_bindings,
+main_pipeline, additional_pipelines}`` dict instead of dumping the whole
+model, so a field left out of that dict is invisible to the digest however
+well the builder populates it.
 """
 
 import pytest
@@ -64,34 +61,29 @@ def test_statements_are_kept_in_source_order():
 
 
 def test_a_single_statement_query_has_no_additional_pipelines():
-    """The boundary: one statement must not grow a spurious second entry.
-
-    ``let`` statements are not tabular statements, so a query with three of
-    them still has exactly one pipeline.
-    """
+    """One statement must not grow a spurious second entry: ``let`` statements
+    are not tabular, so leading bindings still leave exactly one pipeline."""
     assert _ir("T | count").additional_pipelines == []
     assert _ir("let a = 5; let b = 6; T | where x > a").additional_pipelines == []
 
 
 # -- the hash responds ----------------------------------------------------
 #
-# That a second statement changes the hash, and that two queries differing
-# only in their second statement hash apart, are asserted in
-# tests/ir/test_hash_battery.py as second-statement-dropped,
-# second-statement-table and second-statement-operator-param. The last of
-# those proves the later pipeline's operators reach the digest, not only
-# its source name.
+# tests/ir/test_hash_battery.py carries the cases where a second statement
+# changes the hash: second-statement-dropped, second-statement-table, and
+# second-statement-operator-param. The last shows the later pipeline's
+# operators reach the digest, not only its source name.
 
 def test_statement_order_is_hashed():
     """``T | count; U | take 1`` and ``U | take 1; T | count`` are different
-    queries — the last statement is the one whose result the caller gets."""
+    queries: the last statement is the one whose result the caller gets."""
     assert _hash("T | count; U | take 1") != _hash("U | take 1; T | count")
 
 
 def test_compute_semantic_hash_agrees_with_the_stored_field():
-    """``QueryIR.semantic_hash`` is computed at build time and
-    ``compute_semantic_hash`` is what consumers call after mutating the IR;
-    the two must not disagree about the new field."""
+    """``QueryIR.semantic_hash`` is computed at build time and consumers call
+    ``compute_semantic_hash`` after mutating the IR; the two must agree about
+    ``additional_pipelines``."""
     ir = _ir("T | count; U | count")
     assert compute_semantic_hash(ir) == ir.semantic_hash
 
@@ -99,8 +91,8 @@ def test_compute_semantic_hash_agrees_with_the_stored_field():
 # -- the subtree is reachable ---------------------------------------------
 
 def test_walk_reaches_into_a_later_statement():
-    """``find_all`` is the documented traversal; an analyzer built on it
-    needs to see past the first semicolon, not just the main pipeline."""
+    """``find_all`` is the documented traversal, so an analyzer built on it
+    must see past the first semicolon."""
     ir = _ir("T | count; U | where FileName == 'cmd.exe'")
     assert [f.name for f in find_all(ir, ColumnRef)] == ["FileName"]
     assert len(list(find_all(ir, FilterOp))) == 1
@@ -115,8 +107,8 @@ def test_json_round_trip_keeps_every_statement():
 
 
 def test_the_binder_enriches_a_later_statement(sample_schema):
-    """A later statement is a real pipeline, so the schema pass must reach it
-    — otherwise the same column resolves in statement one and not in two."""
+    """A later statement is a real pipeline, so the schema pass must reach it;
+    otherwise a column resolves in statement one and not in two."""
     ir = parse(
         "DeviceProcessEvents | count; "
         "DeviceFileEvents | where FileName == 'cmd.exe'",
@@ -133,9 +125,8 @@ def test_the_binder_enriches_a_later_statement(sample_schema):
 
 def test_a_let_reference_in_a_later_statement_is_canonicalized():
     """``_canonicalize_let_names`` rewrites ``let`` names on the hash's copy.
-    Guards against renaming the main pipeline only: a reference from a later
-    statement must be renamed the same way, or it keeps its source-level
-    name and the rename stops being a rename."""
+    A reference from a later statement must be renamed the same way, or it
+    keeps its source-level name and the two spellings hash apart."""
     a = _hash("let X = T | take 1; T | count; X | count")
     b = _hash("let Y = T | take 1; T | count; Y | count")
     assert a == b
@@ -147,7 +138,6 @@ def test_a_let_reference_in_a_later_statement_is_canonicalized():
 ])
 def test_llm_view_renders_later_statements(query):
     """``to_llm_dict`` derives from ``model_fields``, so the field appears
-    without a per-field rule — pinned so a future view change cannot drop it
-    silently."""
+    without a per-field rule; a view change cannot drop it silently."""
     view = _ir(query).to_llm_dict()
     assert len(view["additional_pipelines"]) == 1

@@ -3,17 +3,16 @@
 
 """Operator parameters: the modifiers that change what an operator does.
 
-Every assertion here runs on a real parse. The pattern is a value assertion
-on a non-default parameter plus a hash pair, because the two failures this
-family produces are different: a field that is never populated reads as
-implemented, and a parameter the IR does not carry at all makes two
-different queries share one ``semantic_hash``.
+Every assertion here runs on a real parse. Each case pairs a value assertion
+on a non-default parameter with a hash pair, because the two failures differ:
+a field that is never populated reads as implemented, and a parameter the IR
+does not carry makes two different queries share one ``semantic_hash``.
 
 The effective-default cases (``join``, ``lookup``, ``union kind``,
-``parse kind``) are always written as a *pair* -- the bare form against the
+``parse kind``) are always written as a *pair*: the bare form against the
 explicitly-written default, which must hash alike, and the bare form against
-a different written value, which must not. Asserting only the first would
-pass on a builder that recorded nothing at all.
+a different written value, which must not. Asserting only the first passes
+on a builder that records nothing.
 """
 
 from __future__ import annotations
@@ -56,11 +55,8 @@ def test_typed_capture_is_reachable_through_find_all():
 
 
 def test_typed_capture_gives_the_binder_the_declared_type():
-    """The declared type is the column's type -- nothing to infer.
-
-    Untyped captures still default to ``string`` (KQL's rule), so this
-    asserts the typed branch specifically.
-    """
+    """The declared type is the column's type. Untyped captures default to
+    ``string`` by KQL's rule, so this asserts the typed branch."""
     ir = parse(
         "T | parse a with 'x' b:long", schema={"T": {"a": "string"}},
     ).to_ir()
@@ -97,11 +93,9 @@ def test_mv_expand_records_with_itemindex():
 
 
 def test_mv_expand_records_its_kind():
-    """``kind=`` and the legacy ``bagexpansion=`` are one field.
-
-    ``_MV_ALL`` writes both (which parses clean), and the modern spelling
-    wins -- see :class:`MvExpandOp`.
-    """
+    """``kind=`` and the legacy ``bagexpansion=`` are one field. ``_MV_ALL``
+    writes both, which parses clean, and the modern spelling wins; see
+    :class:`MvExpandOp`."""
     (op,) = _ops(_MV_ALL)
     assert op.expand_kind == "array"
 
@@ -128,11 +122,10 @@ def test_mv_expand_kind_value_set_is_the_dlls():
 def test_mv_expand_modifiers_all_reach_the_hash():
     """Each modifier alone must move the digest, and off a common base.
 
-    Comparing the spellings pairwise is what catches a field that is
-    modeled but not hashed: several could still collapse onto the bare form
-    if only one pair were checked. ``bagexpansion`` is absent because it is
-    not a fifth modifier -- it is ``kind`` spelled the old way, pinned as an
-    equality above.
+    Comparing the spellings pairwise catches a field that is modeled but not
+    hashed; checking one pair alone lets several collapse onto the bare form.
+    ``bagexpansion`` is absent because it is ``kind`` spelled the legacy way,
+    pinned as an equality above.
     """
     variants = {
         "bare": _hash("T | mv-expand a"),
@@ -167,8 +160,7 @@ def test_mv_apply_records_the_declared_element_type():
 def test_mv_apply_multi_column_to_typeof_takes_the_first_written():
     """Disclosed in :class:`~kustology.ir.query.MvApplyOp`'s docstring: with
     two comma-separated columns each carrying its own ``to typeof(...)``, the
-    reader takes the first written occurrence across ``assignments``, not the
-    last."""
+    reader takes the first written occurrence across ``assignments``."""
     (op,) = _ops(
         "T | mv-apply a to typeof(long), b to typeof(string) on (take 1)"
     )
@@ -454,9 +446,9 @@ def test_a_non_hint_parameter_is_not_a_hint():
 def test_a_function_call_render_property_is_recorded_as_written():
     """A property value is not always a bare name or a literal.
 
-    ``strcat("a","b")`` is a ``FunctionCallExpression``, which *has* a
-    ``Name`` member -- so the bare-name branch fired and recorded the
-    function's name, ``"strcat"``, for every call whatever its arguments.
+    ``strcat("a","b")`` is a ``FunctionCallExpression`` that *has* a ``Name``
+    member, so a bare-name branch records ``"strcat"`` for every call
+    whatever its arguments. The written text is what lands in ``properties``.
     """
     (op,) = _ops('T | render timechart with (title=strcat("a","b"))')
     assert op.properties == {"title": 'strcat("a","b")'}
@@ -469,12 +461,10 @@ def test_two_function_call_render_properties_hash_apart():
 
 
 def test_bare_search_records_kqls_effective_kind():
-    """D8 does apply here: the DLL pins the value set.
-
-    ``search kind=bogus 'x'`` on a bound parse is diagnosed *Expected one
-    of: default, case_insensitive, case_sensitive*, so ``default`` is a
-    value the grammar knows and the unwritten case selects it.
-    """
+    """D8 applies here: the DLL pins the value set. ``search kind=bogus 'x'``
+    on a bound parse is diagnosed *Expected one of: default,
+    case_insensitive, case_sensitive*, so ``default`` is a value the grammar
+    knows and the unwritten case selects it."""
     (op,) = _ops("search 'x'")
     assert op.search_kind == "default"
 
@@ -494,10 +484,10 @@ def test_search_kind_value_set_is_the_dlls():
 def test_only_the_grammars_hint_spelling_is_a_hint():
     """The prefix match is case-sensitive because the grammar is.
 
-    ``HINT.strategy=shuffle`` is not a named parameter at all -- the parser
-    reads ``HINT`` as a name and complains -- so a lenient match could not
-    admit anything a strict one misses, and would risk two dict entries for
-    one hint if a later DLL did accept a second casing.
+    ``HINT.strategy=shuffle`` is not a named parameter at all: the parser
+    reads ``HINT`` as a name and complains, so a lenient match admits nothing
+    a strict one misses and risks two dict entries for one hint if a later
+    DLL accepts a second casing.
     """
     ir = parse(
         "T | join HINT.strategy=shuffle (U) on k",
@@ -510,10 +500,8 @@ def test_only_the_grammars_hint_spelling_is_a_hint():
 
 def test_the_render_with_clause_wins_a_property_collision():
     """Both spellings in one query: the modern ``with`` clause is the value.
-
-    Documented in the merge and otherwise unpinned, so a reordering of the
-    two ``read_named_params`` calls would flip it silently.
-    """
+    Documented in the merge and otherwise unpinned, so reordering the two
+    ``read_named_params`` calls would flip it silently."""
     (op,) = _ops("T | render columnchart kind=stacked with (kind=unstacked)")
     assert op.properties == {"kind": "unstacked"}
 
@@ -526,12 +514,9 @@ def test_find_qualified_table_keeps_its_database():
 
 
 def test_find_project_smart_is_the_default_projection():
-    """``project-smart`` is what a bare ``find`` does, so the two must hash
-    alike.
-
-    True today because the clause holds no columns; pinned so a future read
-    of ``ProjectKeyword`` cannot split them by accident.
-    """
+    """``project-smart`` is what a bare ``find`` does, so the two hash alike.
+    The clause holds no columns; pinned so a read of ``ProjectKeyword``
+    cannot split them by accident."""
     assert _hash("find in (T) where a == 1 project-smart") == _hash(
         "find in (T) where a == 1"
     )

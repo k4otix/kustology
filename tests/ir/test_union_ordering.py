@@ -4,28 +4,22 @@
 """Every ``Pipeline`` union member must round-trip back to its own class.
 
 ``Pipeline.source``, ``Pipeline.operators``, ``SearchOp.tables``,
-``FindOp.tables`` and ``expr.AnyExpr`` are each
+``FindOp.tables``, and ``expr.AnyExpr`` are each
 ``Field(discriminator="kind")``, and every member carries a unique
 ``kind: Literal[...]``, so member order is cosmetic and a kind-less or
-mismatched payload is rejected by name instead of absorbed by shape (see
+mismatched payload is rejected by name (see
 ``test_operator_payload_without_kind_is_rejected_with_a_discriminator_error``
-below). Without the discriminator, pydantic's default "smart" mode ties by
-shape: it would prefer a defaulted-fields class over a true fields-less one
-when given a span+kind payload, so the position of every member in the list
-would matter, and a kind-less ``And``/``Or`` payload (both just ``span`` +
-``operands``) would silently validate as whichever came first in the
-``Union``.
+below). Pydantic's default "smart" mode ties by shape instead: it prefers a
+defaulted-fields class over a true fields-less one for a ``span`` + ``kind``
+payload, so the position of every member would matter, and a kind-less
+``And``/``Or`` payload (both just ``span`` + ``operands``) would silently
+validate as whichever came first in the ``Union``.
 
-The exhaustive-membership checks and round-trip tests stay regardless: a
-discriminator only changes *how* a payload is matched to a class, not
-whether a class can go missing from the union declaration or a ``Literal``
-can be mis-declared, so the same coverage still catches both.
-
-The two membership assertions are the load-bearing half. Without them a
-class added to the union later would not be exercised, and the silent
-failure mode -- a ``FilterOp`` payload validating as a fields-less
-``GetSchemaOp`` with the predicate dropped -- is exactly the one that
-produces a passing test suite and a wrong IR.
+A discriminator changes how a payload is matched to a class, so the membership
+assertions carry the rest: without them a class added to the union goes
+unexercised, and a mis-declared ``Literal`` or a ``FilterOp`` payload
+validating as a fields-less ``GetSchemaOp`` with the predicate dropped both
+pass the suite while the IR is wrong.
 """
 
 from __future__ import annotations
@@ -61,18 +55,15 @@ def _union_members(annotation) -> tuple[type, ...]:
 def _sample(annotation):
     """Build one valid value for ``annotation``.
 
-    Deliberately generic rather than a hand-written table: a table drifts
-    the moment a field is added, and the point of this module is that a
-    model change cannot slip past it.
+    A hand-written table drifts the moment a field is added, so this stays
+    generic: a model change cannot slip past it.
 
-    Every field is filled, not just the required ones. Filling only what is
-    required leaves each defaulted field at its default, and a payload made
-    entirely of defaults is exactly the shape a smart-mode union could not
-    tell apart by shape alone -- ``{"kind": …, "span": …, "predicate": null,
-    "tables": []}`` is what a fields-less class's payload has to be told
-    apart from. Giving every optional field a non-default value also puts
-    it through the round-trip, which is where a mis-declared ``Literal`` or
-    a container type the validator coerces would show up.
+    Every field is filled, including the defaulted ones. A payload made
+    entirely of defaults (``{"kind": …, "span": …, "predicate": null,
+    "tables": []}``) is the shape a smart-mode union cannot tell apart from a
+    fields-less class's. Non-default optional values also go through the
+    round-trip, where a mis-declared ``Literal`` or a container type the
+    validator coerces shows up.
     """
     annotation = _unwrap(annotation)
     if annotation is Span:
@@ -112,9 +103,8 @@ def _sample(annotation):
     return "x"
 
 
-# One instance of every ``Pipeline.source`` member, each carrying a
-# non-default payload where it has one -- a sample that only ever exercises
-# defaults cannot tell two classes apart.
+# One instance of every ``Pipeline.source`` member with a non-default payload
+# where it has one; a defaults-only sample cannot tell two classes apart.
 SOURCE_SAMPLES: tuple[BaseModel, ...] = (
     Q.TableRef(name="T", database="d", cluster="c", is_wildcard=True, span=_SPAN),
     Q.LetRef(name="X", span=_SPAN),
@@ -178,9 +168,8 @@ def test_operator_round_trips_to_its_own_class(sample):
 
 
 def test_operator_payload_without_kind_is_rejected_with_a_discriminator_error():
-    """Under a shape-based ("smart") union, a kind-less payload is absorbed
-    by whichever structurally compatible class comes first. A discriminated
-    union refuses it by name instead."""
+    """A shape-based ("smart") union absorbs a kind-less payload into the first
+    structurally compatible class; a discriminated union refuses it by name."""
     import pydantic
     import pytest
     payload = {"source": {"kind": "implicit_source", "span": {"text_start": 0, "width": 0}},

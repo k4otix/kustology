@@ -3,30 +3,22 @@
 
 """Every kind in ``IRBuilder.HANDLED_OPERATOR_KINDS`` builds from real KQL.
 
-``HANDLED_OPERATOR_KINDS`` is a public contract — ``scripts/audit_syntax_kinds.py``
-reads it as the list of shapes the builder claims to model, and the coverage
-audit trusts it. The claim can fail with no other test noticing: a dispatch
-arm that reads a .NET member its node type does not have raises
-``AttributeError`` on valid KQL while the kind sits in the set claiming to
-be handled.
+``scripts/audit_syntax_kinds.py`` reads that frozenset as the list of shapes
+the builder models, so a kind can sit in it while its dispatch arm raises
+``AttributeError`` on valid KQL by reading a .NET member its node type lacks.
 
-So this file pins one buildable sample per handled kind and asserts three
-things about each: that the query really parses to the kind it is filed
-under, that ``to_ir()`` returns at all, and that the result contains no
-``UnknownOp`` — the fallback the builder emits when dispatch falls through.
-A branch that crashes fails the second; a kind listed as handled with no
-dispatch arm fails the third.
+Each sample asserts three things: the query parses to the kind it is filed
+under, ``to_ir()`` returns, and the result holds no ``UnknownOp``, the
+fallback for dispatch falling through. A crashing arm fails the second; a
+kind listed as handled with no arm fails the third.
 
-The first assertion is what stops the file rotting into a set of queries
-that prove nothing. Microsoft's parser is error-tolerant, so a mistyped
-sample still parses, still builds, and still emits no ``UnknownOp`` — it
-never produces the operator it is filed under, and the kind goes untested
-behind a green test. Checking the parse tree for the class name closes
-that.
+The first assertion ties a sample to its kind. Microsoft's parser is
+error-tolerant, so a mistyped sample parses, builds, and emits no
+``UnknownOp`` while never producing the operator it is filed under. Checking
+the parse tree for the class name catches that.
 
 ``test_sample_covers_every_handled_operator_kind`` keeps the two sets in
-lockstep, so adding a kind to the frozenset without a sample here is a
-failure rather than an untested claim.
+lockstep.
 """
 
 import pytest
@@ -56,10 +48,8 @@ SAMPLES = {
 
 
 def test_sample_covers_every_handled_operator_kind():
-    """A kind added to the frozenset without a sample here would be a
-    coverage claim nothing exercises; a sample for a kind outside the set is
-    dead weight. Equality catches both directions.
-    """
+    """A kind with no sample is a coverage claim nothing exercises, and a
+    sample for no kind is dead weight."""
     assert set(SAMPLES) == set(IRBuilder.HANDLED_OPERATOR_KINDS)
 
 
@@ -67,11 +57,10 @@ def _syntax_class_names(root) -> set[str]:
     """Return every Python class name in a parsed .NET syntax tree.
 
     ``ChildCount``/``GetChild`` is the generic descent
-    ``scripts/audit_syntax_kinds.py`` uses, and the right one here: the tree
-    is full of structural wrappers (``List``, ``SeparatedElement``) that a
-    field-name walk would have to know about, and ``IRBuilder`` dispatches
-    on the class name too, so this reads the same thing the builder branches
-    on.
+    ``scripts/audit_syntax_kinds.py`` uses. It passes through the structural
+    wrappers (``List``, ``SeparatedElement``) a field-name walk would have to
+    know about, and it reports class names, which is what ``IRBuilder``
+    dispatches on.
     """
     seen: set[str] = set()
     stack = [root]

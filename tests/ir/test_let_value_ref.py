@@ -4,34 +4,32 @@
 """A ``let``-bound scalar used in an expression is not a column.
 
 Lowering ``threshold`` in ``let threshold = 5; T | where Count > threshold``
-to a :class:`~kustology.ir.ColumnRef` claims the query reads two columns
+to a :class:`~kustology.ir.ColumnRef` would claim the query reads two columns
 from ``T`` when it reads one and compares it against a query-local constant.
 Two things follow:
 
-* ``find_all(ir, ColumnRef)`` — the documented way to ask which columns a
-  query touches — reports ``threshold``. Column-level lineage, "does this
-  detection read the column we just renamed", and every schema-drift check
-  built on it answer wrongly, and the binder has to fail to resolve a
-  column that never existed.
+* ``find_all(ir, ColumnRef)``, the documented way to ask which columns a
+  query touches, would report ``threshold``, so column-level lineage and
+  every schema-drift check built on it answer wrongly.
 * ``_canonicalize_let_names`` renames a ``let`` name to its declaration index
   on the hash's copy, so the local label a query chose cannot change its
-  digest. It renames :class:`LetBinding` and :class:`LetRef` and deliberately
-  not ``ColumnRef``, since a real column called ``threshold`` *is* a
-  different query — so a use site lowered to ``ColumnRef`` escapes the
-  rename, and ``let n = 5; T | where a > n`` hashes apart from
+  digest. It renames :class:`LetBinding` and :class:`LetRef` but not
+  ``ColumnRef``, since a real column called ``threshold`` is a different
+  query. A use site lowered to ``ColumnRef`` would escape that rename, so
+  ``let n = 5; T | where a > n`` would hash apart from
   ``let m = 5; T | where a > m``, the pair
   ``test_ir_builder.test_renaming_a_scalar_let_binding_does_not_change_the_hash``
   pins.
 
-:class:`LetValueRef` is the node the use site builds. It is deliberately
-*not* a ``ColumnRef`` subclass: the binder resolves column provenance by
-isinstance, and a subclass would inherit that behavior and send the binder
-looking for a column of that name in the scope.
+:class:`LetValueRef` is the node the use site builds. It is not a
+``ColumnRef`` subclass: the binder resolves column provenance by isinstance,
+and a subclass would inherit that behavior and send the binder looking for a
+column of that name in the scope.
 
-The last section pins the known limitation this buys — a ``let`` name that
-shadows a real column is classified as the binding, because classifying it
-correctly would need the binder and so would make the lowering, and the hash,
-depend on whether a schema was supplied.
+The last section pins the limitation this buys. A ``let`` name that shadows a
+real column is classified as the binding, because classifying it correctly
+would need the binder and so would make the lowering, and the hash, depend on
+whether a schema was supplied.
 """
 
 import pytest
@@ -64,9 +62,8 @@ def _hash(query: str, schema: dict | None = None) -> str:
 
 
 # Parametrization shared by every test whose claim has to hold in both bind
-# states. Classification is made from the query text, so bind state must not
-# change it — that is the invariant the shadowing limitation below is traded
-# for, and asserting it only unbound would leave the trade unproven.
+# states. Classification comes from the query text, so bind state must not
+# change it: the invariant the shadowing limitation below is traded for.
 BOTH_MODES = pytest.mark.parametrize(
     "schema", [None, _T_SCHEMA], ids=["unbound", "bound"],
 )
@@ -92,11 +89,9 @@ def test_find_all_column_ref_no_longer_reports_the_let_name(schema):
 
 
 def test_a_let_value_ref_is_not_a_column_ref():
-    """Pin the type relationship, not only an observed name set: making
-    ``LetValueRef`` a ``ColumnRef`` subclass would satisfy every
-    ``isinstance`` the binder runs and quietly turn the reference back into
-    a column.
-    """
+    """Making ``LetValueRef`` a ``ColumnRef`` subclass would satisfy every
+    ``isinstance`` the binder runs and turn the reference into a column, so
+    the type relationship is pinned, not only an observed name set."""
     assert not issubclass(LetValueRef, ColumnRef)
 
 
@@ -110,9 +105,8 @@ def test_a_let_bound_list_in_a_membership_test_is_a_let_value_ref(schema):
 
 
 def test_a_real_column_of_the_same_name_is_still_a_column_ref():
-    """The boundary: without a ``let`` declaring it, ``threshold`` is a
-    column and must stay one.
-    """
+    """The boundary: with no ``let`` declaring it, ``threshold`` is a column
+    and stays one."""
     ir = _ir("T | where Count > threshold")
     assert {c.name for c in find_all(ir, ColumnRef)} == {"Count", "threshold"}
     assert list(find_all(ir, LetValueRef)) == []
@@ -120,9 +114,8 @@ def test_a_real_column_of_the_same_name_is_still_a_column_ref():
 
 def test_only_bindings_declared_earlier_produce_a_let_value_ref():
     """``self._let_names`` is populated in declaration order, so a name bound
-    *later* is not a reference to it — the same rule ``LetRef`` follows at
-    source position (``test_let_bindings.py``).
-    """
+    later is not a reference to it. ``LetRef`` follows the same rule at
+    source position (``test_let_bindings.py``)."""
     ir = _ir("let early = later + 1; let later = 5; T | where a > early")
     (rhs,) = [b.rhs_expr for b in ir.let_bindings if b.name == "early"]
     assert isinstance(rhs.left, ColumnRef)
@@ -132,15 +125,14 @@ def test_only_bindings_declared_earlier_produce_a_let_value_ref():
 
 # -- the hash --------------------------------------------------------------
 #
-# The rename pair itself (``let n ...`` vs ``let m ...``) is asserted in
+# The rename pair itself (``let n ...`` against ``let m ...``) is asserted in
 # test_hash_battery.py (let-scalar-name-rename) and, with the structural
 # checks that go with it, in test_ir_builder.py's
-# test_renaming_a_scalar_let_binding_does_not_change_the_hash. Asserting it
-# again here would be a third, redundant copy of the same pair.
+# test_renaming_a_scalar_let_binding_does_not_change_the_hash.
 
 def test_a_let_scalar_and_a_real_column_still_hash_apart():
-    """The near-miss the ``ColumnRef`` lowering was protecting: reading a
-    column named ``n`` is not comparing against a constant called ``n``."""
+    """Reading a column named ``n`` is not comparing against a constant
+    called ``n``."""
     assert _hash("let n = 5; T | where a > n") != _hash("T | where a > n")
 
 
@@ -215,21 +207,20 @@ def test_llm_view_drops_the_redundant_canonical_form():
 # no column matches. So a ``let`` whose name collides with a real column is
 # recorded as a ``LetValueRef`` even though the query reads the column.
 #
-# These tests assert what the builder does *today*, deliberately. Fixing the
-# classification needs ``ReferencedSymbol``, which the .NET parser only fills
-# on a bound parse -- so the same query text would build a ``ColumnRef`` with
-# a schema and a ``LetValueRef`` without one. That is a difference in IR
-# shape, which no volatile-field stripping can hide, and it would make
-# ``semantic_hash`` depend on whether a schema was supplied. See
-# ``tests/ir/test_semantic_hash_bind_invariance.py`` for the invariant being
-# protected and ``LetValueRef``'s docstring for the full reasoning.
+# These tests assert what the builder does. Classifying the name correctly
+# needs ``ReferencedSymbol``, which the .NET parser fills only on a bound
+# parse, so the same query text would build a ``ColumnRef`` with a schema and
+# a ``LetValueRef`` without one. No volatile-field stripping hides an
+# IR-shape difference, so ``semantic_hash`` would depend on whether a schema
+# was supplied. See ``tests/ir/test_semantic_hash_bind_invariance.py`` for
+# the invariant and ``LetValueRef``'s docstring for the reasoning.
 
 @BOTH_MODES
 def test_a_let_name_shadowing_a_real_column_is_recorded_as_the_let(schema):
-    """``T`` really has a ``Count`` column, and KQL reads it here -- the .NET
-    binder resolves this name to a ``ColumnSymbol``, not a ``VariableSymbol``.
-    The builder records a ``LetValueRef`` anyway, so ``find_all(ir, ColumnRef)``
-    does not report the column. Pinned, not endorsed."""
+    """``T`` really has a ``Count`` column, and KQL reads it here: the .NET
+    binder resolves this name to a ``ColumnSymbol``. The builder records a
+    ``LetValueRef`` anyway, so ``find_all(ir, ColumnRef)`` does not report
+    the column."""
     ir = _ir("let Count = 5; T | where Count > 1", schema)
     assert [c.name for c in find_all(ir, ColumnRef)] == []
     assert [r.name for r in find_all(ir, LetValueRef)] == ["Count"]
@@ -264,13 +255,12 @@ def test_the_shadowing_case_collapses_two_queries_onto_one_hash(schema):
 
 
 def test_the_shadowing_classification_is_the_same_in_both_bind_states():
-    """The invariant the limitation buys, asserted on the very query that
-    exposes the limitation.
+    """The invariant the limitation buys, asserted on the query that exposes
+    the limitation.
 
-    A ``ReferencedSymbol``-based fix would make exactly this pair diverge --
-    ``ColumnRef`` bound, ``LetValueRef`` unbound -- so if a later change
-    "fixes" the shadowing case, this test is the one that should stop it and
-    force the trade to be re-argued rather than made by accident.
+    A ``ReferencedSymbol``-based classification would make this pair diverge:
+    ``ColumnRef`` bound, ``LetValueRef`` unbound. This test is what stops
+    that change from being made by accident.
     """
     unbound = _ir("let Count = 5; T | where Count > 1")
     bound = _ir("let Count = 5; T | where Count > 1", _T_SCHEMA)

@@ -3,15 +3,13 @@
 
 """Claims written into the docs must match what they describe.
 
-The standing rule is that a written-out count is never trusted: a doc
-derives its numbers where it runs and describes the producing mechanism
-where it does not, so no count exists here for this file to re-derive and
-compare.
+A written-out count is never trusted: a doc derives its numbers where it
+runs and describes the producing mechanism where it does not, so no count
+exists here for this file to re-derive.
 
-The same discipline extends to hand-maintained *lists*, which go stale the
-same way a count does and for the same reason: something is added on one
-side of the repository and not the other. Each list pinned here is rebuilt
-from the directory or file it claims to enumerate.
+Hand-maintained *lists* go stale the same way, when something is added on
+one side of the repository and not the other. Each list pinned here is
+rebuilt from the directory or file it claims to enumerate.
 """
 
 from __future__ import annotations
@@ -57,13 +55,12 @@ def test_contributing_names_every_ci_job_without_a_local_counterpart():
     """CONTRIBUTING's CI table is a hand-maintained list of workflow jobs.
 
     Adding a job to ``test.yml`` and not to the table is the drift this
-    catches -- the table is what a contributor reads to know what CI does
-    that their local loop does not.
+    catches; the table is what a contributor reads to know what CI does that
+    their local loop does not.
 
-    Scoped to ``test.yml`` on purpose. ``canary.yml`` is scheduled and
-    manually dispatched, never triggered by a pull request, so it is not
-    part of the loop the paragraph describes and its absence from the table
-    is deliberate rather than drift.
+    The scope is ``test.yml``. ``canary.yml`` is scheduled and manually
+    dispatched, never triggered by a pull request, so it is outside the loop
+    the paragraph describes and belongs outside the table.
     """
     jobs = _workflow_jobs()
     uncovered = jobs - _LOCALLY_COVERED_JOBS
@@ -82,12 +79,11 @@ def test_readme_points_at_every_runnable_example():
 
     Adding an example and not the row is the drift this catches. The README
     is the only one of the three docs a new user is guaranteed to read, so
-    the table is where they learn ``examples/`` exists at all -- a stale
-    list is the same failure one step later than a missing one.
+    the table is where they learn ``examples/`` exists at all, and a stale
+    row fails them one step later than a missing one.
 
-    Deliberately not asserting a count: the table counts itself, and a
-    written-out count is exactly the kind of claim this file exists to keep
-    out of the docs.
+    No count is asserted: the table counts itself, and a written-out count is
+    the kind of claim this file exists to keep out of the docs.
     """
     readme = (REPO_ROOT / "README.md").read_text()
     on_disk = {

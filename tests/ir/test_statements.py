@@ -12,18 +12,16 @@ KQL admits five statement kinds beside ``let`` and a tabular expression::
     restrict access to (database("d"), T);
 
 A builder that collects only ``let`` statements and pipelines reads none of
-these, so whatever they said would be absent from the IR *and* from
-``semantic_hash``. That is worse than lossy: two different ``set query_now``
-pins would hash alike, and nothing in the IR would record that a statement
-had been there at all.
+these, so what they say is absent from the IR and from ``semantic_hash``:
+two different ``set query_now`` pins hash alike, and nothing records that a
+statement was there.
 
 ``QueryIR.statements`` holds them in source order, one discriminated union
 over the five modeled kinds plus a defensive ``UnknownStmt``. The hash
-payload names it explicitly (``compute_semantic_hash`` builds a
+payload names the field explicitly, since ``compute_semantic_hash`` builds a
 ``{let_bindings, statements, main_pipeline, additional_pipelines}`` dict
-rather than dumping the whole model), so a field left out of that dict would
-be invisible to the digest however well the builder populated it — which is
-what the hash tests below pin.
+instead of dumping the whole model, and a field left out of that dict is
+invisible to the digest however well the builder populates it.
 
 The pattern-body scoping pins live in ``test_let_bindings.py`` beside the
 function-body ones they mirror; the minimal-pair collision rows live in
@@ -55,8 +53,7 @@ from kustology.services import ANALYZE_FAILED_CODE
 # The 12.4.1 binder crashes on this query: ``VisitPatternDeclaration`` indexes
 # the *declared parameter* list with the *supplied value* index, so a match arm
 # with more values than the pattern declares parameters runs off the end. The
-# parse itself is clean, which is what makes it a live hazard rather than a
-# malformed-input case.
+# parse itself is clean, which makes it a live hazard.
 ARITY_CRASH = (
     'declare pattern Logs = (Source:string)[Level:string] '
     '{ ("Kusto","Info") = { print "a" }; };\n'
@@ -112,8 +109,8 @@ def test_query_parameters_carry_declared_types_and_defaults():
 
 def test_query_parameter_names_are_not_canonicalized():
     """A ``let`` name is a local label and is renamed on the hash's copy. A
-    query parameter's name is the caller-facing API of the saved query — the
-    thing a dashboard passes by name — so renaming it would merge two queries
+    query parameter's name is the caller-facing API of the saved query, the
+    thing a dashboard passes by name, so renaming it would merge two queries
     with different call contracts."""
     assert _hash("declare query_parameters(p:long); T | take 1") != _hash(
         "declare query_parameters(q:long); T | take 1"
@@ -122,8 +119,7 @@ def test_query_parameter_names_are_not_canonicalized():
 
 def test_a_function_bodys_query_parameters_are_scoped_to_the_body():
     """``FunctionBody``'s statement list admits ``let`` and
-    ``declare query_parameters``; guards the second against being dropped on
-    the floor."""
+    ``declare query_parameters``; both are scoped to the body."""
     ir = _ir("let f = (x:long) { declare query_parameters(p:long = 1); T | take x }; f(1)")
     assert ir.statements == []
     fn = ir.let_bindings[0].rhs_function
@@ -214,9 +210,8 @@ def test_restrict_carries_its_targets_and_properties():
         RestrictStmt,
     )
     assert len(stmt.expressions) == 2
-    # Values come back decoded, the same rendering `parse-kv`'s `with (...)`
-    # clause gets -- the shared ``named_param_value`` reader unquotes a
-    # literal rather than recording its source text.
+    # The shared ``named_param_value`` reader unquotes a literal, so values
+    # come back decoded, as they do for ``parse-kv``'s ``with (...)`` clause.
     assert stmt.properties == [("a", "1"), ("b", "x")]
 
 
@@ -226,12 +221,11 @@ def test_restrict_with_a_single_literal_property_keeps_it():
 
 
 def test_restrict_with_a_non_literal_property_keeps_it():
-    """The grammar admits only a literal or a bare name in this slot -- a
-    call, a parenthesized expression, or a timespan literal each diagnose
-    ``Missing value`` on a real parse. A bare name parses as a
-    ``NameDeclaration`` here, not the ``NameReference`` ``named_param_value``
-    special-cases, so it reaches the ``node_text`` fallback rather than the
-    literal branch, and still lands in ``properties``."""
+    """The grammar admits only a literal or a bare name in this slot: a call,
+    a parenthesized expression, or a timespan literal each diagnose ``Missing
+    value`` on a real parse. A bare name parses as a ``NameDeclaration``, not
+    the ``NameReference`` ``named_param_value`` special-cases, so it reaches
+    the ``node_text`` fallback and still lands in ``properties``."""
     stmt = _only("restrict access to (T) with (a=b); T | count", RestrictStmt)
     assert ("a", "b") in stmt.properties
 
@@ -310,11 +304,10 @@ def test_no_modelled_statement_falls_through_to_unknown():
     "restrict access to (T) with (); T | count",
 ])
 def test_a_recovered_statement_builds_rather_than_raising(query):
-    """KQL's parser recovers from a half-written statement by synthesizing
-    the missing children, so every reader here meets nodes the grammar says
-    are required and the source never wrote. An ``IRBuilder`` that raised on
-    one would turn a diagnosable typo into an exception out of ``to_ir()``.
-    """
+    """KQL's parser recovers from a half-written statement by synthesizing the
+    missing children, so every reader here meets nodes the grammar requires
+    and the source never wrote. Raising on one turns a diagnosable typo into
+    an exception out of ``to_ir()``."""
     ir = _ir(query)
     assert len(ir.statements) == 1
     assert not list(find_all(ir, UnknownStmt))
@@ -352,8 +345,7 @@ def test_json_round_trip_keeps_every_statement():
 ])
 def test_llm_view_renders_statements(query):
     """``to_llm_dict`` derives from ``model_fields``, so the field appears
-    without a per-field rule — pinned so a future view change cannot drop it
-    silently."""
+    with no per-field rule. Pinned so a view change cannot drop it silently."""
     view = _ir(query).to_llm_dict()
     assert len(view["statements"]) == 1
 
@@ -379,10 +371,9 @@ def test_the_binder_tolerates_a_statement_carrying_query(sample_schema):
 # bind-invariant, so the fallback digest is the right digest.
 
 def test_the_repro_still_crashes_microsofts_binder_unguarded():
-    """The guard is only worth its tests while the crash is real. If this
-    starts failing, a DLL refresh fixed the binder and the pins below stop
-    exercising anything — rewrite them against the new repro or retire them.
-    """
+    """The guard is only worth its tests while the crash is real. A failure
+    here means a DLL refresh fixed the binder and the pins below exercise
+    nothing; rewrite them against a new repro or retire them."""
     from kustology.bridge import GlobalState, KustoCode
 
     assert parse(ARITY_CRASH).diagnostics == []
@@ -440,10 +431,9 @@ def test_validate_with_a_schema_survives_the_crash():
 
 
 def test_the_crash_diagnostic_names_the_dotnet_exception():
-    """A guard that swallowed the cause would be worse than the crash: the
-    exception reaches the diagnostic's ``detail`` field, so the failure stays
-    reportable upstream through ``to_ir()`` while ``message`` stays one short
-    sentence."""
+    """The exception reaches the diagnostic's ``detail`` field, so the failure
+    stays reportable upstream through ``to_ir()`` while ``message`` stays one
+    short sentence."""
     (crash,) = _crashes(parse(ARITY_CRASH).to_ir().diagnostics)
     assert "IndexOutOfRangeException" in crash.message
     assert "\n" not in crash.message
@@ -452,9 +442,9 @@ def test_the_crash_diagnostic_names_the_dotnet_exception():
 
 def test_the_fallback_digest_is_the_bound_digest():
     """``semantic_hash`` is bind-invariant, so falling back to the unanalyzed
-    parse costs the binder's types and provenance — not the digest. Pinned on
-    a query the binder handles, since the crashing one has no bound digest to
-    compare against."""
+    parse costs the binder's types and provenance but leaves the digest.
+    Pinned on a query the binder handles, since the crashing one has no bound
+    digest to compare against."""
     query = "T | where a > 1"
     assert (
         parse(query).to_ir().semantic_hash

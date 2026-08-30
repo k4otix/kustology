@@ -7,7 +7,7 @@ For each query in a representative corpus:
   build → enrich → model_dump_json → model_validate_json → deep-equal check.
 
 Any drift between the in-memory model and the reloaded copy is a serialization
-bug — usually a missing ``model_rebuild()`` on a recursive field or a default
+bug, usually a missing ``model_rebuild()`` on a recursive field or a default
 value that differs between construction and deserialization.
 """
 
@@ -52,24 +52,22 @@ QUERIES = [
     # let-bindings.
     "let cutoff = ago(1h); DeviceProcessEvents | where TimeGenerated > cutoff",
     "let allowlist = dynamic(['svc_a','svc_b']); DeviceProcessEvents | where AccountName !in (allowlist)",
-    # let-declared functions. `LetFunction` holds a whole second IR —
-    # parameters with their declared types and defaults, body-scoped bindings,
-    # and a tail that is either a nested `Pipeline` or an `AnyExpr`. Each of
-    # those is a recursive field reached only through this node, so a missing
-    # `model_rebuild()` on any of them surfaces here and nowhere else.
+    # let-declared functions. `LetFunction` holds a whole second IR: typed
+    # parameters with defaults, body-scoped bindings, and a tail that is either
+    # a nested `Pipeline` or an `AnyExpr`. Each is a recursive field reached
+    # only through this node, so a missing `model_rebuild()` surfaces here.
     (
         "let Recent = (win:timespan=1h) { let cutoff = ago(win); "
         "DeviceProcessEvents | where TimeGenerated > cutoff }; Recent(2h)"
     ),
     "let Doubled = (n:long) { n * 2 }; DeviceProcessEvents | extend P = Doubled(ProcessId)",
     "let AllDevices = view () { DeviceProcessEvents | project DeviceId }; AllDevices()",
-    # Parameter names and call-site names are alpha-canonicalized in the
-    # digest and recorded verbatim in the IR, and this file pins the join
-    # between those two facts: the reloaded copy must reproduce its own
+    # Parameter and call-site names are alpha-canonicalized in the digest and
+    # recorded verbatim in the IR. The reloaded copy must reproduce its own
     # `semantic_hash`, which it cannot if a parameter's `TypedNameDecl`, a
-    # tabular parameter's body `TableRef` or a call site's name comes back
-    # differently. Two parameters, one of them tabular, so the rename has to
-    # be positional and has to reach both classes it lowers to.
+    # tabular parameter's body `TableRef`, or a call site's name comes back
+    # differently. Two parameters, one tabular, so the rename has to be
+    # positional and has to reach both classes it lowers to.
     (
         "let Filtered = (Src:(*), n:long) { Src | where ProcessId > n }; "
         "Filtered(DeviceProcessEvents, 5) | take 1"
@@ -146,12 +144,12 @@ def test_ir_roundtrip(builder, attacher, query):
 
 
 def test_dumps_carrying_removed_fields_are_rejected():
-    """``extra="forbid"`` makes a retired wire field loud instead of silent.
+    """``extra="forbid"`` makes an unknown wire field loud instead of silent.
 
-    ``QueryIR.parse_warnings``, ``Span.source_text``, and ``Expr.nullable``
-    are not fields of the current model, but a stored dump written by an
-    older release carries them — and it must fail to load rather than
-    quietly dropping data. That is what the IR_SCHEMA_VERSION bump is for.
+    ``QueryIR.parse_warnings``, ``Span.source_text``, and ``Expr.nullable`` are
+    not fields of the model, so a stored dump carrying them must fail to load
+    rather than quietly dropping data. ``IR_SCHEMA_VERSION`` is what tells the
+    holder of such a dump that the shape moved.
     """
     import json
 
@@ -178,26 +176,24 @@ def test_dumps_carrying_removed_fields_are_rejected():
 
 
 def test_dumps_missing_a_field_added_this_release_are_rejected():
-    """The other direction: a required field the older shape did not have.
+    """The other direction: a dump short a required field.
 
     ``extra="forbid"`` rejects a dump carrying a field the model does not
-    have, which the test above pins. It says nothing about a dump written
-    before a field was *added* — that one is short a key, not carrying a
-    spare, and only the field being required (no pydantic default) makes it
-    fail. ``SortKey`` is the sharpest case: the older wire shape holds the
+    have, which the test above pins. It says nothing about a dump missing a
+    key, where only the field being required (no pydantic default) makes the
+    load fail. ``SortKey`` is the sharpest case: an older wire shape holds the
     bare ordering expression directly in ``SortOp.expressions``, where the
-    current ``list[SortKey]`` wraps it as ``expression`` alongside a
-    required ``direction``.
+    current ``list[SortKey]`` wraps it as ``expression`` beside a required
+    ``direction``.
 
-    The distinction matters precisely because the older dump is *lossy* —
-    it predates the model recording which way the rows come back. Loading it
-    by treating the missing direction as some default would invent the half
-    of the query that dump never carried, and reproduce the collision
-    ``SortKey`` exists to close. So it must fail loudly instead, and the
-    error has to name the field a reader would have to add.
+    Such a dump is lossy, carrying nothing about which way the rows come back.
+    Treating the missing direction as a default would invent the half of the
+    query the dump never held and reproduce the collision ``SortKey`` closes,
+    so the load must fail loudly and the error has to name the field a reader
+    would add.
 
-    Built by demoting a real dump rather than by hand, so the payload stays
-    genuine: ``expressions[0]`` is replaced with the very expression node
+    The payload is a real dump demoted to the older shape rather than one
+    written by hand: ``expressions[0]`` is replaced with the expression node
     the current shape carries inside it.
     """
     import json
@@ -211,9 +207,8 @@ def test_dumps_missing_a_field_added_this_release_are_rejected():
     payload = json.loads(ir.model_dump_json())
     sort_op = payload["main_pipeline"]["operators"][0]
     assert sort_op["kind"] == "sort", sort_op["kind"]
-    # Sanity: the current shape wraps the expression in a SortKey that
-    # states the direction. Asserting the non-default value here is what
-    # makes the demotion below meaningful.
+    # The current shape wraps the expression in a SortKey that states the
+    # direction. Asserting the non-default value makes the demotion meaningful.
     assert sort_op["expressions"][0]["kind"] == "sort_key"
     assert sort_op["expressions"][0]["direction"] == "desc"
 
@@ -223,13 +218,11 @@ def test_dumps_missing_a_field_added_this_release_are_rejected():
     with pytest.raises(ValidationError) as excinfo:
         QueryIR.model_validate_json(json.dumps(payload))
 
-    # `Pipeline.operators` is a discriminated union (on `kind`), so pydantic
-    # picks the `SortOp` member by its `"sort"` tag directly instead of
-    # trying every member and reporting a branch of noise per failed one —
-    # the tag value itself shows up as a `loc` segment rather than a
-    # per-member class-name segment. Matching on the leaf name alone would
-    # also accept a `missing` on some unrelated member's own `expression`
-    # field, so the path is still checked in full.
+    # `Pipeline.operators` is a discriminated union on `kind`, so pydantic
+    # picks the `SortOp` member by its `"sort"` tag and the tag value shows up
+    # as a `loc` segment. Matching on the leaf name alone would also accept a
+    # `missing` on an unrelated member's `expression` field, so the check keeps
+    # the full path.
     missing = {
         ".".join(str(part) for part in err["loc"])
         for err in excinfo.value.errors()

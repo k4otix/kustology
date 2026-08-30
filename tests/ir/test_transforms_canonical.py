@@ -3,11 +3,10 @@
 
 """``compute_semantic_hash`` is exactly ``_digest(_payload(_canonicalize(node)))``.
 
-Pins the three-way split so a future edit to any one stage cannot silently
-change what ``compute_semantic_hash`` returns without a test noticing, and
-pins that ``_canonicalize`` records spans before ``_clear_volatile`` wipes
-them -- the one hook :mod:`kustology.ir.similarity` needs and the hash
-pipeline itself never asks for.
+Pinning the three-way split keeps an edit to one stage from moving the digest
+unnoticed. ``_canonicalize`` also records spans before ``_clear_volatile``
+wipes them, the one hook :mod:`kustology.ir.similarity` needs from a pipeline
+that has no other use for it.
 """
 
 import copy
@@ -61,11 +60,10 @@ def test_merged_filter_span_widens_regardless_of_which_where_carries_the_and():
 
 
 def test_the_merged_predicate_spans_what_the_merged_operator_does():
-    """One node, one answer about where it came from.
+    """The ``And`` holds the operands of every merged ``where``.
 
-    The ``And`` holds the operands of every merged ``where``, so a consumer
-    highlighting ``predicate.span`` -- a linter underlining the offending
-    condition -- must not be pointed at only the first one.
+    A consumer highlighting ``predicate.span``, such as a linter underlining
+    the offending condition, has to reach all of them.
     """
     for q in (
         "T | where a > 1 | where b > 2 | take 1",              # fresh ``And``
@@ -78,7 +76,7 @@ def test_the_merged_predicate_spans_what_the_merged_operator_does():
 
 
 def test_an_unmerged_filter_keeps_its_predicates_own_span():
-    """No run to merge, no widening: the predicate still spans just the expression."""
+    """No run to merge, no widening: the predicate spans only the expression."""
     q = "T | where a > 1 | take 1"
     ir = _ir(q)
     merge_consecutive_filters(ir)
@@ -91,8 +89,8 @@ def test_a_copy_computes_its_own_digest_rather_than_inheriting_one():
     """``cached_property`` memoizes into ``__dict__``, which pydantic copies.
 
     Copy-then-mutate is the workflow ``merge_consecutive_filters`` and
-    ``normalize_expressions`` document, so a copy that answered its first read
-    with the source's digest would be wrong exactly where the docs send people.
+    ``normalize_expressions`` document, so a copy answering its first read with
+    the source's digest is wrong exactly where the docs send people.
     """
     ir = parse("T | where a > 1 | take 1").to_ir()
     source = ir.semantic_hash

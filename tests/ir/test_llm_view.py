@@ -3,14 +3,13 @@
 
 """Tests for ``ir.llm_view.to_llm_dict``.
 
-The LLM view is a lossy projection of the IR — discriminator-prefixed,
-default-stripped, span-free. Tests pin the shape contract: every node
-carries ``kind``, the root additionally carries ``ir_schema_version``, and
-every default value is omitted. The three operators whose KQL ``kind``
-clause would collide with that discriminator (``render``, ``join``,
-``lookup``) are pinned too — the model fields are named ``render_kind`` /
-``join_kind`` / ``lookup_kind``, so the view renames nothing and both keys
-survive side by side.
+The LLM view is a lossy projection of the IR: discriminator-prefixed,
+default-stripped, span-free. Tests pin the shape contract. Every node carries
+``kind``, the root also carries ``ir_schema_version``, and every default value
+is omitted. The three operators whose KQL ``kind`` clause would collide with
+that discriminator (``render``, ``join``, ``lookup``) are pinned too: their
+model fields are named ``render_kind``, ``join_kind``, and ``lookup_kind``, so
+the view renames nothing and both keys survive side by side.
 """
 
 from __future__ import annotations
@@ -56,10 +55,10 @@ def test_top_level_has_query_kind(storm_ir):
 
 
 def test_every_structural_node_has_kind(storm_ir):
-    """Spot-check ``kind`` at every model level — top, source, operator,
-    nested expression. Universal walking can't distinguish model dicts
-    (which carry ``kind``) from domain dicts (``TabularSchema.columns``,
-    which don't), so we pin known sites explicitly."""
+    """Spot-check ``kind`` at every model level: top, source, operator, nested
+    expression. A universal walk can't distinguish model dicts (which carry
+    ``kind``) from domain dicts (``TabularSchema.columns``, which don't), so
+    this test pins known sites explicitly."""
     out = to_llm_dict(storm_ir)
     assert out["kind"] == "query"
     assert out["main_pipeline"]["kind"] == "pipeline"
@@ -140,14 +139,13 @@ def test_operator_result_schema_is_dropped_but_the_pipeline_keeps_its_own(storm_
     operator, which is what the view exists to avoid.
 
     ``Pipeline.result_schema`` answers "what does this query return"; the
-    per-operator copy answers the same question once per step, and on a
-    bound parse most steps give the same answer. Measured over the 49-query
-    fixture corpus against a schema covering every referenced column, the
-    per-operator copies were 35% of the whole bound LLM view — 295,156 of
-    851,224 bytes.
+    per-operator copy answers it once per step, and on a bound parse most
+    steps answer the same. Measured over the 49-query fixture corpus against a
+    schema covering every referenced column, the per-operator copies are 35%
+    of the whole bound LLM view: 295,156 of 851,224 bytes.
 
-    ``model_dump_json`` keeps every one of them — this is a view decision,
-    the same call ``_cap_datatable_rows`` makes about ``rows``.
+    ``model_dump_json`` keeps every one of them. That is a view decision, the
+    same call ``_cap_datatable_rows`` makes about ``rows``.
     """
     out = to_llm_dict(storm_ir)
     pipeline = out["main_pipeline"]
@@ -173,9 +171,9 @@ def test_operator_result_schema_is_dropped_but_the_pipeline_keeps_its_own(storm_
 
 def test_redundant_canonical_form_dropped_on_leaves(storm_ir):
     """``canonical_form`` is dropped on ColumnRef when it restates ``name``
-    (bare or ``table.name`` for bound nodes), and on LiteralExpr when it's
-    the canonical restatement of ``value``. It survives on subtree
-    expressions where it summarizes the tree."""
+    (bare or ``table.name`` for bound nodes), and on LiteralExpr when it is
+    the canonical restatement of ``value``. It survives on subtree expressions,
+    where it summarizes the tree."""
     out = to_llm_dict(storm_ir)
     bin_op = out["main_pipeline"]["operators"][0]["predicate"]["operands"][0]
 
@@ -233,13 +231,11 @@ def test_binop_contains_exclusion_becomes_not_contains():
 
 def test_setmembership_shows_its_real_operator():
     """``SetMembership.op`` is carried on the model, so the view surfaces it
-    rather than synthesizing one from polarity.
-
-    Synthesizing ``has_any`` and ``has_all`` as ``in`` would lose which one
-    a query wrote, and because ``case_sensitive`` defaults to ``False``,
-    the default-stripping pass would drop that field too -- a model would
-    be shown ``has_all`` as an indistinguishable case-sensitive ``in``.
-    """
+    instead of synthesizing one from polarity. Synthesizing ``has_any`` and
+    ``has_all`` as ``in`` would lose which one a query wrote, and since
+    ``case_sensitive`` defaults to ``False`` the default-stripping pass would
+    drop that field too, showing a model ``has_all`` as a case-sensitive
+    ``in``."""
     for op in ("in", "!in", "in~", "!in~", "has_any", "has_all"):
         ir = IRBuilder().build(f'T | where x {op} ("a", "b")')
         pred = to_llm_dict(ir)["main_pipeline"]["operators"][0]["predicate"]
@@ -264,10 +260,9 @@ def test_between_synthesizes_between_op():
 def test_join_kind_field_is_renamed():
     """``join kind=inner`` and the ``join`` discriminator both reach the dump.
 
-    The model field is called ``join_kind``, so the view renames nothing --
-    the collision was designed out at the model rather than patched in the
-    projection. What is pinned here is that both keys survive, which is what
-    a rename in either direction would break.
+    The model field is called ``join_kind``, so the view renames nothing. What
+    is pinned here is that both keys survive, which a rename in either
+    direction would break.
     """
     ir = IRBuilder().build("T | join kind=inner (U) on x")
     out = to_llm_dict(ir)
@@ -305,20 +300,18 @@ def test_llm_view_kind_comes_from_the_model_field():
 
 
 def test_every_ir_model_class_has_kind_field():
-    """Every BaseModel subclass exported from ``kustology.ir`` must
-    declare a ``kind`` field with a ``Literal`` default. Catches drift
-    when a new operator is added without updating the LLM discriminator
-    vocabulary.
+    """Every BaseModel subclass exported from ``kustology.ir`` must declare a
+    ``kind`` field with a ``Literal`` default. Catches drift when a new
+    operator is added without updating the LLM discriminator vocabulary.
 
-    Pydantic enforces, at model-build time, that every member of a
+    Pydantic enforces at model-build time that every member of a
     ``Field(discriminator="kind")`` union carries a working ``kind``
-    discriminator -- ``Expr`` subclasses included, since they are all
-    gathered into ``AnyExpr``. But some exported models (``SortKey``,
-    ``ReorderKey``, ``ForkBranch`` and their siblings -- see
-    ``test_canonical_coverage.py``) hang off an operator field directly
-    rather than sitting in any discriminated union, so nothing else
-    guarantees they still carry a ``kind`` field. This test is what
-    catches that.
+    discriminator, ``Expr`` subclasses included, since they are all gathered
+    into ``AnyExpr``. Some exported models hang off an operator field directly
+    instead of sitting in a discriminated union (``SortKey``, ``ReorderKey``,
+    ``ForkBranch`` and their siblings, listed in
+    ``test_canonical_coverage.py``), so nothing else guarantees they carry a
+    ``kind`` field.
     """
     from pydantic import BaseModel
 
@@ -345,13 +338,11 @@ def test_every_ir_model_class_has_kind_field():
 def test_kind_values_are_unique_per_class():
     """Two different IR classes must not share a ``kind`` default.
 
-    Discriminated unions already reject a duplicate discriminator value
-    among the classes *within* the same union, but each union is checked
-    in isolation -- pydantic has no way to notice a ``FilterOp`` and some
-    unrelated ``Expr`` subclass both claiming ``kind="filter"``, since the
-    two never validate against the same tagged union. This test is what
-    checks uniqueness across the full exported vocabulary, every
-    discriminated union included.
+    A discriminated union rejects duplicate discriminator values among its own
+    members, and each union is checked in isolation: pydantic cannot notice a
+    ``FilterOp`` and an unrelated ``Expr`` subclass both claiming
+    ``kind="filter"``, since the two never validate against one tagged union.
+    This test checks uniqueness across the full exported vocabulary.
     """
     from pydantic import BaseModel
 
@@ -383,7 +374,7 @@ def test_query_ir_has_to_llm_dict_method(storm_ir):
 # Round-trip safety ------------------------------------------------------
 
 def test_canonical_serialization_still_round_trips(storm_ir):
-    """Adding ``ClassVar[KIND]`` must not affect ``model_dump_json``."""
+    """The view's field rules leave the lossless dump alone."""
     dumped = storm_ir.model_dump_json()
     reloaded = QueryIR.model_validate_json(dumped)
     assert storm_ir.model_dump() == reloaded.model_dump()
@@ -392,11 +383,10 @@ def test_canonical_serialization_still_round_trips(storm_ir):
 def test_dispatch_survives_a_class_rename():
     """The view's rules dispatch on class identity, not on class *name*.
 
-    Guards against comparing ``cls.__name__`` against string literals
-    instead: renaming a class would then silently stop every rule that
-    mentioned it -- no error, just a quietly worse LLM view. A subclass is
-    the cheapest way to prove identity dispatch: it has a different
-    ``__name__`` and must still get the rules.
+    Comparing ``cls.__name__`` against string literals would let a rename
+    silently stop every rule that mentioned it: no error, only a quietly worse
+    LLM view. A subclass proves identity dispatch cheaply, since it has a
+    different ``__name__`` and must still get the rules.
     """
     from kustology.ir.expr import ColumnRef, SetMembership
     from kustology.ir.llm_view import (
@@ -414,24 +404,22 @@ def test_dispatch_survives_a_class_rename():
     _drop_redundant_canonical_form(out, RenamedColumnRef)
     assert "canonical_form" not in out
 
-    # SetMembership carries its own op, so the rule only drops the
-    # redundant polarity -- but it still has to *fire*, which is what
-    # identity dispatch buys.
+    # SetMembership carries its own op, so the rule drops only the redundant
+    # polarity. It still has to *fire*, which is what identity dispatch buys.
     out2 = {"polarity": "exclusion", "op": "!in~"}
     _collapse_polarity_into_op(out2, RenamedSetMembership)
     assert out2 == {"op": "!in~"}
 
 
 def test_body_span_is_omitted_from_a_let_function():
-    """Guards against ``_OMIT_FIELDS`` matching the name ``span`` exactly:
-    ``LetFunction`` -- the one model whose span field is called
-    ``body_span`` -- would then ship a raw character offset into the LLM
-    view that every other node is spared.
+    """Guards against ``_OMIT_FIELDS`` matching the name ``span`` exactly.
+    ``LetFunction`` is the one model whose span field is called ``body_span``,
+    and an exact match would ship a raw character offset into the LLM view
+    that every other node is spared.
 
     The body itself is rendered: it is the query a reader has to see to know
-    what the function does. Parameters render as their own dicts rather than
-    as bare name strings, since the declared type and any default are part of
-    the signature.
+    what the function does. Parameters render as their own dicts, since the
+    declared type and any default are part of the signature.
     """
     ir = IRBuilder().build("let f = (x:int){x+1}; T | extend y = f(a)")
     fn = to_llm_dict(ir)["let_bindings"][0]["rhs_function"]
@@ -453,12 +441,11 @@ def test_the_llm_view_is_tagged_with_the_ir_schema_version():
     carrying nothing that says which IR shape produced it.
 
     ``model_dump_json`` round-trips through pydantic, which validates the
-    shape and fails loudly on drift; the LLM view is a lossy projection with
-    no validator behind it, so without the tag, a consumer holding one from
-    an earlier release has no way to tell -- the fields it expected are
-    absent outright, which reads identically to a query that did not use
-    them. The tag is the same ``IR_SCHEMA_VERSION`` the CLI's JSON envelope
-    already publishes, so the two agree by construction.
+    shape and fails loudly on drift. The LLM view has no validator behind it,
+    so without the tag a consumer holding a view built from a different IR
+    shape cannot tell: the fields it expects are absent outright, which reads
+    exactly like a query that did not use them. The tag is the same
+    ``IR_SCHEMA_VERSION`` the CLI's JSON envelope publishes, so the two agree.
     """
     from kustology.ir import IR_SCHEMA_VERSION
 
@@ -481,9 +468,9 @@ def test_only_the_root_carries_the_schema_version():
 
 def test_the_llm_view_surfaces_the_semantic_hash(storm_ir):
     """``semantic_hash`` is a computed field, absent from ``model_fields``, so
-    the view's field loop needs its own path to reach it -- otherwise it
-    silently drops out of the LLM-facing dict. Reading it here forces the
-    digest, same as ``model_dump()`` would."""
+    the view's field loop needs its own path to reach it or it drops silently
+    out of the LLM-facing dict. Reading it here forces the digest, the same as
+    ``model_dump()`` would."""
     dumped = to_llm_dict(storm_ir)
     assert dumped["semantic_hash"] == storm_ir.semantic_hash
     assert dumped["semantic_hash"].startswith("kustology-sem-v2:")
@@ -492,14 +479,13 @@ def test_the_llm_view_surfaces_the_semantic_hash(storm_ir):
 def test_the_null_flag_strip_is_scoped_to_binop():
     """``polarity``/``case_sensitive`` are stripped when ``None`` *on BinOp*,
     where ``None`` means "the operator is arithmetic, so neither question
-    applies". Guards against a typeless strip that takes only the output
-    dict: it would reach into every node in the IR, and any future model
-    with a legitimately-optional ``case_sensitive`` would have it silently
-    removed from the view with no way to tell an absent field from a null
-    one.
+    applies". A typeless strip taking only the output dict would reach into
+    every node in the IR, and any future model with a legitimately optional
+    ``case_sensitive`` would have it silently removed, with no way to tell an
+    absent field from a null one.
 
-    Exercised through a plain ``BaseModel`` rather than an ``Expr``
-    subclass: defining one of those inside a test registers it on
+    Exercised through a plain ``BaseModel`` rather than an ``Expr`` subclass:
+    defining one of those inside a test registers it on
     ``Expr.__subclasses__()`` for the rest of the session, which
     ``test_canonical_coverage`` walks.
     """

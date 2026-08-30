@@ -1,13 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-"""Tests for ``subtree_hashes``.
-
-Pins that the root entry equals ``compute_semantic_hash``, that the digest
-set is invariant to ``let`` naming and to filter splitting the same way the
-whole-query hash is, that ``min_size`` floors the returned bag, and that
-each entry's span locates its subtree in the original source.
-"""
+"""Tests for ``subtree_hashes`` and the similarity surface built on it."""
 
 import pathlib
 
@@ -60,11 +54,11 @@ def test_min_size_floors_the_bag():
 
 
 def test_diagnostics_do_not_split_the_bound_and_unbound_bag(sample_schema):
-    """A bound copy's ``QueryIR.diagnostics`` (``T`` is not in ``sample_schema``, so
-    binding raises a real "table not found" diagnostic the schemaless parse never
-    gets) must not leak into the subtree bag at ``min_size=1`` — the same query
-    bound and unbound has to produce the same bag, since diagnostics never enter
-    the whole-query digest either."""
+    """Diagnostics stay out of the subtree bag, as they stay out of the digest.
+
+    ``T`` is absent from ``sample_schema``, so only the bound parse carries a
+    "table not found" diagnostic. Both bags match anyway, at ``min_size=1``.
+    """
     q = "T | where a == 1 | take 1"
     bound = parse(q, schema=sample_schema).to_ir(semantic_hash=False)
     unbound = parse(q).to_ir(semantic_hash=False)
@@ -132,19 +126,18 @@ def test_sketch_shape_and_determinism():
 
 
 def test_sketch_tracks_exact_jaccard_on_the_corpus():
-    """Measure the estimator on the pairs a caller actually reads it at.
+    """Measure the estimator on the overlapping pairs a caller reads it at.
 
-    Pairs with an exact similarity of 0.0 -- 93.5% of this corpus, since most
-    fixtures share no subtree at all -- are excluded. Both the exact and the
-    sketch value are trivially 0.0 there, so the error is trivially 0.0 too,
-    and averaging them in dilutes the bound by more than an order of magnitude:
-    a badly broken estimator would still clear a whole-corpus mean. This is the
-    same reason ``scripts/eval_similarity._sketch_fidelity`` samples from
-    candidate neighbours rather than uniformly.
+    Pairs with an exact similarity of 0.0 are 93.5% of this corpus, and there
+    both the exact and the sketch value are trivially 0.0. Averaging them in
+    dilutes the bound by more than an order of magnitude, enough for a badly
+    broken estimator to clear it, so only overlapping pairs are sampled.
+    ``scripts/eval_similarity._sketch_fidelity`` samples candidate neighbours
+    for the same reason.
 
-    The bounds hold roughly a 2x margin over the measured values
-    (mean 0.013, p95 0.040 at ``k=128``), so ordinary corpus churn does not
-    move them but a real regression in the permutation family does.
+    The asserted bounds sit at roughly 2x the measured values (mean 0.013,
+    p95 0.040 at ``k=128``). That absorbs corpus churn and still trips on a
+    regression in the permutation family.
     """
     bags = [
         subtree_hashes(parse(p.read_text()).to_ir(semantic_hash=False))
@@ -157,8 +150,8 @@ def test_sketch_tracks_exact_jaccard_on_the_corpus():
         for j in range(i + 1, len(bags))
         if (exact := similarity(bags[i], bags[j])) > 0.0
     )
-    # Guards the guard: a corpus that stopped producing overlapping pairs would
-    # otherwise leave this test asserting a mean over nothing.
+    # A corpus with no overlapping pairs would leave the bounds below
+    # averaging over nothing.
     assert len(errs) >= 50, f"only {len(errs)} overlapping pairs to measure"
     assert sum(errs) / len(errs) < 0.03
     assert errs[int(0.95 * (len(errs) - 1))] < 0.08
@@ -184,10 +177,10 @@ def test_a_header_declaring_no_slots_raises_rather_than_dividing_by_zero():
 def test_a_sketch_from_another_digest_scheme_is_rejected_not_compared():
     """A stale sketch must not read as "these queries are unrelated".
 
-    The slots are minned from ``semantic_hash`` digests, so they mean nothing
-    across a ``SEMANTIC_HASH_SCHEME`` bump -- and the comparison would return a
-    number near 0.0, indistinguishable from a real answer. The header carries
-    the scheme so the mismatch surfaces instead.
+    Slots are minned from ``semantic_hash`` digests, so across a
+    ``SEMANTIC_HASH_SCHEME`` bump they compare to a number near 0.0 that is
+    indistinguishable from a real answer. The header carries the scheme so the
+    mismatch raises.
     """
     good = similarity_sketch(_ir("T | where a == 1 | take 1"))
     foreign = _HEADER.pack(_SKETCH_MAGIC, 128, (_SCHEME_TAG ^ 1) & 0xFFFF) + good[_HEADER.size:]
@@ -196,11 +189,11 @@ def test_a_sketch_from_another_digest_scheme_is_rejected_not_compared():
 
 
 def test_sketches_do_not_depend_on_the_interpreter_random_module(monkeypatch):
-    """The permutation family comes from a keyed hash, not ``random``.
+    """The permutation family comes from a keyed hash.
 
     ``random.Random.randrange`` has no cross-version reproducibility promise,
-    and a sketch invalidated by an interpreter upgrade would be undetectable.
-    Breaking ``random`` outright is the cheapest proof that nothing reads it.
+    so a sketch built on it would be invalidated undetectably by an
+    interpreter upgrade. Breaking ``random`` outright proves nothing reads it.
     """
     import random
 

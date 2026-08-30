@@ -3,9 +3,8 @@
 
 """Skip the whole tier-2 test directory when the ``[ir]`` extra isn't installed.
 
-Base-install CI runs ``pytest`` against a venv without pydantic; without this
-hook, every collection under ``tests/ir/`` would raise ``ImportError``.
-``pytest.importorskip`` short-circuits the entire directory cleanly.
+Base-install CI runs ``pytest`` against a venv without pydantic, where every
+collection under ``tests/ir/`` would otherwise raise ``ImportError``.
 """
 
 import pytest

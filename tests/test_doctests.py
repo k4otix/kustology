@@ -3,23 +3,19 @@
 
 """Run every ``src`` module's doctest examples as a standing gate.
 
-Rendered prose is not otherwise checked: a docstring can drift from what it
-shows and nothing red-flags it. This caught exactly that once already --
-marking a docstring raw for ruff's D301 (a raw string escapes nothing)
-doubled the backslashes in a handful of docstrings that already escaped
-theirs for a plain string, and one of the doubled examples
-(``utf16_to_codepoint``'s) silently stopped exercising the surrogate-pair
-offset it exists to demonstrate. Running every module's doctests keeps a
-repeat from passing silently.
+Nothing else checks that a docstring's examples still run. Escaping is the
+quiet way they break: marking a docstring raw for ruff's D301 doubles the
+backslashes in one that already escaped them for a plain string, so an example
+such as ``utf16_to_codepoint``'s surrogate-pair offset still reads as correct
+while exercising nothing.
 
-Modules are found with ``grep -rl '>>>' src/kustology --include='*.py'``.
-``kustology.ir.walk`` is not included: its ``Example:`` blocks use ``ir`` as
-a stand-in for "a :class:`~kustology.ir.query.QueryIR` you already have" and
-``...`` as a placeholder loop body, neither of which is a name or a
-complete statement -- they read as ``>>>``-prefixed prose, not as examples
-doctest can run, and forcing them to execute would mean building a fixture
-this gate has no other reason to need. The two modules gated here need no
-schema and no pydantic: both stay on the Tier 1, pydantic-free import path.
+Modules come from ``grep -rl '>>>' src/kustology --include='*.py'``.
+``kustology.ir.walk`` is out: its ``Example:`` blocks use ``ir`` as a stand-in
+for "a :class:`~kustology.ir.query.QueryIR` you already have" and ``...`` as a
+placeholder loop body, so they are ``>>>``-prefixed prose that doctest cannot
+run, and executing them would mean a fixture this gate has no other reason to
+need. The two modules gated here need no schema and no pydantic, so both stay
+on the Tier 1 import path.
 """
 
 from __future__ import annotations

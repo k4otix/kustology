@@ -14,9 +14,9 @@ def test_get_operator_chain():
 def test_get_operator_chain_excludes_the_source_table():
     """The chain is operators, so the source table is not one of them.
 
-    A chain whose element 0 is the ``NameReference`` naming the table makes
-    every caller either special-case it or count it as an operator — and a
-    ``__repr__`` doing the latter reports a two-operator query as ``3 ops``.
+    A chain whose element 0 is the ``NameReference`` naming the table forces
+    every caller to special-case it. A ``__repr__`` that does not reports a
+    two-operator query as ``3 ops``.
     """
     chain = parse("T | where a | take 1").get_operator_chain()
     assert [str(node.Kind) for node in chain] == ["FilterOperator", "TakeOperator"]
@@ -33,12 +33,11 @@ def test_get_operator_chain_of_a_bare_table_is_empty():
 def test_every_public_kustoquery_member_is_documented():
     """Every public `KustoQuery` member carries a docstring of its own.
 
-    `KustoQuery` is the whole tier-1 API, and much of it delegates: the
-    behavior worth reading lives with the implementation — what
-    `get_structural_hash` is blind to, how `get_referenced_columns`'s two
-    modes disagree by design. A member with no docstring leaves a
-    `help(KustoQuery)` reader a bare signature and no way to know there is
-    anything to read.
+    `KustoQuery` is the whole tier-1 API and much of it delegates, so the
+    behavior worth reading (what `get_structural_hash` is blind to, how
+    `get_referenced_columns`'s two modes disagree) lives with the
+    implementation. A member with no docstring leaves a `help(KustoQuery)`
+    reader a bare signature.
     """
     from kustology import KustoQuery
 
@@ -46,9 +45,9 @@ def test_every_public_kustoquery_member_is_documented():
         (name, attr)
         for name, attr in vars(KustoQuery).items()
         # Methods and properties only. A plain class attribute has no
-        # docstring of its own, so `attr.__doc__` would read its *type's* —
-        # `int.__doc__` is a paragraph — and the check would silently pass
-        # for something genuinely undocumented.
+        # docstring of its own, so `attr.__doc__` reads its *type's*
+        # (`int.__doc__` is a paragraph) and the check passes for something
+        # undocumented.
         if not name.startswith("_") and (callable(attr) or isinstance(attr, property))
     ]
     assert len(members) >= 15, "the walk found almost nothing; the filter is wrong"
@@ -161,10 +160,10 @@ def test_referenced_columns_syntactic_reports_a_column_the_query_creates():
     """``extend a = …`` creates a column even where nothing reads it back.
 
     The alias is a ``NameDeclaration``, not a ``NameReference``, so a walk
-    that only collects references sees ``x`` and ``y`` and misses ``a``
-    entirely. Semantic mode is the mirror image here — the binder attaches a
-    ``ColumnSymbol`` to references, and there is no reference — so the two
-    modes are asserted separately rather than for equality.
+    that only collects references sees ``x`` and ``y`` and misses ``a``.
+    Semantic mode is the mirror image: the binder attaches a ``ColumnSymbol``
+    to references, and there is no reference. The two modes are asserted
+    separately.
     """
     query = "T | extend a = x + y"
     assert parse(query).get_referenced_columns(force_syntactic=True) == {"x", "y", "a"}
@@ -174,10 +173,8 @@ def test_referenced_columns_syntactic_reports_a_column_the_query_creates():
 
 def test_referenced_columns_excludes_named_parameter_names():
     """`kind` in `kind=inner` and `S` in `withsource=S` are not columns.
-
-    All three are ``NameDeclaration`` nodes, the same node kind an ``extend``
-    alias uses — so collecting declarations wholesale would report them.
-    """
+    They are ``NameDeclaration`` nodes, the same kind an ``extend`` alias
+    uses, so collecting declarations wholesale would report them."""
     cols = parse(
         "union isfuzzy=true withsource=S kind=inner A, B | where x == 1"
     ).get_referenced_columns(force_syntactic=True)
@@ -209,11 +206,11 @@ def test_structural_hash_ignores_literal_values():
 
 
 def test_structural_hash_distinguishes_join_kind():
-    """`kind=inner` and `kind=leftanti` are different queries, not one shape.
+    """`kind=inner` and `kind=leftanti` are different queries.
 
     The parameter value is a ``TokenLiteralExpression``, whose *kind* string
-    contains "Token" — so a walker that skips every kind containing "Token"
-    throws the value away and hashes an inner join identically to an anti-join.
+    contains "Token", so a walker that skips every kind containing "Token"
+    hashes an inner join identically to an anti-join.
     """
     inner = parse("T | join kind=inner (U) on a").get_structural_hash()
     leftanti = parse("T | join kind=leftanti (U) on a").get_structural_hash()
@@ -229,9 +226,8 @@ def test_structural_hash_distinguishes_union_kind():
 def test_structural_hash_distinguishes_evaluate_plugin():
     """`bag_unpack` expands a dynamic column; `pivot` reshapes the whole table.
 
-    The plug-in name is an ordinary ``NameReference`` — not a
-    ``TokenLiteralExpression`` — so retaining named-parameter values is not
-    enough on its own to tell these two apart.
+    The plug-in name is an ordinary ``NameReference``, so the
+    ``TokenLiteralExpression`` retention above does not cover it.
     """
     bag_unpack = parse("T | evaluate bag_unpack(d)").get_structural_hash()
     pivot = parse("T | evaluate pivot(d)").get_structural_hash()
@@ -271,8 +267,7 @@ def test_find_time_expressions_finds_bin():
 
     Its first signature declares no return type, so reading signature zero
     alone files it under ``scalar_functions()`` and this discovery aid skips
-    the single most common temporal construct in the corpus.
-    """
+    the most common temporal construct in the corpus."""
     times = parse("T | summarize count() by bin(TimeGenerated, 1h)").find_time_expressions()
     assert [t[0] for t in times] == ["bin(TimeGenerated, 1h)"]
 
@@ -289,10 +284,9 @@ def test_find_time_expressions_finds_bin_at():
 def test_find_time_expressions_ignores_arithmetic_abs():
     """``abs`` is in ``time_functions()`` but is never a temporal expression.
 
-    Reflection classifies by return type and ``abs`` has a timespan overload,
-    which is the right answer to "what can this return" and the wrong answer
-    to "is this call about time". ``abs(x)`` on a number must not surface in
-    a discovery list a rule author reads to find the query's time handling.
+    Reflection classifies by return type, and ``abs`` has a timespan
+    overload. ``abs(x)`` on a number must not surface in a discovery list a
+    rule author reads to find the query's time handling.
     """
     assert parse("T | extend a = abs(x)").find_time_expressions() == []
     # The timespan usage is still not reported: the exclusion is by name, and
@@ -310,9 +304,8 @@ def test_find_time_expressions_reports_only_the_outer_of_two_nested_calls():
     """``startofday(now())`` is one time expression, not two.
 
     The inner ``now()`` is an argument of the outer call, so reporting both
-    gives a reader two overlapping spans for one construct — the same
-    double-count the literal pass avoids for ``ago(1h)``, applied to the
-    call pass itself.
+    gives a reader two overlapping spans for one construct. The literal pass
+    avoids the same double-count for ``ago(1h)``.
     """
     times = parse("T | where Time > startofday(now())").find_time_expressions()
     assert [t[0] for t in times] == ["startofday(now())"]
@@ -449,7 +442,7 @@ def test_referenced_functions_dedupes_repeated_callers():
 
 
 def test_referenced_functions_semantic_mode_matches_syntactic_for_builtins():
-    """For built-in callee names, semantic and syntactic results should agree."""
+    """Semantic and syntactic results agree for built-in callee names."""
     schema = {"T": {"x": "string", "y": "string"}}
     query = "T | extend a = strcat(x, y) | where tolower(x) == 'foo'"
     syntactic = parse(query).get_referenced_functions()
@@ -474,8 +467,7 @@ def test_collect_nodes_visits_every_node_when_predicate_is_constant():
 
     code = parse("T | count").syntax
     everything = collect_nodes(code, lambda n: True)
-    # Walker yields multiple kinds of nodes; just confirm it's non-trivial
-    # and the operator nodes are in there.
+    # The walk is non-trivial and reaches the operator nodes.
     kinds = {str(n.Kind) for n in everything}
     assert "CountOperator" in kinds
     assert "PipeExpression" in kinds
@@ -485,9 +477,8 @@ def test_collect_nodes_visits_every_node_when_predicate_is_constant():
 #
 # `MAX_AST_DEPTH` lives in `kustology.utils.walker` and bounds both the
 # `node_to_dict` serializer and `KustoWalker.visit`. A cap at or above
-# CPython's own 1000-frame recursion limit is unreachable, so without this
-# one `KustoQuery.to_dict()` on deeply nested input raises `RecursionError`
-# out of the library.
+# CPython's own 1000-frame recursion limit is unreachable, leaving
+# `KustoQuery.to_dict()` on deeply nested input to raise `RecursionError`.
 
 _PAREN_BOMB = "T | where " + "(" * 1200 + "1" + ")" * 1200
 
@@ -538,9 +529,8 @@ def test_to_dict_of_an_ordinary_query_carries_no_truncation_marker():
 
 def test_kusto_walker_stops_descending_at_the_depth_cap():
     """`KustoWalker.visit` recurses too, so `collect_nodes` and every
-    analyzer built on it hit the same wall. The cap makes the walk finish;
-    the depth it reaches pins that it stopped at `MAX_AST_DEPTH` rather than
-    bailing out early or running away."""
+    analyzer built on it hit the same wall. The measured depth pins that the
+    walk stopped at `MAX_AST_DEPTH`, neither early nor never."""
     from kustology.utils.walker import MAX_AST_DEPTH, KustoWalker
 
     class DepthProbe(KustoWalker):

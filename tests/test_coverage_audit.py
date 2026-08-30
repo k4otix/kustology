@@ -1,17 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-"""Coverage audit: every parser SyntaxKind is either handled by the IR
-builder or explicitly skipped.
+"""Every parser SyntaxKind is handled by the IR builder or explicitly skipped.
 
 The baseline lives in ``tests/fixtures/syntax_kinds_baseline.json`` and is
 regenerated with ``python scripts/audit_syntax_kinds.py --update-baseline``.
-When a DLL upgrade introduces a new SyntaxKind, this test fails until the
+A DLL upgrade that introduces a new SyntaxKind fails this test until the
 contributor either:
 
 * adds handling in ``ir/builder.py`` and re-runs the script, or
-* adds the kind to ``deliberately_skipped`` (for tokens / trivia / variants
-  the IR has no use for) and re-runs the script.
+* adds the kind to ``deliberately_skipped`` (tokens, trivia, or variants the
+  IR has no use for) and re-runs the script.
 """
 
 from __future__ import annotations
@@ -32,9 +31,8 @@ BASELINE = Path(__file__).resolve().parent / "fixtures" / "syntax_kinds_baseline
 def _handled_classes() -> set[str]:
     """Return every Python class name the builder claims to dispatch on.
 
-    Three sets, and all three have to be here: a kind missing from this
-    union is reported as unhandled however completely the builder models it,
-    which is exactly what a handled set that isn't wired in looks like.
+    All three sets belong in the union: a kind missing from it reads as
+    unhandled however completely the builder models it.
     """
     return set(
         IRBuilder.HANDLED_EXPR_KINDS
@@ -46,10 +44,10 @@ def _handled_classes() -> set[str]:
 def _current_unhandled(skipped: set[str], collapsed: set[str]) -> set[str]:
     """Subtract directly-handled kinds, class-collapsed kinds, and the skip list.
 
-    ``collapsed`` is the union of SyntaxKinds whose Python class name appears
-    in ``IRBuilder.HANDLED_*_KINDS`` — discovered empirically and recorded
-    in the baseline's ``dispatched_via_class`` section. Without this the
-    audit would falsely flag every subkind of ``BinaryExpression`` etc.
+    ``collapsed`` holds the SyntaxKinds whose Python class name appears in
+    ``IRBuilder.HANDLED_*_KINDS``, discovered by the audit script and recorded
+    in the baseline's ``dispatched_via_class`` section. Without it the audit
+    flags every subkind of ``BinaryExpression`` and its peers.
     """
     return set(syntax_kinds()) - _handled_classes() - collapsed - skipped
 
@@ -63,9 +61,8 @@ def test_no_new_unhandled_syntax_kinds():
     skipped = set(baseline.get("deliberately_skipped", []))
     baseline_unhandled = set(baseline.get("unhandled", []))
 
-    # Recover the collapsed kinds the same way the audit script does:
-    # union SyntaxKinds dispatched via Python classes that are in the
-    # handled set.
+    # Recover the collapsed kinds the way the audit script does: union the
+    # SyntaxKinds dispatched via a handled Python class.
     handled_classes = _handled_classes()
     dispatched_via_class: dict[str, list[str]] = baseline.get(
         "dispatched_via_class", {},

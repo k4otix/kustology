@@ -1,25 +1,20 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Eddie Allan
 
-"""Text that UTF-16 cannot encode must raise, not abort the process.
+"""Text that UTF-16 cannot encode raises ``ValueError`` before it reaches the CLR.
 
 A Python ``str`` can hold an unpaired surrogate; UTF-16 has no encoding for
-one. pythonnet marshals a ``str`` argument by encoding it to UTF-16, and the
-failure surfaces as an unhandled exception on the CLR side, which terminates
-the interpreter with ``SIGABRT``. No Python ``except`` clause intercepts
-that, including ``except BaseException``, so every entry point checks the
-text before it crosses.
+one. pythonnet marshals a ``str`` argument by encoding it to UTF-16, so the
+failure lands as an unhandled CLR exception that terminates the interpreter
+with ``SIGABRT``. No Python ``except`` clause intercepts that, ``except
+BaseException`` included, so every entry point checks the text before it
+crosses.
 
-Every probe runs in one child process, because an in-process
-``pytest.raises(ValueError)`` here is worse than no test: it passes while the
-guard is present, and the moment the guard regresses it aborts the whole
-pytest session instead of failing. Delete the guard in ``services.parse`` and
-the difference shows: in-process, the session dies with no summary; in a
-child, the parent reports which position regressed and the rest of the suite
-still runs.
-
-The child reports one JSON record per position, so a single CLR startup covers
-all of them.
+The probes run in a child process. In-process, a regressed guard takes the
+whole pytest session down with no summary; from a child, the parent reports
+which position regressed and the rest of the suite still runs. The child
+emits one JSON record per position, so a single CLR startup covers all of
+them.
 """
 
 import json
@@ -65,8 +60,8 @@ print("BEGIN-JSON", flush=True)
 print(json.dumps(out), flush=True)
 '''
 
-# Each position and the word its message must carry, so a guard firing from
-# the wrong place cannot pass by raising the right type from somewhere else.
+# Each position with the word its message must carry, so a guard firing from
+# the wrong place cannot pass by raising the right type.
 EXPECTED_POSITION_WORDS = {
     "parse": "query text",
     "validate": "query text",

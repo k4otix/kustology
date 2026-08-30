@@ -58,11 +58,9 @@ def test_adjacent_string_literals_concatenate_into_one_literal():
     single value ``"ab"``.
 
     The parser hands that over as a ``CompoundStringLiteralExpression`` with
-    ``LiteralValue == "ab"`` already computed. Guards the concatenation
-    contract: without a dedicated branch for this literal kind, the
-    right-hand side falls through to ``UnknownExpr`` carrying the raw text
-    ``"'a' 'b'"`` -- a filter comparing against a string becomes a filter
-    comparing against an unmodeled blob, invisible to
+    ``LiteralValue == "ab"`` already computed. Without a branch for this
+    literal kind, the right-hand side falls through to ``UnknownExpr``
+    carrying the raw text ``"'a' 'b'"``: an unmodeled blob, invisible to
     ``find_all(ir, LiteralExpr)`` and hashing apart from the identical query
     written ``'ab'``.
     """
@@ -75,8 +73,8 @@ def test_adjacent_string_literals_concatenate_into_one_literal():
 
     ir = parse("T | where x == 'a' 'b'").to_ir()
     assert not list(find_all(ir, UnknownExpr))
-    # The whole point of the concatenation: it means what the joined
-    # spelling means, so it must hash there too.
+    # The concatenation means what the joined spelling means, so it has to
+    # hash there too.
     assert ir.semantic_hash == parse("T | where x == 'ab'").to_ir().semantic_hash
 
 
@@ -127,47 +125,44 @@ def test_semantic_hash_is_stable_for_temporal_literals():
 
 def test_datetime_literal_is_utc_and_tz_independent():
     """A ``Z``-suffixed datetime literal parses through .NET's default
-    ``DateTime.Parse`` as ``DateTimeKind.Local`` -- its ``Ticks`` already
-    carry the *host's* UTC offset baked in, not the UTC instant the query
-    text names. Rendering ``.Ticks``/``.ToString()`` straight off that value
-    would make ``value``, ``ticks``, and therefore ``semantic_hash`` depend
-    on the timezone of whatever machine parsed the query. Re-running the
-    same parse in a subprocess pinned to a timezone the parent is not
-    already in proves the hash does not move for either the ``Local``-kind
-    (``Z``-suffixed) literal or the ``Unspecified``-kind (bare) one --
-    covering both branches separately matters because
-    ``ToUniversalTime()`` is a no-op on an ``Unspecified`` value when the
-    host zone already happens to be UTC, so a regression in that branch
+    ``DateTime.Parse`` as ``DateTimeKind.Local``, so its ``Ticks`` carry the
+    *host's* UTC offset baked in instead of the UTC instant the query text
+    names. Rendering ``.Ticks``/``.ToString()`` straight off that value would
+    make ``value``, ``ticks``, and therefore ``semantic_hash`` depend on the
+    timezone of whatever machine parsed the query. Re-running the same parse
+    in a subprocess pinned to a timezone the parent is not already in proves
+    the hash holds for both the ``Local``-kind (``Z``-suffixed) literal and
+    the ``Unspecified``-kind (bare) one. Covering the two branches separately
+    matters because ``ToUniversalTime()`` is a no-op on an ``Unspecified``
+    value where the host zone is already UTC, so a regression in that branch
     alone could still pass a same-zone comparison.
 
     The absolute-value assertion below runs everywhere. The cross-timezone
     half needs a platform that honors ``TZ``; where one does not, the test
-    **skips** rather than failing, because a platform that cannot host the
-    experiment says nothing about the library.
+    **skips**, because a platform that cannot host the experiment says
+    nothing about the library.
     """
     import System
 
     q = "T | where d > datetime(2024-01-01T00:00:00Z)"
     naive_q = "T | where d > datetime(2024-01-01)"
     lit = next(l for l in find_all(parse(q).to_ir(), LiteralExpr) if l.literal_kind == "datetime")
-    # Non-vacuous even on a host whose CoreCLR ignores TZ entirely: this
-    # absolute value only comes from Kind-normalization -- rendering
-    # whatever Kind/Ticks LiteralValue hands back unconverted would vary
-    # with the host's timezone instead.
+    # Non-vacuous even where CoreCLR ignores TZ entirely: this absolute value
+    # comes only from Kind-normalization, and rendering whatever Kind/Ticks
+    # LiteralValue hands back unconverted would vary with the host's timezone.
     assert lit.value == "2024-01-01T00:00:00.0000000Z" and lit.ticks == 638396640000000000
     here = parse(q).to_ir().semantic_hash
     naive_here = parse(naive_q).to_ir().semantic_hash
     parent_tz = System.TimeZoneInfo.Local.Id
 
-    # Pick a child zone the parent is not already in: a hardcoded
-    # ``Asia/Tokyo`` would compare the zone against itself whenever the
-    # suite runs there, which is not hypothetical -- the ``test-locale``
-    # matrix in ``.github/workflows/test.yml`` has a cell that sets exactly
-    # ``TZ=Asia/Tokyo``. Two candidates suffice -- they differ from each
-    # other, so at most one can equal the parent. Neither is UTC on purpose:
-    # ``ToUniversalTime()`` is a no-op on an ``Unspecified`` value under a
-    # UTC host, and the naive-literal half of this test would stop proving
-    # anything.
+    # Pick a child zone the parent is not already in. A hardcoded
+    # ``Asia/Tokyo`` would compare the zone against itself whenever the suite
+    # runs there, which the ``test-locale`` matrix in
+    # ``.github/workflows/test.yml`` does in the cell that sets
+    # ``TZ=Asia/Tokyo``. Two candidates suffice: they differ from each other,
+    # so at most one can equal the parent. Neither is UTC, where
+    # ``ToUniversalTime()`` is a no-op on an ``Unspecified`` value and the
+    # naive-literal half of this test would stop proving anything.
     child_tz_name = "America/New_York" if parent_tz == "Asia/Tokyo" else "Asia/Tokyo"
 
     child = subprocess.run(
@@ -183,21 +178,18 @@ def test_datetime_literal_is_utc_and_tz_independent():
     assert child.returncode == 0, f"subprocess failed (exit {child.returncode}):\n{child.stderr}"
     child_tz, other, naive_other = child.stdout.strip().splitlines()
 
-    # Did the child really run in a different zone? On a platform where
-    # CoreCLR resolves TimeZoneInfo.Local from the OS rather than from TZ,
-    # it did not, and the comparisons below would degrade into a
-    # same-config comparison that cannot catch a regression. Windows is
-    # expected to behave that way; that is a prediction, not an
-    # observation -- the condition is detected here at run time, so
-    # nothing depends on which platforms they are.
+    # Did the child really run in a different zone? Where CoreCLR resolves
+    # TimeZoneInfo.Local from the OS rather than from TZ it did not, and the
+    # comparisons below degrade into a same-config comparison that cannot
+    # catch a regression. Windows is expected to behave that way, which is a
+    # prediction; the condition is detected here at run time, so nothing
+    # depends on which platforms they are.
     #
-    # That is a **skip**, not a failure. Nothing about the library is wrong
-    # when a platform ignores TZ; this test cannot gather evidence there,
-    # and failing would report a defect that does not exist. It also
-    # misdirects: a hard assertion here would blame CoreCLR by name,
-    # sending a maintainer who hits it looking for a .NET bug instead of
-    # noticing the two processes share a zone. Skipping says which zone was
-    # observed and leaves it at that.
+    # That is a **skip**. Nothing about the library is wrong when a platform
+    # ignores TZ, and this test can gather no evidence there. A hard assertion
+    # would also blame CoreCLR by name, sending a maintainer who hits it
+    # looking for a .NET bug instead of noticing that the two processes share
+    # a zone. The skip message names the zone observed and stops there.
     if child_tz == parent_tz:
         pytest.skip(
             f"TZ={child_tz_name} did not move System.TimeZoneInfo.Local.Id: "
@@ -222,8 +214,8 @@ def test_datetime_literal_is_utc_and_tz_independent():
 def test_naive_and_zulu_datetime_hash_equal():
     """KQL datetimes are UTC by definition, so a bare (``Unspecified``-kind)
     literal and its explicit ``Z``-suffixed spelling of the same instant
-    must collapse to the same hash -- one is *specified* as UTC, the other
-    is *converted* to it, and both land on the same ticks and ISO string."""
+    collapse to the same hash. One is *specified* as UTC and the other is
+    *converted* to it, and both land on the same ticks and ISO string."""
     assert (
         parse("T | where d > datetime(2024-01-01)").to_ir().semantic_hash
         == parse("T | where d > datetime(2024-01-01T00:00:00Z)").to_ir().semantic_hash

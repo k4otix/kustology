@@ -27,10 +27,9 @@ def test_build_info_matches_the_bundled_pin():
 def test_build_info_reports_the_ir_tags_without_the_extra():
     """The tags describe the installed source, so they do not depend on pydantic.
 
-    Asserted against ``kustology._ir_tags`` rather than ``kustology.ir`` so the
-    check runs identically in the base-install CI cell, where importing the IR
-    would raise -- and so a regression that made ``build_info()`` reach into the
-    IR again shows up as a failure rather than as a silently skipped branch.
+    The assertion reads ``kustology._ir_tags``, which imports on a base
+    install where ``kustology.ir`` would raise. The check therefore runs in
+    every CI cell, and a ``build_info()`` that reached into the IR fails it.
     """
     from kustology import _ir_tags
 

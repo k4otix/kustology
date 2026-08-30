@@ -3,24 +3,21 @@
 
 """Exit-code tests for the scripts/*.py maintenance tooling.
 
-The failure a maintenance script is most prone to is exiting 0 on failure --
-an empty corpus, a network error, a directory that isn't the repo it claims
-to be all read as success. Each test here drives one script through
-argv/main() and asserts the process-level exit code a caller (a human, or
-CI) actually sees, not only that the function runs without raising.
+A maintenance script's likeliest failure is exiting 0 anyway: an empty
+corpus, a network error, or a directory that isn't the repo it claims to be
+all read as success. Each test drives one script through argv/main() and
+asserts the process-level exit code a human or CI sees.
 
-scripts/ has no __init__.py -- it isn't an installed package -- so each
-module is loaded fresh by file path with importlib rather than imported by
-name. A fresh load per test also means one test's monkeypatched module
-globals (BIN_DIR, PYPROJECT, NUGET_FLATCONTAINER) can never leak into
-another test's copy of the same module.
+scripts/ has no __init__.py and is not an installed package, so each module
+loads fresh by file path with importlib. That also keeps one test's
+monkeypatched module globals (BIN_DIR, PYPROJECT, NUGET_FLATCONTAINER) out of
+another test's copy.
 
-verify_dll.py / refresh_dll.py touch the bundled Kusto.Language.dll and its
-nuget.org provenance. Nothing here downloads the real package or writes to
-the repo's actual src/kustology/bin/ -- every fixture uses a tmp_path bin/
-dir, and the one network-path test points at a reserved, guaranteed-
-unroutable host (RFC 2606's .invalid TLD) so it exercises the NetworkError
-path without ever reaching nuget.org.
+verify_dll.py and refresh_dll.py touch the bundled Kusto.Language.dll and its
+nuget.org provenance, so nothing here downloads the real package or writes to
+the repo's src/kustology/bin/. Every fixture uses a tmp_path bin/ dir, and the
+one network-path test points at a reserved, unroutable host (RFC 2606's
+.invalid TLD) to reach the NetworkError path without reaching nuget.org.
 """
 
 from __future__ import annotations
@@ -78,8 +75,8 @@ def test_verify_dll_offline_matching_pin_exits_0(tmp_path):
 
 
 def test_verify_dll_offline_hash_mismatch_exits_1(tmp_path):
-    """A genuine hash mismatch is the ONE case that returns 1 -- everything
-    else (missing files, missing pin, network trouble) is 2."""
+    """A genuine hash mismatch is the one case that returns 1. Everything else
+    (missing files, missing pin, network trouble) is 2."""
     mod = _load("verify_dll")
     mod.BIN_DIR = _dll_bin_dir(tmp_path, bundled=b"actual bundled bytes",
                                 pinned_sha="0" * 64)
@@ -107,9 +104,8 @@ def test_verify_dll_no_version_pin_exits_2(tmp_path):
 
 
 def test_verify_dll_fake_url_network_error_exits_2(tmp_path, capsys):
-    """A real fetch attempt against a host that cannot exist (RFC 2606
-    .invalid) hits NetworkError, not HashMismatchError: exit 2, and the
-    stderr names the failure as a network problem, not a hash mismatch."""
+    """A fetch against a host that cannot exist (RFC 2606 .invalid) raises
+    NetworkError: exit 2, with stderr naming a network problem."""
     mod = _load("verify_dll")
     mod.BIN_DIR = _dll_bin_dir(tmp_path, bundled=b"whatever bytes",
                                 pinned_sha=None)
@@ -187,9 +183,8 @@ def test_refresh_dll_write_pinned_version_inserts_new_block(tmp_path):
 
 
 def test_refresh_dll_tfm_matches_verify_dll_pin():
-    """refresh_dll and verify_dll must pin the same TFM -- a mismatch means
-    refresh_dll fetches a DLL verify_dll can never match, even from the
-    correct package version."""
+    """refresh_dll and verify_dll must pin the same TFM: a mismatch fetches a
+    DLL verify_dll can never match, even from the correct package version."""
     refresh = _load("refresh_dll")
     verify = _load("verify_dll")
     assert refresh.TFM == verify.TFM == "net6.0"
@@ -197,11 +192,10 @@ def test_refresh_dll_tfm_matches_verify_dll_pin():
 
 
 def test_refresh_dll_atomic_write_preserves_existing_file_mode(tmp_path):
-    """tempfile.mkstemp creates the temp file at 0600, and os.replace
-    carries the *source* file's mode to the destination -- without an
-    explicit chmod, every atomic write over an existing 0644 file (as
-    pyproject.toml, VERSION.txt, and the bundled DLL all are) would
-    silently downgrade it to owner-only."""
+    """tempfile.mkstemp creates the temp file at 0600 and os.replace carries
+    the source file's mode to the destination, so without an explicit chmod an
+    atomic write over an existing 0644 file (pyproject.toml, VERSION.txt, the
+    bundled DLL) downgrades it to owner-only."""
     mod = _load("refresh_dll")
     target = tmp_path / "Kusto.Language.dll"
     target.write_bytes(b"old bytes")
@@ -213,9 +207,8 @@ def test_refresh_dll_atomic_write_preserves_existing_file_mode(tmp_path):
 
 
 def test_refresh_dll_atomic_write_new_file_is_group_world_readable(tmp_path):
-    """A brand new file (no prior mode to preserve) must still come out
-    readable by group/world, matching what Path.write_text/shutil.copyfile
-    would have produced under a normal umask -- not mkstemp's 0600."""
+    """A new file has no prior mode to preserve and must still come out
+    group/world readable, matching Path.write_text under a normal umask."""
     mod = _load("refresh_dll")
     target = tmp_path / "VERSION.txt"
     mod._atomic_write_text(target, "package=x\nversion=1.2.3\n")
@@ -224,10 +217,9 @@ def test_refresh_dll_atomic_write_new_file_is_group_world_readable(tmp_path):
 
 
 def test_precommit_pydantic_pin_matches_uv_lock():
-    """.pre-commit-config.yaml pins pydantic for mypy's
-    additional_dependencies independently of uv.lock -- if a future relock
-    moves pydantic, nothing else catches the drift, mirroring the TFM
-    parity check above."""
+    """.pre-commit-config.yaml pins pydantic for mypy's additional_dependencies
+    independently of uv.lock, so nothing else catches a relock that moves
+    pydantic. Mirrors the TFM parity check above."""
     lock_text = (REPO_ROOT / "uv.lock").read_text()
     m = re.search(r'name = "pydantic"\nversion = "([^"]+)"', lock_text)
     assert m is not None, "pydantic entry not found in uv.lock"
@@ -256,9 +248,8 @@ def test_verify_corpus_empty_corpus_exits_1(tmp_path):
 
 
 def test_verify_corpus_missing_corpus_dir_exits_1(tmp_path):
-    """rglob on a nonexistent directory silently yields nothing rather than
-    raising -- the missing-dir case and the empty-dir case must both be
-    caught by the same empty-corpus check."""
+    """rglob on a nonexistent directory yields nothing instead of raising, so
+    the missing-dir and empty-dir cases share the empty-corpus check."""
     pytest.importorskip("pydantic")
     mod = _load("verify_corpus")
     missing_dir = tmp_path / "does-not-exist"
@@ -280,9 +271,9 @@ def test_verify_corpus_empty_corpus_soft_exits_0(tmp_path):
 
 
 def test_verify_corpus_findings_exit_1_and_soft_exits_0(tmp_path):
-    """A query the IR builder cannot build at all is a `builder_exception`
-    finding -- the corpus is non-empty, but not clean, so the default run
-    must fail while --soft still reports and returns 0."""
+    """A query the IR builder cannot build is a `builder_exception` finding:
+    the corpus is non-empty but not clean, so the default run fails while
+    --soft still reports and returns 0."""
     pytest.importorskip("pydantic")
     mod = _load("verify_corpus")
     corpus = tmp_path / "corpus"
@@ -390,10 +381,9 @@ def test_sample_sentinel_corpus_missing_dir_exits_nonzero(tmp_path):
 
 
 def test_sample_sentinel_corpus_non_repo_dir_exits_nonzero(tmp_path):
-    """A directory that exists but was never `git init`ed (a stray scratch
-    dir, a wrong path, a clone that failed partway) samples zero queries
-    from empty stratum folders; exiting 0 with an empty manifest there is
-    indistinguishable from a real, successful, empty result."""
+    """A directory that exists but was never `git init`ed samples zero queries
+    from empty stratum folders, and exiting 0 with an empty manifest there is
+    indistinguishable from a successful empty result."""
     pytest.importorskip("yaml")
     mod = _load("sample_sentinel_corpus")
     not_a_repo = tmp_path / "not-a-repo"
@@ -404,9 +394,8 @@ def test_sample_sentinel_corpus_non_repo_dir_exits_nonzero(tmp_path):
 
 
 def test_sample_sentinel_corpus_repo_with_no_strata_exits_nonzero(tmp_path):
-    """A real git repo that just doesn't happen to be Azure-Sentinel (none
-    of the expected stratum folders) must not report 0 sampled queries as
-    success either."""
+    """A git repo with none of the expected stratum folders must not report 0
+    sampled queries as success either."""
     pytest.importorskip("yaml")
     mod = _load("sample_sentinel_corpus")
     repo = tmp_path / "some-other-repo"

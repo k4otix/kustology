@@ -3,13 +3,12 @@
 
 """IR isolation contract.
 
-The whole point of the IR layer is that downstream consumers (analyzers, API
-serialization, UI renderers) never touch the .NET runtime. If a pydantic
-model accidentally carries a ``System.Object`` reference, JSON serialization
-explodes at runtime and tests get flaky in non-obvious ways. The contract:
+Downstream consumers (analyzers, API serialization, UI renderers) never touch
+the .NET runtime. A pydantic model carrying a ``System.Object`` reference
+breaks JSON serialization at runtime, so:
 
-1. Every field in the built IR is a primitive, list, dict, pydantic model,
-   or a known enum. Nothing else.
+1. Every field in the built IR is a primitive, list, dict, pydantic model, or
+   a known enum.
 2. ``model_dump_json`` succeeds and round-trips back to an equal hash.
 """
 
@@ -102,7 +101,6 @@ def test_ir_has_no_dotnet_refs(builder, query):
 
 @pytest.mark.parametrize("query", CORPUS, ids=lambda q: q[:50])
 def test_ir_serializes_cleanly(builder, query):
-    """Check the cheap half of the contract: ``model_dump_json`` succeeds and round-trips to an equal hash."""
     ir = builder.build(query)
     dumped = ir.model_dump_json()
     reloaded = QueryIR.model_validate_json(dumped)

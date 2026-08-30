@@ -3,14 +3,13 @@
 
 """Every .NET member name the library reads must exist in the assembly.
 
-pythonnet resolves members by exact, case-sensitive name, and it fails two
-different ways depending on how the read is written.
+pythonnet resolves members by exact, case-sensitive name, and a misspelling
+fails one of two ways depending on how the read is written.
 
 ``getattr(node, "Uris", None)`` on a node whose member is ``URIs`` returns
-``None``: the guard around it declines, and the field it would have
-populated keeps its declared default. No exception, no log line, no failing
-test — the surface reads as implemented forever. The shapes that ship this
-way:
+``None``, so the guard around it takes its fallback path and the field it
+would have populated keeps its declared default, with no exception and no
+failing test. The shapes that miss this way:
 
 ===========================  ==========================================
 probe                        reality
@@ -21,23 +20,23 @@ probe                        reality
 ``n.Keys`` then ``.Count``   ``Keys`` is a ``RowSchema``; no ``Count``
 ===========================  ==========================================
 
-Direct attribute access — ``n.ValueExpression`` — is the opposite: it
-raises ``AttributeError`` out of whatever public API the caller invoked, so
-a builder branch written that way crashes ``to_ir()`` on valid KQL
-(``T | top-hitters 5 of a by b``, ``T | __partitionby a (take 1)``) while
-its kind sits in ``HANDLED_OPERATOR_KINDS`` claiming to be modeled.
+Direct attribute access, ``n.ValueExpression``, raises ``AttributeError``
+out of whatever public API the caller invoked, so a builder branch written
+that way crashes ``to_ir()`` on valid KQL (``T | top-hitters 5 of a by b``,
+``T | __partitionby a (take 1)``) while its kind sits in
+``HANDLED_OPERATOR_KINDS`` claiming to be modeled.
 
-This test closes most of both classes rather than single instances. It
-parses ``src/kustology/`` for every PascalCase member name that is either
-passed to ``getattr``/``hasattr`` or read as a direct attribute, and
-asserts each one resolves on a type this library actually interops with.
+This test closes most of both classes. It parses ``src/kustology/`` for
+every PascalCase member name passed to ``getattr``/``hasattr`` or read as a
+direct attribute, and asserts each resolves on a type this library interops
+with.
 
 Direct attribute access needs exclusions, because ``x.Foo`` is also
-ordinary Python. They are structural, so nothing has to be maintained by
-hand as the source grows:
+ordinary Python. They are structural, so nothing needs hand maintenance as
+the source grows:
 
 * A **pure attribute chain rooted at a name that file's own imports bind**
-  is dropped, in whole — ``argparse.Namespace``,
+  is dropped in whole: ``argparse.Namespace``,
   ``System.Threading.Thread.CurrentThread.CurrentCulture``,
   ``CultureInfo.InvariantCulture``, ``KustoCode.ParseAndAnalyze``. A
   namespace segment and a member read are the same ``ast.Attribute`` node,
@@ -47,32 +46,29 @@ hand as the source grows:
   repo's ``ClassVar`` discriminator convention (``KIND``), not .NET's
   member convention.
 
-Two limits, stated so nobody over-trusts this.
+Two limits bound what a pass here proves:
 
-**The import rule drops real member reads, not just namespace segments.**
-``GlobalState.Default.WithDatabase(db)`` in ``utils/schema_state.py`` loses
-both ``Default`` (a static property read) and ``WithDatabase`` (an instance
-member read off its result) — the whole chain goes, because ``GlobalState``
-is imported and nothing breaks the chain. A ``Call`` does break it:
-``TableSymbol.From(cols).WithName(name)`` is dropped at ``From`` and
-**checked** at ``WithName``, since a call result is an instance whose
-members are exactly what this test exists to check. The same is true of
-``KustoCode.Parse(...)``/``.ParseAndAnalyze(...)`` in ``services.py`` and
-``builder.py``, ``DateTime.SpecifyKind(...)`` in ``_builder_helpers.py``,
-and the culture pins in ``bridge.py``. What makes that acceptable rather
-than a hole: every one of those reads is *eagerly executed* on a hot path —
-module import, ``parse()``, or the literal lowering every IR build runs — so
-a typo there fails the suite loudly on the next run. The reads this test
-exists for are the opposite: rare operator branches no fixture covers —
-exactly the shape that lets a ``ValueExpression`` reach a release.
-
-**The check is per name, not per type.** The ``Keys``/``Count`` shape above
-probes ``Keys`` (which exists) for ``Count`` (which exists on plenty of
-other types, just not on ``RowSchema``), so a name-level check cannot see it —
-and for the same reason it does not see ``PartitionByOperator.Expression``,
-where ``Expression`` is a real member of dozens of other nodes. Catching
-those needs the value assertion the individual tests make: a field asserted
-non-default on a real parse. Both are needed; neither subsumes the other.
+* **A chain rooted at an import loses real member reads along with the
+  namespace segments.** ``GlobalState.Default.WithDatabase(db)`` in
+  ``utils/schema_state.py`` loses both ``Default`` (a static property read)
+  and ``WithDatabase`` (an instance member read off its result), because
+  ``GlobalState`` is imported and nothing breaks the chain. A ``Call`` does
+  break it: ``TableSymbol.From(cols).WithName(name)`` is dropped at ``From``
+  and **checked** at ``WithName``, since a call result is an instance.
+  ``KustoCode.Parse``/``.ParseAndAnalyze`` in ``services.py`` and
+  ``builder.py``, ``DateTime.SpecifyKind`` in ``_builder_helpers.py``, and
+  the culture pins in ``bridge.py`` drop the same way. All of them run
+  eagerly on a hot path (module import, ``parse()``, or the literal lowering
+  every IR build runs), so a typo there fails the suite loudly on the next
+  run. This test exists for the rare operator branches no fixture covers,
+  the shape that lets a ``ValueExpression`` reach a release.
+* **The check is per name, not per type.** The ``Keys``/``Count`` shape
+  above probes ``Keys`` (which exists) for ``Count`` (which exists on other
+  types but not on ``RowSchema``), so a name-level check cannot see it, and
+  for the same reason it misses ``PartitionByOperator.Expression``, where
+  ``Expression`` is a real member of dozens of other nodes. Catching those
+  needs the value assertion the individual tests make: a field asserted
+  non-default on a real parse.
 
 Verified to bite: writing ``Uris``, ``IsNullable``, ``Underlying`` or
 ``n.ValueExpression`` into ``src/`` turns this red.
@@ -93,20 +89,16 @@ import kustology  # noqa: F401  -- loads the CLR and the bundled assembly
 SRC = Path(__file__).resolve().parent.parent / "src" / "kustology"
 
 # .NET members are PascalCase: an initial capital and at least one more
-# character. Python attributes on our own objects are snake_case (no match)
-# or SCREAMING_CASE for the ClassVar discriminators like ``KIND``, which
-# matches this pattern and is excluded separately.
+# character. This library's own attributes are snake_case, except the
+# SCREAMING_CASE ``ClassVar`` discriminators like ``KIND``, which match this
+# pattern and are excluded separately.
 _PASCAL_MEMBER = re.compile(r"^[A-Z][A-Za-z0-9]+$")
 
 # Names that resolve against something no type below exposes. Each entry
-# would need a reason: an unexplained entry re-opens the hole this test
-# closes.
-#
-# Empty today, and that is the healthy state. Everything the library reads
-# is a real member of a type it genuinely interops with. When a read turns
-# out to land on a .NET type outside the bundled assembly, the honest fix
-# is to add that type to ``_INTEROP_TYPES`` below — naming the object the
-# library touches — rather than to excuse the member name here.
+# needs a reason; an unexplained entry re-opens the hole this test closes.
+# Empty is the healthy state. A read that lands on a .NET type outside the
+# bundled assembly belongs in ``_INTEROP_TYPES`` below, which names the
+# object the library touches.
 ALLOWED_ELSEWHERE: dict[str, str] = {}
 
 
@@ -137,8 +129,8 @@ def _attribute_chain_root(node: ast.Attribute) -> str | None:
     """The leftmost ``ast.Name`` of a pure attribute chain, else ``None``.
 
     Only ``ast.Attribute`` links are followed. ``a.B.C`` roots at ``a``;
-    ``f().B`` roots at nothing, because its base is a call result -- an
-    instance -- whose members are exactly what this test exists to check.
+    ``f().B`` roots at nothing, because its base is a call result, an
+    instance whose members this test exists to check.
     """
     current: ast.expr = node
     while isinstance(current, ast.Attribute):
@@ -219,20 +211,17 @@ def _probed_member_names() -> dict[str, list[str]]:
 # Not every member this library reads belongs to a Kusto.Language type.
 # ``LiteralExpression.LiteralValue`` hands back a boxed BCL primitive, and
 # ``_builder_helpers`` reads members off it. Naming the *types* the library
-# touches is more honest than excusing member names -- but it is also
-# looser, because adding one type admits everything on it: these two add a
-# long tail of names the bundled assembly does not have, of which the
-# library reads two.
+# touches is honest but loose: admitting one admits every name on it, most
+# of which the bundled assembly does not have.
 #
 # So the widening is gated by its own footprint. ``BCL_ONLY_MEMBERS`` pins
 # the probes that ``_INTEROP_TYPES`` -- and nothing else -- explains, and
 # ``test_bcl_footprint_is_exactly_justified`` asserts set *equality* against
-# what the scan actually finds. That gives the widening the same "no stale
-# entries" property ``ALLOWED_ELSEWHERE`` has, in both directions: a new
-# read that only a BCL type explains must be declared here with its reason,
-# an entry whose last probe disappears must be removed, and a wrong-member
-# read that one of these types happens to explain fails instead of passing
-# unnoticed. The effective admitted surface is these two names, not the tail.
+# what the scan finds, giving the widening the "no stale entries" property
+# ``ALLOWED_ELSEWHERE`` has. A new read only a BCL type explains must be
+# declared here with its reason, an entry whose last probe disappears must
+# be removed, and a wrong-member read one of these types happens to explain
+# fails instead of passing unnoticed.
 _INTEROP_TYPES = (
     "System.DateTime",
     "System.TimeSpan",
@@ -262,9 +251,8 @@ BCL_ONLY_MEMBERS: dict[str, str] = {
 def _member_names(types) -> set[str]:
     names: set[str] = set()
     for t in types:
-        # Every type in the bundled assembly reflects cleanly; a bare
-        # loop here means a type that stops doing so fails loudly rather
-        # than quietly shrinking the set this test checks against.
+        # Every type in the bundled assembly reflects cleanly, so a bare loop
+        # fails loudly instead of shrinking the set this test checks against.
         names.update(prop.Name for prop in t.GetProperties())
         names.update(m.Name for m in t.GetMethods())
         names.update(f.Name for f in t.GetFields())
@@ -297,21 +285,19 @@ def dotnet_members(assembly_members) -> set[str]:
 def test_bcl_footprint_is_exactly_justified(assembly_members):
     """``_INTEROP_TYPES`` may only admit names something actually reads.
 
-    Widening the universe by a type is the honest way to describe interop,
-    but on its own it is unenforced: these two types bring in ``Date``,
-    ``Day``, ``Days``, ``Duration``, ``Hours``, ``MaxValue`` and the whole
+    Widening the universe by a type is unenforced on its own:
+    ``System.DateTime`` and ``System.TimeSpan`` bring in ``Date``, ``Day``,
+    ``Days``, ``Duration``, ``Hours``, ``MaxValue`` and the whole
     ``Add*``/``From*`` family, none of which the bundled assembly has and
-    every one of them a plausible *wrong* member read on a Kusto syntax node
-    that would then pass. Pinning the footprint as an exact set is what
-    keeps the admitted surface at the two names the library genuinely reads
-    instead of everything the two types expose.
+    each a plausible *wrong* member read on a Kusto syntax node that would
+    then pass. Pinning the footprint as an exact set holds the admitted
+    surface at the names the library genuinely reads.
 
-    Equality, not containment, so this is stale-proof in both directions: a
-    new BCL read must be declared here with its reason, and an entry whose
-    last probe disappears must be removed. An unused type left in
-    ``_INTEROP_TYPES`` is bounded by the same rule rather than special-cased
-    -- it pre-admits nothing, because the first probe that actually lands on
-    one of its names still has to be declared here and justified."""
+    Equality makes this stale-proof in both directions: a new BCL read must
+    be declared here with its reason, and an entry whose last probe
+    disappears must be removed. An unused type in ``_INTEROP_TYPES``
+    pre-admits nothing, because the first probe to land on one of its names
+    still has to be declared and justified."""
     outside = {
         name: sites for name, sites in _probed_member_names().items()
         if name not in assembly_members
@@ -344,16 +330,15 @@ def test_probed_dotnet_members_exist(dotnet_members):
 
 
 def test_both_scans_find_something():
-    """The two collectors are independent, and either could be silently
-    disabled by a refactor of the visitor or the call matcher -- leaving a
-    green test that checks half of what it claims. Assert each contributes.
+    """A refactor of the visitor or the call matcher can silently disable
+    either collector, leaving a green test that checks half of what it
+    claims. Each one must contribute.
 
-    Deliberately name-free. Pinning a landmark member per style would go red
-    the day someone rewrites that one read in the other style -- a change
-    with no effect on what this test is actually about, which is that both
-    styles reach the audit. What is asserted instead is that each collector
-    finds names, and that each finds at least one the other does not, so a
-    collector cannot be "passing" on names the other one supplies."""
+    Name-free: pinning a landmark member per style would go red the day that
+    one read is rewritten in the other style, which has no bearing on
+    whether both styles reach the audit. Each collector must find names, and
+    each must find one the other does not, so neither can pass on names the
+    other supplies."""
     by_style: dict[str, set[str]] = {"getattr": set(), "direct": set()}
     for path in sorted(SRC.rglob("*.py")):
         tree = ast.parse(path.read_text(), filename=str(path))
@@ -372,10 +357,9 @@ def test_imported_names_are_excluded_but_call_results_are_not():
     """The exclusion is a rule about attribute *chains*, not a name list.
 
     ``TableSymbol`` is imported in ``schema_state.py``, so
-    ``TableSymbol.From`` is a type path and excluded -- but the same
-    expression continues ``.WithName(name)`` off the call result, which is
-    a real .NET member read and must survive. A rule that excluded by name
-    would drop both."""
+    ``TableSymbol.From`` is a type path and excluded. The same expression
+    continues ``.WithName(name)`` off the call result, a real .NET member
+    read that must survive; a name-based rule would drop both."""
     path = SRC / "utils" / "schema_state.py"
     tree = ast.parse(path.read_text(), filename=str(path))
     imported = _imported_names(tree)
@@ -405,14 +389,13 @@ def test_unknown_name_codes_match_the_assembly():
     """``_UNKNOWN_NAME_CODES`` is pinned; the DLL decides whether it is right.
 
     The set is written out rather than reflected at runtime, so the filter is
-    a frozenset lookup and every code is greppable. That trades one risk for
-    another: AGENTS.md warns that refreshing the DLL "can shift diagnostic
-    codes (KS204 etc.)", and a shifted code would turn the filter into a
-    silent no-op for one family. So the pin is re-derived here from
-    ``Kusto.Language.DiagnosticFacts``, whose method *names* say which
-    family each belongs to — ``GetNameDoesNotReferToAnyKnown<X>`` and
-    ``GetFuzzy<X>NotDefined`` are, by construction, "this name is not among
-    the things the GlobalState describes".
+    a frozenset lookup and every code is greppable. AGENTS.md warns that
+    refreshing the DLL "can shift diagnostic codes (KS204 etc.)", and a
+    shifted code turns the filter into a silent no-op for one family, so the
+    pin is re-derived here from ``Kusto.Language.DiagnosticFacts``. Its
+    method *names* say which family a code belongs to:
+    ``GetNameDoesNotReferToAnyKnown<X>`` and ``GetFuzzy<X>NotDefined`` both
+    mean "this name is not among the things the GlobalState describes".
 
     A refresh that renumbers a code, adds a name kind, or renames a factory
     fails here with the new set to paste in.
@@ -433,8 +416,7 @@ def test_unknown_name_codes_match_the_assembly():
     derived = set()
     for name in factories:
         factory = getattr(DiagnosticFacts, name)
-        # Arity differs across the family (a graph snapshot names its model
-        # too); the message text is irrelevant here, only the code is.
+        # Arity differs across the family, and only the code matters here.
         for args in (("x",), ("x", "y")):
             try:
                 derived.add(str(factory(*args).Code))

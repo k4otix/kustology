@@ -36,12 +36,11 @@ def test_a_binder_crash_keeps_message_short_and_puts_the_trace_in_detail():
 
 
 def test_every_diagnostic_row_carries_the_same_keys():
-    """One shape, whoever built the row.
+    """Every diagnostic row has one shape, whoever built it.
 
-    ``_diagnostic_dicts`` calls itself the one place that decides what a
-    diagnostic looks like, and :func:`validate` appends the crash row to that
-    same list -- so a caller reading ``d["detail"]`` must not have to ask which
-    kind of row it holds. The crash row's own message names ``detail``.
+    ``_diagnostic_dicts`` decides what a diagnostic looks like, and
+    :func:`validate` appends the crash row to the same list, so a caller
+    reading ``d["detail"]`` never has to ask which kind of row it holds.
     """
     def boom():
         raise IndexError("Index was outside the bounds of the array.")

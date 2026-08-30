@@ -3,34 +3,29 @@
 
 """Ordering keys: ``sort by`` / ``order by`` / ``top … by`` / ``project-reorder``.
 
-``SortOp.expressions`` and ``TopOp.by`` hold :class:`SortKey` elements, not
-bare expressions, because a bare expression cannot carry the direction or
-the ``nulls first`` / ``nulls last`` clause. The AST's ``OrderedExpression``
-wrapper carries both, and a builder that unwraps it and keeps only the
-inner expression throws them away — collapsing ``sort by x asc`` and
-``sort by x desc``, which return rows in opposite orders, onto
-byte-identical IR that collides under ``semantic_hash``.
+``SortOp.expressions`` and ``TopOp.by`` hold :class:`SortKey` elements
+because a bare expression carries neither the direction nor the ``nulls
+first`` / ``nulls last`` clause. The AST's ``OrderedExpression`` wrapper
+carries both; keeping only the inner expression collapses ``sort by x asc``
+and ``sort by x desc``, which return rows in opposite orders, onto one
+``semantic_hash``.
 
-Two properties are pinned here that are easy to conflate:
+Two properties pinned here are easy to conflate. The recorded value on an
+explicit query: ``asc``, ``desc``, ``nulls first`` and ``nulls last`` each
+have a case asserting the written value. The effective default on a bare
+query: ``sort by x`` sorts *descending* in KQL, so ``direction`` is
+``"desc"`` there and the two queries hash alike. The second is a claim about
+KQL's semantics, which is why ``SortKey.direction`` is required with no
+default: ``to_llm_dict`` drops a field holding its declared default, and a
+reader could not then tell ``desc`` was in force.
 
-* **The recorded value on an explicit query.** ``asc``, ``desc``, ``nulls
-  first`` and ``nulls last`` each have a case that asserts the written value,
-  so a builder that hardcoded one answer fails.
-* **The effective default on a bare query.** ``sort by x`` sorts *descending*
-  in KQL, so ``direction`` is ``"desc"`` there and the two queries must hash
-  alike. That is an assertion about KQL's semantics rather than about a
-  pydantic default — which is why ``SortKey.direction`` is declared required
-  with no default at all: a defaulted field would be dropped from
-  ``to_llm_dict``'s output and a reader could not tell ``desc`` was in force.
-
-``project-reorder`` is here because it is the third consumer of the same
-``OrderedExpression`` wrapper, and the one that makes the two properties
-above come apart. Its ``asc``/``desc`` orders *columns*, not rows, and its
-no-modifier case means "keep the order they are listed in" — there is no
-effective default to substitute, so :class:`ReorderKey` gives ``direction``
-a genuine ``None`` where :class:`SortKey` cannot. Reusing ``SortKey`` here
-would stamp ``desc`` on a bare column, misreporting it and collapsing it
-against an explicit ``desc``.
+``project-reorder`` is the third consumer of ``OrderedExpression``, and the
+one that makes those two properties come apart. Its ``asc``/``desc`` orders
+*columns*, and its no-modifier case means "keep the order they are listed
+in", so there is no effective default to substitute and :class:`ReorderKey`
+gives ``direction`` a genuine ``None``. Reusing ``SortKey`` would stamp
+``desc`` on a bare column, misreporting it and collapsing it against an
+explicit ``desc``.
 """
 
 import pytest
@@ -145,11 +140,10 @@ def test_top_by_records_nulls_clause():
 # -- binding --------------------------------------------------------------
 
 def test_binder_reaches_expressions_through_the_new_wrapper():
-    """``SchemaAttacher._fill_children`` descends ``model_fields`` rather than
-    a hardcoded attribute tuple, so interposing ``SortKey`` between the
-    operator and its expression must not hide the expression from the binder.
-    Asserted on a bound parse with non-default values on both sides: the
-    column's provenance *and* its type."""
+    """``SchemaAttacher._fill_children`` descends ``model_fields``, not a
+    hardcoded attribute tuple, so interposing ``SortKey`` between the operator
+    and its expression must not hide the expression from the binder. Asserted
+    on a bound parse for both the column's provenance and its type."""
     schema = {"T": {"x": "string", "n": "long"}}
     ir = parse("T | sort by x desc, n asc | top 3 by n asc", schema=schema).to_ir()
     assert ir.schema_attached
@@ -163,20 +157,18 @@ def test_binder_reaches_expressions_through_the_new_wrapper():
 
 # -- hashing --------------------------------------------------------------
 #
-# Every ordering hash pair lives in tests/ir/test_hash_battery.py:
-# sort-asc-vs-desc/sort-per-key-direction/top-asc-vs-desc/bare-sort-is-desc/
-# bare-top-is-desc as sort-direction/sort-per-key-direction/top-by-direction/
-# sort-bare-is-desc/top-bare-is-desc; sort-nulls-first-vs-last as
-# sort-nulls-placement; sort-bare-vs-asc, top-bare-vs-asc,
-# sort-nulls-first-vs-default as sort-nulls-clause-vs-absent; and
-# order-by-is-sort-by and order-by-desc-is-sort-by-desc.
+# Every ordering hash pair lives in tests/ir/test_hash_battery.py, as
+# sort-direction, sort-per-key-direction, top-by-direction,
+# sort-bare-is-desc, top-bare-is-desc, sort-nulls-placement,
+# sort-nulls-clause-vs-absent, order-by-is-sort-by and
+# order-by-desc-is-sort-by-desc.
 
 # -- serialization --------------------------------------------------------
 
 def test_sort_keys_round_trip_through_json():
-    """``SortKey`` is a new element type inside ``SortOp.expressions`` and a
-    new field type on ``TopOp.by``; both need a validator that reads them
-    back under ``extra="forbid"``."""
+    """``SortOp.expressions`` holds ``SortKey`` elements and ``TopOp.by`` is
+    one; both need a validator that reads them back under
+    ``extra="forbid"``."""
     ir = parse("T | sort by x desc nulls first, y asc | top 5 by z asc").to_ir()
     again = QueryIR.model_validate_json(ir.model_dump_json())
     assert again == ir
@@ -189,10 +181,10 @@ def test_sort_keys_round_trip_through_json():
 
 
 def test_sort_key_direction_is_required_so_the_llm_view_renders_it():
-    """A field holding its declared default is dropped by ``to_llm_dict``.
-    ``direction`` therefore has no default: the effective ``desc`` on a bare
-    ``sort by x`` has to reach the reader, who cannot otherwise tell which
-    way the rows come back."""
+    """``to_llm_dict`` drops a field holding its declared default, so
+    ``direction`` has none: the effective ``desc`` on a bare ``sort by x``
+    has to reach the reader, who cannot otherwise tell which way the rows
+    come back."""
     from kustology.ir import to_llm_dict
 
     ir = parse("T | sort by x").to_ir()
@@ -201,9 +193,8 @@ def test_sort_key_direction_is_required_so_the_llm_view_renders_it():
         if op["kind"] == "sort"
     ]
     assert sort_view["expressions"][0]["direction"] == "desc"
-    # ``nulls`` is genuinely optional -- unwritten means "the engine decides"
-    # rather than a value KQL substitutes -- so it keeps its ``None`` default
-    # and is dropped from the view.
+    # ``nulls`` is genuinely optional: unwritten means "the engine decides",
+    # so it keeps its ``None`` default and the view drops it.
     assert "nulls" not in sort_view["expressions"][0]
 
 
@@ -235,12 +226,12 @@ def test_a_malformed_nulls_clause_degrades_instead_of_raising(case_id, query, di
     """``to_ir()`` must not be the thing that fails on bad KQL.
 
     Kusto's error recovery has two ways of saying "the keyword isn't there",
-    and only one of them is ``None``. ``sort by x nulls`` builds an
+    and only one is ``None``: ``sort by x nulls`` builds an
     ``OrderingNullsClause`` that *exists*, holding a ``FirstOrLastKeyword``
     that also exists but is a missing token whose ``Text`` is ``""``. A
-    presence check alone would let that empty string reach
-    ``Literal["first", "last"]`` and turn a typo into a ``ValidationError``
-    out of ``to_ir()`` -- a hard crash where ``T | take``, ``T | where``,
+    presence check alone lets that empty string reach
+    ``Literal["first", "last"]`` and turns a typo into a ``ValidationError``
+    out of ``to_ir()``, where ``T | take``, ``T | where``,
     ``T | summarize by`` and ``T | sort by`` all build a degraded operator
     and leave the complaint to the diagnostics.
     """
@@ -258,10 +249,9 @@ def test_a_malformed_nulls_clause_degrades_instead_of_raising(case_id, query, di
 
 
 def test_a_truncated_nulls_keyword_recovers_as_a_second_key():
-    """Recovery is the parser's call, not ours, and it is worth pinning what
-    it actually does: ``nulls firs`` drops the unreadable clause and reads
-    ``firs`` as a second ordering key. The point is that the builder reports
-    that shape rather than dying on it."""
+    """Recovery is the parser's call: ``nulls firs`` drops the unreadable
+    clause and reads ``firs`` as a second ordering key. The builder reports
+    that shape and does not fail on it."""
     keys = _sort_keys("T | sort by x nulls firs")
     assert [(k.expression.name, k.direction, k.nulls) for k in keys] == [
         ("x", "desc", None), ("firs", "desc", None),
@@ -277,12 +267,10 @@ def _reorder_keys(query: str) -> list[ReorderKey]:
 
 
 def test_project_reorder_keeps_the_column_and_records_the_direction():
-    """Guards the regression this exists for: handling the
-    ``OrderedExpression`` branch of ``_visit_expr`` for ``sort``/``top``
-    does not cover this third site on its own. Left unhandled,
-    ``project-reorder x asc`` falls through to ``UnknownExpr`` and the
-    column identity is gone -- unbindable, invisible to ``find_all``, an
-    opaque blob in the LLM view."""
+    """The ``OrderedExpression`` branch of ``_visit_expr`` for ``sort`` and
+    ``top`` does not cover this third site. Unhandled,
+    ``project-reorder x asc`` falls through to ``UnknownExpr``, losing the
+    column identity: unbindable and invisible to ``find_all``."""
     (key,) = _reorder_keys("T | project-reorder x asc")
     assert isinstance(key, ReorderKey), type(key).__name__
     assert isinstance(key.expression, ColumnRef), type(key.expression).__name__
@@ -295,9 +283,9 @@ def test_project_reorder_column_is_reachable_by_find_all():
 
 
 def test_project_reorder_without_a_modifier_has_no_direction():
-    """Not ``desc``. ``project-reorder x`` keeps the listed order; there is no
-    KQL default to record, which is why ``ReorderKey`` is a separate model
-    from ``SortKey`` rather than a reuse of it."""
+    """``project-reorder x`` keeps the listed order. There is no KQL default
+    to record, which is why ``ReorderKey`` is a separate model from
+    ``SortKey``."""
     (key,) = _reorder_keys("T | project-reorder x")
     assert key.direction is None
 
@@ -310,22 +298,20 @@ def test_project_reorder_records_each_term_independently():
 
 
 def test_project_reorder_wildcard_terms_survive_with_their_direction():
-    """``*`` and prefix wildcards are where ``asc``/``desc`` earn their keep --
+    """``*`` and prefix wildcards are where ``asc``/``desc`` earn their keep:
     the direction orders the columns the wildcard matched.
 
-    A bare ``*`` is *every remaining column*, not a column named ``*``. Kusto
-    parses it as a ``NameReference`` (with a ``WildcardedName`` inside), the
-    same class it uses for an ordinary column, so a builder that lowers it
-    the same way produces ``ColumnRef(name="*")`` -- and
-    ``find_all(ir, ColumnRef)``, the documented way to ask which columns a
-    query names, would answer with a column that does not exist. It is
-    instead a :class:`~kustology.ir.StarExpr`, the node the IR already has
-    for exactly this, and the one ``distinct *`` has always produced.
+    A bare ``*`` is *every remaining column*. Kusto parses it as a
+    ``NameReference`` holding a ``WildcardedName``, the same class an
+    ordinary column gets, so lowering it the same way produces
+    ``ColumnRef(name="*")`` and ``find_all(ir, ColumnRef)``, the documented
+    way to ask which columns a query names, reports a column that does not
+    exist. It is a :class:`~kustology.ir.StarExpr`, the node ``distinct *``
+    produces.
 
     A *prefix* wildcard stays a ``ColumnRef``: ``a*`` names a set of real
-    columns by pattern, and the pattern text is the only record of which
-    ones, so there is something to keep. ``StarExpr`` has no field to keep it
-    in.
+    columns by pattern, the pattern text is the only record of which ones,
+    and ``StarExpr`` has no field to hold it.
     """
     from kustology.ir import StarExpr
 
@@ -344,15 +330,14 @@ def test_project_reorder_wildcard_terms_survive_with_their_direction():
 
 
 def test_a_bare_wildcard_is_not_reported_as_a_column():
-    """The rule this guards: ``find_all(ir, ColumnRef)`` must not name ``*``.
+    """``find_all(ir, ColumnRef)`` must not name ``*``.
 
-    The rule lives in ``_visit_expr``'s ``NameReference`` branch, which every
-    operator that puts an expression in that position shares, so the reach is
+    The rule lives in ``_visit_expr``'s ``NameReference`` branch, shared by
+    every operator that puts an expression in that position, so its reach is
     wider than ``project-reorder``: without it, ``search *``,
-    ``summarize arg_max(*, x)`` and ``evaluate bag_unpack(*)`` would all
-    write a phantom column into the IR too. Enumerated here rather than
-    described, because the shared branch is exactly what makes the blast
-    radius easy to under-report.
+    ``summarize arg_max(*, x)`` and ``evaluate bag_unpack(*)`` each write a
+    phantom column into the IR. The cases are enumerated because the shared
+    branch makes the blast radius easy to under-report.
     """
     from kustology.ir import StarExpr, find_all
 
@@ -370,12 +355,10 @@ def test_a_bare_wildcard_is_not_reported_as_a_column():
 
 
 def test_a_prefix_wildcard_and_a_bare_one_do_not_hash_alike():
-    """Guards the near-miss implementation of the change above: keying the
-    ``StarExpr`` rewrite on ``WildcardedName`` alone -- rather than on
-    ``WildcardedName`` *and* the text being exactly ``*`` -- would swallow
-    ``a*`` too, and ``StarExpr`` has no field to carry the pattern, so every
-    prefix wildcard would collapse onto every other one and onto a bare
-    ``*``."""
+    """The ``StarExpr`` rewrite keys on ``WildcardedName`` *and* the text
+    being exactly ``*``. Keying on ``WildcardedName`` alone swallows ``a*``
+    too, and ``StarExpr`` has no field to carry the pattern, so every prefix
+    wildcard collapses onto every other one and onto a bare ``*``."""
     assert (
         parse("T | project-reorder *").to_ir().semantic_hash
         != parse("T | project-reorder a*").to_ir().semantic_hash
@@ -383,10 +366,9 @@ def test_a_prefix_wildcard_and_a_bare_one_do_not_hash_alike():
 
 
 REORDER_MUST_DIFFER = [
-    # asc-vs-desc and asc-vs-bare are dropped: they duplicate
-    # test_hash_battery.py's project-reorder-direction and
-    # project-reorder-direction-vs-unwritten pairs exactly. desc-vs-bare and
-    # per-term stay -- neither is in the battery.
+    # desc-vs-bare and per-term are here because the battery does not carry
+    # them. asc-vs-desc and asc-vs-bare live in test_hash_battery.py, as
+    # project-reorder-direction and project-reorder-direction-vs-unwritten.
     ("desc-vs-bare", "T | project-reorder x desc", "T | project-reorder x"),
     ("per-term", "T | project-reorder x asc, y desc", "T | project-reorder x desc, y asc"),
 ]
@@ -396,19 +378,16 @@ REORDER_MUST_DIFFER = [
     "case_id, a, b", REORDER_MUST_DIFFER, ids=[c[0] for c in REORDER_MUST_DIFFER],
 )
 def test_project_reorder_directions_hash_apart(case_id, a, b):
-    """Guards against a regression the column-identity fix could introduce:
-    a builder where ``project-reorder`` falls through to ``UnknownExpr``
-    still hashes these three forms apart, because the direction survives
-    inside the raw text. Restoring the column identity must not lose that
-    and collapse them together."""
+    """The direction survives inside an ``UnknownExpr``'s raw text, so these
+    forms hash apart even where ``project-reorder`` is undispatched. Modeling
+    the column must keep them apart too."""
     assert _hash(a) != _hash(b), f"{case_id}: {a!r} and {b!r} order columns differently"
 
 
 def test_project_reorder_binder_reaches_the_column_and_microsoft_orders_it():
-    """The column has to be a real expression for the binder to reach it:
-    ``_fill`` places and types it. The emitted column order is Microsoft's
-    -- ``project-reorder`` closes the symbol, so the answer is stamped
-    rather than derived."""
+    """The column has to be a real expression for ``_fill`` to place and type
+    it. The emitted column order is Microsoft's: ``project-reorder`` closes
+    the symbol, so the answer is stamped."""
     schema = {"T": {"x": "string", "n": "long"}}
     ir = parse("T | project-reorder n asc", schema=schema).to_ir()
     assert ir.schema_attached
@@ -442,9 +421,9 @@ def test_project_reorder_rejects_an_unknown_direction():
 
 
 def test_reorder_direction_is_optional_so_the_llm_view_shows_only_written_ones():
-    """The mirror image of ``SortKey.direction``: here ``None`` is the honest
-    value for an unwritten modifier, so it keeps a pydantic default and
-    ``to_llm_dict`` drops it -- while a written one still renders."""
+    """The mirror image of ``SortKey.direction``: ``None`` is the right value
+    for an unwritten modifier, so it keeps a pydantic default and
+    ``to_llm_dict`` drops it. A written one still renders."""
     from kustology.ir import to_llm_dict
 
     ir = parse("T | project-reorder x asc, z").to_ir()

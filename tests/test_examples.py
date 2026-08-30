@@ -3,20 +3,19 @@
 
 """Smoke-test every example in ``examples/``.
 
-The examples are the first thing a new user copies. Silent drift —
-signature changes, removed re-exports, dependency leaks — is invisible
-without exercising them in CI. This test imports each example as a
-module and invokes its ``main()`` with stdout captured, asserting only
-that it returns cleanly. The shape of the output is intentionally not
-pinned: examples are demos, not contracts.
+The examples are the first thing a new user copies, and drift in them
+(signature changes, removed re-exports, dependency leaks) stays invisible
+until something runs them. Each example imports as a module and its ``main()``
+runs with stdout captured. Only a clean return is asserted; the output shape
+stays unpinned because examples are demos.
 
 IR-dependent examples skip cleanly when pydantic isn't installed.
 
-Every example renders through ``examples/_display.py``, which uses Rich
-when it is installed and plain text when it is not. Both paths run here:
-the ``forced-plain`` parameter sets ``KUSTOLOGY_EXAMPLES_PLAIN=1`` so the
-fallback keeps working on a base install, and skips itself where Rich is
-absent and the default path is already the fallback.
+Every example renders through ``examples/_display.py``, which uses Rich when
+it is installed and plain text when it is not. Both paths run here: the
+``forced-plain`` parameter sets ``KUSTOLOGY_EXAMPLES_PLAIN=1`` to cover the
+fallback on a base install, and skips itself where Rich is absent and the
+default path is already the fallback.
 """
 
 from __future__ import annotations
@@ -61,28 +60,25 @@ def test_example_runs_cleanly(example_path: Path, forced_plain: bool, monkeypatc
     else:
         monkeypatch.delenv("KUSTOLOGY_EXAMPLES_PLAIN", raising=False)
 
-    # Running an example directly puts examples/ on sys.path, which is how
-    # its ``from _display import ...`` resolves. Loading one by file path
-    # does not, so prepend it here.
+    # Running an example directly puts examples/ on sys.path, which is how its
+    # ``from _display import ...`` resolves; loading by file path does not.
     monkeypatch.syspath_prepend(str(EXAMPLES_DIR))
     # _display reads the environment once, at import.
     sys.modules.pop("_display", None)
 
-    # Load by file path so the example doesn't need to be on sys.path or
-    # installed as a package. mod_name is namespaced under "examples." to
-    # avoid colliding with kustology module names.
+    # Load by file path so the example needs no install, namespaced under
+    # "examples." so the module name cannot collide with kustology's.
     spec = importlib.util.spec_from_file_location(f"examples.{stem}", example_path)
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod
     try:
-        # Importing the module shouldn't print to stdout, but capture
-        # defensively so a stray ``print`` at module load doesn't pollute
-        # pytest's output.
+        # Capture the import too, so a stray module-level ``print`` stays out
+        # of pytest's output.
         with redirect_stdout(io.StringIO()):
             spec.loader.exec_module(mod)
             assert hasattr(mod, "main"), f"{stem} has no main() function"
-            # Some examples take parameters; the convention here is zero-arg.
+            # The convention is a zero-argument ``main()``.
             mod.main()
     finally:
         sys.modules.pop(spec.name, None)
