@@ -6,6 +6,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`walk()` and `find_all()` take `prune=`** (tier 2). A node the callback accepts is yielded but not entered, so an outer pipeline can be analysed without its `join`/`lookup` subqueries. `predicate` still filters only what is yielded.
+- **`span_of(node)`** (tier 2) returns the smallest `Span` covering a node and its descendants, so `Pipeline`, `QueryIR` and the statement models — which have no `span` field — can still be located in the source. No IR shape change.
+- **Lexical span helpers** (tier 1): `comment_spans()`, `string_literal_spans(include_prefix=...)`, `statement_spans()` and the underlying `tokens()` on `KustoQuery` and in `kustology.lexical`. They report what the lexer decided — several comments in one trivia run, the trailing comment, `//` inside a string — as code-point `TextSpan`s, with no pydantic. See [Lexical spans](docs/tier1-syntax-tree.md#lexical-spans).
+- **Graded similarity** (tier 2): `subtree_hashes()` digests every subtree of at least `min_size` nodes under the whole-query canonicalization; `similarity()` (Jaccard) and `containment()` compare bags; `similarity_sketch()`/`sketch_similarity()` estimate Jaccard from a 520-byte MinHash; `differing_subtrees()` names the smallest subtrees two queries do not share. IDF weighting, clustering and thresholds stay with the caller. See [docs/similarity.md](docs/similarity.md).
+- **`Diagnostic.detail`** (tier 2) carries the .NET exception text of an analyzer crash; parser diagnostics leave it `None`. Additive — 0.2.x IR JSON still loads.
+
+### Changed
+
+- **`find_time_expressions()` returns `TimeExpr` named tuples** (tier 1). `(text, start, length)` unpacking, indexing and equality with plain tuples are unchanged; `.start`, `.length` and `.span` are new. `TextSpan(start, length)` is the pydantic-free span type shared by every Tier 1 helper.
+- **`semantic_hash` is computed on first read** (tier 2), memoized, and still present in `model_dump()`; `to_ir(semantic_hash=True)` computes it during the build. Stored IR JSON carrying the key loads as before. No digest moves; `""` no longer appears.
+- **`merge_consecutive_filters` gives the merged `where` a span covering every operator it merged** (tier 2), not only the first. The digest ignores spans, so no hash moves.
+- **The `KUSTOLOGY001` analyzer-crash diagnostic carries the .NET exception in a new `detail` key** (tier 1) and keeps `message` to one sentence. `MemoryError` and `RecursionError` propagate instead of being reported as a binder crash.
+
+### Fixed
+
+- **`__version__` describes the imported code** (tier 1). It is read from `kustology/_version.py`, the version's single source, instead of install metadata, so an editable checkout no longer reports the last `pip install`. **`build_info()`** returns the version, the bundled `Kusto.Language.dll` pin and SHA-256, and the IR tags (`None` without `[ir]`).
+
 ## [0.2.1] — 2026-08-29
 
 ### Fixed
