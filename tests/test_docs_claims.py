@@ -109,19 +109,23 @@ def test_readme_points_at_every_runnable_example():
 
 
 _NOT_GREENFIELD = re.compile(r"\b(previously|no longer|used to be|e\.g\.|i\.e\.)", re.IGNORECASE)
+# Anchored on ``REPO_ROOT`` like every other path here, not on the working
+# directory: this list is built at import time, so a CWD-relative ``Path`` both
+# fails collection from elsewhere and -- for the two globbed roots, which just
+# come back empty -- makes the gate vacuous without failing.
 _PROSE_FILES = [
-    *Path("src").rglob("*.py"),
-    *Path("docs").glob("*.md"),
-    Path("README.md"),
-    Path("ARCHITECTURE.md"),
-    Path("CONTRIBUTING.md"),
+    *(REPO_ROOT / "src").rglob("*.py"),
+    *(REPO_ROOT / "docs").glob("*.md"),
+    REPO_ROOT / "README.md",
+    REPO_ROOT / "ARCHITECTURE.md",
+    REPO_ROOT / "CONTRIBUTING.md",
 ]
 
 
 def test_prose_is_greenfield_and_spells_out_latin():
     """AGENTS.md's documentation-style rules; CHANGELOG.md and AGENTS.md are exempt."""
     hits = [
-        f"{path}:{lineno}: {line.strip()}"
+        f"{path.relative_to(REPO_ROOT)}:{lineno}: {line.strip()}"
         for path in _PROSE_FILES
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
         if _NOT_GREENFIELD.search(line)

@@ -1756,13 +1756,40 @@ class QueryIR(BaseModel):
         Two queries with the same semantic content collide; see
         ``docs/semantic-hash.md`` for what the digest ignores. Mutating the IR
         afterwards leaves the memoized value stale — call
-        :func:`kustology.ir.compute_semantic_hash` for a fresh one. Distinct
+        :func:`kustology.ir.compute_semantic_hash` for a fresh one. A copy
+        does not inherit the memo: ``model_copy()``, in either depth, and
+        ``copy.deepcopy`` all hand back an IR that computes its own. Distinct
         from Tier 1's :meth:`KustoQuery.get_structural_hash`, which is
         literal- and identifier-blind.
         """
         from .transforms import compute_semantic_hash
 
         return compute_semantic_hash(self)
+
+    def __deepcopy__(self, memo: dict | None = None) -> "QueryIR":
+        """Deep-copy without carrying the memoized digest into the copy.
+
+        ``cached_property`` stores ``semantic_hash`` in the instance
+        ``__dict__``, which pydantic copies along with the fields, so the copy
+        would answer its *first* read with the source's digest. A copy is a
+        different tree the moment the caller mutates it -- which is the point
+        of the copy-then-mutate workflow
+        :func:`~kustology.ir.merge_consecutive_filters` documents -- so it
+        recomputes instead of inheriting.
+        """
+        copied = super().__deepcopy__(memo)
+        copied.__dict__.pop("semantic_hash", None)
+        return copied
+
+    def __copy__(self) -> "QueryIR":
+        """Shallow-copy without carrying the memoized digest; see :meth:`__deepcopy__`.
+
+        A shallow copy shares the operator lists, so its digest goes stale
+        under exactly the mutation a deep copy's does.
+        """
+        copied = super().__copy__()
+        copied.__dict__.pop("semantic_hash", None)
+        return copied
 
     def to_llm_dict(self) -> dict[str, Any]:
         """LLM-friendly serialization. See :mod:`kustology.ir.llm_view`."""

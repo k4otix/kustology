@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 from typing import NamedTuple
 
+from ._ir_tags import IR_SCHEMA_VERSION, SEMANTIC_HASH_SCHEME
 from ._version import __version__
 
 
@@ -17,25 +18,25 @@ class BuildInfo(NamedTuple):
     version: str
     kusto_language_version: str
     kusto_language_sha256: str
-    ir_schema_version: str | None      # None without the [ir] extra
-    semantic_hash_scheme: str | None
+    ir_schema_version: str
+    semantic_hash_scheme: str
 
 
 def build_info() -> BuildInfo:
     """Return the library version, the bundled ``Kusto.Language.dll`` pin, and the two IR tags.
 
     These are the values a consumer should gate behaviour on.
+
+    The IR tags are always reported. They describe the IR shape *this version
+    of kustology* defines, which is a fact about the installed source and not
+    about whether the ``[ir]`` extra brought pydantic along; both come from
+    :mod:`kustology._ir_tags`, which imports nothing, so reading them here
+    does not pull the IR into a Tier 1-only process.
     """
     pin = _read_pin()
-    schema: str | None = None
-    scheme: str | None = None
-    try:
-        from . import ir
-    except ImportError:
-        pass
-    else:
-        schema, scheme = ir.IR_SCHEMA_VERSION, ir.SEMANTIC_HASH_SCHEME
-    return BuildInfo(__version__, pin["version"], pin["sha256"], schema, scheme)
+    return BuildInfo(
+        __version__, pin["version"], pin["sha256"], IR_SCHEMA_VERSION, SEMANTIC_HASH_SCHEME,
+    )
 
 
 def _read_pin() -> dict[str, str]:

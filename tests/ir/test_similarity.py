@@ -24,6 +24,7 @@ from kustology.ir import (
     sketch_similarity,
     subtree_hashes,
 )
+from kustology.ir.similarity import _HEADER, _SCHEME_TAG, _SKETCH_MAGIC
 
 FIXTURES = pathlib.Path(__file__).resolve().parent.parent / "fixtures" / "complex_queries"
 
@@ -131,14 +132,36 @@ def test_sketch_shape_and_determinism():
 
 
 def test_sketch_tracks_exact_jaccard_on_the_corpus():
-    bags = [subtree_hashes(parse(p.read_text()).to_ir(semantic_hash=False)) for p in sorted(FIXTURES.glob("*.kql"))]
+    """Measure the estimator on the pairs a caller actually reads it at.
+
+    Pairs with an exact similarity of 0.0 -- 93.5% of this corpus, since most
+    fixtures share no subtree at all -- are excluded. Both the exact and the
+    sketch value are trivially 0.0 there, so the error is trivially 0.0 too,
+    and averaging them in dilutes the bound by more than an order of magnitude:
+    a badly broken estimator would still clear a whole-corpus mean. This is the
+    same reason ``scripts/eval_similarity._sketch_fidelity`` samples from
+    candidate neighbours rather than uniformly.
+
+    The bounds hold roughly a 2x margin over the measured values
+    (mean 0.013, p95 0.040 at ``k=128``), so ordinary corpus churn does not
+    move them but a real regression in the permutation family does.
+    """
+    bags = [
+        subtree_hashes(parse(p.read_text()).to_ir(semantic_hash=False))
+        for p in sorted(FIXTURES.glob("*.kql"))
+    ]
     sketches = [similarity_sketch(b) for b in bags]
-    errs = [
-        abs(similarity(bags[i], bags[j]) - sketch_similarity(sketches[i], sketches[j]))
+    errs = sorted(
+        abs(exact - sketch_similarity(sketches[i], sketches[j]))
         for i in range(len(bags))
         for j in range(i + 1, len(bags))
-    ]
+        if (exact := similarity(bags[i], bags[j])) > 0.0
+    )
+    # Guards the guard: a corpus that stopped producing overlapping pairs would
+    # otherwise leave this test asserting a mean over nothing.
+    assert len(errs) >= 50, f"only {len(errs)} overlapping pairs to measure"
     assert sum(errs) / len(errs) < 0.03
+    assert errs[int(0.95 * (len(errs) - 1))] < 0.08
 
 
 def test_sketch_rejects_mismatch_and_empty():
@@ -149,6 +172,50 @@ def test_sketch_rejects_mismatch_and_empty():
         similarity_sketch([])
     with pytest.raises(ValueError):
         sketch_similarity(b"nope", similarity_sketch(ir))
+
+
+def test_a_header_declaring_no_slots_raises_rather_than_dividing_by_zero():
+    """``k=0`` satisfies the length check on its own -- 8 bytes of header, no slots."""
+    empty = _HEADER.pack(_SKETCH_MAGIC, 0, _SCHEME_TAG)
+    with pytest.raises(ValueError):
+        sketch_similarity(empty, empty)
+
+
+def test_a_sketch_from_another_digest_scheme_is_rejected_not_compared():
+    """A stale sketch must not read as "these queries are unrelated".
+
+    The slots are minned from ``semantic_hash`` digests, so they mean nothing
+    across a ``SEMANTIC_HASH_SCHEME`` bump -- and the comparison would return a
+    number near 0.0, indistinguishable from a real answer. The header carries
+    the scheme so the mismatch surfaces instead.
+    """
+    good = similarity_sketch(_ir("T | where a == 1 | take 1"))
+    foreign = _HEADER.pack(_SKETCH_MAGIC, 128, (_SCHEME_TAG ^ 1) & 0xFFFF) + good[_HEADER.size:]
+    with pytest.raises(ValueError, match="digest scheme"):
+        sketch_similarity(foreign, good)
+
+
+def test_sketches_do_not_depend_on_the_interpreter_random_module(monkeypatch):
+    """The permutation family comes from a keyed hash, not ``random``.
+
+    ``random.Random.randrange`` has no cross-version reproducibility promise,
+    and a sketch invalidated by an interpreter upgrade would be undetectable.
+    Breaking ``random`` outright is the cheapest proof that nothing reads it.
+    """
+    import random
+
+    baseline = similarity_sketch(_ir("T | where a == 1 | take 1"))
+    monkeypatch.delattr(random.Random, "randrange")
+    assert similarity_sketch(_ir("T | where a == 1 | take 1")) == baseline
+
+
+def test_digest_only_callers_skip_the_span_map():
+    ir = _ir("T | where a == 1 | summarize count() by b | take 10")
+    with_spans = subtree_hashes(ir)
+    without = subtree_hashes(ir, spans=False)
+    assert [h.digest for h in without] == [h.digest for h in with_spans]
+    assert all(h.span is None for h in without)
+    assert any(h.span is not None for h in with_spans)
 
 
 def test_differing_subtrees_localizes_one_changed_operator():

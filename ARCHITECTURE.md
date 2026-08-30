@@ -11,13 +11,14 @@ src/kustology/
   services.py        # Public entry points: parse(), format_query(), validate()
   reflection.py      # Runtime introspection of Kusto.Language for func classification
   cli.py             # Command-line interface — kustology parse/format/validate/version
+  _ir_tags.py        # IR_SCHEMA_VERSION + SEMANTIC_HASH_SCHEME; no imports, read by both tiers
   ir/                # Tier-2: pydantic IR (opt-in via [ir] extras)
     builder.py       # Walks .NET syntax tree → QueryIR; dispatch tables for operators/expressions
     query.py         # Operator and pipeline node models
     expr.py          # Expression node models
     binder.py        # SchemaAttacher: provenance (ColumnRef.table, origins)
     walk.py          # Generic IR traversal: walk() and find_all()
-    transforms.py    # semantic_hash, canonicalization, SEMANTIC_HASH_SCHEME
+    transforms.py    # semantic_hash, canonicalization
     llm_view.py      # to_llm_dict — compact JSON-safe rendering for LLMs
     analyzers.py     # The Finding vocabulary for IR-driven static analysis
     types.py         # Kusto type enum

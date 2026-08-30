@@ -462,8 +462,9 @@ None` on a hand-built node passes identically whether the populating code works
 or has never worked once. Assert a **non-default value on a real parse**.
 
 ### Version tags bump together, once per release; the hash is bind-state-dependent
-`IR_SCHEMA_VERSION` (`ir/__init__.py`) must be bumped on any breaking
-field-shape change, and `SEMANTIC_HASH_SCHEME` (`ir/transforms.py`) in lockstep
+`IR_SCHEMA_VERSION` must be bumped on any breaking field-shape change, and
+`SEMANTIC_HASH_SCHEME` in lockstep — both live in `_ir_tags.py`, a module with
+no imports, and are re-exported from `kustology.ir`
 — the scheme prefix exists so a canonicalization change invalidates stored
 hashes *visibly* instead of silently returning "these queries differ".
 

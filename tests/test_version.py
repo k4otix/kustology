@@ -24,11 +24,31 @@ def test_build_info_matches_the_bundled_pin():
     assert info.version == kustology.__version__
 
 
-def test_build_info_ir_tags_track_the_extra():
+def test_build_info_reports_the_ir_tags_without_the_extra():
+    """The tags describe the installed source, so they do not depend on pydantic.
+
+    Asserted against ``kustology._ir_tags`` rather than ``kustology.ir`` so the
+    check runs identically in the base-install CI cell, where importing the IR
+    would raise -- and so a regression that made ``build_info()`` reach into the
+    IR again shows up as a failure rather than as a silently skipped branch.
+    """
+    from kustology import _ir_tags
+
     info = kustology.build_info()
-    try:
-        from kustology import ir
-    except ImportError:
-        assert (info.ir_schema_version, info.semantic_hash_scheme) == (None, None)
-    else:
-        assert (info.ir_schema_version, info.semantic_hash_scheme) == (ir.IR_SCHEMA_VERSION, ir.SEMANTIC_HASH_SCHEME)
+    assert (info.ir_schema_version, info.semantic_hash_scheme) == (
+        _ir_tags.IR_SCHEMA_VERSION,
+        _ir_tags.SEMANTIC_HASH_SCHEME,
+    )
+
+
+def test_build_info_does_not_import_the_ir():
+    """A Tier 1 host reading its DLL pin must not pay for pydantic and the IR graph."""
+    import subprocess
+    import sys
+
+    probe = (
+        "import kustology, sys; kustology.build_info(); "
+        "print(int('pydantic' in sys.modules or 'kustology.ir' in sys.modules))"
+    )
+    out = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == "0", "build_info() pulled the IR into sys.modules"

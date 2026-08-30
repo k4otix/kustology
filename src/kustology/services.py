@@ -99,7 +99,8 @@ def _analyze_guarded(
     ``start``/``length`` are zero because the failure has no source location:
     it is a fault in the analyzer, not a span of the query. Every consumer of
     this shape already reads those two keys, so omitting them is not an
-    option.
+    option. The row carries the same seven keys :func:`_diagnostic_dicts`
+    emits, so a list holding both is uniform.
 
     ``detail`` carries ``str(exc)`` — the .NET exception's own message, which
     for a CLR exception reaching Python through pythonnet includes its stack
@@ -110,10 +111,11 @@ def _analyze_guarded(
     trace reads ``detail``.
 
     ``MemoryError`` and ``RecursionError`` propagate rather than being
-    reported through this shape: both mean the *host* is out of a resource
-    the fallback build would need just as much as the analyze call that
-    triggered it, so building ``unbound()`` would fail the same way, and
-    reporting a resource exhaustion as a binder fault would misattribute it.
+    reported through this shape: both mean the *host* is out of a resource,
+    and reporting a resource exhaustion as a binder fault would misattribute
+    it. That holds at every call site, including the two in
+    :meth:`kustology.KustoQuery.to_ir` whose ``unbound`` only returns the tree
+    the object already holds and so could not fail on its own.
 
     The remaining ``except Exception`` is broad. A .NET
     exception reaches Python through pythonnet as an ordinary ``Exception``
@@ -225,6 +227,11 @@ def _diagnostic_dicts(
                 "severity": str(d.Severity),
                 "category": str(d.Category),
                 "code": code_str,
+                # Always present, ``None`` for a parser diagnostic. The
+                # analyzer-crash row :func:`_analyze_guarded` builds fills it,
+                # and a caller iterating the list must not have to ask which
+                # kind of row it is holding before reading a key.
+                "detail": None,
             }
         )
     return results

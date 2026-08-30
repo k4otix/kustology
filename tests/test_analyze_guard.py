@@ -10,7 +10,7 @@ as a collection-time ``ImportError`` on a bare install.
 
 import pytest
 
-from kustology.services import ANALYZE_FAILED_CODE, _analyze_guarded
+from kustology.services import ANALYZE_FAILED_CODE, _analyze_guarded, validate
 
 
 @pytest.mark.parametrize("exc_type", [MemoryError, RecursionError])
@@ -33,3 +33,26 @@ def test_a_binder_crash_keeps_message_short_and_puts_the_trace_in_detail():
     assert failure["code"] == ANALYZE_FAILED_CODE
     assert "\n" not in failure["message"] and len(failure["message"]) < 300
     assert failure["detail"] == trace
+
+
+def test_every_diagnostic_row_carries_the_same_keys():
+    """One shape, whoever built the row.
+
+    ``_diagnostic_dicts`` calls itself the one place that decides what a
+    diagnostic looks like, and :func:`validate` appends the crash row to that
+    same list -- so a caller reading ``d["detail"]`` must not have to ask which
+    kind of row it holds. The crash row's own message names ``detail``.
+    """
+    def boom():
+        raise IndexError("Index was outside the bounds of the array.")
+
+    _, failure = _analyze_guarded(boom, lambda: "unbound")
+    assert set(failure) == {
+        "start", "length", "message", "severity", "category", "code", "detail",
+    }
+
+    parser_rows = validate("T | wher a")
+    assert parser_rows, "expected the parser to complain about this query"
+    for row in parser_rows:
+        assert set(row) == set(failure)
+        assert row["detail"] is None

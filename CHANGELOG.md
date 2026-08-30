@@ -8,27 +8,27 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.3.0] — 2026-08-30
 
-No IR JSON shape or digest change: `IR_SCHEMA_VERSION` stays `0.2` and `SEMANTIC_HASH_SCHEME` stays `kustology-sem-v2`; stored IR JSON and hashes from 0.2.x remain valid. `semantic_hash` is a computed field and `Diagnostic` gains an optional `detail` (see Changed and Added).
+`IR_SCHEMA_VERSION` stays `0.2` and `SEMANTIC_HASH_SCHEME` stays `kustology-sem-v2`. No digest moves, and IR JSON stored by 0.2.x loads into 0.3.0 unchanged — a stored `semantic_hash` is dropped and recomputed, and `Diagnostic.detail` defaults to `None`. What the tags do not promise is the other direction: a 0.3.0 dump carries a `detail` key on every diagnostic, and every IR model sets `extra="forbid"`, so 0.2.x refuses it. Rebuild from source rather than downgrading a dump.
 
 ### Added
 
 - **`walk()` and `find_all()` take `prune=`** (tier 2). A node the callback accepts is yielded but not entered, so an outer pipeline can be analysed without its `join`/`lookup` subqueries. `predicate` still filters only what is yielded.
 - **`span_of(node)`** (tier 2) returns the smallest `Span` covering a node and its descendants, so `Pipeline`, `QueryIR` and the statement models — which have no `span` field — can still be located in the source. No IR shape change.
 - **Lexical span helpers** (tier 1): `comment_spans()`, `string_literal_spans(include_prefix=...)`, `statement_spans()` and the underlying `tokens()` on `KustoQuery` and in `kustology.lexical`. They report what the lexer decided — several comments in one trivia run, the trailing comment, `//` inside a string — as code-point `TextSpan`s, with no pydantic. See [Lexical spans](docs/tier1-syntax-tree.md#lexical-spans).
-- **Graded similarity** (tier 2): `subtree_hashes()` digests every subtree of at least `min_size` nodes under the whole-query canonicalization; `similarity()` (Jaccard) and `containment()` compare bags; `similarity_sketch()`/`sketch_similarity()` estimate Jaccard from a 520-byte MinHash; `differing_subtrees()` names the smallest subtrees two queries do not share. IDF weighting, clustering and thresholds stay with the caller. See [docs/similarity.md](docs/similarity.md).
+- **Graded similarity** (tier 2): `subtree_hashes()` digests every subtree of at least `min_size` nodes under the whole-query canonicalization; `similarity()` (Jaccard) and `containment()` compare bags; `similarity_sketch()`/`sketch_similarity()` estimate Jaccard from a 520-byte MinHash; `differing_subtrees()` names the smallest subtrees two queries do not share. The sketch header records `k` and the `SEMANTIC_HASH_SCHEME` that built it, so a sketch stored across a scheme bump is rejected instead of silently compared, and its permutations come from a keyed hash so sketches agree across interpreter versions. `subtree_hashes(..., spans=False)` skips the per-node span map when only digests are wanted. IDF weighting, clustering and thresholds stay with the caller. See [docs/similarity.md](docs/similarity.md).
 - **`Diagnostic.detail`** (tier 2) carries the .NET exception text of an analyzer crash; parser diagnostics leave it `None`. Additive — 0.2.x IR JSON still loads.
 - **Docs: what the binder resolves without a schema** (tier 2) — `result_type` tells a `let`-bound `datetime` from a `timespan` on an unbound parse; `examples/lookback_window.py` shows it, together with `prune=` and `span_of`.
 
 ### Changed
 
 - **`find_time_expressions()` returns `TimeExpr` named tuples** (tier 1). `(text, start, length)` unpacking, indexing and equality with plain tuples are unchanged; `.start`, `.length` and `.span` are new. `TextSpan(start, length)` is the pydantic-free span type shared by every Tier 1 helper.
-- **`semantic_hash` is computed on first read** (tier 2), memoized, and still present in `model_dump()`; `to_ir(semantic_hash=True)` computes it during the build. Stored IR JSON carrying the key loads as before. No digest moves; `""` no longer appears.
+- **`semantic_hash` is computed on first read** (tier 2), memoized, and still present in `model_dump()`; `to_ir(semantic_hash=True)` computes it during the build. No digest moves, and the field is never `""`. Stored IR JSON carrying the key still loads, but the stored *value* is dropped and the digest recomputed from the tree as loaded — a dump whose digest was edited by hand, or taken before `SchemaAttacher` ran, reloads with a different one. A copy does not inherit the memo either: `model_copy()` and `copy.deepcopy` hand back an IR that computes its own, so the copy-then-mutate workflow the transforms document reports the copy's digest rather than the original's.
 - **`merge_consecutive_filters` gives the merged `where` a span covering every operator it merged** (tier 2), not only the first. The digest ignores spans, so no hash moves.
-- **The `KUSTOLOGY001` analyzer-crash diagnostic carries the .NET exception in a new `detail` key** (tier 1) and keeps `message` to one sentence. `MemoryError` and `RecursionError` propagate instead of being reported as a binder crash.
+- **The `KUSTOLOGY001` analyzer-crash diagnostic carries the .NET exception in a new `detail` key** (tier 1) and keeps `message` to one sentence. Every diagnostic dict `validate()` and `KustoQuery.diagnostics` return carries the key, `None` for a parser diagnostic, so one list never holds two shapes. `MemoryError` and `RecursionError` propagate instead of being reported as a binder crash.
 
 ### Fixed
 
-- **`__version__` describes the imported code** (tier 1). It is read from `kustology/_version.py`, the version's single source, instead of install metadata, so an editable checkout no longer reports the last `pip install`. **`build_info()`** returns the version, the bundled `Kusto.Language.dll` pin and SHA-256, and the IR tags (`None` without `[ir]`).
+- **`__version__` describes the imported code** (tier 1). It is read from `kustology/_version.py`, the version's single source, instead of install metadata, so an editable checkout no longer reports the last `pip install`. **`build_info()`** returns the version, the bundled `Kusto.Language.dll` pin and SHA-256, and the IR tags, which describe the installed source and are reported with or without the `[ir]` extra.
 
 ## [0.2.1] — 2026-08-29
 

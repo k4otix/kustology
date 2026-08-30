@@ -27,6 +27,7 @@ from typing import Any
 from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 
+from .._ir_tags import SEMANTIC_HASH_SCHEME
 from ._normalize import normalize_in_place
 from .expr import (
     And,
@@ -175,6 +176,14 @@ def _merge_at_one_level(ops: list) -> list:
                     text_start=op.span.text_start,
                     width=last.span.text_end - op.span.text_start,
                 )
+                # The predicate widens with the operator. ``merged`` is an
+                # ``And`` on both paths here, and it now holds the operands of
+                # every merged ``where``, so a consumer highlighting the
+                # offending condition must not be pointed at only the first
+                # one. Assigning after the widening matters: the ``And`` above
+                # captured the *narrow* ``op.span``, and the line above rebinds
+                # ``op.span`` to a new object rather than mutating that one.
+                merged.span = op.span
             if merged is not op.predicate:
                 # Flatten any ``And(And(...), ...)`` introduced by the wrap.
                 normalize_in_place(merged)
@@ -772,26 +781,6 @@ def _operand_sort_key(child: BaseModel) -> str:
     does not matter.
     """
     return json.dumps(child.model_dump(mode="json"), sort_keys=True)
-
-
-# Scheme prefix declares the version of the canonicalization rules (volatile
-# field set + transforms + dump format) so a future change can ship a new
-# tag without silently invalidating stored hashes. Keep in lockstep with
-# ``IR_SCHEMA_VERSION`` in ``kustology.ir`` — bump together.
-#
-# The lockstep rule is about *released* versions. One tag covers one
-# unreleased window: every canonicalization change that lands between two
-# releases shares one increment, however many branches carry them. Bumping
-# per branch would burn tags nobody ever saw and leave gaps in the released
-# sequence that a later reader has to go digging to explain. Bump on the
-# first change *after* a release, not on every change.
-#
-# The one thing never to do is reuse a tag for different rules: a stored hash
-# whose prefix stops implying its canonicalization is exactly the silent
-# wrong answer the prefix exists to prevent. Renumbering down into an
-# unreleased window is only safe while nothing has consumed the intermediate
-# value.
-SEMANTIC_HASH_SCHEME = "kustology-sem-v2"
 
 
 # Operator ``kind`` -> the fields whose *unwritten* defaults must dump as

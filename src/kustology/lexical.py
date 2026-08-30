@@ -76,7 +76,7 @@ def comment_spans(kusto_code: Any) -> list[TextSpan]:
             m = _LINE_BREAK.search(trivia, j)
             end = m.start() if m else len(trivia)
             out.append(TextSpan(base + j, end - j))
-            i = max(end, j + 2)
+            i = end
     return out
 
 

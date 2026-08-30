@@ -10,7 +10,7 @@ declaring this shape now is to give the v2 analyzer ecosystem a common
 ``Finding`` vocabulary so independently-developed analyzers compose.
 
 Example:
--------
+--------
 
 .. code-block:: python
 

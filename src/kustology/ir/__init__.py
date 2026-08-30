@@ -10,14 +10,13 @@ importing without pydantic raises an ``ImportError`` with the install command.
 Stability: pre-1.0. Minor breaking changes are possible at minor versions
 until the IR survives one DLL upgrade cycle. See CHANGELOG.
 
-``IR_SCHEMA_VERSION`` is the IR shape's own version, distinct from the
-``kustology`` package version. It moves on breaking field-shape changes —
-once per release, in lockstep with ``SEMANTIC_HASH_SCHEME`` — so serialized
-IR JSON can carry a version tag (for example, via a wrapper envelope) and
-consumers can refuse to load an incompatible payload.
+``IR_SCHEMA_VERSION`` and ``SEMANTIC_HASH_SCHEME`` are re-exported here, which
+is their public spelling; both are defined in :mod:`kustology._ir_tags`, a
+module with no imports, so :func:`kustology.build_info` can read them without
+loading this package. See that module for what each one tags and when it moves.
 """
 
-IR_SCHEMA_VERSION = "0.2"
+from .._ir_tags import IR_SCHEMA_VERSION
 
 from ._guard import _require_pydantic
 

@@ -34,12 +34,11 @@ runtime is not on a standard path.
    once. Assert a non-default value on a real parse.
 5. Update `CHANGELOG.md` under an `## [Unreleased]` heading.
 6. Changing an IR field shape, or anything that feeds `semantic_hash`? Record
-   it in the CHANGELOG, but do **not** bump `IR_SCHEMA_VERSION`
-   (`src/kustology/ir/__init__.py`) or `SEMANTIC_HASH_SCHEME`
-   (`src/kustology/ir/transforms.py`) yourself. They move once, at release, so
-   they mark what a consumer can observe rather than the project's internal
-   history — several branches can land between releases and still share one
-   increment.
+   it in the CHANGELOG, but do **not** bump `IR_SCHEMA_VERSION` or
+   `SEMANTIC_HASH_SCHEME` (both in `src/kustology/_ir_tags.py`) yourself. They
+   move once, at release, so they mark what a consumer can observe rather than
+   the project's internal history — several branches can land between releases
+   and still share one increment.
 7. Open a PR. CI runs the same checks on Linux across Python 3.10–3.14,
    with macOS and Windows sanity cells on 3.14. `test`, `test-ir`, and `lint`
    in `.github/workflows/test.yml` are the loop above; every other job in

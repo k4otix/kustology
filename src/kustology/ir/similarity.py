@@ -14,13 +14,13 @@ clustering, LSH indexing, thresholds — stay with the consumer.
 from __future__ import annotations
 
 import hashlib
-import random
 import struct
 from collections.abc import Iterable
 from typing import NamedTuple, TypeAlias
 
 from pydantic import BaseModel
 
+from .._ir_tags import SEMANTIC_HASH_SCHEME
 from .spans import Span
 from .transforms import _canonicalize, _digest, _payload
 from .walk import _models_in, model_bearing_fields
@@ -32,10 +32,12 @@ class SubtreeHash(NamedTuple):
     digest: str        # same scheme and prefix as ``semantic_hash``
     kind: str          # the node's ``kind`` value, or its class name
     size: int          # model nodes in the subtree; ``Span`` not counted
-    span: Span | None  # envelope in the caller's IR; ``None`` if nothing below has one
+    span: Span | None  # envelope in the caller's IR; ``None`` if nothing below
+                       # has one, or if the digests were taken with
+                       # ``subtree_hashes(..., spans=False)``
 
 
-def subtree_hashes(node: BaseModel, *, min_size: int = 3) -> list[SubtreeHash]:
+def subtree_hashes(node: BaseModel, *, min_size: int = 3, spans: bool = True) -> list[SubtreeHash]:
     """Return one entry per subtree of ``node`` with at least ``min_size`` nodes.
 
     Entries come in post-order — children before parents, root last — and the
@@ -52,13 +54,21 @@ def subtree_hashes(node: BaseModel, *, min_size: int = 3) -> list[SubtreeHash]:
     Returns ``[]`` when ``node`` itself has fewer than ``min_size`` nodes —
     including the root, since it is entry ``[-1]`` rather than a guaranteed
     one. Index the result with ``[-1]`` only after checking it is non-empty.
+
+    ``spans=False`` leaves every ``SubtreeHash.span`` ``None`` and skips
+    building the map, which costs a ``span_of`` fold per node — each one a walk
+    of that node's whole subtree, so the saving grows with query size. Pass it
+    when only the digests are wanted: it takes about a fifth off the call on a
+    thousand-node query, and it is what :func:`similarity`,
+    :func:`containment`, :func:`similarity_sketch` and the ``b`` side of
+    :func:`differing_subtrees` use.
     """
     if min_size < 1:
         raise ValueError("min_size must be at least 1")
-    spans: dict[int, Span | None] = {}
-    canonical = _canonicalize(node, spans=spans)
+    span_map: dict[int, Span | None] = {}
+    canonical = _canonicalize(node, spans=span_map if spans else None)
     out: list[SubtreeHash] = []
-    _collect(canonical, min_size, spans, out, set())
+    _collect(canonical, min_size, span_map, out, set())
     return out
 
 
@@ -100,14 +110,24 @@ def _collect(
 Bag: TypeAlias = BaseModel | Iterable[SubtreeHash] | Iterable[str]
 
 _SKETCH_MAGIC = b"KSK1"
-_HEADER = struct.Struct("<4sHH")  # magic, k, reserved
+_HEADER = struct.Struct("<4sHH")  # magic, k, scheme tag
 _MERSENNE = (1 << 61) - 1
 _MAX32 = (1 << 32) - 1
+
+# Which ``SEMANTIC_HASH_SCHEME`` the slots were minned from, folded to two
+# bytes. ``semantic_hash`` carries its scheme as a prefix so a mismatch is
+# visible rather than silently wrong; a sketch is built from those digests and
+# needs the same. Without it, comparing a sketch stored under one scheme
+# against one built under the next returns a number near 0.0 — which reads as
+# "these queries are unrelated" rather than "this sketch is stale".
+_SCHEME_TAG = int.from_bytes(
+    hashlib.blake2b(SEMANTIC_HASH_SCHEME.encode(), digest_size=2).digest(), "little",
+)
 
 
 def _digest_set(bag: Bag) -> frozenset[str]:
     if isinstance(bag, BaseModel):
-        return frozenset(h.digest for h in subtree_hashes(bag))
+        return frozenset(h.digest for h in subtree_hashes(bag, spans=False))
     return frozenset(h.digest if isinstance(h, SubtreeHash) else h for h in bag)
 
 
@@ -130,8 +150,25 @@ def containment(a: Bag, b: Bag) -> float:
 
 
 def _coefficients(k: int) -> list[tuple[int, int]]:
-    rng = random.Random(0x6B7573746F)  # fixed seed: sketches must agree across processes
-    return [(rng.randrange(1, _MERSENNE), rng.randrange(0, _MERSENNE)) for _ in range(k)]
+    """Return ``k`` ``(multiplier, addend)`` pairs for the MinHash permutations.
+
+    Derived from a keyed hash rather than ``random.Random(seed).randrange``:
+    sketches must agree across processes *and* across interpreter versions, and
+    CPython's reproducibility promise covers ``random()``, not ``randrange`` —
+    whose ``_randbelow`` internals are free to change. A stored sketch invalid
+    after an interpreter upgrade would be undetectable, since the header has no
+    field that could catch it.
+    """
+    out = []
+    for i in range(k):
+        raw = hashlib.blake2b(
+            i.to_bytes(4, "little"), key=b"kustology-minhash", digest_size=16,
+        ).digest()
+        out.append((
+            int.from_bytes(raw[:8], "little") % (_MERSENNE - 1) + 1,
+            int.from_bytes(raw[8:], "little") % _MERSENNE,
+        ))
+    return out
 
 
 def _feature(digest: str) -> int:
@@ -142,8 +179,10 @@ def similarity_sketch(a: Bag, *, k: int = 128) -> bytes:
     """Return a MinHash sketch of ``a``'s digest bag: an 8-byte header plus ``k`` 4-byte slots.
 
     The default ``k=128`` yields 520 bytes. Two sketches estimate
-    ``similarity`` without the IR; store them alongside the scheme that
-    produced them and recompute after a ``SEMANTIC_HASH_SCHEME`` bump.
+    ``similarity`` without the IR. The header records which
+    ``SEMANTIC_HASH_SCHEME`` built it, so a sketch stored across a scheme bump
+    is rejected by :func:`sketch_similarity` rather than silently compared;
+    recompute it from the IR.
     """
     if not 1 <= k <= 0xFFFF:
         raise ValueError("k must be between 1 and 65535")
@@ -151,14 +190,22 @@ def similarity_sketch(a: Bag, *, k: int = 128) -> bytes:
     if not features:
         raise ValueError("cannot sketch an empty bag")
     slots = [min(((m * f + c) % _MERSENNE) & _MAX32 for f in features) for m, c in _coefficients(k)]
-    return _HEADER.pack(_SKETCH_MAGIC, k, 0) + struct.pack(f"<{k}I", *slots)
+    return _HEADER.pack(_SKETCH_MAGIC, k, _SCHEME_TAG) + struct.pack(f"<{k}I", *slots)
 
 
 def _slots(sketch: bytes) -> tuple[int, ...]:
     if len(sketch) < _HEADER.size or sketch[:4] != _SKETCH_MAGIC:
         raise ValueError("not a kustology similarity sketch")
-    _, k, _ = _HEADER.unpack_from(sketch)
-    if len(sketch) != _HEADER.size + 4 * k:
+    _, k, tag = _HEADER.unpack_from(sketch)
+    if tag != _SCHEME_TAG:
+        raise ValueError(
+            "sketch was built under a different digest scheme than this build's "
+            f"{SEMANTIC_HASH_SCHEME}; recompute it from the IR",
+        )
+    # ``k == 0`` passes the length check on its own -- an 8-byte header and no
+    # slots -- and then divides by zero in ``sketch_similarity``. Every other
+    # malformed-sketch path raises ``ValueError``, so this one does too.
+    if k == 0 or len(sketch) != _HEADER.size + 4 * k:
         raise ValueError("sketch length does not match its k")
     return struct.unpack_from(f"<{k}I", sketch, _HEADER.size)
 
@@ -166,7 +213,8 @@ def _slots(sketch: bytes) -> tuple[int, ...]:
 def sketch_similarity(s1: bytes, s2: bytes) -> float:
     """Return the estimated Jaccard similarity: the share of slots that agree between two sketches.
 
-    Raises ``ValueError`` when the sketches' headers or ``k`` values differ.
+    Raises ``ValueError`` when a sketch's magic, digest scheme or ``k`` does not
+    match — including when the two ``k`` values differ from each other.
     """
     a, b = _slots(s1), _slots(s2)
     if len(a) != len(b):
@@ -185,7 +233,7 @@ def differing_subtrees(a: BaseModel, b: BaseModel, *, min_size: int = 3) -> list
     """
     if min_size < 1:
         raise ValueError("min_size must be at least 1")
-    other = {h.digest for h in subtree_hashes(b, min_size=min_size)}
+    other = {h.digest for h in subtree_hashes(b, min_size=min_size, spans=False)}
     spans: dict[int, Span | None] = {}
     canonical = _canonicalize(a, spans=spans)
     out: list[SubtreeHash] = []

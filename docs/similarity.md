@@ -20,9 +20,12 @@ an equal/not-equal verdict.
 
 ## Subtree digests
 
-`subtree_hashes(node, *, min_size=3)` returns one `SubtreeHash` per subtree
-of `node` with at least `min_size` model nodes, in post-order — children
-before parents, root last. The digests come from the same canonical copy
+`subtree_hashes(node, *, min_size=3, spans=True)` returns one `SubtreeHash`
+per subtree of `node` with at least `min_size` model nodes, in post-order —
+children before parents, root last. Each entry carries the span locating that
+subtree in the source; `spans=False` leaves those `None` and skips building
+the map, which costs a subtree walk per node. `similarity`, `containment` and
+`similarity_sketch` pass it, since they read only the digests. The digests come from the same canonical copy
 `compute_semantic_hash` builds: `let` names replaced by their position in a
 scope-ordered walk, consecutive `where` operators merged into one `and`,
 commutative operand order sorted, and every binder-supplied field, span,
@@ -83,17 +86,20 @@ changed on `b`'s side.
 ## Comparing many
 
 `similarity_sketch(a, *, k=128)` returns a fixed-size MinHash sketch: an
-8-byte header (magic plus `k`) followed by `k` 4-byte slots — 520 bytes at
-the default `k`. `sketch_similarity(s1, s2)` estimates `similarity` from
-the share of slots that agree, without ever materializing the full digest
-bags; it raises when the two sketches' headers or `k` values don't match.
-Sketching an empty bag raises, since there's nothing to hash into slots.
+8-byte header (magic, `k`, and a tag for the digest scheme) followed by `k`
+4-byte slots — 520 bytes at the default `k`. `sketch_similarity(s1, s2)`
+estimates `similarity` from the share of slots that agree, without ever
+materializing the full digest bags; it raises when the two sketches' magic,
+scheme or `k` don't match. Sketching an empty bag raises, since there's
+nothing to hash into slots.
 
-A sketch inherits the digest scheme of whatever built it. Store the scheme
-string next to a saved sketch and recompute after a `SEMANTIC_HASH_SCHEME`
-bump — a sketch is exactly as durable across schemes as `semantic_hash`
-itself or stored IR JSON (see semantic-hash.md's "Storing hashes"), because
-the digests underneath it change.
+A sketch is exactly as durable across schemes as `semantic_hash` itself or
+stored IR JSON (see semantic-hash.md's "Storing hashes"), because the digests
+underneath it change with the canonicalization. The header carries the scheme
+that built it, so a sketch stored across a `SEMANTIC_HASH_SCHEME` bump is
+rejected rather than compared: recompute it from the IR. The slots themselves
+come from a keyed hash of each permutation's index, so two sketches agree
+across processes and across interpreter versions.
 
 Neither `similarity` nor a sketch weights subtrees by how much they say
 about a query. Over a corpus, a filter such as `where TimeGenerated >
@@ -136,13 +142,23 @@ script prints the mean digest-bag size alongside each table, so rerunning
 it shows directly how much bag weight a higher `min_size` sheds for that
 trade.
 
-`k=128` is the default because the sketch's mean absolute error against
-the exact Jaccard value stayed well under 0.01 at that `k` (measured on
-this repo's fixture corpus by `tests/ir/test_similarity.py`, and
-reproducible at any scale with the script above). `k=64` still tracks the
-exact value closely enough to be useful when 520 bytes per query is too
-much to store; `k=256` narrows the error further for the same trade
-running the other way.
+`k=128` is the default because the script's fidelity table showed the
+sketch's mean absolute error against the exact Jaccard value flattening
+there: `k=64` still tracks the exact value closely enough to be useful when
+520 bytes per query is too much to store, and `k=256` narrows the error
+further for the same trade running the other way, but neither moves the
+mean far enough to change the default. Rerun the script to see the table for
+your own corpus.
+
+Read that error on the pairs a caller reads the estimator at — the ones that
+share at least one digest. A pair with nothing in common has an exact
+similarity of 0.0 and a sketch estimate of 0.0, so averaging every pair in a
+corpus measures mostly trivially-correct zeros: on this repo's 49 fixtures,
+93.5% of pairs are disjoint and the whole-corpus mean is more than an order
+of magnitude below the mean over overlapping pairs. Both the script and
+`tests/ir/test_similarity.py` sample only overlapping pairs for this reason;
+the test is a regression guard on the permutation family, not the source of
+the default.
 
 ## What it is not
 
