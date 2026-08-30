@@ -138,6 +138,13 @@ def _convert(node: Any) -> Any:
             if isinstance(v, (list, dict)) and len(v) == 0:
                 continue
             out[name] = _convert(v)
+        # A computed field (``QueryIR.semantic_hash``) has no ``model_fields``
+        # entry, so the loop above never reaches it -- read it explicitly.
+        # Reading forces the digest, the same cost ``model_dump()`` pays.
+        for name in cls.model_computed_fields:
+            if name in _OMIT_FIELDS:
+                continue
+            out[name] = _convert(getattr(node, name))
         # ``Expr.canonical_form`` is a derived property (not a model field);
         # surface it for the LLM since it summarizes subtrees the model would
         # otherwise have to walk.

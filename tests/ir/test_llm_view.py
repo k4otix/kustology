@@ -479,6 +479,16 @@ def test_only_the_root_carries_the_schema_version():
     assert "ir_schema_version" not in sub
 
 
+def test_the_llm_view_surfaces_the_semantic_hash(storm_ir):
+    """``semantic_hash`` is a computed field, absent from ``model_fields``, so
+    the view's field loop needs its own path to reach it -- otherwise it
+    silently drops out of the LLM-facing dict. Reading it here forces the
+    digest, same as ``model_dump()`` would."""
+    dumped = to_llm_dict(storm_ir)
+    assert dumped["semantic_hash"] == storm_ir.semantic_hash
+    assert dumped["semantic_hash"].startswith("kustology-sem-v2:")
+
+
 def test_the_null_flag_strip_is_scoped_to_binop():
     """``polarity``/``case_sensitive`` are stripped when ``None`` *on BinOp*,
     where ``None`` means "the operator is arithmetic, so neither question
