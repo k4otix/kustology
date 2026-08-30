@@ -69,7 +69,7 @@ def _offset(expr, env: dict[str, timedelta]) -> timedelta:
     if isinstance(expr, LiteralExpr) and expr.result_type is KustoType.TIMESPAN:
         # ticks are 100ns units; ticks // 10 is exact to a microsecond -- see
         # docs/tier1-syntax-tree.md#totalseconds-loses-sub-second-precision.
-        return timedelta(microseconds=expr.ticks / 10)
+        return timedelta(microseconds=expr.ticks // 10)
     if isinstance(expr, FuncCall) and expr.name == "ago":
         # ago(x) means x in the past, so its offset from now is -x.
         return -_offset(expr.args[0], env)
