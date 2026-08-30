@@ -3,10 +3,9 @@
 
 """Runtime introspection of the loaded ``Kusto.Language`` assembly.
 
-Categorized KQL function name lookups and the full ``SyntaxKind`` enum. Cached
-after first call. Reflection failure is loud, not silent: categories return
-empty rather than fall back to a stale hard-coded set that would silently
-drift from upstream.
+Categorized KQL function name lookups and the full ``SyntaxKind`` enum, cached
+after the first call. Reflection failure leaves the categories empty so it is
+visible; a stale hard-coded fallback would drift from upstream in silence.
 """
 
 from __future__ import annotations
@@ -38,18 +37,17 @@ def _safe_return_type_name(sym: object) -> str | None:
 
     ``Signature.DeclaredReturnType`` carries the primitive type symbol for
     fixed-return functions (``strcat`` → string, ``ago`` → datetime).
-    Computed / parameterized return kinds expose it as ``None`` and would
-    need ``GetReturnType()`` resolution at the call site — not something we
-    can do offline here.
+    Computed and parameterized return kinds expose it as ``None``; resolving
+    those needs ``GetReturnType()`` at the call site, which is unavailable
+    offline.
 
-    A function has one ``Signature`` per overload and they need not agree:
+    A function has one ``Signature`` per overload and they need not agree.
     ``bin`` declares ``[None, timespan, datetime, datetime]`` and ``bin_at``
     ``[None, timespan, timespan, datetime]``, so reading signature zero alone
-    reports ``None`` for the two functions almost every Sentinel query uses
-    to bucket time and files both under ``scalar``. ``datetime`` /
-    ``timespan`` wins as soon as any overload declares it; otherwise the
-    first declared name is used, and ``None`` means no overload declared one
-    at all.
+    reports ``None`` for the two functions almost every Sentinel query uses to
+    bucket time and files both under ``scalar``. ``datetime`` or ``timespan``
+    wins as soon as any overload declares it. Otherwise the first declared
+    name is used, and ``None`` means no overload declared one at all.
     """
     try:
         signatures = getattr(sym, "Signatures", None)
@@ -76,23 +74,19 @@ def _safe_return_type_name(sym: object) -> str | None:
 def _enumerate_static_symbols(container_name: str) -> dict[str, object]:
     """Return every ``FunctionSymbol`` static on ``Kusto.Language.<container_name>``, keyed by symbol name.
 
-    ``container.All`` — an ``IReadOnlyList[FunctionSymbol]`` — is the
+    ``container.All``, an ``IReadOnlyList[FunctionSymbol]``, is the
     authoritative list and is read first. Enumerating with ``dir()`` alone
     loses any static whose .NET name collides with a member of
     ``System.Object`` or with the list itself: ``Functions.ToString``,
-    ``Functions.GetType`` and ``Functions.All`` are shadowed, hiding
-    ``tostring`` — the most-called scalar function in Sentinel content —
+    ``Functions.GetType`` and ``Functions.All`` are shadowed, which hides
+    ``tostring`` (the most-called scalar function in Sentinel content),
     ``gettype`` and ``all`` from every category this module publishes.
 
-    The ``dir()`` sweep supplements ``All`` rather than yielding to it,
-    because ``All`` is not exhaustive either: ``PlugIns.SchemaMerge`` is a
-    real ``evaluate`` plug-in that ``PlugIns.All`` omits. Neither list
-    subsumes the other, so both are read. What each contributes moves with
-    the assembly and is not a reason to drop either: on the bundled 12.4.1
-    the ``dir()`` half adds only ``schema_merge``, to ``PlugIns`` — on 12.3.2
-    it contributed to ``Functions`` as well, and 12.4.1 folded those into
-    ``Functions.All`` — while ``All`` still recovers ``tostring``,
-    ``gettype`` and ``all``, which ``dir()`` alone cannot see.
+    The ``dir()`` sweep supplements ``All`` because ``All`` is not exhaustive
+    either: on the bundled 12.4.1 it recovers ``schema_merge``, a real
+    ``evaluate`` plug-in that ``PlugIns.All`` omits. What each list
+    contributes shifts between assembly versions, so read both however little
+    either adds.
     """
     out: dict[str, object] = {}
     try:
@@ -128,11 +122,10 @@ def _enumerate_static_symbols(container_name: str) -> dict[str, object]:
 def _load() -> None:
     """Populate caches from the loaded DLL. Idempotent.
 
-    On reflection failure the categories stay empty so consumers fail
-    visibly rather than against a stale fallback. The DLL load failing
-    is a much louder error anyway (raised at import time from
-    ``bridge.py``), so reaching here with empty reflection results
-    means the upstream Functions/Aggregates surface itself changed.
+    On reflection failure the categories stay empty so consumers fail visibly.
+    A failed DLL load raises at import time from ``bridge.py``, so reaching
+    here with empty reflection results means the upstream Functions/Aggregates
+    surface itself changed.
     """
     if _CATEGORIES:
         return
@@ -177,12 +170,11 @@ def _load() -> None:
         all_set.add(name)
         plugin_set.add(name)
 
-    # Four names — `any`, `hll_merge`, `merge_tdigest`, `tdigest_merge` —
-    # are declared in both `Functions` and `Aggregates`. They are aggregates,
-    # and `scalar` is defined as the leftovers, so the aggregate list wins.
-    # Without the subtraction a caller asking "is this a scalar function?"
-    # gets yes for all four. `time` and `string` need none: neither
-    # intersects `Aggregates` on the bundled assembly.
+    # `any`, `hll_merge`, `merge_tdigest` and `tdigest_merge` are declared in
+    # both `Functions` and `Aggregates`. They are aggregates, and `scalar` is
+    # defined as the leftovers, so without this a caller asking "is this a
+    # scalar function?" gets yes for all four. `time` and `string` need no
+    # subtraction: neither intersects `Aggregates` on the bundled assembly.
     scalar_set -= agg_set
 
     _CATEGORIES["time"] = frozenset(time_set)
@@ -197,13 +189,12 @@ def time_functions() -> frozenset[str]:
     """Names of KQL functions that return ``datetime`` or ``timespan``.
 
     "Return" here means *any* overload declares one, so ``bin``, ``bin_at``
-    and ``floor`` are members — and so is ``abs``, whose timespan overload
-    returns a timespan even though the function is not about time. The
-    converse gap is larger: ``format_datetime`` returns a string and
-    ``datetime_diff`` a number, so neither is here. A caller wanting
-    "functions a query uses to work with time" wants a wider set than a
-    return type can express; ``utils.analysis.find_time_expressions`` unions
-    this one with a hand-curated list for exactly that reason.
+    and ``floor`` are members, and so is ``abs`` on the strength of its
+    timespan overload. ``format_datetime`` returns a string and
+    ``datetime_diff`` a number, so neither is here. For "functions a query
+    uses to work with time", a wider set than a return type can express, use
+    ``utils.analysis.find_time_expressions``, which unions this set with a
+    hand-curated list.
     """
     _load()
     return _CATEGORIES["time"]
@@ -235,9 +226,9 @@ def plugin_functions() -> frozenset[str]:
     """Names of the ``evaluate`` plug-ins (``Kusto.Language.PlugIns``).
 
     ``bag_unpack``, ``pivot``, ``narrow``, ``sql_request`` and the rest are
-    invoked as ``| evaluate name(...)``, never as scalar calls, so they are
-    their own category rather than part of :func:`scalar_functions`. They are
-    included in :func:`all_function_names`.
+    invoked as ``| evaluate name(...)``, never as scalar calls, so they form
+    their own category outside :func:`scalar_functions`.
+    :func:`all_function_names` includes them.
     """
     _load()
     return _CATEGORIES["plugin"]
@@ -246,8 +237,8 @@ def plugin_functions() -> frozenset[str]:
 def all_function_names() -> frozenset[str]:
     """Every KQL function name discoverable on the loaded ``Kusto.Language``.
 
-    The union of ``Functions``, ``Aggregates`` and ``PlugIns`` — so it is a
-    superset of all five categories this module publishes.
+    The union of ``Functions``, ``Aggregates`` and ``PlugIns``, so a superset
+    of all five categories this module publishes.
     """
     _load()
     return _CATEGORIES["all"]

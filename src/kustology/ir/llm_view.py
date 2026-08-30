@@ -8,35 +8,31 @@ being fed to a language model:
 
 * Every node carries a stable ``kind`` discriminator drawn from the class's
   ``KIND`` constant — the wire format uses snake_case KQL-aligned labels.
-* A ``QueryIR`` root additionally carries ``ir_schema_version``. The view is
-  a lossy projection with no validator behind it, so unlike
-  ``model_dump_json`` — which pydantic re-validates — a dump from an earlier
+* A ``QueryIR`` root also carries ``ir_schema_version``, the same
+  ``IR_SCHEMA_VERSION`` the CLI's JSON envelope publishes. The view is a
+  lossy projection with no validator behind it, unlike ``model_dump_json``
+  which pydantic re-validates, so without the tag a dump from an earlier
   release is indistinguishable from a query that did not use the fields a
-  reader expects. The tag is the same ``IR_SCHEMA_VERSION`` the
-  CLI's JSON envelope publishes.
+  reader expects.
 * Fields holding their declared default (``result_type=unresolved``,
   ``result_type_inner=None``, empty lists/dicts) are dropped.
 * ``span`` (and ``LetFunction.body_span``) and ``schema_attached`` are
-  stripped — character offsets aren't useful without source-text
-  triangulation, and ``schema_attached`` is inferrable from whether
-  ``result_schema`` is populated.
+  stripped: character offsets need source-text triangulation, and
+  ``schema_attached`` follows from whether ``result_schema`` is populated.
 * ``Operator.result_schema`` is stripped; ``Pipeline.result_schema``
   survives. See :func:`_drop_operator_result_schema`.
 * Enum values are unwrapped to their string form.
 * ``canonical_form`` on ``ColumnRef`` / ``LiteralExpr`` leaves is dropped
-  when it's a literal restatement of ``name`` / ``value``; survives on
-  subtree expressions (``BinOp``, ``And``, …) where it summarizes the tree.
-  On literals the test is ``cf == _canonical_literal_repr(value)``, which
-  re-renders ``value`` as KQL and so double-quotes any Python ``str``. The
-  rule that follows, stated once so a new ``literal_kind`` cannot falsify
-  it: the drop fires unless ``value`` is a ``str`` for a kind that is *not*
-  a KQL string literal, and such a kind keeps a ``canonical_form``
-  identical to its ``value`` (``7d`` emits ``"value": "7.00:00:00"``
-  beside ``"canonical_form": "7.00:00:00"``). Harmless duplication rather
-  than lost information, and not worth special-casing the repr for.
-  ``examples/llm_view.py`` probes every member of ``literal_kind`` and
-  prints which side each falls on, so the membership is measurable instead
-  of listed here where it would go stale.
+  when it restates ``name`` / ``value``; it survives on subtree expressions
+  (``BinOp``, ``And``, …) where it summarizes the tree. On literals the test
+  is ``cf == _canonical_literal_repr(value)``, which re-renders ``value`` as
+  KQL and so double-quotes any Python ``str``. The drop therefore fires
+  unless ``value`` is a ``str`` for a kind that is no KQL string literal;
+  such a kind keeps a ``canonical_form`` identical to its ``value``, so
+  ``7d`` emits ``"value": "7.00:00:00"`` beside
+  ``"canonical_form": "7.00:00:00"``. ``examples/llm_view.py`` probes every
+  member of ``literal_kind`` and prints which side each falls on, so the
+  membership stays measurable.
 * ``polarity`` on ``BinOp`` / ``SetMembership`` / ``Exists`` / ``Between``
   is collapsed into ``op`` so the LLM reads natural KQL (``!=``,
   ``!contains``, ``!in``, ``isnull``, ``!between``) instead of IR-canonical
@@ -56,9 +52,8 @@ from typing import Any
 from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 
-# Imported for isinstance/issubclass dispatch rather than matched by class
-# name. Name-string dispatch silently stops firing when a class is renamed:
-# the rule never applies again and the LLM view quietly regresses.
+# Imported for isinstance/issubclass dispatch. Matching on a class name stops
+# firing on a rename, and the rule it guards never applies again.
 from ._normalize import _kql_string
 from .expr import (
     Between,
@@ -70,25 +65,19 @@ from .expr import (
     SetMembership,
 )
 
-# Stripped from every node by name. ``span`` and ``KIND``-ClassVar metadata
-# aren't useful for the LLM (offsets need source-text triangulation, KIND
-# duplicates the ``kind`` discriminator). ``schema_attached`` duplicates what
-# ``result_schema`` already conveys.
-# ``ticks`` is the machine-exact companion to ``value``; an LLM reads the
-# rendered value, so emitting both is noise.
-#
-# ``body_span`` is here because the set matches field names exactly, and
-# ``LetFunction`` is the one model whose span field is not called ``span``.
-# Matching on a ``_span`` suffix instead would be the same trap one rename
-# later; an explicit name is checkable.
+# Stripped from every node by name. ``span`` offsets need source-text
+# triangulation, ``KIND`` duplicates the ``kind`` discriminator,
+# ``schema_attached`` duplicates what ``result_schema`` conveys, and ``ticks``
+# is the machine-exact companion to a ``value`` the LLM already reads.
+# ``body_span`` is listed because the set matches field names exactly and
+# ``LetFunction`` is the one model whose span field carries another name;
+# matching a ``_span`` suffix would be the same trap one rename later.
 _OMIT_FIELDS = {"span", "body_span", "schema_attached", "ticks"}
 
 # Ceiling on ``DataTableSource.rows`` in the LLM view. Real threat-intel
-# datatables run to thousands of IOC rows; handing all of them to a model
-# buries the query's structure in data it cannot use and costs the context
-# window that structure needs. The truncation is announced with a
-# ``rows_omitted`` count so the reader is never shown a short table that
-# looks complete. It is a *view* concern only: ``model_dump_json`` stays
+# datatables run to thousands of IOC rows, which bury the query's structure in
+# the context window. A ``rows_omitted`` count announces the truncation, so a
+# short table is never mistaken for a complete one. ``model_dump_json`` stays
 # lossless, which is what round-trip and ``semantic_hash`` depend on.
 _MAX_LLM_DATATABLE_ROWS = 20
 
@@ -105,11 +94,10 @@ def to_llm_dict(node: Any) -> Any:
     from .query import QueryIR
 
     if isinstance(node, QueryIR) and isinstance(out, dict):
-        # Only the document root. Stamping every node would repeat one string
-        # hundreds of times into the context window this view exists to
-        # conserve, and a sub-tree dumped on its own is not a document.
-        # Placed second so it reads before the body, after the ``kind``
-        # discriminator that leads every node.
+        # Only the document root: a sub-tree dumped on its own is not a
+        # document, and stamping every node would repeat one string hundreds
+        # of times into the context window this view conserves. Placed second,
+        # after the ``kind`` discriminator that leads every node.
         out = {
             "kind": out["kind"],
             "ir_schema_version": IR_SCHEMA_VERSION,
@@ -147,9 +135,8 @@ def _convert(node: Any) -> Any:
             if name in _OMIT_FIELDS:
                 continue
             out[name] = _convert(getattr(node, name))
-        # ``Expr.canonical_form`` is a derived property (not a model field);
-        # surface it for the LLM since it summarizes subtrees the model would
-        # otherwise have to walk.
+        # ``Expr.canonical_form`` is a derived property, surfaced for the LLM
+        # because it summarizes subtrees the model would otherwise walk.
         if isinstance(node, Expr):
             out["canonical_form"] = node.canonical_form
         _drop_redundant_canonical_form(out, cls)
@@ -182,13 +169,13 @@ def _is_default(value: Any, default: Any) -> bool:
 def _drop_redundant_canonical_form(out: dict[str, Any], cls: type) -> None:
     """Remove ``canonical_form`` on leaf nodes where it duplicates ``name`` or ``value``.
 
-    Higher-level expressions (BinOp, And, …) keep theirs because the
-    canonical form summarizes a subtree the LLM would otherwise walk.
+    Higher-level expressions (BinOp, And, …) keep theirs because the canonical
+    form summarizes a subtree the LLM would otherwise walk.
 
-    For ColumnRef the bare-name match covers unbound nodes; bound nodes
-    canonicalize to ``"table.name"``, which is also a literal restatement
-    once the LLM has the surrounding ``table`` field — so drop that too.
-    ``LetValueRef`` is the same shape with no ``table`` to qualify it.
+    For ColumnRef the bare-name match covers unbound nodes. Bound nodes
+    canonicalize to ``"table.name"``, which restates the surrounding ``table``
+    field, so that form drops too. ``LetValueRef`` is the same shape with no
+    ``table`` to qualify it.
     """
     cf = out.get("canonical_form")
     if cf is None:
@@ -208,13 +195,11 @@ def _canonical_literal_repr(value: Any) -> str:
     Strings get double-quoted, bools and ``None`` render lowercase, and
     numbers are stringified.
 
-    The quoting is delegated to ``_normalize._kql_string`` rather than
-    re-spelled here. This function only exists to answer "is
-    ``canonical_form`` a restatement of ``value``", and two independent
-    renderings of the same thing answer that question wrongly the moment they
-    disagree — which they did, for every string containing a quote or a
-    backslash: the drop stopped firing and the LLM view carried a
-    ``canonical_form`` restating the ``value`` beside it.
+    ``_normalize._kql_string`` does the quoting. This function answers one
+    question, "is ``canonical_form`` a restatement of ``value``", and two
+    independent renderings of the same thing answer it wrongly the moment they
+    disagree: a string holding a quote or a backslash would then keep a
+    ``canonical_form`` that restates the ``value`` beside it.
     """
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -228,9 +213,9 @@ def _canonical_literal_repr(value: Any) -> str:
 def _cap_datatable_rows(out: dict[str, Any], cls: type) -> None:
     """Truncate a ``DataTableSource``'s rows, recording how many were cut.
 
-    See :data:`_MAX_LLM_DATATABLE_ROWS`. ``rows_omitted`` is added only when
-    something really was omitted, so a short datatable reads exactly as it
-    did before and the key's presence means what it says.
+    See :data:`_MAX_LLM_DATATABLE_ROWS`. ``rows_omitted`` appears only when
+    rows really were omitted, so its presence means what it says and a short
+    datatable carries no such key.
     """
     from .query import DataTableSource  # lazy import: avoids cycle at module load
 
@@ -246,27 +231,23 @@ def _cap_datatable_rows(out: dict[str, Any], cls: type) -> None:
 def _drop_operator_result_schema(out: dict[str, Any], cls: type) -> None:
     """Remove ``result_schema`` from an operator node. Pipelines keep theirs.
 
-    ``Operator.result_schema`` is the column list the operator emits, read
-    off Microsoft's binder. It is the right thing to carry on the model and
-    the wrong thing to repeat in a view whose whole purpose is context
-    economy: on a bound parse most operators emit the columns the one before
-    them emitted, so a pipeline of *n* steps restates one column list *n*
-    times. Measured across the 49-query fixture corpus, bound against a
-    schema naming every referenced column, the per-operator copies were 35%
-    of the whole LLM view (295,156 of 851,224 bytes): with them the view was
-    a median 28% smaller than ``model_dump_json`` on the same query, without
-    them it is 45%. Those are the numbers ``CHANGELOG.md``'s ``to_llm_dict``
-    entry carries; keep the two in step.
+    ``Operator.result_schema`` is the column list the operator emits, read off
+    Microsoft's binder. On a bound parse most operators emit the columns the
+    one before them emitted, so a pipeline of *n* steps restates one column
+    list *n* times, which a view built for context economy cannot afford.
+    Measured across the 49-query fixture corpus, bound against a schema naming
+    every referenced column, the per-operator copies were 35% of the whole LLM
+    view (295,156 of 851,224 bytes): with them the view was a median 28%
+    smaller than ``model_dump_json`` on the same query, without them it is
+    45%. ``CHANGELOG.md``'s ``to_llm_dict`` entry carries those numbers; keep
+    the two in step.
 
-    ``Pipeline.result_schema`` is not dropped: "what columns does this query
-    return" is one answer per pipeline, and it is the answer a reader
-    actually asks for. What is lost is the per-*step* column list;
-    ``model_dump_json`` keeps it, which is the same split
-    :func:`_cap_datatable_rows` makes for ``DataTableSource.rows``.
-
-    Scoped by ``issubclass`` rather than by putting the field name in
-    :data:`_OMIT_FIELDS`, which matches names across every model and would
-    take ``Pipeline``'s with it.
+    ``Pipeline.result_schema`` stays: "what columns does this query return" is
+    one answer per pipeline, and it is the answer a reader asks for. The
+    per-*step* column list is what goes, and ``model_dump_json`` keeps it, the
+    same split :func:`_cap_datatable_rows` makes for ``DataTableSource.rows``.
+    ``issubclass`` does the scoping; the field name in :data:`_OMIT_FIELDS`
+    would match across every model and take ``Pipeline``'s with it.
     """
     from .query import Operator  # lazy import: avoids cycle at module load
 
@@ -277,24 +258,20 @@ def _drop_operator_result_schema(out: dict[str, Any], cls: type) -> None:
 def _drop_inapplicable_operator_flags(out: dict[str, Any], cls: type) -> None:
     """Remove ``BinOp``'s ``polarity`` / ``case_sensitive`` when ``None``.
 
-    ``None`` there means "this operator is arithmetic, so the question does
-    not apply" — see :class:`~kustology.ir.expr.BinOp`. ``polarity`` is a
+    ``None`` there means the operator is arithmetic and the question does not
+    apply — see :class:`~kustology.ir.expr.BinOp`. ``polarity`` is a
     *required* field, so the default-stripping pass above cannot drop it and
-    the dump would carry an explicit ``"polarity": null``. A null field is
-    worse than an absent one for a model reading the dump: it invites the
-    question of what a null case-sensitivity means, when the answer is that
+    the dump would carry an explicit ``"polarity": null``, which invites a
+    model to ask what a null case-sensitivity means when the answer is that
     the node was never asked.
 
-    Scoped to ``BinOp`` by ``issubclass``, like both its siblings. Written
-    without the class it took only the dict, so it reached every node in the
-    IR and would silently strip a future model's legitimately-optional
-    ``case_sensitive`` — leaving the reader unable to tell an absent field
-    from a null one, which is the exact distinction this function exists to
-    make.
-
-    Runs before :func:`_collapse_polarity_into_op`, whose ``None`` guard then
-    reads the key as absent and leaves the node alone — the right outcome,
-    since there is no polarity to fold into ``op``.
+    ``issubclass`` scopes this to ``BinOp``, like both its siblings. Applied
+    to every node in the IR it would strip a future model's legitimately
+    optional ``case_sensitive``, leaving the reader unable to tell an absent
+    field from a null one. It runs before
+    :func:`_collapse_polarity_into_op`, whose ``None`` guard then reads the
+    key as absent and leaves the node alone, since there is no polarity left
+    to fold into ``op``.
     """
     if not issubclass(cls, BinOp):
         return
@@ -315,11 +292,11 @@ def _collapse_polarity_into_op(out: dict[str, Any], cls: type) -> None:
       signal, and ``between``/``!between`` is a closed two-member set that
       polarity fully determines. Synthesize it and drop polarity.
 
-    Synthesizing ``SetMembership`` like ``Between`` would be the worst of
-    both: it would emit ``op: "in"`` for ``has_any`` and ``has_all``, and
-    because ``case_sensitive`` defaults to ``False`` the default-stripping
-    pass above would remove that field too — so a model would see
-    ``has_all`` as a bare, case-sensitive ``in``.
+    Synthesizing ``SetMembership`` the way ``Between`` is synthesized would
+    emit ``op: "in"`` for ``has_any`` and ``has_all``, and since
+    ``case_sensitive`` defaults to ``False`` the default-stripping pass above
+    would remove that field too, so a model would read ``has_all`` as a bare,
+    case-sensitive ``in``.
     """
     polarity = out.get("polarity")
     if polarity is None:

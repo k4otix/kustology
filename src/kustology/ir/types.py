@@ -12,7 +12,7 @@ except ImportError:
         """Back-port of :class:`enum.StrEnum` for Python versions before 3.11."""
 
         def __str__(self) -> str:
-            """Return the member's string value, not its qualified name."""
+            """Return the member's string value."""
             return str(self.value)
 
         def __format__(self, format_spec: str) -> str:
@@ -23,8 +23,8 @@ except ImportError:
 class KustoType(StrEnum):
     """Kusto type names as wire strings.
 
-    ``str(KustoType.LONG)`` is ``"long"``, not ``"KustoType.LONG"``, so
-    members compare, format, and serialize as the KQL spelling.
+    ``str(KustoType.LONG)`` is ``"long"``, so members compare, format, and
+    serialize as the KQL spelling.
     """
 
     BOOL = "bool"
@@ -38,8 +38,7 @@ class KustoType(StrEnum):
     STRING = "string"
     DYNAMIC = "dynamic"
     TABULAR = "tabular"
-    # The binder hasn't placed this expression's type yet — distinct from
-    # ``UnknownExpr`` (a *shape* the IR builder couldn't model) and from
-    # the IR-internal ``"unknown"`` string used as a placeholder when an
-    # ``Assignment.expr.result_type`` couldn't be resolved.
+    # The binder hasn't placed this expression's type yet. Distinct from
+    # ``UnknownExpr`` (a *shape* the builder couldn't model) and from the
+    # IR-internal ``"unknown"`` placeholder for an unresolved ``Assignment.expr.result_type``.
     UNRESOLVED = "unresolved"

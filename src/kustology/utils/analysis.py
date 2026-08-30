@@ -44,10 +44,8 @@ __all__ = [
 def collect_nodes(syntax, predicate) -> list:
     """Walk the syntax tree; return every node where ``predicate(node)`` is truthy.
 
-    Most analyzers in this module collapse to a single-pass collect-by-predicate
-    walk. This helper hides the ``KustoWalker`` subclass boilerplate so a new
-    analyzer is one lambda instead of a five-line class. The walker visits every
-    node in source order; ``predicate`` is called once per node.
+    The walker visits every node in source order, calling ``predicate`` once
+    per node, so an analyzer needs no ``KustoWalker`` subclass of its own.
 
     Example:
         # every FilterOperator in the query, in source order
@@ -65,18 +63,16 @@ def collect_nodes(syntax, predicate) -> list:
     return results
 
 
-# Functions a query uses to *work with* time whose return type does not say
-# so, which is the only signal reflection has. `format_datetime` and
+# Functions a query uses to work with time whose return type does not say so.
+# The return type is reflection's only signal: `format_datetime` and
 # `format_timespan` return strings; `datetime_diff`, `datetime_part`,
-# `dayofmonth`, `dayofyear`, `getyear`, `getmonth`, `hourofday`,
-# `monthofyear` and `weekofyear` return numbers; `bin_auto` resolves its
-# return type from the query's own `query_bin_auto_size` at the call site.
-# Twelve of the entries below are invisible to `time_functions()` for that
-# reason -- the rest overlap it and are listed anyway so this set reads as
-# the intended list rather than as a diff against whatever reflection
-# currently returns. Hand-curated and visible: no
-# property on a FunctionSymbol says "temporal", so this is a judgement about
-# what a reader of a detection rule cares about and it should be reviewable.
+# `dayofmonth`, `dayofyear`, `getyear`, `getmonth`, `hourofday`, `monthofyear`
+# and `weekofyear` return numbers; `bin_auto` resolves its return type from the
+# query's own `query_bin_auto_size` at the call site. Twelve entries below are
+# invisible to `time_functions()` for that reason; the rest overlap it and are
+# listed anyway, so this set reads as the intended list. No property on a
+# FunctionSymbol says "temporal", so the curation is a hand-written, reviewable
+# judgement about what a reader of a detection rule cares about.
 _TEMPORAL_RELEVANT = frozenset({
     "ago", "now",
     "bin", "bin_at", "bin_auto", "floor",
@@ -93,15 +89,14 @@ _TEMPORAL_RELEVANT = frozenset({
     "unixtime_microseconds_todatetime", "unixtime_nanoseconds_todatetime",
 })
 
-# The other half of the judgement: arithmetic functions that reflection
-# reports as temporal only because one *overload* returns a timespan.
-# `time_functions()` is right to list them — it answers "what can this
-# return", and `abs(1h)` really does return a timespan — but the question
-# both consumers here ask is "is this call about time", and for `abs` the
-# answer is no in every usage. `floor` is NOT in this set:
-# `floor(TimeGenerated, 1h)` is a real bucketing idiom, which is why it is
-# hand-listed above. Add a name here only when its temporal claim is purely
-# an artifact of an overload; see ``reflection._safe_return_type_name``.
+# The other half of the judgement: arithmetic functions reflection reports as
+# temporal only because one overload returns a timespan. `time_functions()`
+# answers "what can this return", and `abs(1h)` does return a timespan. The
+# question both consumers here ask is "is this call about time", and for `abs`
+# the answer is no in every usage. `floor` stays out of this set because
+# `floor(TimeGenerated, 1h)` is a real bucketing idiom, so it is hand-listed
+# above. Add a name here only when its temporal claim is purely an artifact of
+# an overload; see ``reflection._safe_return_type_name``.
 _NON_TEMPORAL_ARITHMETIC = frozenset({"abs"})
 
 # See kustology.reflection.time_functions for the reflected source.
@@ -114,23 +109,23 @@ except Exception:  # pragma: no cover — defensive
 
 _STRUCTURAL_NOISE_KINDS = frozenset({"List", "SeparatedElement"})
 
-# Every SyntaxKind that names a *token* — punctuation and identifiers.
-# Keyword kinds are NOT in here (`JoinKeyword`, `EvaluateKeyword`, `AscKeyword`
-# and the rest end in "Keyword", not "Token") and still contribute their kind
-# to the hash, which is what makes `sort by a asc` differ from `desc` and
-# `render timechart` from `barchart`.
-# Derived once from the enum, as a closed set: substring-matching "Token" also
-# catches ``TokenLiteralExpression`` (the value half of ``kind=inner``) and
-# ``TokenName``, neither of which is a token. See :func:`get_structural_hash`.
+# Every SyntaxKind that names a token — punctuation and identifiers. Keyword
+# kinds stay out, since `JoinKeyword`, `EvaluateKeyword`, `AscKeyword` and the
+# rest end in "Keyword", so they still contribute their kind to the hash, which
+# makes `sort by a asc` differ from `desc` and `render timechart` from
+# `barchart`. The set is derived once from the enum and closed, because
+# substring-matching "Token" also catches ``TokenLiteralExpression`` (the value
+# half of ``kind=inner``) and ``TokenName``, which are not tokens. See
+# :func:`get_structural_hash`.
 _TOKEN_KINDS = frozenset(k for k in _syntax_kinds() if k.endswith("Token"))
 
 
 def _is_token_kind(kind: str) -> bool:
     """Return True when ``kind`` names a token rather than a node.
 
-    ``syntax_kinds()`` returns empty rather than raising if enum reflection
-    fails; falling back to the suffix test keeps the hash's meaning stable
-    instead of silently folding every token kind into it.
+    ``syntax_kinds()`` returns empty rather than raising when enum reflection
+    fails. The suffix fallback keeps the hash's meaning stable; without it
+    every token kind would silently fold into the hash.
     """
     if _TOKEN_KINDS:
         return kind in _TOKEN_KINDS
@@ -200,12 +195,11 @@ def _is_function_callee(node) -> bool:
 def _is_wildcard_name(node) -> bool:
     """Return True when this NameReference spells a wildcard pattern (``T*``).
 
-    ``union T*`` names a *set* of tables by pattern, and a pattern is not a
-    table name: it cannot be looked up, and rewriting it would silently
-    change which tables the query reads. Only the syntactic walk needs this
-    test — a bound parse gets the binder's expansion instead, which is a
-    ``GroupSymbol`` for two or more matches and the ``TableSymbol`` itself
-    when exactly one table matches.
+    ``union T*`` names a set of tables by pattern. The pattern cannot be looked
+    up, and rewriting it would silently change which tables the query reads.
+    Only the syntactic walk needs this test: a bound parse gets the binder's
+    expansion, a ``GroupSymbol`` for two or more matches and the
+    ``TableSymbol`` itself when exactly one table matches.
     """
     name = getattr(node, "Name", None)
     return name is not None and str(name.Kind) == "WildcardedName"
@@ -214,37 +208,35 @@ def _is_wildcard_name(node) -> bool:
 def _collect_table_refs(syntax) -> list:
     """Return every (name, NameReference node) in a table-source position.
 
-    One entry per occurrence, deduplicated by source span and sorted by it —
-    several of the branches below see the same node.
+    One entry per occurrence, deduplicated by source span and sorted by it,
+    since several of the branches below see the same node.
 
     Four kinds of name occupy a table-source position without being a table,
     and each is excluded here:
 
-    * a name bound by ``let``, from that ``let`` onward — but see the
-      shadowing rule below;
+    * a name bound by ``let``, from that ``let`` onward — see the shadowing
+      rule below;
     * a name bound by ``| as X``, from the ``as`` operator onward;
     * a table-typed parameter of a user-defined function, inside the body of
       the function that declares it;
     * a wildcard pattern such as ``union T*``.
 
-    Every exclusion is positional, not name-keyed, because a name is only
-    an alias where it is actually in scope. ``union X, (T | as X)`` reads a
-    real table ``X`` *before* the ``as`` that rebinds the name;
-    ``X | count; let X = T | take 1`` likewise reads the table ``X`` before
-    the ``let`` binds it, which Microsoft's binder confirms by resolving
-    that occurrence to a ``TableSymbol``; and in
+    Every exclusion is positional, because a name is only an alias where it is
+    in scope. ``union X, (T | as X)`` reads a real table ``X`` before the ``as``
+    that rebinds the name. ``X | count; let X = T | take 1`` reads the table
+    ``X`` before the ``let`` binds it, which Microsoft's binder confirms by
+    resolving that occurrence to a ``TableSymbol``. In
     ``let f = (T:(a:long)){ let g = (U:(b:long)){ U | count }; union T, U }``
     the ``U`` of ``union T, U`` sits outside ``g``'s body, so it is the real
     table and only ``g``'s own ``U`` is the parameter.
 
-    **Shadowing.** In ``let T = T | where ...; T | take 1`` the right-hand
-    side ``T`` is the real table: KQL evaluates a binding's RHS in the scope
-    *outside* its own name, so a ``let`` cannot be recursive. Every later
-    ``T`` is the alias. A flat name-keyed filter gets this exactly backwards
-    and drops both, so the RHS occurrences of the name a statement is itself
-    binding are recorded by source span and exempted from the filter. Names
-    bound by *earlier* ``let`` statements are in scope on a RHS and stay
-    excluded there.
+    Shadowing follows the same rule. In ``let T = T | where ...; T | take 1``
+    the right-hand side ``T`` is the real table, because KQL evaluates a
+    binding's RHS in the scope outside its own name and a ``let`` cannot be
+    recursive. Every later ``T`` is the alias. A flat name-keyed filter drops
+    both, so the RHS occurrences of the name a statement is itself binding are
+    recorded by source span and exempted from the filter. Names bound by
+    earlier ``let`` statements are in scope on a RHS and stay excluded there.
     """
     # (name, TextStart of its binder) — a name is in scope from there on.
     let_vars: list[tuple[str, int]] = []
@@ -254,9 +246,8 @@ def _collect_table_refs(syntax) -> list:
     unshadowed = set()  # (TextStart, Width) of let-RHS refs that are tables
     refs = []
 
-    # Defined before the walk because the LetStatement branch calls it: a
-    # binding's right-hand side is exempt from the filter only where the
-    # name is not already bound by an *earlier* let.
+    # A binding's right-hand side is exempt from the filter only where an
+    # earlier ``let`` has not already bound the name.
     def _is_let_alias(name: str, start: int) -> bool:
         return any(
             name == bound and start >= let_start for bound, let_start in let_vars
@@ -281,10 +272,10 @@ def _collect_table_refs(syntax) -> list:
                 return
 
             if kind == "FunctionDeclaration":
-                # `Parameters` is this declaration's own list and `Body` its
-                # own body. Collecting parameters from the whole node would
-                # sweep up a *nested* declaration's parameters and scope them
-                # to the outer body, where that name is not bound at all.
+                # ``Parameters`` and ``Body`` are this declaration's own.
+                # Collecting from the whole node would scope a nested
+                # declaration's parameters to the outer body, where that name
+                # is not bound at all.
                 params = getattr(node, "Parameters", None)
                 body = getattr(node, "Body", None)
                 if params is None or body is None:
@@ -324,10 +315,9 @@ def _collect_table_refs(syntax) -> list:
                 return
 
             if kind in ("FindOperator", "SearchOperator"):
-                # `find in (T1, T2) …` / `search in (T1, T2) …`. Without
-                # this branch, `find in (S1, S2)` reports *no* tables at
-                # all, and replace_table returns the query unchanged with
-                # no error.
+                # `find in (T1, T2) …` / `search in (T1, T2) …`. Without this
+                # branch they report no tables at all, and replace_table
+                # returns the query unchanged with no error.
                 in_clause = getattr(node, "InClause", None)
                 if in_clause is not None:
                     for el in iter_elements(in_clause.Expressions):
@@ -381,18 +371,15 @@ def _collect_semantic_table_refs(syntax) -> list:
 def _merge_unresolved_table_refs(syntax) -> list:
     """Return semantic table refs plus the syntactic ones the binder left unresolved.
 
-    A schema is almost always partial — a detection rule joins tables from
-    workspaces the caller did not describe — and the binder resolves only
-    what it was told about. Returning its answer alone means every unknown
-    table silently disappears, which is the worst possible failure for
-    ``replace_table``: it rewrites nothing and reports nothing.
+    A schema is usually partial, and the binder resolves only what it was told
+    about. Returning its answer alone drops every unknown table silently, so
+    ``replace_table`` rewrites nothing and reports nothing.
 
-    A syntactic ref is added when the binder produced no symbol for that
-    exact node (``ReferencedSymbol is None``) and no semantic ref already
-    occupies its span. Both lists hold ``NameReference`` nodes, which cannot
-    nest, so two refs either share a span exactly or do not overlap at all —
-    equality is full coverage, and there is no partial-overlap case to
-    arbitrate. The syntactic side is the filtered walk of
+    A syntactic ref is added when the binder produced no symbol for that exact
+    node (``ReferencedSymbol is None``) and no semantic ref already occupies
+    its span. Both lists hold ``NameReference`` nodes, which cannot nest, so
+    two refs either share a span exactly or do not overlap at all, leaving no
+    partial overlap to arbitrate. The syntactic side is the filtered walk of
     :func:`_collect_table_refs`, so ``let`` and ``as`` aliases, function
     parameters and wildcard patterns stay out of the union.
     """
@@ -415,9 +402,9 @@ def find_table_references(kusto_code, force_syntactic: bool = False) -> list:
     ``get_referenced_tables`` for a deduplicated set of names.
 
     On a bound parse the binder's own references are used, and the syntactic
-    walk fills in the tables the supplied schema did not describe — those
-    would otherwise vanish. Pass ``force_syntactic=True`` for the syntactic
-    walk alone.
+    walk fills in the tables the supplied schema did not describe, which would
+    otherwise vanish. Pass ``force_syntactic=True`` for the syntactic walk
+    alone.
     """
     if not force_syntactic and kusto_code.HasSemantics:
         return _merge_unresolved_table_refs(kusto_code.Syntax)
@@ -432,11 +419,10 @@ def get_tables_syntactic(kusto_code) -> set[str]:
 def get_tables_semantic(kusto_code) -> set[str]:
     """Return tables resolved by the binder.
 
-    Requires a bound ``KustoCode``. Strictly the binder's answer: a table
-    the supplied schema does not
-    describe is *not* in this set. ``get_referenced_tables`` /
-    :func:`find_table_references` add those back — prefer them unless you
-    specifically want to know what resolved.
+    Requires a bound ``KustoCode``. Strictly the binder's answer: a table the
+    supplied schema does not describe is absent from this set.
+    ``get_referenced_tables`` and :func:`find_table_references` add those back;
+    prefer them unless you want to know what resolved.
     """
     if not kusto_code.HasSemantics:
         raise ValueError(
@@ -449,9 +435,8 @@ def get_tables_semantic(kusto_code) -> set[str]:
 def get_operator_stats(kusto_code) -> dict[str, int]:
     """Count nodes whose ``Kind`` contains ``"Operator"``, keyed by kind.
 
-    Covers the whole tree — nested pipelines, ``let`` bodies, and join
-    subqueries included — unlike :func:`get_operator_chain`, which follows
-    only the main pipeline.
+    Covers the whole tree, including nested pipelines, ``let`` bodies and join
+    subqueries. :func:`get_operator_chain` follows only the main pipeline.
     """
     counts: dict[str, int] = {}
     for node in collect_nodes(kusto_code.Syntax, lambda n: "Operator" in str(n.Kind)):
@@ -463,16 +448,14 @@ def get_operator_stats(kusto_code) -> dict[str, int]:
 def get_operator_chain(kusto_code) -> list:
     """Flatten pipe expressions into a left-to-right list of operator nodes.
 
-    **Operator nodes only**: the source the pipeline reads from is not an
-    operator and is not in the list, so ``T | where a | take 1`` returns two
-    nodes and a bare ``T`` returns none — ``len()`` is an operator count,
-    and every element is an operator like the rest. Read the source from
-    :func:`find_table_references` instead.
+    The source the pipeline reads from is not an operator and is not in the
+    list, so ``T | where a | take 1`` returns two nodes and a bare ``T``
+    returns none. Every element is an operator, and ``len()`` is an operator
+    count. Read the source from :func:`find_table_references`.
 
-    **Main pipeline only**: the walk follows the top-level pipe chain, so
-    operators inside a ``let`` binding, a join's subquery or any other nested
-    pipeline are not reported. Use :func:`get_operator_stats` for a count
-    across the whole AST.
+    The walk follows the top-level pipe chain only, so operators inside a
+    ``let`` binding, a join's subquery or any other nested pipeline are not
+    reported. Use :func:`get_operator_stats` for a count across the whole AST.
     """
     chain = []
 
@@ -499,14 +482,14 @@ def _is_path_selector(node) -> bool:
     """Return True when this NameReference is the ``.member`` half of a PathExpression.
 
     ``tostring(InitiatedBy.user.userPrincipalName)`` references exactly one
-    column — ``InitiatedBy``. Everything after a dot is a key inside that
-    column's dynamic value, and no table has a column named ``user`` or
-    ``userPrincipalName``; reporting them as columns is how a caller ends up
+    column, ``InitiatedBy``. Everything after a dot is a key inside that
+    column's dynamic value; no table has a column named ``user`` or
+    ``userPrincipalName``, and reporting them as columns sends a caller
     querying a schema for names that cannot exist.
 
-    ``$left.x`` / ``$right.x`` are the inverse: there the selector *is* a
-    real column of the joined table and the ``$``-prefixed half is the macro,
-    so those selectors are kept.
+    In ``$left.x`` / ``$right.x`` the selector is a real column of the joined
+    table and the ``$``-prefixed half is the macro, so those selectors are
+    kept.
     """
     parent = node.Parent
     if parent is None or str(parent.Kind) != "PathExpression":
@@ -528,24 +511,24 @@ def get_referenced_columns(kusto_code, force_syntactic: bool = False) -> set[str
     """Return the set of column names referenced in the query.
 
     Semantic mode keeps only NameReferences whose ReferencedSymbol is a
-    ColumnSymbol — function names and aliases drop out naturally.
+    ColumnSymbol, so function names and aliases drop out.
 
     Syntactic mode reconstructs the same answer from position. A name is a
     column unless it occupies one of the positions that are not: a function
     callee, a wildcard pattern, a ``let`` or ``| as`` alias, a ``$``-prefixed
     macro, the selector half of a path into a dynamic value, or a source span
     :func:`find_table_references` already reported as a table. That last test
-    is by ``(TextStart, Width)``, not by name — matching on the name drops a
-    genuine column that happens to be spelled like some table in the same
-    query, so ``T | where T2 > 1 | join (T2) on a`` loses ``T2`` from both
-    places at once.
+    is by ``(TextStart, Width)``. Matching on the name drops a genuine column
+    spelled like some table in the same query, so
+    ``T | where T2 > 1 | join (T2) on a`` would lose ``T2`` from both places at
+    once.
 
-    The two modes differ on a column the query *creates* and never reads
-    back. Syntactic mode reports it — the ``a`` of ``T | extend a = x + y``
-    — because a ``SimpleNamedExpression``'s name declaration is one. Semantic
-    mode does not, because the binder attaches a ``ColumnSymbol`` to
-    *references*, and there is no reference to attach one to. Where the query
-    does read the alias back the two agree.
+    The two modes differ on a column the query creates and never reads back.
+    Syntactic mode reports the ``a`` of ``T | extend a = x + y``, because a
+    ``SimpleNamedExpression``'s name declaration is a column. Semantic mode
+    does not, because the binder attaches a ``ColumnSymbol`` to references and
+    there is no reference here. Where the query reads the alias back the two
+    agree.
     """
     if not force_syntactic and kusto_code.HasSemantics:
         cols = set()
@@ -588,9 +571,8 @@ def get_referenced_columns(kusto_code, force_syntactic: bool = False) -> set[str
             if kind == "NameReference":
                 if _is_function_callee(node):
                     return
-                # A `union T*` pattern is not a column either; wildcards
-                # never land in `table_spans`, so the span test below
-                # cannot exclude it.
+                # A `union T*` pattern is not a column, and wildcards never
+                # land in `table_spans`, so the span test cannot exclude it.
                 if _is_wildcard_name(node):
                     return
                 if (node.TextStart, node.Width) in table_spans:
@@ -600,8 +582,8 @@ def get_referenced_columns(kusto_code, force_syntactic: bool = False) -> set[str
             elif kind == "NameDeclaration":
                 # `extend actor = ...` and `summarize n = count()` create a
                 # column. A named parameter's `kind=`, a `let` name and an
-                # `| as` alias are the same node kind and are not columns —
-                # only a `SimpleNamedExpression` names a projected column.
+                # `| as` alias share this node kind; only a
+                # `SimpleNamedExpression` names a projected column.
                 parent = node.Parent
                 if parent is None or str(parent.Kind) != "SimpleNamedExpression":
                     return
@@ -623,10 +605,10 @@ def get_referenced_functions(kusto_code, force_syntactic: bool = False) -> set[s
     """Return the set of function names called in the query.
 
     Semantic mode reads ``ReferencedSymbol`` and keeps only ``FunctionSymbol``
-    references, so user-defined / let-bound functions resolve to their declared
-    names and built-ins return their canonical names. Syntactic mode falls back
-    to ``NameReference`` nodes that occupy a function-callee position — fast,
-    no schema required, but cannot distinguish a built-in from a let-bound
+    references, so user-defined and let-bound functions resolve to their
+    declared names and built-ins to their canonical ones. Syntactic mode falls
+    back to ``NameReference`` nodes in a function-callee position. It is fast,
+    needs no schema, and cannot distinguish a built-in from a let-bound
     callable of the same name.
     """
     syntax = kusto_code.Syntax
@@ -654,9 +636,9 @@ def _is_plugin_callee(node) -> bool:
     """Return True when this NameReference names the plug-in of an ``evaluate``.
 
     ``evaluate bag_unpack(d)`` parses as a plain ``FunctionCallExpression``
-    directly under the ``EvaluateOperator``, so the plug-in name is an
-    ordinary identifier in the tree with nothing to mark it as a plug-in.
-    The grandparent's kind is what distinguishes it.
+    directly under the ``EvaluateOperator``, so the plug-in name is an ordinary
+    identifier with nothing in the tree to mark it. The grandparent's kind
+    distinguishes it.
     """
     parent = node.Parent
     if parent is None or str(parent.Kind) != "FunctionCallExpression":
@@ -668,27 +650,27 @@ def _is_plugin_callee(node) -> bool:
 
 
 def get_structural_hash(kusto_code) -> str:
-    """Return a SHA256 over the AST shape — a "same query modulo the data" fingerprint.
+    """Return a SHA256 over the AST shape, a "same query modulo the data" fingerprint.
 
-    **Blind to** literal values (``x == 1`` and ``x == 5`` hash alike),
-    identifiers (table, column and ordinary function names — ``Alpha | where
-    beta == 1`` matches ``Gamma | where delta == 1``, and ``tolower(x)``
-    matches ``toupper(x)``), whitespace, and comments. Not a
-    logical-equivalence hash either: parenthesization and other cosmetic
-    rewrites still change it.
+    The hash is blind to literal values, so ``x == 1`` and ``x == 5`` hash
+    alike. It is blind to identifiers — table, column and ordinary function
+    names — so ``Alpha | where beta == 1`` matches ``Gamma | where delta == 1``
+    and ``tolower(x)`` matches ``toupper(x)``. Whitespace and comments are
+    invisible too. It is not a logical-equivalence hash: parenthesization and
+    other cosmetic rewrites change it.
 
-    **Sensitive to** the keyword value of every named parameter and to the
-    plug-in an ``evaluate`` names — ``join kind=inner`` versus
-    ``kind=leftanti``, ``union kind=inner`` versus ``kind=outer``,
-    ``evaluate bag_unpack(d)`` versus ``evaluate pivot(d)``. Those are not
-    cosmetic: they select the operator's semantics, and a hash that folds
-    them together claims two genuinely different queries are one shape.
+    It is sensitive to the keyword value of every named parameter and to the
+    plug-in an ``evaluate`` names: ``join kind=inner`` against
+    ``kind=leftanti``, ``union kind=inner`` against ``kind=outer``,
+    ``evaluate bag_unpack(d)`` against ``evaluate pivot(d)``. Those values
+    select the operator's semantics, so folding them together would claim two
+    genuinely different queries are one shape.
 
-    The exception inside that sensitivity is a named parameter whose value is
-    an ordinary literal — ``union isfuzzy=true`` and ``isfuzzy=false``, or
-    ``parse flags='i'`` and ``flags='m'`` — which stays invisible, because
-    blindness to literals is the property this hash exists for. Only the
-    enumerated-keyword values (a ``TokenLiteralExpression``) are kept.
+    A named parameter whose value is an ordinary literal stays invisible:
+    ``union isfuzzy=true`` hashes as ``isfuzzy=false`` does, and
+    ``parse flags='i'`` as ``flags='m'``. Blindness to literals is the property
+    this hash exists for. Only the enumerated-keyword values (a
+    ``TokenLiteralExpression``) are kept.
     """
     parts = []
 
@@ -719,32 +701,29 @@ def find_time_expressions(kusto_code) -> list[TimeExpr]:
     ``start`` and ``length`` are code-point offsets into the query text, so
     ``query[start:start + length]`` is the reported ``text``.
 
-    In source order: time-function calls (``ago``, ``now``, ``bin``, ...)
-    plus standalone datetime/timespan literals not already inside a matched
-    call.
+    The list holds, in source order, time-function calls (``ago``, ``now``,
+    ``bin``, ...) plus standalone datetime and timespan literals that are not
+    already inside a matched call.
 
-    One entry per construct: a matched call nested inside another matched
-    call is reported at the outer one only, so ``startofday(now())`` is a
-    single expression whose span covers the whole of it. A temporal call
-    inside a *non*-temporal one is still reported — nothing matched around
-    it, so ``tostring(now())`` yields ``now()``.
+    One entry per construct. A matched call nested inside another matched call
+    is reported at the outer one only, so ``startofday(now())`` is a single
+    expression whose span covers the whole of it. A temporal call inside a
+    non-temporal one has nothing matched around it and is still reported, so
+    ``tostring(now())`` yields ``now()``.
 
-    A **discovery aid**, not a lookback extractor. The result is syntactic: it
-    includes bare ``now()``, bare ``1h`` operands, and the operands of
-    ``!between`` — with no indication of which bound a given expression is, or
-    whether it constrains the query's time column at all. Resolving an
-    effective time window additionally needs let-resolution, awareness of which
-    column is temporal, and negation handling; build that on the tier-2 IR
-    rather than on this list.
+    Treat the result as a discovery aid. It is syntactic: it includes bare
+    ``now()``, bare ``1h`` operands and the operands of ``!between``, with no
+    indication of which bound a given expression is or whether it constrains
+    the query's time column at all. Resolving an effective time window also
+    needs let-resolution, awareness of which column is temporal, and negation
+    handling; build that on the tier-2 IR.
 
-    The match is on the callee's *name*, so a function that is temporal in its
+    The match is on the callee's name, so a function that is temporal in its
     usual usage is reported in all of them. ``floor`` is hand-listed because
-    ``floor(TimeGenerated, 1h)`` buckets time exactly as ``bin`` does, so
-    numeric ``floor(x, 1)`` is over-reported too. ``abs`` is excluded even
-    though reflection lists it as returning a timespan, because of its
-    ``abs(timespan)`` overload — no usage of it is about time, so it is
-    subtracted. Everything here is a candidate to read, not a fact about the
-    query's time window.
+    ``floor(TimeGenerated, 1h)`` buckets time exactly as ``bin`` does, which
+    over-reports numeric ``floor(x, 1)`` as well. ``abs`` is subtracted:
+    reflection lists it as returning a timespan because of the
+    ``abs(timespan)`` overload, and no usage of it is about time.
     """
     fn_ranges: list[tuple[int, int]] = []  # (start, end) of matched time-function calls
     out = []
@@ -763,12 +742,11 @@ def find_time_expressions(kusto_code) -> list[TimeExpr]:
                 return
             start = node.TextStart
             end = start + node.Width
-            # `startofday(now())` is one expression. The walk is pre-order,
-            # so an enclosing match is already recorded when the argument is
-            # reached; reporting both would hand the caller two overlapping
-            # spans for one construct. The suppressed range is a subset of the one
-            # that suppressed it, so the literal pass below stays correct
-            # without recording it.
+            # `startofday(now())` is one expression. The walk is pre-order, so
+            # an enclosing match is already recorded when the argument is
+            # reached; reporting both gives the caller two overlapping spans
+            # for one construct. A suppressed range is a subset of the one that
+            # suppressed it, so the literal pass below stays correct without it.
             if _within_function(start, end):
                 return
             fn_ranges.append((start, end))
@@ -797,10 +775,9 @@ def find_time_expressions(kusto_code) -> list[TimeExpr]:
         seen.add(key)
         deduped.append(entry)
     deduped.sort(key=lambda t: t[1])
-    # Translated last, once the dedup and the nesting test are done: those
-    # compare .NET offsets against each other, where the unit cancels out.
-    # Sorting is unaffected too, since the two unit systems are monotonic in
-    # each other. Only the value handed back has to index a Python ``str``.
+    # Translated last: the dedup, the nesting test and the sort compare .NET
+    # offsets against each other, where the unit cancels out and the two unit
+    # systems are monotonic. Only the value handed back indexes a Python ``str``.
     offsets = Utf16Offsets(str(kusto_code.Text))
     return [
         TimeExpr(text, *offsets.span_to_codepoints(start, width))
@@ -829,18 +806,16 @@ def _quote_table_name(new_name: str) -> str:
     """Return ``new_name`` in a form that parses as one table name.
 
     Microsoft's own ``KustoFacts.BracketNameIfNecessary`` decides, because
-    "needs quoting" is a property of the grammar and not of a regex we can
-    keep in step with it. A hand-rolled
-    ``re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*")`` test looks right and passes
-    every KQL **keyword** through bare, which is the same silent failure the
-    quoting exists to prevent: ``replace_table("A", "project")`` emits
-    ``project | count``, a query that validates with **zero** diagnostics and
-    reads no table at all. It also gets the escaping wrong — a name
-    containing a newline produces a broken literal.
+    "needs quoting" is a property of the grammar. A hand-rolled
+    ``re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*")`` test passes every KQL keyword
+    through bare, which is the silent failure the quoting exists to prevent:
+    ``replace_table("A", "project")`` emits ``project | count``, a query that
+    validates with zero diagnostics and reads no table at all. Such a test also
+    escapes wrongly, so a name containing a newline produces a broken literal.
 
     The helper returns the name unchanged when it is usable bare (``Z_9``),
-    ``['name']`` when it is not, and switches to the double-quoted form
-    (``["o'brien"]``) when the name contains an apostrophe.
+    ``['name']`` when it is not, and the double-quoted form (``["o'brien"]``)
+    when the name contains an apostrophe.
     """
     return str(KustoFacts.BracketNameIfNecessary(new_name))
 
@@ -848,29 +823,28 @@ def _quote_table_name(new_name: str) -> str:
 def replace_table(kusto_code, old_name: str, new_name: str, force_syntactic: bool = False) -> str:
     """Rename every reference to ``old_name`` to ``new_name``; return the new text.
 
-    ``new_name`` is emitted verbatim when it is a bare identifier and in
-    KQL's bracketed form, ``['my-new-table']``, when it is not — a hyphenated
-    or spaced table name is legal in Kusto and illegal as a bare identifier,
-    and pasting one in raw produces a query that parses as arithmetic and
-    reads no table at all. Both names must be non-empty strings; a
-    ``ValueError`` beats returning a query with the table name deleted from
-    it.
+    ``new_name`` is emitted verbatim when it is a bare identifier and in KQL's
+    bracketed form, ``['my-new-table']``, when it is not. A hyphenated or
+    spaced table name is legal in Kusto and illegal as a bare identifier, so
+    pasting one in raw produces a query that parses as arithmetic and reads no
+    table at all. Both names must be non-empty strings; an empty one raises
+    ``ValueError`` instead of deleting the table name from the query.
 
     Rewrites the spans ``find_table_references`` reports, minus wildcard
     patterns. On a bound parse that includes tables the supplied schema does
-    not describe — the binder cannot resolve them, but they are still in the
+    not describe: the binder cannot resolve them, and they are still in the
     query and still have to be retargeted. Names that only look like tables
-    (``let`` and ``as`` aliases, function parameters) are left alone; so is a
-    shadowed alias, while the binding's own right-hand side is rewritten.
+    (``let`` and ``as`` aliases, function parameters) are left alone, and so is
+    a shadowed alias, while the binding's own right-hand side is rewritten.
 
     A wildcard is never rewritten, in either mode. The binder expands
     ``union T*`` against a schema with exactly one match straight to that
     ``TableSymbol``, so ``replace_table("T1", "Z")`` would otherwise rewrite
-    the span holding the text ``T*`` and emit ``union Z`` — a name the caller
+    the span holding the text ``T*`` and emit ``union Z``: a name the caller
     never wrote over a pattern they did, silently narrowing which tables the
-    query reads as soon as a second ``T…`` table exists. The reference is
-    still *reported* (``get_referenced_tables`` says ``{'T1'}``, which is
-    true); it cannot be retargeted this way.
+    query reads as soon as a second ``T…`` table exists. The reference is still
+    reported, and ``get_referenced_tables`` says ``{'T1'}``; it cannot be
+    retargeted this way.
     """
     for label, value in (("old_name", old_name), ("new_name", new_name)):
         if not isinstance(value, str):
@@ -896,10 +870,9 @@ def replace_table(kusto_code, old_name: str, new_name: str, force_syntactic: boo
     text = kusto_code.Text
     offsets = Utf16Offsets(str(text))
     for start, length in sorted(replacements, key=lambda t: t[0], reverse=True):
-        # ``TextStart``/``Width`` count UTF-16 code units and ``text`` is a
-        # Python ``str``, indexed by code point. Splicing at the untranslated
-        # offset cuts the wrong characters as soon as the query holds an
-        # astral one.
+        # ``TextStart``/``Width`` count UTF-16 code units; ``text`` is a Python
+        # ``str``, indexed by code point. Splicing at the untranslated offset
+        # cuts the wrong characters once the query holds an astral character.
         start, length = offsets.span_to_codepoints(start, length)
         text = text[:start] + replacement + text[start + length:]
     return text

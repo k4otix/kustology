@@ -12,26 +12,24 @@ Exit codes:
       ``--schema`` JSON, missing optional extra, input exceeded the size
       ceiling).
 
-The distinction between 1 and 2 is "your query is wrong" versus "your
-invocation is wrong", and it is what a CI job branches on: an unreadable
-path or an unparseable ``--schema`` says nothing about the KQL. Both
-``format`` and ``parse`` run the validator before they emit anything, so
-neither writes output derived from a query the parser rejected.
+1 says the query is wrong and 2 says the invocation is wrong, which is what
+a CI job branches on: an unreadable path or an unparseable ``--schema`` says
+nothing about the KQL. Both ``format`` and ``parse`` run the validator before
+they emit anything, so neither writes output derived from a query the parser
+rejected.
 
-Because 2 is a claim about the *invocation*, the mapping is attached to the
-two places that read one — :func:`_read_input` and :func:`_load_schema`,
-which raise :class:`_UsageError` — and not to a blanket ``except OSError``
-in :func:`main`. A blanket one covers every ``sys.stdout.write`` too, and
-reports a usage error for ``kustology parse --ast --json big.kql | head``
-— a correct invocation whose reader stopped reading.
+Because 2 is a claim about the *invocation*, the mapping lives where one is
+read: :func:`_read_input` and :func:`_load_schema`, which raise
+:class:`_UsageError`. A blanket ``except OSError`` in :func:`main` would cover
+every ``sys.stdout.write`` too and report a usage error for
+``kustology parse --ast --json big.kql | head``, whose reader stopped reading.
 
 A broken pipe is neither a usage error nor a verdict. Each command decides
 its exit code before it writes and wraps only the writing in
 :func:`_tolerate_broken_pipe`, so a reader hanging up stops the output and
 nothing else: ``kustology validate q.kql | head`` still exits 1 on a query
-that fails validation. Only a pipe that breaks outside any command's guard
-— that is, before a code was ever decided — reaches :func:`main`'s own arm
-and exits 0.
+that fails validation. A pipe breaking outside every guard, before a code was
+ever decided, reaches :func:`main`'s own arm and exits 0.
 """
 from __future__ import annotations
 
@@ -45,10 +43,10 @@ from . import __version__
 from .services import format_query, parse, validate
 from .utils.walker import MAX_AST_DEPTH, node_to_dict
 
-# Bound the bytes we'll read from stdin or a file. KQL queries are not large;
-# a 10 MB ceiling means an oversized payload (CI webhook abuse,
-# misrouted log dump) fails fast instead of OOM-ing the host. Override with
-# ``KUSTOLOGY_MAX_INPUT_BYTES`` for legitimate edge cases.
+# Bound on the bytes read from stdin or a file. KQL queries are not large, so
+# a 10 MB ceiling makes an oversized payload (CI webhook abuse, misrouted log
+# dump) fail fast instead of exhausting host memory. Override with
+# ``KUSTOLOGY_MAX_INPUT_BYTES``.
 _DEFAULT_MAX_INPUT_BYTES = 10 * 1024 * 1024
 
 
@@ -64,15 +62,14 @@ def _max_input_bytes() -> int:
 
 
 class _UsageError(Exception):
-    """A failure of the invocation rather than of the KQL — exit 2.
+    """A failure of the invocation, exit 2.
 
-    Raised where the invocation is actually read (a path we cannot open, a
-    ``--schema`` file that is not JSON) so that ``main`` needs no blanket
-    ``except OSError`` — the blanket form reports a ``BrokenPipeError``
-    from a ``sys.stdout.write`` as a usage error.
-
-    The message is rendered verbatim after ``error: ``, so callers embed the
-    exception's own class name where it is useful (``FileNotFoundError: …``).
+    Raised where the invocation is read: a path that will not open, a
+    ``--schema`` file that is not JSON. That keeps ``main`` free of a blanket
+    ``except OSError``, which would report a ``BrokenPipeError`` from a
+    ``sys.stdout.write`` as a usage error. The message renders verbatim after
+    ``error: ``, so callers embed the exception's own class name where it
+    helps (``FileNotFoundError: …``).
     """
 
 
@@ -90,25 +87,22 @@ def _add_io_arguments(p: argparse.ArgumentParser) -> None:
 def _read_capped(stream, limit: int, source: str) -> str:
     """Read up to ``limit`` **bytes** from ``stream``, then decode as UTF-8.
 
-    The ceiling is named in bytes and has to mean bytes: a decoded text
-    stream's ``read(n)`` counts *characters*, so measuring it lets a
-    multibyte payload occupy several times the ceiling in memory — which is
-    the one thing the ceiling exists to prevent. We therefore read through
-    ``stream.buffer``, the undecoded byte stream behind ``sys.stdin``, and
-    treat a stream that has no ``.buffer`` as already binary (that is how
-    the file paths open it).
+    The ceiling has to mean bytes: a decoded text stream's ``read(n)`` counts
+    *characters*, which lets a multibyte payload occupy several times the
+    ceiling in memory. The read goes through ``stream.buffer``, the undecoded
+    byte stream behind ``sys.stdin``; a stream with no ``.buffer`` is already
+    binary, which is how the file paths open it.
 
-    Reads ``limit + 1`` so we can distinguish "exactly limit bytes" from
-    "overflowed." The +1 is bounded, not the entire stream.
+    Reads ``limit + 1`` to tell "exactly limit bytes" from "overflowed". The
+    +1 is bounded.
     """
     raw = getattr(stream, "buffer", stream)
     data = raw.read(limit + 1)
     if isinstance(data, str):
         # An embedder calling `main()` in-process with `sys.stdin` set to a
         # `StringIO` lands here: no `.buffer`, and `read` hands back text.
-        # Silently measuring its length would make the ceiling count
-        # characters — the failure the byte read exists to prevent — and
-        # `.decode` would then die with a bare `AttributeError`. Say so.
+        # Measuring its length would make the ceiling count characters, and
+        # `.decode` would then fail with a bare `AttributeError`.
         raise TypeError(
             f"{source} is a decoded text stream with no .buffer, so the "
             f"{limit}-byte input ceiling cannot be enforced over it. Pass a "
@@ -130,9 +124,8 @@ def _read_input(args: argparse.Namespace) -> str:
         with open(args.file, "rb") as f:
             return _read_capped(f, limit, args.file)
     except OSError as e:
-        # Scoped to the read: a path that does not exist, a directory, a
-        # permission denial. Classifying OSError here, not at large in
-        # `main`, keeps writes from being swept up with reads.
+        # Scoped to the read: a missing path, a directory, a permission
+        # denial. Classifying OSError here keeps writes out of the net.
         raise _UsageError(f"{type(e).__name__}: {e}") from e
 
 
@@ -199,8 +192,8 @@ def _build_parser() -> argparse.ArgumentParser:
 def _tolerate_broken_pipe():
     """Stop emitting when the reader goes away, without losing the verdict.
 
-    A broken pipe means the *reader* stopped listening. It says nothing about
-    whether the input was valid — and for ``validate`` the validity verdict
+    A broken pipe means the *reader* stopped listening, which says nothing
+    about whether the input was valid. For ``validate`` the validity verdict
     *is* the exit code, so swallowing it turns
     ``kustology validate q.kql | head`` in CI into a pass on a query that
     fails validation.
@@ -208,14 +201,14 @@ def _tolerate_broken_pipe():
     Each command therefore computes its exit code **before** it writes and
     wraps only the writing in this guard: the emit stops here, stdout is
     redirected so the interpreter's shutdown flush stays silent, and the
-    caller falls straight through to its own ``return rc``. The flush is
-    inside the guard because a pipe write is buffered — a departed reader is
-    not discovered until the buffer drains, and leaving that to interpreter
+    caller falls through to its own ``return rc``. The flush sits inside the
+    guard because a pipe write is buffered; a departed reader is not
+    discovered until the buffer drains, and leaving that to interpreter
     shutdown puts it beyond every handler in this module.
 
     ``main`` keeps a ``BrokenPipeError`` arm as the last resort for anything
-    that escapes a guard; returning 0 there is right, because a command that
-    never got as far as computing a code was still on the success path.
+    that escapes a guard, where returning 0 is right because a command that
+    never computed a code was still on the success path.
     """
     try:
         yield
@@ -244,17 +237,16 @@ def _report_error_diagnostics(body: str) -> bool:
 
     ``format`` and ``parse`` both derive their output from the parse tree, so
     emitting it for input the parser rejected hands the caller something that
-    looks like a result and is not one — the formatter returns ``'T | where '``
-    for the truncated ``T | where``, and a shell redirect writes that to a
-    file. The gate is unbound (parser diagnostics only): a table the schema
-    does not describe is a schema gap, not a malformed query, and ``validate``
-    is the subcommand for asking about that.
+    looks like a result: the formatter returns ``'T | where '`` for the
+    truncated ``T | where``, and a shell redirect writes that to a file. The
+    gate is unbound, parser diagnostics only. A table the schema does not
+    describe is a schema gap, and ``validate`` is the subcommand for asking
+    about that.
     """
     errors = [d for d in validate(body) if d.get("severity") == "Error"]
-    # Same rule as stdout, on the other stream: the verdict is already
-    # decided, so a reader that hung up mid-report stops the report and
-    # nothing else. `kustology format bad.kql 2>&1 | head` is the case —
-    # with `2>&1` these lines *are* what fills the pipe.
+    # Same rule as stdout, on the other stream: the verdict is decided, so a
+    # reader that hangs up mid-report stops the report and nothing else. Under
+    # `kustology format bad.kql 2>&1 | head` these lines fill the pipe.
     with contextlib.suppress(BrokenPipeError):
         for d in errors:
             sys.stderr.write(_format_diagnostic(d))
@@ -342,16 +334,14 @@ def _cmd_parse(args: argparse.Namespace) -> int:
             )
             sys.stderr.write(f"({e})\n")
             return 2
-        # Going through `parse().to_ir()` rather than `IRBuilder().build()`
-        # is what makes `--schema` mean anything here: `to_ir()` auto-attaches
-        # the schema on a bound parse, so the IR carries column types and
-        # table provenance instead of an unenriched skeleton.
+        # `parse().to_ir()` is what makes `--schema` mean anything here:
+        # `to_ir()` auto-attaches the schema on a bound parse, so the IR
+        # carries column types and table provenance.
         ir = parse(body, schema=schema).to_ir()
         if args.json:
-            # Envelope, not the bare dump: both version tags are the
-            # consumer's compatibility contract, and a stored payload that
-            # names neither cannot be checked against the IR shape that
-            # produced it.
+            # Both version tags are the consumer's compatibility contract: a
+            # stored payload naming neither cannot be checked against the IR
+            # shape that produced it.
             payload = {
                 "ir_schema_version": IR_SCHEMA_VERSION,
                 "semantic_hash_scheme": SEMANTIC_HASH_SCHEME,
@@ -376,14 +366,14 @@ def _cmd_parse(args: argparse.Namespace) -> int:
 def _silence_broken_stdout() -> None:
     """Point stdout somewhere harmless after the downstream reader went away.
 
-    CPython flushes ``sys.stdout`` once more at interpreter shutdown, and on
-    a dead pipe that second failure prints ``Exception ignored … Broken
-    pipe`` to stderr — after ``main`` has already returned, so a caller that
-    handled the pipe still gets noise on a run it considers clean.
-    Redirecting the file *descriptor* is the stdlib's own recipe (the note on
-    SIGPIPE in the ``signal`` docs); when stdout has no descriptor to
-    redirect — a ``capsys`` buffer, a test stub — rebinding the name is the
-    closest equivalent available.
+    CPython flushes ``sys.stdout`` once more at interpreter shutdown, and on a
+    dead pipe that second failure prints ``Exception ignored … Broken pipe``
+    to stderr after ``main`` has returned, so a caller that handled the pipe
+    still gets noise on a run it considers clean. Redirecting the file
+    *descriptor* is the stdlib's own recipe (the note on SIGPIPE in the
+    ``signal`` docs). When stdout has no descriptor to redirect, such as a
+    ``capsys`` buffer or a test stub, rebinding the name is the closest
+    equivalent.
     """
     try:
         fd = sys.stdout.fileno()
@@ -401,22 +391,18 @@ def _silence_broken_stdout() -> None:
 
 def main(argv: list[str] | None = None) -> int:
     """Run the ``kustology`` command line and return its exit code."""
-    # KQL is arbitrary Unicode, and this CLI's contract is to emit UTF-8 on
-    # every platform. Left alone, a Windows console attaches `sys.stdout`
-    # with the OS charmap codepage, which cannot encode most of Unicode —
-    # `kustology format`/`parse` on a query containing, for example, Japanese
-    # dies with a `UnicodeEncodeError` instead of printing. `reconfigure` is
-    # only on `io.TextIOWrapper`; a real terminal or pipe has it, but a test
-    # double standing in for stdout/stderr (an `io.StringIO`, a bespoke stub)
-    # may not, so the `getattr` guard skips those rather than crashing on a
-    # missing method. `ValueError`/`OSError` cover a stream that is closed or
-    # otherwise cannot be reconfigured (a detached buffer); either way we
-    # fall back to whatever encoding it already had rather than fail startup
-    # over an encoding upgrade. This runs before any command writes a byte
-    # and before `_tolerate_broken_pipe`/`_silence_broken_stdout` ever touch
-    # these streams, so it cannot interfere with the broken-pipe handling —
-    # it only changes how bytes are encoded, never which file descriptor is
-    # open or which object `sys.stdout`/`sys.stderr` name.
+    # KQL is arbitrary Unicode and this CLI emits UTF-8 on every platform. A
+    # Windows console otherwise attaches `sys.stdout` with the OS charmap
+    # codepage, which cannot encode most of Unicode, so `kustology
+    # format`/`parse` on a query containing Japanese dies with a
+    # `UnicodeEncodeError`. `reconfigure` lives only on `io.TextIOWrapper`,
+    # which a test double standing in for stdout/stderr may lack, so the
+    # `getattr` guard skips those; `ValueError`/`OSError` cover a stream that
+    # is closed or has a detached buffer, and either way the stream keeps the
+    # encoding it had. This runs before any command writes a byte and only
+    # changes how bytes are encoded, never which file descriptor is open or
+    # which object `sys.stdout`/`sys.stderr` name, so it cannot disturb the
+    # broken-pipe handling.
     for _stream in (sys.stdout, sys.stderr):
         _reconfigure = getattr(_stream, "reconfigure", None)
         if _reconfigure is not None:
@@ -439,22 +425,19 @@ def main(argv: list[str] | None = None) -> int:
         else:
             parser.error(f"unknown command: {args.command!r}")
             rc = 2  # unreachable; parser.error raises SystemExit
-        # Backstop flush, for anything written outside a command's own
-        # `_tolerate_broken_pipe` block. A write to a pipe is buffered, so a
-        # departed reader is not discovered until the buffer drains, and if
-        # that only happens at interpreter shutdown it lands outside every
-        # handler here and becomes an unclassifiable traceback.
+        # Backstop flush for anything written outside a command's own
+        # `_tolerate_broken_pipe` block. A pipe write is buffered, so a
+        # departed reader is not discovered until the buffer drains, and a
+        # drain at interpreter shutdown lands outside every handler here and
+        # becomes an unclassifiable traceback.
         #
-        # It has its own handler rather than falling through to the
-        # `BrokenPipeError` arm below, because by this line `rc` is already
-        # decided and that arm returns 0. A pipe breaking *here* would
-        # therefore turn `kustology validate bad.kql | head` into a pass —
-        # the exact failure `_tolerate_broken_pipe` exists to prevent, one
-        # frame further out. Every stdout write in this module is
-        # inside a guard that flushes on the way out, so this flush finds an
-        # empty buffer and cannot raise; the handler is what keeps that an
-        # implementation detail instead of a load-bearing invariant, and it
-        # is what makes the arm below's "no code was ever decided" true.
+        # The handler is local rather than the `BrokenPipeError` arm below,
+        # because `rc` is decided by this line and that arm returns 0: a pipe
+        # breaking *here* would turn `kustology validate bad.kql | head` into
+        # a pass. Every stdout write in this module sits inside a guard that
+        # flushes on the way out, so this flush finds an empty buffer and
+        # cannot raise; the handler keeps that an implementation detail and
+        # makes the arm below's "no code was ever decided" true.
         try:
             sys.stdout.flush()
         except BrokenPipeError:
@@ -463,11 +446,11 @@ def main(argv: list[str] | None = None) -> int:
     except SystemExit:
         raise
     except BrokenPipeError:
-        # Last resort, for a pipe that broke somewhere no command guarded.
-        # Each command wraps its own writing in `_tolerate_broken_pipe` and
-        # returns the code it had already decided, so `validate | head` keeps
-        # reporting 1 on a query that fails validation. Reaching *here* means
-        # no code was ever decided, which only happens on the success path.
+        # Last resort for a pipe that broke where no command guarded. Each
+        # command wraps its own writing in `_tolerate_broken_pipe` and returns
+        # the code it already decided, so `validate | head` keeps reporting 1
+        # on a query that fails validation. Reaching *here* means no code was
+        # ever decided, which only happens on the success path.
         _silence_broken_stdout()
         return 0
     except _UsageError as e:

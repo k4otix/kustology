@@ -3,12 +3,11 @@
 
 """Generic IR traversal.
 
-``walk`` is depth-first, pre-order, and yields only pydantic
-``BaseModel`` descendants — primitive values (strings, ints, enums,
-``None``) are skipped, since they're read via attribute access on the
-node that owns them. Container fields are unwrapped to any depth, so a
-model reached only through ``list[tuple[...]]`` is still visited, and an
-object reachable by more than one path is yielded once.
+``walk`` is depth-first and pre-order. It yields each pydantic ``BaseModel``
+descendant once and skips primitive values (strings, ints, enums, ``None``),
+which you read by attribute access on the node that owns them. Container
+fields are unwrapped to any depth, so a model reached only through
+``list[tuple[...]]`` is still visited.
 
 ``find_all`` is the type-filtered convenience wrapper most analyzers use.
 """
@@ -34,31 +33,28 @@ T = TypeVar("T", bound=BaseModel)
 
 Predicate = Callable[[BaseModel], bool]
 
-# Leaf types that cannot hold a ``BaseModel``. A field annotated entirely
-# from these, and from the containers below, is skipped by :func:`_walk`.
+# Leaf types that cannot hold a ``BaseModel``. :func:`_walk` skips a field
+# annotated entirely from these and the containers below.
 _SCALAR_LEAVES = (type(None), bool, int, float, complex, str, bytes)
 
-# Containers :func:`_models_in` descends. A field whose annotation nests only
-# these around scalar leaves still cannot reach a model.
+# Containers :func:`_models_in` descends. Nesting only these around scalar
+# leaves still cannot reach a model.
 _CONTAINER_ORIGINS = (list, tuple, set, frozenset, dict)
 
 
 def _cannot_hold_a_model(annotation: Any) -> bool:
     """Test whether an annotation rules out reaching a ``BaseModel``.
 
-    This answers conservatively: it returns ``True`` only for an annotation
-    built entirely from :data:`_SCALAR_LEAVES`, ``Enum`` subclasses,
-    ``Literal`` values of those types, and :data:`_CONTAINER_ORIGINS`
-    wrapping the same. ``Any``, a bare container, an unresolved forward
-    reference, a ``BaseModel`` subclass and every unrecognized class all
-    return ``False``.
+    The answer is ``True`` only for an annotation built entirely from
+    :data:`_SCALAR_LEAVES`, ``Enum`` subclasses, ``Literal`` values of those
+    types, and :data:`_CONTAINER_ORIGINS` wrapping the same. ``Any``, a bare
+    container, an unresolved forward reference, a ``BaseModel`` subclass and
+    every unrecognized class return ``False``.
 
-    The two errors cost different amounts. ``False`` for something that can
-    never hold a model costs one wasted ``getattr`` per node. ``True`` for
-    something that can drops those nodes from every traversal in the library,
-    silently, which is the failure mode AGENTS.md records for a
-    hand-maintained field list. So err toward ``False`` for any annotation
-    this cannot read.
+    Answer ``False`` for any annotation this cannot read. A wrong ``False``
+    costs one wasted ``getattr`` per node. A wrong ``True`` silently drops
+    those nodes from every traversal in the library, the failure mode
+    AGENTS.md records for a hand-maintained field list.
     """
     if annotation is None or annotation is Any:
         return False
@@ -95,11 +91,11 @@ _MODEL_BEARING_FIELDS: dict[type[BaseModel], tuple[str, ...]] = {}
 def model_bearing_fields(model: type[BaseModel]) -> tuple[str, ...]:
     """Return the field names of ``model`` whose values can hold a ``BaseModel``.
 
-    Derived once per class from ``model_fields`` annotations and cached, so
+    Derived from ``model_fields`` annotations once per class and cached, so
     :func:`_walk` skips ``getattr`` and ``_models_in`` on the ``str``,
     ``bool``, ``Literal`` and ``dict[str, str]`` fields that make up much of
-    the IR. Nothing here is hand-maintained: a new field is classified by its
-    own annotation the first time its class is walked.
+    the IR. A new field is classified by its own annotation the first time its
+    class is walked, with no hand-maintained list.
     """
     cached = _MODEL_BEARING_FIELDS.get(model)
     if cached is None:
@@ -120,29 +116,24 @@ def walk(
 ) -> Iterator[BaseModel]:
     """Yield every ``BaseModel`` descendant of ``node`` (including the root) in depth-first, pre-order.
 
-    Descends into list-, tuple- and dict-valued fields, and through
-    nested containers such as ``list[tuple[Expr, Expr]]``.
+    Descends list-, tuple- and dict-valued fields to any nesting depth.
 
-    **Each object is yielded exactly once.** The IR is a DAG, not a tree:
-    several nodes index into a subtree that another field already owns,
-    holding the *same* objects rather than copies. ``LetBinding`` is the
-    clear case — ``inner_time_exprs`` and ``inner_tables`` point at nodes
-    that also live inside ``rhs_pipeline`` — so an un-deduplicated walk
-    would report ``ago`` and ``now`` twice for a single ``let``, and any
-    caller counting occurrences would double-count them. Identity is the key
-    (``id(node)``), not equality: two structurally identical nodes written
-    at different offsets are different nodes and both must surface.
+    Each object is yielded exactly once, keyed by ``id(node)``. The IR is a
+    DAG: ``LetBinding.inner_time_exprs`` and ``inner_tables`` hold the same
+    objects that live inside ``rhs_pipeline``, so without deduplication a
+    single ``let`` reports ``ago`` and ``now`` twice and occurrence counts
+    double. Identity is the key, so two structurally identical nodes written
+    at different offsets both surface.
 
-    With ``predicate``, only nodes for which ``predicate(node)`` returns
-    truthy are yielded; traversal still descends into every subtree, so a
-    skipped parent doesn't hide its children. Use this for "every BinOp
-    that's case-insensitive" / "every operator with a span past
-    position X" / cross-cutting filters that don't reduce to a type.
+    With ``predicate``, only nodes it returns truthy for are yielded.
+    Traversal still descends into a rejected node's subtree, so a skipped
+    parent doesn't hide its children. Use it for filters that don't reduce to
+    a type, such as "every case-insensitive BinOp".
 
-    ``predicate`` filters what is yielded; ``prune`` limits where the walk
-    goes. A node for which ``prune`` returns ``True`` is still yielded when
-    ``predicate`` accepts it, but none of its descendants are visited. To
-    analyse an outer pipeline without its subqueries::
+    ``prune`` limits where the walk goes. A node for which ``prune`` returns
+    ``True`` is still yielded when ``predicate`` accepts it, but none of its
+    descendants are visited. To analyse an outer pipeline without its
+    subqueries::
 
         walk(ir.main_pipeline, prune=lambda n: isinstance(n, (JoinOp, LookupOp)))
 
@@ -152,9 +143,9 @@ def walk(
         >>> for n in walk(ir, lambda n: isinstance(n, BinOp) and n.case_sensitive is False):
         ...     ...
 
-    ``is False`` rather than ``not``: ``BinOp.case_sensitive`` is ``None``
-    on the arithmetic operators, where the question does not apply, and
-    ``not None`` is true.
+    Use ``is False`` there. ``BinOp.case_sensitive`` is ``None`` on the
+    arithmetic operators, where the question does not apply, and ``not None``
+    is true.
 
     """
     yield from _walk(node, predicate, prune, set())
@@ -168,23 +159,19 @@ def _walk(
 ) -> Iterator[BaseModel]:
     """Recursive half of :func:`walk`, threading the visited set.
 
-    Kept private so the public signature stays a fixed set of parameters:
-    the set is an implementation detail of one traversal, and a caller who
-    supplied their own could silently suppress nodes.
+    Private because a caller who supplied their own visited set could silently
+    suppress nodes.
 
-    Re-entering an already-visited object prunes its whole subtree, not only
-    the yield — descending a second time can only re-yield what the first
-    descent already produced. Holding ``id()`` values is safe because the
-    root keeps every descendant alive for the traversal's lifetime, so no
-    address is recycled underneath us.
+    Re-entering an already-visited object prunes its whole subtree, since a
+    second descent can only re-yield what the first produced. Holding ``id()``
+    values is safe because the root keeps every descendant alive for the
+    traversal's lifetime, so no address is recycled underneath us.
 
-    A side effect worth knowing: the set also makes a cycle terminate. The
-    builder does not produce one and this is not a license to introduce one
-    — a cycle would still break ``model_dump`` and the hash — but the walk
-    ends rather than recursing forever if one ever appears.
+    The set also makes a cycle terminate. The builder produces none, and a
+    cycle would break ``model_dump`` and the hash, but the walk ends instead
+    of recursing forever if one ever appears.
 
-    Only the fields :func:`model_bearing_fields` reports are read. A field
-    whose annotation rules out holding a model is not touched at all.
+    Only the fields :func:`model_bearing_fields` reports are read.
     """
     if id(node) in seen:
         return
@@ -202,11 +189,10 @@ def _models_in(value: object) -> Iterator[BaseModel]:
     """Yield every ``BaseModel`` directly held by ``value``.
 
     Descends list, tuple and dict containers recursively, so a field typed
-    ``list[tuple[Expr, Expr]]`` (``CaseExpr.branches``) is reached as
-    readily as a plain ``list[Expr]``. Nesting the containers is what
-    matters: a tuple sitting inside a list is not a ``BaseModel``, so a
-    walker that only unwraps one level treats the whole arm as a scalar
-    and silently skips it.
+    ``list[tuple[Expr, Expr]]`` (``CaseExpr.branches``) is reached as readily
+    as a plain ``list[Expr]``. A tuple sitting inside a list is not a
+    ``BaseModel``, so unwrapping only one level treats the whole arm as a
+    scalar and silently skips it.
     """
     if isinstance(value, BaseModel):
         yield value
@@ -222,9 +208,9 @@ def _models_in(value: object) -> Iterator[BaseModel]:
 def find_all(node: BaseModel, type_: type[T], *, prune: Predicate | None = None) -> Iterator[T]:
     """Yield every descendant of ``node`` that is an instance of ``type_``.
 
-    The 90%-case wrapper around :func:`walk`. Custom analyzers typically
-    reduce to a single ``find_all`` call plus attribute access. ``prune``
-    is passed through to :func:`walk`.
+    The 90%-case wrapper around :func:`walk`, with ``prune`` passed straight
+    through. Custom analyzers typically reduce to one ``find_all`` call plus
+    attribute access.
 
     Example:
         >>> from kustology.ir import find_all, FilterOp

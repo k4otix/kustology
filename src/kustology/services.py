@@ -14,52 +14,49 @@ from .bridge import (
     ensure_invariant_culture,
 )
 
-# A schema is a mapping of table name to column spec. `str` is not in the
-# union: `build_global_state` raises `TypeError` on anything that
-# isn't a dict, so admitting `parse(q, schema="(a:string)")` would type-check
-# a call that can only fail at runtime. The single-table string form is a
-# *value* inside the mapping — `{"T": "(a:string)"}` — not a substitute for
-# it.
+# A schema maps table name to column spec. `str` stays out of the union
+# because `build_global_state` raises `TypeError` on anything that isn't a
+# dict, so `parse(q, schema="(a:string)")` would type-check a call that can
+# only fail at runtime. The single-table string form is a *value* inside the
+# mapping: `{"T": "(a:string)"}`.
 SchemaLike = dict | None
 
-# Binder code emitted when a name doesn't refer to any known table/variable/function.
-# This one code, and no other, is what ``validate(..., ignore_unknown_tables=True)``
-# waives — see ``_UNKNOWN_NAME_CODES`` for why that stays narrow.
+# Binder code for a name that doesn't refer to any known table/variable/function.
+# The only code ``validate(..., ignore_unknown_tables=True)`` waives; see
+# ``_UNKNOWN_NAME_CODES`` for why that stays narrow.
 _UNKNOWN_TABLE_CODE = "KS204"
 
 # Every binder code for "this name is not among the things the GlobalState
-# describes". Microsoft raises one per *kind* of name, so the family is wider
-# than KS204 by eleven codes, eight of them ``Error`` severity:
+# describes". Microsoft raises one per *kind* of name, so the family runs
+# eleven codes wider than KS204, eight of them ``Error`` severity:
 #
 #   KS142 item        KS204 table   KS205 fuzzy name   KS207 cluster
 #   KS208 database    KS209 external table             KS210 materialized view
 #   KS211 function    KS247 entity group               KS248 stored query result
 #   KS260 graph model KS261 graph snapshot
 #
-# The set is pinned rather than reflected so the filter is a frozenset lookup
-# and the codes are greppable; ``tests/test_reflection_audit.py`` re-derives
-# it from ``Kusto.Language.DiagnosticFacts`` and fails if a DLL refresh moves
-# or adds one, which is the drift AGENTS.md warns about by name.
+# Pinned instead of reflected, so the filter is a frozenset lookup and the
+# codes are greppable. ``tests/test_reflection_audit.py`` re-derives the set
+# from ``Kusto.Language.DiagnosticFacts`` and fails if a DLL refresh moves or
+# adds one, which is the drift AGENTS.md warns about by name.
 #
-# **Not what ``validate(ignore_unknown_tables=True)`` waives.**
-# The two flags answer different questions. ``validate`` only reaches the
-# binder when the caller passed a schema, so there the caller owns every name
-# in the query and is waiving exactly one dimension of it — tables outside
-# their schema. Suppressing "unknown function" there would hide an error
-# about a name their schema was supposed to describe. This set is for the
-# opposite case: a binding run against ``GlobalState.Default``, globals the
-# caller never chose and which describe nothing, where every name-resolution
-# failure is an artifact of how the types were obtained.
+# ``validate(ignore_unknown_tables=True)`` waives KS204 alone. It reaches the
+# binder only when the caller passed a schema, so the caller owns every name
+# and waives one dimension of it: tables outside their schema. Suppressing
+# "unknown function" there would hide an error about a name that schema was
+# supposed to describe. This set covers a bind against ``GlobalState.Default``,
+# globals the caller never chose that describe nothing, where every
+# name-resolution failure is an artifact of how the types were obtained.
 _UNKNOWN_NAME_CODES = frozenset({
     "KS142", "KS204", "KS205", "KS207", "KS208", "KS209",
     "KS210", "KS211", "KS247", "KS248", "KS260", "KS261",
 })
 
-# kustology's own diagnostic code, outside Microsoft's ``KS***``
-# space: it reports a failure of *our* call into their binder, not a defect in
-# the query. A consumer filtering on ``KS`` codes will not mistake it for one,
-# and a consumer gating on ``severity == "Error"`` still sees it — which is
-# the point, since the IR it accompanies was built from an unbound tree.
+# kustology's own diagnostic code, outside Microsoft's ``KS***`` space: it
+# reports a failure of this package's call into their binder. A consumer
+# filtering on ``KS`` codes skips it; a consumer gating on
+# ``severity == "Error"`` sees it, which matters because the IR it accompanies
+# was built from an unbound tree.
 ANALYZE_FAILED_CODE = "KUSTOLOGY001"
 
 
@@ -70,58 +67,45 @@ def _analyze_guarded(
     """Bind a tree, or fall back to the unbound one and say so.
 
     The single guard around every call this package makes into Microsoft's
-    analyzer — ``KustoCode.ParseAndAnalyze`` in :func:`parse` and
-    :func:`validate`, ``KustoCode.Analyze`` in
-    :meth:`kustology.KustoQuery.to_ir`, and ``ParseAndAnalyze`` again in
-    :meth:`kustology.ir.IRBuilder.build`. It exists because the binder can
-    *crash* on input the parser accepts without a single diagnostic: a
-    ``declare pattern`` whose match arm supplies more values than the
-    declaration has parameters sends ``Binder.NodeBinder.VisitPatternDeclaration``
-    indexing the declared-parameter list with the supplied-value index
-    (Kusto.Language 12.3.2 through 12.4.1, unchanged). Unguarded, that
-    ``IndexOutOfRangeException`` comes out of ``parse()``/``to_ir()`` raw —
-    a caller who passed a schema gets a CLR traceback where they asked for
-    diagnostics.
+    analyzer: ``ParseAndAnalyze`` in :func:`parse`, :func:`validate` and
+    :meth:`kustology.ir.IRBuilder.build`, and ``KustoCode.Analyze`` in
+    :meth:`kustology.KustoQuery.to_ir`. The binder can crash on input the
+    parser accepts without a single diagnostic: a ``declare pattern`` whose
+    match arm supplies more values than the declaration has parameters sends
+    ``Binder.NodeBinder.VisitPatternDeclaration`` indexing the
+    declared-parameter list with the supplied-value index (Kusto.Language
+    12.3.2 through 12.4.1). Unguarded, that ``IndexOutOfRangeException``
+    reaches a caller who asked for diagnostics as a raw CLR traceback.
 
     Returns ``(code, failure)``. ``failure`` is ``None`` when the analysis
     succeeded; otherwise the tree is the **unanalyzed** parse and ``failure``
-    is one diagnostic in this module's dict shape, carrying the .NET
-    exception so the crash stays reportable upstream instead of being
-    swallowed.
+    is one diagnostic in this module's dict shape, carrying the .NET exception
+    so the crash stays reportable upstream.
 
-    Falling back is safe in the one way that matters here: everything the
-    binder writes is stripped before ``semantic_hash`` is computed, so an
-    unbound build produces the *same digest* a bound one would have. What is
-    genuinely lost is the binder's own answers — ``Expr.result_type``,
-    ``Pipeline.result_schema``, table provenance — which is why the failure
-    is an ``Error`` rather than a warning.
+    Falling back keeps the digest: everything the binder writes is stripped
+    before ``semantic_hash`` is computed, so an unbound build produces the
+    same digest a bound one would. Lost are the binder's own answers,
+    ``Expr.result_type``, ``Pipeline.result_schema`` and table provenance,
+    which is why the failure carries ``Error`` severity.
 
-    ``start``/``length`` are zero because the failure has no source location:
-    it is a fault in the analyzer, not a span of the query. Every consumer of
-    this shape already reads those two keys, so omitting them is not an
-    option. The row carries the same seven keys :func:`_diagnostic_dicts`
-    emits, so a list holding both is uniform.
+    The row carries the same seven keys :func:`_diagnostic_dicts` emits, so a
+    list holding both is uniform. ``start``/``length`` are zero because a
+    fault in the analyzer has no source span, and the keys stay present
+    because every consumer of this shape reads them. ``detail`` carries
+    ``str(exc)``: a CLR exception reaching Python through pythonnet brings its
+    stack trace along, thousands of characters across many lines, so
+    ``message`` stays one short sentence naming the exception's type and a
+    caller who logs diagnostics inline gets no stack trace in that line.
 
-    ``detail`` carries ``str(exc)`` — the .NET exception's own message, which
-    for a CLR exception reaching Python through pythonnet includes its stack
-    trace and can run to thousands of characters across many lines.
-    ``message`` stays one short sentence naming only the exception's type, so
-    a caller who logs or displays diagnostics inline does not have a
-    multi-kilobyte stack trace land in that line; a caller who wants the
-    trace reads ``detail``.
+    ``MemoryError`` and ``RecursionError`` propagate: both mean the *host* is
+    out of a resource, which is not a binder fault. That holds at every call
+    site, including the two in :meth:`kustology.KustoQuery.to_ir` whose
+    ``unbound`` only returns the tree the object already holds.
 
-    ``MemoryError`` and ``RecursionError`` propagate rather than being
-    reported through this shape: both mean the *host* is out of a resource,
-    and reporting a resource exhaustion as a binder fault would misattribute
-    it. That holds at every call site, including the two in
-    :meth:`kustology.KustoQuery.to_ir` whose ``unbound`` only returns the tree
-    the object already holds and so could not fail on its own.
-
-    The remaining ``except Exception`` is broad. A .NET
-    exception reaches Python through pythonnet as an ordinary ``Exception``
-    subclass, and there is no shared base class for "the binder gave up" —
-    the arity crash is an ``IndexOutOfRangeException`` and the next one will
-    be something else. ``BaseException`` is *not* caught, so
+    The remaining ``except Exception`` is broad because pythonnet surfaces a
+    .NET exception as an ordinary ``Exception`` subclass and there is no
+    shared base class for "the binder gave up"; the arity crash is an
+    ``IndexOutOfRangeException``. ``BaseException`` is *not* caught, so
     ``KeyboardInterrupt`` and ``SystemExit`` still propagate.
     """
     try:
@@ -149,11 +133,10 @@ def _analyze_guarded(
 def parse(query_text: str, schema: SchemaLike = None):
     """Parse a KQL query and return a ``KustoQuery``.
 
-    When ``schema`` is provided the query is bound (semantic analysis runs);
-    callers can use ``KustoQuery.has_semantics`` to check.
-    Schema is a dict mapping table name to a column spec:
-    ``{"Table": {"col": "type", ...}}``, ``{"Table": "(col:type, ...)"}`` or
-    ``{"Table": ["col", ...]}`` — see
+    With ``schema`` the query is bound (semantic analysis runs) and
+    ``KustoQuery.has_semantics`` reports which. Schema is a dict mapping table
+    name to a column spec: ``{"Table": {"col": "type", ...}}``,
+    ``{"Table": "(col:type, ...)"}`` or ``{"Table": ["col", ...]}`` — see
     :func:`kustology.utils.analysis.build_global_state`.
 
     If Microsoft's analyzer crashes on the query, the returned ``KustoQuery``
@@ -162,9 +145,8 @@ def parse(query_text: str, schema: SchemaLike = None):
     :func:`_analyze_guarded`.
 
     Raises ``ValueError`` when ``query_text`` holds an unpaired surrogate,
-    which UTF-16 cannot encode — see
-    :func:`kustology._text.check_utf16_encodable` for why that has to be
-    caught here rather than at the CLR boundary.
+    which UTF-16 cannot encode; see
+    :func:`kustology._text.check_utf16_encodable`.
     """
     from .core import KustoQuery
     from .utils.analysis import build_global_state
@@ -205,9 +187,9 @@ def _diagnostic_dicts(
 
     The one place that decides what a diagnostic looks like on the Python
     side. :func:`validate` and :attr:`kustology.KustoQuery.diagnostics` both
-    go through it so the two cannot drift — they differ only in where the
-    ``KustoCode`` came from, and the property's whole reason to exist is that
-    it already has one and must not parse again.
+    go through it so the two cannot drift; they differ only in where the
+    ``KustoCode`` came from, and the property exists to answer without a
+    second parse.
 
     ``start`` and ``length`` are translated to code points, so they index the
     Python ``str`` the caller passed in. Microsoft reports them in UTF-16
@@ -227,10 +209,9 @@ def _diagnostic_dicts(
                 "severity": str(d.Severity),
                 "category": str(d.Category),
                 "code": code_str,
-                # Always present, ``None`` for a parser diagnostic. The
-                # analyzer-crash row :func:`_analyze_guarded` builds fills it,
-                # and a caller iterating the list must not have to ask which
-                # kind of row it is holding before reading a key.
+                # Always present so a caller reads the key without asking
+                # which kind of row it holds; ``None`` for a parser
+                # diagnostic, filled by :func:`_analyze_guarded`'s crash row.
                 "detail": None,
             }
         )
@@ -244,25 +225,24 @@ def validate(
 ) -> list[dict]:
     """Validate a KQL query and return diagnostics.
 
-    Without ``schema`` only parser diagnostics are returned. With ``schema`` the
-    query is bound and semantic diagnostics (unresolved columns, type errors) are
-    included. Set ``ignore_unknown_tables=True`` to suppress KS204 ("name does
-    not refer to any known table") diagnostics for tables outside the schema.
-
-    ``schema`` takes the same dict-of-tables shapes :func:`parse` accepts.
+    Without ``schema`` only parser diagnostics are returned. With ``schema``
+    the query is bound and semantic diagnostics (unresolved columns, type
+    errors) are included. Set ``ignore_unknown_tables=True`` to suppress KS204
+    ("name does not refer to any known table") diagnostics for tables outside
+    the schema. ``schema`` takes the same dict-of-tables shapes :func:`parse`
+    accepts.
 
     This parses the text. When you already hold a ``KustoQuery``, read
-    :attr:`kustology.KustoQuery.diagnostics` instead — same dicts, no second
+    :attr:`kustology.KustoQuery.diagnostics` instead: same dicts, no second
     parse.
 
     A query that crashes Microsoft's analyzer returns the parser's own
-    diagnostics plus one ``Error`` row naming the .NET exception, rather than
-    raising it — see :func:`_analyze_guarded`.
+    diagnostics plus one ``Error`` row naming the .NET exception, and raises
+    nothing — see :func:`_analyze_guarded`.
 
     ``start`` and ``length`` are code-point offsets into ``query_text``, so
-    they slice it directly.
-
-    Raises ``ValueError`` on text UTF-16 cannot encode; see :func:`parse`.
+    they slice it directly. Raises ``ValueError`` on text UTF-16 cannot
+    encode; see :func:`parse`.
     """
     from .utils.analysis import build_global_state
 

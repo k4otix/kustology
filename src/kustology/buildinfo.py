@@ -25,13 +25,12 @@ class BuildInfo(NamedTuple):
 def build_info() -> BuildInfo:
     """Return the library version, the bundled ``Kusto.Language.dll`` pin, and the two IR tags.
 
-    These are the values a consumer should gate behaviour on.
+    Gate consumer behaviour on these values.
 
     The IR tags are always reported. They describe the IR shape *this version
-    of kustology* defines, which is a fact about the installed source and not
-    about whether the ``[ir]`` extra brought pydantic along; both come from
-    :mod:`kustology._ir_tags`, which imports nothing, so reading them here
-    does not pull the IR into a Tier 1-only process.
+    of kustology* defines, whether or not the ``[ir]`` extra brought pydantic
+    along. Both come from :mod:`kustology._ir_tags`, which imports nothing, so
+    reading them here does not pull the IR into a Tier 1-only process.
     """
     pin = _read_pin()
     return BuildInfo(

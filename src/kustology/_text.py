@@ -3,15 +3,15 @@
 
 """Translate between Python's code-point offsets and .NET's UTF-16 offsets.
 
-A Python ``str`` is indexed by code point. A .NET ``System.String`` is
-indexed by UTF-16 code unit, so every offset ``Kusto.Language`` reports
-(``TextStart``, ``Width``, a diagnostic's ``Start``) counts code units. The
-two agree across the whole Basic Multilingual Plane and diverge by one per
-astral character (an emoji, a rare CJK ideograph, or a historic script) that
-precedes the offset. Slicing the query text you passed in at a .NET offset is
-therefore correct for almost all input and silently wrong for the rest.
+A Python ``str`` is indexed by code point. A .NET ``System.String`` is indexed
+by UTF-16 code unit, so every offset ``Kusto.Language`` reports
+(``TextStart``, ``Width``, a diagnostic's ``Start``) counts code units. The two
+agree across the whole Basic Multilingual Plane and diverge by one per astral
+character (an emoji or a historic script) preceding the offset. Slicing the
+query text at a .NET offset is correct for almost all input and silently wrong
+for the rest.
 
-:class:`Utf16Offsets` converts between the two units, and
+:class:`Utf16Offsets` converts between the two units.
 :func:`check_utf16_encodable` rejects the text .NET cannot represent at all.
 """
 
@@ -30,16 +30,14 @@ def check_utf16_encodable(text: str, what: str = "query text") -> bytes:
     containing ``query: "\ud800"`` decodes to exactly one.
 
     Call this before handing text to ``Kusto.Language``. pythonnet marshals a
-    ``str`` argument by encoding it to UTF-16, and when that fails it raises
-    on the CLR side, where the exception is unhandled and aborts the process
-    with ``SIGABRT``. No Python ``except`` clause intercepts that, including
-    ``except BaseException``, so the check has to happen first.
+    ``str`` argument by encoding it to UTF-16, and a failure there raises on
+    the CLR side, where the exception is unhandled and aborts the process with
+    ``SIGABRT``. No Python ``except`` clause intercepts that, ``except
+    BaseException`` included, so the check has to happen first.
 
     ``what`` names the position for the message, so a bad schema column reads
-    as one instead of as query text.
-
-    Hands back the encoded bytes so a caller that also needs
-    :class:`Utf16Offsets` does not encode twice.
+    as one instead of as query text. The encoded bytes come back so a caller
+    that also needs :class:`Utf16Offsets` does not encode twice.
     """
     try:
         return text.encode("utf-16-le")
@@ -55,12 +53,9 @@ class Utf16Offsets:
     """Offset translation for one string, in both directions.
 
     Build one per query and reuse it. Construction is a single encode plus,
-    for text that needs it, one scan; each translation is then a binary
-    search over the astral characters alone.
-
-    All-BMP text takes an identity fast path where both methods return their
-    argument unchanged. That covers every query holding no emoji and no other
-    astral character.
+    for text that needs it, one scan; each translation is then a binary search
+    over the astral characters alone. All-BMP text takes an identity fast path
+    where both methods return their argument unchanged.
     """
 
     __slots__ = ("_astral_utf16", "_identity")
@@ -70,13 +65,12 @@ class Utf16Offsets:
         if encoded is None:
             encoded = check_utf16_encodable(text)
         # One code unit per code point means no surrogate pairs, so the two
-        # offset spaces coincide. Comparing lengths reads that off the encode
-        # already done, rather than scanning the string a second time.
+        # offset spaces coincide. Comparing lengths reuses the encode already
+        # done instead of scanning the string a second time.
         self._identity = len(encoded) // 2 == len(text)
         # Each entry is the UTF-16 offset of an astral character's leading
-        # surrogate. The k-th such character sits k units further into the
-        # UTF-16 string than into the Python one, which is what makes the
-        # difference between the two offsets countable by bisection.
+        # surrogate. The k-th one sits k units further into the UTF-16 string
+        # than into the Python one, so bisection counts the difference.
         self._astral_utf16: list[int] = (
             []
             if self._identity
@@ -97,10 +91,9 @@ class Utf16Offsets:
         """Convert a UTF-16 offset to a code-point offset.
 
         An offset pointing at the trailing half of a surrogate pair rounds
-        **down** to the pair's start, since that half is not a character a
-        Python index can name. Token boundaries never land there, because a
-        lexer splits on characters, so this governs only hand-computed
-        offsets.
+        down to the pair's start, since no Python index names that half. A
+        lexer splits on characters, so token boundaries never land there and
+        this governs only hand-computed offsets.
         """
         if self._identity:
             return offset
@@ -111,8 +104,8 @@ class Utf16Offsets:
         if self._identity:
             return offset
         # Each astral character at or before ``offset`` in code-point space
-        # adds one unit. Walk the same index in the other direction: the
-        # k-th entry sits at code point ``entry - k``.
+        # adds one unit. Search the same index inverted: the k-th entry sits
+        # at code point ``entry - k``.
         low, high = 0, len(self._astral_utf16)
         while low < high:
             mid = (low + high) // 2
@@ -125,9 +118,9 @@ class Utf16Offsets:
     def span_to_codepoints(self, start: int, width: int) -> tuple[int, int]:
         """Convert a UTF-16 ``(start, width)`` pair to code-point units.
 
-        This translates the end and re-derives the width from it. A width is
-        a difference between two positions, so an astral character inside the
-        span shrinks it by one while leaving the start alone.
+        Translates the end and re-derives the width from it. A width is a
+        difference between two positions, so an astral character inside the
+        span shrinks it by one and leaves the start alone.
         """
         if self._identity:
             return start, width
@@ -152,13 +145,12 @@ def utf16_to_codepoint(text: str, offset: int) -> int:
         'where'
 
     Every offset kustology itself reports is already in code points (Tier 2
-    :class:`~kustology.ir.spans.Span`, the ``start``/``length`` of a
-    diagnostic dict, and ``find_time_expressions``), so this is for callers
-    reading Microsoft's nodes directly.
+    :class:`~kustology.ir.spans.Span`, a diagnostic dict's ``start`` and
+    ``length``, and ``find_time_expressions``), so this is for callers reading
+    Microsoft's nodes directly.
 
-    Indexing ``text`` costs O(len(text)) per call. Translating more than a
-    couple of offsets from one query is what
-    :class:`~kustology._text.Utf16Offsets` is for.
+    Indexing ``text`` costs O(len(text)) per call. Use
+    :class:`~kustology._text.Utf16Offsets` for more than a couple of offsets.
     """
     return Utf16Offsets(text).to_codepoint(offset)
 
@@ -167,7 +159,7 @@ def codepoint_to_utf16(text: str, offset: int) -> int:
     """Convert a code-point offset into ``text`` to a UTF-16 offset.
 
     The inverse of :func:`utf16_to_codepoint`, for comparing an offset you
-    computed in Python against one a raw syntax node reports. Carries the
-    same per-call indexing cost.
+    computed in Python against one a raw syntax node reports. Same per-call
+    indexing cost.
     """
     return Utf16Offsets(text).to_utf16(offset)

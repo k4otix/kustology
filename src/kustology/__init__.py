@@ -4,8 +4,8 @@
 """Python bindings over Microsoft's ``Kusto.Language`` library.
 
 Importing this package starts the .NET runtime, loads the bundled
-``Kusto.Language.dll``, and pins .NET's invariant culture process-wide —
-see :mod:`kustology.bridge` for what that means for the host process.
+``Kusto.Language.dll``, and pins .NET's invariant culture process-wide. See
+:mod:`kustology.bridge` for what that means for the host process.
 """
 
 from ._text import codepoint_to_utf16, utf16_to_codepoint
@@ -43,14 +43,14 @@ __all__ = [
     "TextSpan",
     "TimeExpr",
     "Token",
-    # Offset translation — .NET reports UTF-16 code units, Python indexes
-    # code points; see :mod:`kustology._text`.
+    # Offset translation. .NET reports UTF-16 code units, Python indexes code
+    # points; see :mod:`kustology._text`.
     "utf16_to_codepoint",
     "codepoint_to_utf16",
-    # Culture — importing pins .NET to invariant; this repairs a host that
+    # Culture. Importing pins .NET to invariant; this repairs a host that
     # assigned over the pin. See :func:`kustology.bridge._pin_invariant_culture`.
     "ensure_invariant_culture",
-    # Reflection — always available; reflects the loaded Kusto.Language.dll
+    # Reflection over the loaded Kusto.Language.dll; always available
     "time_functions",
     "aggregate_functions",
     "string_functions",

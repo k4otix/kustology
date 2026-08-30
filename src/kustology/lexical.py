@@ -3,9 +3,9 @@
 
 """Lexical helpers over Microsoft's token stream (Tier 1, pydantic-free).
 
-Each helper reports positions the lexer already decided — comments, string
-literals, statements — as code-point :class:`TextSpan`s. None reinterprets
-the tree: "the main pipeline without its joins" is a Tier 2 question, see
+Each helper reports positions the lexer already decided (comments, string
+literals, statements) as code-point :class:`TextSpan`s. None reinterprets the
+tree: "the main pipeline without its joins" is a Tier 2 question, see
 ``kustology.ir.walk(prune=...)`` and ``span_of``.
 """
 
@@ -20,8 +20,8 @@ from .utils.walker import iter_elements
 
 _STRING_PREFIX = re.compile(r"[hH]?@?")
 # Kusto's lexer ends a comment at CR, LF, U+2028 LINE SEPARATOR or U+2029
-# PARAGRAPH SEPARATOR — NEL (U+0085), VT and FF are not line terminators to
-# it and stay inside the comment.
+# PARAGRAPH SEPARATOR. NEL (U+0085), VT and FF are not line terminators to it
+# and stay inside the comment.
 _LINE_BREAK = re.compile(r"[\n\r\u2028\u2029]")
 
 
@@ -39,8 +39,8 @@ def tokens(kusto_code: Any) -> list[Token]:
     r"""Return every token, including the final ``EndOfTextToken`` that owns trailing trivia.
 
     On a malformed query the list also includes the zero-width placeholder
-    tokens the parser inserts for what it expected but did not find — empty
-    ``text``, no source of their own — for example the missing operand
+    tokens the parser inserts for what it expected but did not find. They have
+    empty ``text`` and no source of their own, such as the missing operand
     ``IdentifierToken`` in ``T | where // c\n``.
     """
     offsets = Utf16Offsets(str(kusto_code.Text))
@@ -53,10 +53,10 @@ def tokens(kusto_code: Any) -> list[Token]:
             trivia_span=TextSpan(*offsets.span_to_codepoints(tok.TriviaStart, tok.TriviaWidth)),
         )
         # ``True`` is ``includeZeroWidthTokens`` (optional, default
-        # ``False``): a token is dropped only when both its own width and
-        # its trivia width are zero — an ``EndOfTextToken`` with no
-        # trailing comment, or a parser-inserted placeholder token that
-        # picked up no trivia — not every zero-width token.
+        # ``False``). A token is dropped only when its own width and its
+        # trivia width are both zero, such as an ``EndOfTextToken`` with no
+        # trailing comment or a parser-inserted placeholder that picked up
+        # no trivia.
         for tok in kusto_code.Syntax.GetTokens(True)
     ]
 

@@ -39,8 +39,7 @@ class KustoQuery:
     ):
         """Wrap an already-parsed ``KustoCode``; use :func:`kustology.parse` instead of calling this directly."""
         self._code = kusto_code
-        # Diagnostics kustology raised about this parse rather than ones
-        # Microsoft's parser or binder produced — carrying
+        # kustology's own diagnostics about this parse, carrying
         # :func:`kustology.services._analyze_guarded`'s record that the
         # analyzer crashed and the tree is the unbound parse.
         self._extra_diagnostics: list[dict] = list(extra_diagnostics or [])
@@ -64,10 +63,10 @@ class KustoQuery:
         """The root ``SyntaxNode`` of Microsoft's parse tree (a ``QueryBlock``).
 
         Offsets on these nodes (``TextStart``, ``Width``, ``End``) count
-        UTF-16 code units, not code points, so slicing :attr:`text` with one
-        is wrong as soon as the query holds an astral character. Convert with
-        :func:`kustology.utf16_to_codepoint`. Every offset kustology itself
-        reports is already a code-point offset.
+        UTF-16 code units, so slicing :attr:`text` with one is wrong as soon
+        as the query holds an astral character. Convert with
+        :func:`kustology.utf16_to_codepoint`. Every offset kustology reports
+        is already a code-point offset.
         """
         return self._code.Syntax
 
@@ -85,25 +84,24 @@ class KustoQuery:
     def diagnostics(self) -> list[dict]:
         """This query's diagnostics, in :func:`kustology.validate`'s dict shape.
 
-        ``start`` and ``length`` are code-point offsets into :attr:`text`.
-
-        Read off the ``KustoCode`` this object already holds — no second
-        parse — so on a bound query the binder's semantic diagnostics
+        ``start`` and ``length`` are code-point offsets into :attr:`text`. The
+        list is read off the ``KustoCode`` this object already holds, with no
+        second parse, so on a bound query the binder's semantic diagnostics
         (unresolved columns, type errors) are included and on an unbound one
         the parser's are all there is. ``validate(text)`` answers the same
         question for text you have not parsed yet.
 
-        Unfiltered: unlike ``validate(..., ignore_unknown_tables=True)``
-        there is no way to suppress ``KS204`` here. Filter the list yourself
-        — ``[d for d in q.diagnostics if d["code"] != "KS204"]`` — since the
-        parse is already done and doing it here would only hide rows.
+        Unfiltered: there is no way to suppress ``KS204`` here, as
+        ``validate(..., ignore_unknown_tables=True)`` does. The parse is
+        already done, so filtering here would only hide rows. Filter the list
+        yourself: ``[d for d in q.diagnostics if d["code"] != "KS204"]``.
 
-        One row can come from kustology rather than from Microsoft: if the
-        analyzer crashed while ``parse(..., schema=...)`` was binding this
-        tree, the crash is reported here as an ``Error`` with the code
+        One row can come from kustology: if the analyzer crashed while
+        ``parse(..., schema=...)`` was binding this tree, the crash is
+        reported here as an ``Error`` with the code
         :data:`kustology.services.ANALYZE_FAILED_CODE` and the tree is the
-        unbound parse. :meth:`to_ir` does not repeat that row — it re-analyzes
-        and records its own.
+        unbound parse. :meth:`to_ir` re-analyzes and records its own row
+        instead of repeating this one.
         """
         return _diagnostic_dicts(
             self._code.GetDiagnostics(), self._offsets,
@@ -112,28 +110,24 @@ class KustoQuery:
     def get_referenced_tables(self, force_syntactic: bool = False) -> set[str]:
         """Return the set of tables referenced by the query.
 
-        Uses the binder when the query was parsed with a schema, the syntactic
-        walk otherwise — and on a bound query, the syntactic walk as well, for
-        the names the binder could not resolve. Pass ``force_syntactic=True``
-        to bypass the binder entirely (mainly useful for benchmarking and
-        parity checks).
+        Uses the binder when the query was parsed with a schema and the
+        syntactic walk otherwise. On a bound query it runs the syntactic walk
+        as well, for names the binder could not resolve, so a table the schema
+        does not describe is still reported and a partial schema cannot make a
+        table disappear. Pass ``force_syntactic=True`` to bypass the binder
+        entirely, which is mainly useful for benchmarking and parity checks.
 
         ``let`` aliases, ``as`` aliases, function parameters and wildcard
-        patterns are not tables and are excluded; the binding's own
-        right-hand side is included — in ``let T = T | where x; T | take 1``
-        the right-hand ``T`` is the real table and the rest is the alias.
+        patterns are excluded. The binding's own right-hand side is included:
+        in ``let T = T | where x; T | take 1`` the right-hand ``T`` is the
+        real table and the rest is the alias.
 
-        On a bound query the result is *not* limited to what the binder
-        resolved: a table the schema does not describe is still reported, so
-        a partial schema cannot make a table disappear.
-
-        One position is bind-dependent in the other direction: the node
-        table in ``make-graph``'s ``with`` clause. The syntactic walk does
-        not reach it, so ``parse("Edges | make-graph src --> dst with Nodes
-        on n").get_referenced_tables()`` answers ``{"Edges"}`` while the
-        same query bound answers ``{"Edges", "Nodes"}``.
-        :meth:`replace_table` inherits the split — a no-op unbound, a
-        correct rewrite bound. Bind before migrating tables in a query that
+        One position is bind-dependent in the other direction: the node table
+        in ``make-graph``'s ``with`` clause. The syntactic walk does not reach
+        it, so ``parse("Edges | make-graph src --> dst with Nodes on
+        n").get_referenced_tables()`` answers ``{"Edges"}`` while the same
+        query bound answers ``{"Edges", "Nodes"}``. :meth:`replace_table`
+        inherits the split. Bind before migrating tables in a query that
         builds a graph.
         """
         return {
@@ -171,14 +165,12 @@ class KustoQuery:
         Descent stops at :data:`kustology.utils.walker.MAX_AST_DEPTH`; a node
         at the cap is emitted with no children and an extra
         ``"truncated": True``. The cap exists because the AST's depth is the
-        Python stack's depth — without one, a few kilobytes of parentheses
-        outrun CPython's frame limit and raise ``RecursionError``. Real
-        queries stay well inside it, but not as far inside as
-        they look: counting the root as level 0, the 49-fixture corpus has a
-        median depth of 18 and a deepest of 42
-        (``FileHashEntity_SecurityEvent.kql``), and 22 of the 49 go past 20.
-        The cap of 300 is still seven times that deepest measurement, so the
-        key is absent from ordinary output.
+        Python stack's depth: without one, a few kilobytes of parentheses
+        outrun CPython's frame limit and raise ``RecursionError``. Counting
+        the root as level 0, the 49-fixture corpus has a median depth of 18
+        and a deepest of 42 (``FileHashEntity_SecurityEvent.kql``), and 22 of
+        the 49 go past 20. The cap of 300 is seven times that deepest
+        measurement, so the key is absent from ordinary output.
         """
         return node_to_dict(self.syntax)
 
@@ -217,7 +209,7 @@ class KustoQuery:
     def find_time_expressions(self) -> list[TimeExpr]:
         """Return ``[TimeExpr(text, start, length), ...]`` in source order.
 
-        A discovery aid, not a lookback extractor — see
+        A discovery aid; it does not resolve a lookback window. See
         :func:`kustology.utils.analysis.find_time_expressions`.
         """
         return find_time_expressions(self._code)
@@ -284,88 +276,79 @@ class KustoQuery:
     ):
         """Build the pydantic IR from this ``KustoCode``. Requires the ``[ir]`` extra.
 
-        Reuses the already-parsed AST (no second parse). If bound with a
-        schema, the binder's ``GlobalState`` is reused so symbol-resolved
-        nodes keep their types — Microsoft's binder populates
+        Reuses the already-parsed AST, so there is no second parse. On a parse
+        bound with a schema the binder's ``GlobalState`` is reused, so
+        symbol-resolved nodes keep the types Microsoft's binder writes into
         ``Expr.result_type`` on the way through.
 
         **Without a schema the binder still runs**, against
-        ``GlobalState.Default``. ``KustoCode.Analyze(globals)`` binds the
-        tree already in hand and hands back a *new* bound ``KustoCode``, so
-        this costs no second parse and leaves this object syntactic —
-        ``has_semantics`` stays ``False`` and every Tier 1 accessor keeps
-        taking its syntactic path. What it buys is real types for everything
-        that does not need a table: ``1h`` is a ``timespan``, ``1.5`` a
+        ``GlobalState.Default``. ``KustoCode.Analyze(globals)`` binds the tree
+        in hand and hands back a *new* bound ``KustoCode``, so this object
+        stays syntactic: ``has_semantics`` stays ``False`` and every Tier 1
+        accessor keeps taking its syntactic path. It buys real types for
+        everything that needs no table — ``1h`` is a ``timespan``, ``1.5`` a
         ``real``, ``ago(1h)`` a ``datetime``.
 
-        Those types come from the half of ``GlobalState.Default`` that is
-        *populated*: Kusto's built-in functions, aggregates and plug-ins,
-        several hundred of them. ``ago`` resolves there, and so does every
-        other built-in. What is empty is the default **database** — no
-        tables, no user functions, no external tables, materialized views,
-        entity groups or stored query results — and the cluster list. So
-        every name that has to come from a database fails to resolve, and
-        the whole unknown-name diagnostic family those failures raise
-        (:data:`kustology.services._UNKNOWN_NAME_CODES`, twelve codes of
-        which ``KS204`` "the name X does not refer to any known table" is
-        one) is an artifact of how the types were obtained rather than
-        anything the caller wrote. It is filtered out. A parse the caller
-        bound with their own schema keeps every one of them, because there
-        an undescribed name is a real error.
+        Those types come from the populated half of ``GlobalState.Default``:
+        Kusto's built-in functions, aggregates and plug-ins, several hundred
+        of them, where ``ago`` and every other built-in resolves. Empty are
+        the default **database** — no tables, no user functions, no external
+        tables, materialized views, entity groups or stored query results —
+        and the cluster list. Every name that has to come from a database
+        therefore fails to resolve, so the whole unknown-name diagnostic
+        family those failures raise
+        (:data:`kustology.services._UNKNOWN_NAME_CODES`, twelve codes of which
+        ``KS204`` "the name X does not refer to any known table" is one) is an
+        artifact of how the types were obtained, and it is filtered out. A
+        parse the caller bound with their own schema keeps every one of them,
+        because there an undescribed name is a real error.
 
         A clean ``diagnostics`` list from a schemaless ``to_ir()`` therefore
-        means "nothing wrong that default globals could see" — it does not
-        mean the query's tables, columns or user functions exist. Bind with
-        a schema to ask that question.
+        means "nothing wrong that default globals could see". It says nothing
+        about whether the query's tables, columns or user functions exist.
+        Bind with a schema to ask that question.
 
-        Microsoft's binder is where types and per-operator output schemas
-        come from whenever a schema is in play — ``Expr.result_type`` and
-        ``Pipeline.result_schema`` alike. That schema can arrive at parse
-        time (``parse(query, schema=...)``) or right here: a non-empty
-        ``dict`` passed as ``attach_schema`` re-binds the *same tree*
-        against it (``self._code.Analyze(build_global_state(dict))`` — no
-        re-parse, and the receiver stays untouched) rather than merely
-        decorating whatever the parse already knew. ``SchemaAttacher`` is
-        the second, separate pass: it fills ``ColumnRef.table`` — which
-        table a resolved column came from — and sets
-        ``QueryIR.schema_attached = True``.
+        Microsoft's binder supplies types and per-operator output schemas
+        whenever a schema is in play, ``Expr.result_type`` and
+        ``Pipeline.result_schema`` alike. That schema arrives at parse time
+        (``parse(query, schema=...)``) or through ``attach_schema`` here.
+        ``SchemaAttacher`` is the second, separate pass: it fills
+        ``ColumnRef.table`` with the table a resolved column came from and
+        sets ``QueryIR.schema_attached = True``.
 
         ``attach_schema`` controls whether the provenance pass
-        (``SchemaAttacher``) runs — and, only for a non-empty ``dict``,
-        what the binder binds against for this call too:
+        (``SchemaAttacher``) runs, and for a non-empty ``dict`` also what the
+        binder binds against for this call:
 
         * ``None`` (default) — auto-attach iff the parse was bound, so
           ``parse(query, schema=...).to_ir()`` returns a fully enriched
           IR without restating the schema.
         * ``True`` — force the attach pass using the schema captured at
           parse time.
-        * ``False`` — skip the attach pass even on a bound parse. Use
-          when you only want the binder's ``result_type`` and none of
-          the table provenance.
-        * non-empty ``dict`` — re-bind against ``build_global_state(dict)``
-          and run the attach pass with the same dict. This is a real
-          re-bind, not an overlay: on an already-bound parse it replaces
-          the parse-time schema for this call rather than layering on top
-          of it, and the resulting output schemas, types, and IR shape now
-          match ``parse(query, schema=dict).to_ir()`` exactly — ``let A = T``
+        * ``False`` — skip the attach pass even on a bound parse. Use it
+          when you want the binder's ``result_type`` and none of the table
+          provenance.
+        * non-empty ``dict`` — re-bind the *same tree* against
+          ``build_global_state(dict)``, with no re-parse and the receiver
+          untouched, then run the attach pass with the same dict. On an
+          already-bound parse this replaces the parse-time schema for this
+          call, and the resulting output schemas, types and IR shape match
+          ``parse(query, schema=dict).to_ir()`` exactly: ``let A = T``
           lowers to ``rhs_pipeline`` whenever ``T`` resolves in *either*
-          path. A partial dict — one that omits a table the query
-          references — leaves that symbol open: Microsoft's binder does not
-          raise, it reports the affected operator's ``result_schema`` as
-          ``None`` rather than guessing.
-          Diagnostics do not follow that equivalence: unknown-name
-          suppression tracks the *receiver's* own bind state, not the
-          dict's, so a dict on an unbound receiver stays lenient about
-          unknown names (``parse(q).to_ir(attach_schema=d)``) while the
-          same dict on a bound receiver keeps them
-          (``parse(q, schema=d).to_ir()``).
+          path. A partial dict, one that omits a table the query
+          references, leaves that symbol open, and Microsoft's binder
+          reports the affected operator's ``result_schema`` as ``None``
+          without raising. Diagnostics do not follow that equivalence:
+          unknown-name suppression tracks the *receiver's* own bind state,
+          so a dict on an unbound receiver stays lenient about unknown
+          names (``parse(q).to_ir(attach_schema=d)``) while the same dict
+          on a bound receiver keeps them (``parse(q, schema=d).to_ir()``).
         * ``{}`` — falsy, so treated the same as ``False``: no re-bind,
           no attach pass.
 
-        ``semantic_hash=True`` computes the digest during the build, which
-        is the larger part of it. The default defers computing
-        :attr:`QueryIR.semantic_hash` to its first read, where it is
-        memoized.
+        ``semantic_hash=True`` computes the digest during the build, which is
+        the larger part of it. The default defers
+        :attr:`QueryIR.semantic_hash` to its first read, where it is memoized.
         """
         from .ir.builder import IRBuilder  # local import: triggers the [ir] extra guard lazily
 
@@ -377,41 +360,33 @@ class KustoQuery:
         )
         failure: dict | None = None
         if schemas is not None:
-            # A dict is a real binding request: re-bind the tree in hand
-            # against it. ``Analyze`` does not re-lex the text and does not
-            # mutate ``self._code``, so the receiver stays syntactic (or
-            # keeps its parse-time binding) regardless.
-            #
-            # Guarded: Microsoft's binder crashes outright on some
-            # clean-parsing input, and the fallback is the tree we already
-            # hold. ``build_global_state`` stays outside the guard — a
-            # malformed schema dict is the caller's error and must still
-            # raise. See ``services._analyze_guarded``.
+            # ``Analyze`` re-binds the tree in hand without re-lexing the text
+            # or mutating ``self._code``, so the receiver keeps its own bind
+            # state. Guarded because Microsoft's binder crashes on some
+            # clean-parsing input; the fallback is the tree already held.
+            # ``build_global_state`` stays outside the guard: a malformed
+            # schema dict is the caller's error and must still raise.
             state = build_global_state(schemas)
             code, failure = _analyze_guarded(
                 lambda: self._code.Analyze(state), lambda: self._code,
             )
-            # ``build_global_state`` accepts three value shapes — a
+            # ``build_global_state`` accepts three value shapes: a
             # ``{col: type}`` dict, a Kusto schema string ``"(col:type)"``,
-            # and a bare ``[col]`` list — and ``parse(schema=...)``
-            # documents all three, so this entry point has to take them too.
-            # ``SchemaAttacher`` takes only the first: it reads
-            # ``schemas[table][column]``, so fed a string value it crashes
-            # and fed a list it resolves only by coincidence.
+            # and a bare ``[col]`` list. ``parse(schema=...)`` documents all
+            # three, so this entry point takes them too. ``SchemaAttacher``
+            # takes only the first — it reads ``schemas[table][column]`` — so
+            # a string value crashes it and a list resolves by coincidence.
             #
-            # Reading the shapes back off the ``GlobalState`` normalizes all
-            # three at once, and reuses the parsing Microsoft already did
-            # rather than re-implementing it. It is read from ``code.Globals``
-            # rather than from the state object so the attacher is guaranteed
-            # to see exactly what the *builder* bound against, which is the
-            # same source ``attach_schema=True`` already normalizes from.
+            # Reading the shapes back off ``code.Globals`` normalizes all
+            # three through the parsing Microsoft already did, and guarantees
+            # the attacher sees what the *builder* bound against: the same
+            # source ``attach_schema=True`` normalizes from.
             schemas = _extract_schemas_from_global_state(code.Globals)
         elif bound_by_caller:
             code = self._code
         else:
-            # ``Analyze`` binds this tree; it does not re-lex the text and
-            # it does not mutate ``self._code``. Guarded for the same
-            # reason the dict path above is.
+            # ``Analyze`` binds this tree without re-lexing the text or
+            # mutating ``self._code``. Guarded like the dict path above.
             code, failure = _analyze_guarded(
                 lambda: self._code.Analyze(GlobalState.Default), lambda: self._code,
             )
@@ -423,9 +398,9 @@ class KustoQuery:
         if failure is not None:
             from .ir.query import Diagnostic
 
-            # No span: the failure is a fault in the analyzer, not a region of
-            # the query. ``QueryIR.diagnostics`` is not in the hash payload,
-            # so appending after the build does not stale ``semantic_hash``.
+            # No span: a fault in the analyzer covers no region of the query.
+            # ``QueryIR.diagnostics`` is outside the hash payload, so
+            # appending after the build cannot stale ``semantic_hash``.
             ir.diagnostics.append(Diagnostic(
                 message=failure["message"],
                 severity=failure["severity"],

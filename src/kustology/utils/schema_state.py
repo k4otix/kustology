@@ -5,10 +5,9 @@
 
 The IR binder, the validator's schema-aware paths, and tests all need a bound
 ``GlobalState`` to drive Microsoft's ``KustoCode.ParseAndAnalyze``. This module
-is the one place that knows how to translate the documented Python schema
-shapes (``{table: {col: type}}``, ``"(col:type, ...)"``, or ``[col, ...]``)
-into the corresponding .NET ``TableSymbol`` / ``ColumnSymbol`` / ``DatabaseSymbol``
-tree.
+is the one place that translates the documented Python schema shapes
+(``{table: {col: type}}``, ``"(col:type, ...)"``, ``[col, ...]``) into the .NET
+``TableSymbol`` / ``ColumnSymbol`` / ``DatabaseSymbol`` tree.
 """
 
 from __future__ import annotations
@@ -30,29 +29,28 @@ from ..bridge import (
 # library; the first frame above it is the caller a warning should name.
 _PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + os.sep
 
-# Microsoft's own name for "no type": ``ScalarTypes.Unknown.Name``. Not in the
-# ``GetSymbol`` table, so it has to be answered before the lookup -- see
-# ``_resolve_scalar_type``. The IR spells the same idea the same way in
-# ``TabularSchema.columns``; ``KustoType.UNRESOLVED`` ("unresolved") is the
-# separate, enum-typed sentinel for an expression's type.
+# Microsoft's own name for "no type": ``ScalarTypes.Unknown.Name``, which the
+# ``GetSymbol`` table does not carry, so ``_resolve_scalar_type`` answers it
+# before the lookup. The IR spells it the same way in ``TabularSchema.columns``;
+# ``KustoType.UNRESOLVED`` ("unresolved") is the separate, enum-typed sentinel
+# for an expression's type.
 _UNKNOWN_TYPE_NAME = "unknown"
 
 
 def _caller_stacklevel() -> int:
     """Return the ``warnings.warn`` stacklevel of the first frame outside this package.
 
-    A hardcoded number cannot be right here. The depth from
-    :func:`_resolve_scalar_type` out to user code depends on which entry point
-    was used — ``parse`` and ``validate`` are one frame deeper than a direct
-    :func:`build_global_state` call — and, worse, on the Python version:
-    PEP 709 inlined comprehensions in **3.12**, and this project supports
-    3.10 and 3.11, where the two comprehensions in this module each push a
-    frame of their own. A constant tuned on 3.12 is attributed back into this
-    very file on those interpreters, which is the bug the level exists to
-    avoid. Walking out to the package boundary is correct on every version by
-    construction, and needs no maintenance when the call chain changes.
+    A hardcoded number cannot be right. The depth from
+    :func:`_resolve_scalar_type` out to user code depends on the entry point,
+    since ``parse`` and ``validate`` are one frame deeper than a direct
+    :func:`build_global_state` call. It also depends on the Python version:
+    PEP 709 inlined comprehensions in 3.12, and on the 3.10 and 3.11 this
+    project also supports, the two comprehensions in this module each push a
+    frame of their own. A constant tuned on 3.12 attributes the warning back
+    into this file on those interpreters. Walking out to the package boundary
+    is correct on every version and survives changes to the call chain.
 
-    ``stacklevel=1`` means the frame that calls ``warn``; that frame is this
+    ``stacklevel=1`` means the frame that calls ``warn``, which is this
     function's caller, so the walk starts there at 1 and counts outward.
     ``skip_file_prefixes=`` does the same job in one argument and is 3.12-only.
     """
@@ -64,8 +62,7 @@ def _caller_stacklevel() -> int:
         parent = frame.f_back
         if parent is None:
             # Nothing outside the package on this stack (an internal call at
-            # import time). Naming the outermost frame we have beats pointing
-            # past the top of the stack, which renders as "sys:1".
+            # import time); pointing past the top would render as "sys:1".
             return level
         frame = parent
         level += 1
@@ -78,38 +75,33 @@ def _resolve_scalar_type(type_name: str, *, column: str | None = None):
     The lookup key is case-folded. ``ScalarTypes.GetSymbol`` is an exact
     dictionary lookup and every scalar type name and alias in the grammar is
     lower-case (``long``, ``int64``, ``datetime``, ``boolean``, …), so an
-    unfolded lookup misses a schema transcribed from a portal column list —
-    ``"LONG"``, ``"DateTime"`` — every time and silently mistypes those
-    columns ``string``. Folding cannot collide with a real name, because
-    there is no scalar type whose spelling differs from another only by case.
+    unfolded lookup misses a schema transcribed from a portal column list
+    (``"LONG"``, ``"DateTime"``) every time and silently types those columns
+    ``string``. No two scalar types differ only by case, so folding cannot
+    collide with a real name.
 
     A genuine miss is the caller's typo in their own schema dict, so the
-    warning is reported against the caller's own line rather than against
-    this file — see :func:`_caller_stacklevel` for why that depth is computed
-    and not written down. Attributed at the library's own file instead, the
-    warning names a module the caller does not own,
+    warning is attributed to the caller's own line; :func:`_caller_stacklevel`
+    explains why that depth is computed. Attributed at the library's own file,
+    the warning names a module the caller does not own,
     ``-W error::RuntimeWarning`` blames the wrong place, and the default
-    "once per location" filter folds every caller's typo into a single
-    report.
+    "once per location" filter folds every caller's typo into a single report.
 
     ``"unknown"`` is answered directly. It is Microsoft's own name for "no
     type" (``ScalarTypes.Unknown.Name``) and what
     :func:`extract_schemas_from_global_state` emits for a column the binder
-    could not type — but ``GetSymbol`` does not carry it, so left to the
-    lookup the dict form scolds the caller for a real type name and hands
-    back ``string`` while ``{"T": "(c:unknown)"}`` keeps it, and
-    round-tripping the extractor's own output through
-    :func:`build_global_state` silently retypes those columns.
+    could not type, and ``GetSymbol`` does not carry it. Left to the lookup,
+    the dict form warns about a real type name and hands back ``string`` while
+    ``{"T": "(c:unknown)"}`` keeps it, so round-tripping the extractor's own
+    output through :func:`build_global_state` silently retypes those columns.
 
-    A non-``str`` type name is a ``TypeError`` raised here rather than at the
-    CLR boundary: ``GetSymbol(None)`` surfaces as a bare
-    ``System.ArgumentNullException`` with a .NET stack trace through
-    ``System.Collections.Generic.Dictionary``, and ``GetSymbol(5)`` as
-    pythonnet's "No method matches given arguments",
-    neither of which mentions schemas. ``column`` puts the offending key in
-    the message, so every schema-shape error this module raises names its own
-    position — the schema, a table name, a table's value, a column name, a
-    column's type.
+    A non-``str`` type name raises ``TypeError`` here, before the CLR boundary.
+    ``GetSymbol(None)`` surfaces as a bare ``System.ArgumentNullException``
+    with a .NET stack trace through ``System.Collections.Generic.Dictionary``,
+    and ``GetSymbol(5)`` as pythonnet's "No method matches given arguments";
+    neither mentions schemas. ``column`` puts the offending key in the message,
+    so every schema-shape error this module raises names its own position: the
+    schema, a table name, a table's value, a column name, or a column's type.
     """
     if not isinstance(type_name, str):
         where = f" for column {column!r}" if column is not None else ""
@@ -138,22 +130,19 @@ def _resolve_scalar_type(type_name: str, *, column: str | None = None):
 def _warn_on_untyped_schema_string_columns(name: str, table) -> None:
     """Warn for each column Microsoft's schema-string parser left ``unknown``.
 
-    ``TableSymbol.From("(n:bogus)")`` does not reject the unrecognized name:
-    it types the column ``ScalarTypes.Unknown`` and returns, so without a
-    warning the typo reaches the binder and resolves nothing while the
-    equivalent dict form ``{"n": "bogus"}`` warns. Same mistake, same
-    category of warning, same attribution — the only difference is the
-    fallback, and Microsoft's
-    ``unknown`` is kept because substituting ``string`` here would invent a
-    type the caller never wrote.
+    ``TableSymbol.From("(n:bogus)")`` accepts the unrecognized name, types the
+    column ``ScalarTypes.Unknown``, and returns, so without a warning the typo
+    reaches the binder and resolves nothing. The equivalent dict form
+    ``{"n": "bogus"}`` warns in the same category with the same attribution.
+    It differs in the fallback: Microsoft's ``unknown`` is kept here, since
+    substituting ``string`` would invent a type the caller never wrote.
 
     A bare name (``"(a)"``) lands in the same place. The documented way to
     say "untyped" is the list form ``{"T": ["a"]}``, which means ``string``;
     a name with no type inside a schema string means neither.
 
-    The stack is walked once for the whole table: the depth is a property of
-    this frame, not of the column being reported, so it cannot differ
-    between iterations.
+    The stack is walked once for the whole table. The depth is a property of
+    this frame, so it cannot differ between the columns reported.
     """
     unresolved = [col for col in table.Columns if col.Type == ScalarTypes.Unknown]
     if not unresolved:
@@ -173,9 +162,9 @@ def _check_column_name(column, table: str):
     """Check that a column key is a str; it becomes the ``ColumnSymbol.Name`` verbatim.
 
     ``ColumnSymbol(5, …)`` surfaces as pythonnet's "No method matches given
-    arguments for ColumnSymbol..ctor" — the same unnameable, schema-silent
-    wording :func:`_resolve_scalar_type` heads off for the *type* position
-    one argument to the right.
+    arguments for ColumnSymbol..ctor", the same unnameable, schema-silent
+    wording :func:`_resolve_scalar_type` heads off for the type position one
+    argument to the right.
     """
     if not isinstance(column, str):
         raise TypeError(
@@ -196,12 +185,10 @@ def _build_table_symbol(name: str, cols):
         )
     check_utf16_encodable(name, "Schema table name")
     if isinstance(cols, str):
-        # ``TableSymbol.From`` is permissive to a fault -- ``"("``, ``"junk"``
-        # and ``"(a:long"`` are all accepted -- but it raises
-        # ``System.InvalidOperationException`` on an empty or whitespace-only
-        # string, a CLR type a caller cannot name without importing from the
-        # CLR and cannot catch except by bare ``except Exception``. That one
-        # input is the whole difference this guard makes.
+        # ``TableSymbol.From`` accepts ``"("``, ``"junk"`` and ``"(a:long"``,
+        # but raises ``System.InvalidOperationException`` on an empty or
+        # whitespace-only string: a CLR type a caller cannot name without
+        # importing from the CLR, or catch except by bare ``except Exception``.
         if not cols.strip():
             raise ValueError(
                 f"Empty schema string for table {name!r}. Use "
@@ -232,9 +219,9 @@ def _build_table_symbol(name: str, cols):
 def extract_schemas_from_global_state(global_state) -> dict[str, dict[str, str]]:
     """Walk a Microsoft ``GlobalState`` and return ``{table: {col: type}}``.
 
-    Inverse of :func:`build_global_state`. Used by ``KustoQuery.to_ir(attach_schema=True)``
-    to recover the schema dict ``SchemaAttacher`` wants without forcing the
-    caller to keep a Python copy alongside the bound ``KustoCode``.
+    Inverse of :func:`build_global_state`. ``KustoQuery.to_ir(attach_schema=True)``
+    uses it to recover the schema dict ``SchemaAttacher`` wants without making
+    the caller keep a Python copy alongside the bound ``KustoCode``.
     """
     out: dict[str, dict[str, str]] = {}
     db = getattr(global_state, "Database", None)
@@ -266,29 +253,27 @@ def build_global_state(schema):
       * dict ``{table: "(col:type, ...)"}`` — per-table Kusto schema string
       * dict ``{table: [col, ...]}`` — untyped columns (treated as string)
 
-    **Every key is a raw name, not query text.** Table keys and column keys
-    become the ``Name`` of a ``TableSymbol`` / ``ColumnSymbol`` verbatim.
-    The bracket-quoting ``["my col"]`` / ``['my col']`` is KQL *query* syntax
-    for referring to a name that is not a bare identifier; written as a key
-    it is taken literally, so ``{"T": {"['my col']": "string"}}`` declares a
-    column whose name is the ten characters ``['my col']`` and no query can
-    reach it. Write ``{"T": {"my col": "string"}}`` and let the query do the
-    quoting.
+    Every key is a raw name. Table keys and column keys become the ``Name`` of
+    a ``TableSymbol`` or ``ColumnSymbol`` verbatim. The bracket-quoting
+    ``["my col"]`` / ``['my col']`` is KQL query syntax for a name that is not
+    a bare identifier; as a key it is taken literally, so
+    ``{"T": {"['my col']": "string"}}`` declares a column named by the ten
+    characters ``['my col']`` that no query can reach. Write
+    ``{"T": {"my col": "string"}}`` and let the query do the quoting.
 
-    Type names are case-insensitive (``"LONG"`` is ``long``) and
-    ``"unknown"`` is accepted as Microsoft's own name for "no type", so the
-    output of :func:`extract_schemas_from_global_state` round-trips. An
-    unrecognized name falls back to ``string`` with a ``RuntimeWarning``;
-    inside a schema string it is Microsoft's ``unknown`` — also a
-    ``RuntimeWarning``, but without the fallback.
+    Type names are case-insensitive (``"LONG"`` is ``long``), and ``"unknown"``
+    is accepted as Microsoft's own name for "no type", so the output of
+    :func:`extract_schemas_from_global_state` round-trips. An unrecognized name
+    falls back to ``string`` with a ``RuntimeWarning``. Inside a schema string
+    it stays Microsoft's ``unknown``, also with a ``RuntimeWarning``.
 
-    Wrong-typed input raises rather than reaching the CLR: a non-``str``
-    table name, column name or type name is a ``TypeError``, a table value
-    that is none of the three forms is a ``TypeError``, and an empty or
-    whitespace-only schema string is a ``ValueError``. A name, type, or schema
-    string holding an unpaired surrogate is a ``ValueError`` too: UTF-16
-    cannot encode one, and pythonnet's failure to marshal it aborts the
-    process. Every message names the position it rejects.
+    Wrong-typed input raises before reaching the CLR. A non-``str`` table name,
+    column name or type name is a ``TypeError``, as is a table value that is
+    none of the three forms; an empty or whitespace-only schema string is a
+    ``ValueError``. A name, type, or schema string holding an unpaired
+    surrogate is a ``ValueError`` too: UTF-16 cannot encode one, and
+    pythonnet's failure to marshal it aborts the process. Every message names
+    the position it rejects.
     """
     if not isinstance(schema, dict):
         raise TypeError(

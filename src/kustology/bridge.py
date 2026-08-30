@@ -5,10 +5,10 @@
 
 Importing this module has process-wide side effects, in order: CoreCLR is
 initialized, the bundled ``Kusto.Language.dll`` is referenced, and .NET's
-culture is pinned to invariant — see :func:`_pin_invariant_culture` for why
-the pin is global and permanent. Downstream modules import from here — or
-import this module for its side effects — so initialization precedes any
-use of the CLR.
+culture is pinned to invariant. See :func:`_pin_invariant_culture` for why
+the pin is global and permanent. Downstream modules import from here, or
+import this module for its side effects, so initialization precedes any use
+of the CLR.
 """
 
 import logging
@@ -21,15 +21,13 @@ import pythonnet
 
 logger = logging.getLogger(__name__)
 
-# `_pin_invariant_culture` binds these at import, so
-# `ensure_invariant_culture` compares against a cached object instead of
-# importing `System.Globalization` on every call.
+# `_pin_invariant_culture` binds these at import so `ensure_invariant_culture`
+# compares a cached object instead of importing `System.Globalization` per call.
 _INVARIANT: Any = None
 _OBJECT: Any = None
 _CULTURE_TYPE: Any = None
 
-# The `opt` symlink, not a `Cellar/X.Y.Z/` path, so detection survives
-# `brew upgrade`.
+# Use the `opt` symlink. A `Cellar/X.Y.Z/` path breaks on `brew upgrade`.
 _HOMEBREW_OPT_PATHS = [
     Path("/opt/homebrew/opt/dotnet/libexec"),
     Path("/usr/local/opt/dotnet/libexec"),
@@ -58,13 +56,12 @@ def _load_runtime() -> None:
     """Initialize CoreCLR, probing known dotnet roots when the default fails.
 
     pythonnet defaults to Mono off-Windows, so coreclr is always requested
-    explicitly. An explicit ``DOTNET_ROOT`` is honored with no fallback:
-    when the host pins a root, failing loudly there beats probing past it.
-    Otherwise the default load runs first, then each candidate root in
-    turn. The probes exist because ``clr_loader.find_dotnet_root()`` falls
-    back to the parent of ``which dotnet``, which is wrong for Homebrew's
-    layout — ``libhostfxr.dylib`` lives under ``<dotnet>/libexec/host/fxr/``,
-    not ``<dotnet>/bin/host/fxr/``.
+    explicitly. An explicit ``DOTNET_ROOT`` is honored with no fallback, so a
+    host that pins a root fails loudly there. Otherwise the default load runs
+    first, then each candidate root in turn. The probes cover Homebrew, whose
+    ``libhostfxr.dylib`` lives under ``<dotnet>/libexec/host/fxr/``;
+    ``clr_loader.find_dotnet_root()`` falls back to the parent of
+    ``which dotnet`` and looks in ``<dotnet>/bin/host/fxr/``.
     """
     if pythonnet.get_runtime_info():
         return
@@ -103,9 +100,9 @@ def _pin_invariant_culture() -> None:
     """Pin .NET's culture to invariant, process-wide, before any parsing.
 
     Kusto's ``LiteralValue`` is evaluated lazily on property access, using the
-    culture live at that moment — not the one active during ``parse()``. Under
-    a comma-decimal locale the decimal point is read as a group separator, so
-    the fractional part is swallowed:
+    culture live at that moment rather than the one active during ``parse()``.
+    Under a comma-decimal locale the decimal point reads as a group separator,
+    so the fractional part is swallowed:
 
     * ``timespan`` — ``1.5h`` yields fifteen hours, ``2.25s`` three minutes
       forty-five; under ``fr-FR`` the parse fails to zero.
@@ -113,39 +110,31 @@ def _pin_invariant_culture() -> None:
       ten times too strict.
     * ``decimal`` — ``decimal(1.5)`` yields ``15``.
 
-    Durations are the loudest case, not the only one: every fractional numeric
-    literal kind is affected identically. Because the corruption happens inside
-    caller code, arbitrarily far from any kustology call, a pin scoped around
-    our own entry points would not close it — only a process-wide pin does.
+    Every fractional numeric literal kind is affected identically. The
+    corruption happens inside caller code, arbitrarily far from any kustology
+    call, so only a process-wide pin closes it.
 
-    ``DefaultThreadCurrentCulture`` covers threads created after import;
+    ``DefaultThreadCurrentCulture`` covers threads created after import, and
     ``CurrentThread.CurrentCulture`` covers the importing thread, which the
-    default does not retroactively affect. ``CurrentUICulture`` is left
-    alone: it selects exception and diagnostic message language, not value
+    default does not retroactively affect. ``CurrentUICulture`` is left alone
+    because it selects exception and diagnostic message language, not value
     parsing.
 
-    This is a process-global effect of importing kustology, with no
-    opt-out. An escape hatch would let a host silently reintroduce 10x and 100x
-    duration errors, which is worse than the co-tenancy cost it would avoid.
+    Importing kustology carries this process-global effect with no opt-out. An
+    escape hatch would let a host silently reintroduce 10x and 100x duration
+    errors.
 
-    **Residual risk — a host that changes .NET's culture after importing
-    kustology re-opens the corruption for any literal not yet read.** The pin
-    runs once, at import. Assigning
+    Residual risk: the pin runs once, at import, so a host that assigns
     ``CultureInfo.DefaultThreadCurrentCulture`` or
-    ``Thread.CurrentThread.CurrentCulture`` afterwards — directly, or via any
-    other .NET-interop library in the same process — governs every
-    ``LiteralValue`` that has not yet been read. Because the value is computed
-    on first access and cached, that includes literals in a tree parsed while
-    the pin was still in force but not yet touched; only literals already read
-    keep their correct value. Measured after a post-import switch to
-    ``de-DE``: an unread ``1.5h`` reads back as ``15:00:00``, ``1.5`` as
-    ``15.0``, ``decimal(1.5)`` as ``15``.
+    ``Thread.CurrentThread.CurrentCulture`` afterwards, directly or through
+    any other .NET-interop library in the same process, re-opens the
+    corruption for every ``LiteralValue`` not yet read. The value is computed
+    on first access and cached, so that includes literals in a tree parsed
+    while the pin still held; only literals already read keep their correct
+    value. Measured under a post-import switch to ``de-DE``, all three
+    corruptions above reproduce on unread literals.
 
-    :func:`ensure_invariant_culture` narrows that window. Every kustology
-    entry point calls it, so a query parsed and lowered through the library
-    reads its literals under invariant culture whatever the host did in
-    between. A caller reading ``LiteralValue`` off a raw syntax node calls it
-    directly.
+    :func:`ensure_invariant_culture` narrows that window.
     """
     from System import Object
     from System.Globalization import CultureInfo
@@ -163,23 +152,21 @@ def _pin_invariant_culture() -> None:
 def ensure_invariant_culture() -> None:
     """Restore invariant culture on the calling thread if something changed it.
 
-    Importing kustology pins .NET's culture to invariant, but a host, or any
-    other .NET-interop library in the same process, can assign over that pin
-    afterwards. Kusto's ``LiteralValue`` reads the culture live at the moment
-    of first property access, so a switch to a comma-decimal locale corrupts
-    every fractional numeric literal not yet read. See
-    :func:`_pin_invariant_culture` for the measured values.
+    Importing kustology pins .NET's culture to invariant. A host, or any other
+    .NET-interop library in the same process, can assign over that pin, which
+    corrupts every fractional numeric literal not yet read. See
+    :func:`_pin_invariant_culture` for the mechanism and the measured values.
 
-    Every kustology entry point calls this, which covers the library's own
-    reads. Call it yourself before reading ``LiteralValue`` off a raw syntax
-    node in a process where culture may have moved.
+    Every kustology entry point calls this, so a query parsed and lowered
+    through the library reads its literals under invariant culture whatever
+    the host did in between. Call it yourself before reading ``LiteralValue``
+    off a raw syntax node in a process where culture may have moved.
 
     The check is a reference comparison against the cached
-    ``InvariantCulture`` singleton, and assignment happens only when it fails,
-    so the common case is one interop property read. A culture object that
-    merely *equals* invariant fails the comparison and is replaced: a clone of
-    invariant carrying a modified ``NumberFormat`` compares equal by name
-    while parsing differently.
+    ``InvariantCulture`` singleton and assigns only when it fails, so the
+    common case is one interop property read. A culture object that merely
+    *equals* invariant is replaced too: a clone of invariant carrying a
+    modified ``NumberFormat`` compares equal by name and parses differently.
     """
     if _INVARIANT is None:  # pragma: no cover - the bridge always initializes
         return

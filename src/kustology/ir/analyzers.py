@@ -4,10 +4,9 @@
 """Minimal analyzer shape for IR-driven static analysis.
 
 An *analyzer* is a function that walks a :class:`kustology.ir.QueryIR` and
-yields zero or more :class:`Finding` instances. That's it — no class
-hierarchy, no registration machinery, no rule engine. The point of
-declaring this shape now is to give the v2 analyzer ecosystem a common
-``Finding`` vocabulary so independently-developed analyzers compose.
+yields zero or more :class:`Finding` instances. There is no class hierarchy,
+registration machinery, or rule engine. The shared ``Finding`` vocabulary is
+what lets independently-developed analyzers compose.
 
 Example:
 --------
@@ -35,10 +34,8 @@ Example:
     ir = parse("DeviceProcessEvents | where tolower(FileName) == 'cmd.exe'").to_ir()
     # After normalize_expressions, the tolower== folds to =~. Run the analyzer.
 
-The :class:`Finding` shape is minimal. ``extra`` exists for
-rule-specific structured data without forcing the core schema to evolve
-every time a new analyzer wants a side-channel field.
-
+``extra`` carries rule-specific structured data, so a new analyzer's
+side-channel field costs no change to the core schema.
 """
 
 from __future__ import annotations
@@ -55,13 +52,12 @@ Severity = Literal["info", "warning", "error"]
 
 
 class Finding(BaseModel):
-    """One analyzer hit. Stable wire shape — minor versions add fields only.
+    """One analyzer hit. Stable wire shape: minor versions add fields only.
 
     ``span`` is optional because some findings are project-wide (for example,
-    "no time filter found anywhere in the query") and don't anchor to a
-    single source location. Analyzer authors should populate it when
-    they can — surfacing a precise span turns a finding from a label
-    into something an IDE can highlight.
+    "no time filter found anywhere in the query") and don't anchor to one
+    source location. Populate it where you can, so an IDE can highlight the
+    finding.
     """
 
     model_config = {"extra": "forbid"}
@@ -76,7 +72,7 @@ class Finding(BaseModel):
 AnalyzerFn = Callable[[QueryIR], Iterable[Finding]]
 """Type alias for a function-shaped analyzer.
 
-Composition: combine analyzers by chaining their outputs —
+Combine analyzers by chaining their outputs:
 
 .. code-block:: python
 

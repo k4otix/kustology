@@ -50,11 +50,11 @@ def _case_fold_side(e: Any) -> bool:
 def _literal_matches_fold(lit: Any, fn: str) -> bool:
     """Return True when ``lit`` is a string literal already in the case ``fn`` folds to.
 
-    ``tolower(X) == "Y"`` (capital Y) is always false -- ``tolower`` never
-    returns anything but lowercase -- while ``X =~ "Y"`` is a case-insensitive
-    match that is often true, so the rewrite is only sound when the literal is
-    already lowercase (or uppercase, for ``toupper``). A non-string literal,
-    or an operand that is not a literal at all, never matches.
+    ``tolower(X) == "Y"`` (capital Y) is always false, since ``tolower``
+    returns only lowercase, while ``X =~ "Y"`` is a case-insensitive match
+    that is often true. The rewrite is sound only when the literal is already
+    lowercase, or uppercase for ``toupper``. A non-string literal, or an
+    operand that is not a literal, never matches.
     """
     return (isinstance(lit, LiteralExpr) and lit.literal_kind == "string" and isinstance(lit.value, str)
             and lit.value == (lit.value.lower() if fn == "tolower" else lit.value.upper()))
@@ -64,16 +64,15 @@ def normalize_in_place(expr: Any) -> Any:
     """Apply semantic-preserving rewrites so equivalent KQL produces the same shape.
 
     * ``tolower(X) == "y"`` → ``X =~ "y"`` when ``"y"`` is already lowercase
-      (case-insensitive equality); symmetrically ``toupper(X) == "Y"`` →
-      ``X =~ "Y"`` when ``"Y"`` is already uppercase. The literal may be on
-      either side -- ``"y" == tolower(X)`` rewrites the same way, with the
-      unwrapped operand landing on the left and the literal on the right, so
-      it collapses to the same canonical form/hash as ``tolower(X) == "y"``.
-      A literal that does not already match the fold (for example
-      ``tolower(X) == "Y"``) is left alone -- that predicate is always false,
-      while ``X =~ "Y"`` is not -- and so is a comparison against anything
-      that is not a literal at all (``tolower(X) == Col``), since there is no
-      fixed case to know the rewrite is sound for.
+      (case-insensitive equality); ``toupper(X) == "Y"`` → ``X =~ "Y"`` when
+      ``"Y"`` is already uppercase. The literal may be on either side:
+      ``"y" == tolower(X)`` rewrites the same way, unwrapped operand on the
+      left and literal on the right, collapsing to the canonical form and
+      hash of ``tolower(X) == "y"``. A literal that does not match the fold
+      (``tolower(X) == "Y"``) is left alone, because that predicate is always
+      false while ``X =~ "Y"`` is often true. So is a comparison against a
+      non-literal (``tolower(X) == Col``), where there is no fixed case to
+      make the rewrite sound.
     * ``tolower(X) != "y"`` → ``X !~ "y"`` (and the ``toupper``/``!~`` mirror),
       under the same case-matching condition.
     * Flatten nested ``And`` / ``Or`` operands into a single list.
@@ -85,11 +84,10 @@ def normalize_in_place(expr: Any) -> Any:
             if _case_fold_side(fold) and _literal_matches_fold(other, fold.name.lower()):
                 expr.op = "=~" if expr.op == "==" else "!~"
                 expr.case_sensitive = False
-                # Always land the unwrapped operand on the left and the
-                # literal on the right, regardless of which side the source
-                # wrote them on -- ``"y" == tolower(X)`` and
-                # ``tolower(X) == "y"`` are the same predicate (equality is
-                # symmetric) and must produce the same canonical form/hash.
+                # The unwrapped operand always lands left and the literal
+                # right: equality is symmetric, so ``"y" == tolower(X)`` and
+                # ``tolower(X) == "y"`` must produce the same canonical form
+                # and hash.
                 expr.left, expr.right = fold.args[0], other
                 break
     elif isinstance(expr, And):
@@ -113,9 +111,8 @@ def normalize_in_place(expr: Any) -> Any:
     return expr
 
 
-# KQL operator precedence, loosest to tightest. The number is only ever
-# compared against another number from this table, so the absolute values
-# mean nothing -- only the ordering does.
+# KQL operator precedence, loosest to tightest. Each number is only ever
+# compared against another from this table, so only the ordering matters.
 _PREC_OR = 1
 _PREC_AND = 2
 # Every comparison and every string operator (``==``, ``has``, ``!in~``,
@@ -129,15 +126,13 @@ _PREC_ARITHMETIC = {"+": 4, "-": 4, "*": 5, "/": 5, "%": 5}
 def _kql_string(value: str) -> str:
     r"""Render ``value`` as a KQL double-quoted string literal.
 
-    Escaping is the whole point. ``f("a\", \"b")`` is a call with **one**
-    argument whose value contains quotes and a comma; rendered raw it reads
-    as ``f("a", "b")``, a call with two arguments -- a description of a
-    tree that does not exist. Backslash goes first, or it would re-escape
-    the backslashes the later replacements introduce.
-
-    ``\r`` is escaped alongside ``\n`` for the same reason: a raw control
-    character inside the quotes makes the rendering unreadable and, for a
-    consumer feeding it back to a parser, unparseable.
+    ``f("a\", \"b")`` is a call with **one** argument whose value contains
+    quotes and a comma; rendered raw it reads as ``f("a", "b")``, a call with
+    two arguments, describing a tree that does not exist. Backslash is
+    replaced first, or it would re-escape the backslashes the later
+    replacements introduce. ``\r`` and ``\n`` are escaped because a raw
+    control character inside the quotes makes the rendering unreadable and,
+    for a consumer feeding it back to a parser, unparseable.
     """
     escaped = (
         value.replace("\\", "\\\\")
@@ -152,16 +147,15 @@ def _kql_string(value: str) -> str:
 def _kql_literal(value: Any, literal_kind: str) -> str:
     """Render a literal's value the way KQL spells it.
 
-    ``bool`` is checked before anything else because ``True`` is a Python
-    ``int`` subclass, and before ``literal_kind`` because the kind tells us
-    what the parser called it, not how to write it down. KQL's spellings are
-    ``true`` / ``false`` / ``null``; ``str()`` produces Python's, so falling
-    through to it would give ``x == True`` a canonical form naming a value
-    KQL has no spelling for.
+    ``bool`` is checked first because ``True`` is a Python ``int`` subclass,
+    and ahead of ``literal_kind`` because the kind says what the parser called
+    the value, not how to write it down. KQL spells these ``true`` / ``false``
+    / ``null`` while ``str()`` produces Python's spellings, so falling through
+    would give ``x == True`` a canonical form naming a value KQL cannot spell.
 
-    Non-string kinds that happen to hold a ``str`` (``datetime``,
-    ``timespan``, ``guid``, ``dynamic``) stay unquoted: their KQL spelling is
-    a bare token or a constructor call, not a quoted string.
+    Non-string kinds that hold a ``str`` (``datetime``, ``timespan``,
+    ``guid``, ``dynamic``) stay unquoted: their KQL spelling is a bare token
+    or a constructor call.
     """
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -175,23 +169,21 @@ def _kql_literal(value: Any, literal_kind: str) -> str:
 def canonical(expr: Any) -> str:
     """Return a stable, commutative-aware string representation for diffing.
 
-    Parenthesized **by precedence**, not by what the source wrote. The
-    parentheses *are* in the .NET tree -- ``ParenthesizedExpression`` -- but
-    ``IRBuilder._visit_expr`` unwraps every one of them unconditionally, so
-    ``(a and b) or c`` and ``a and b or c`` build byte-identical IR and this
-    function has no bracket left to reproduce. That unwrap is the right call
-    on its own terms, and it is why ``BracketedExpr`` stays dropped here:
+    Parenthesized **by precedence**. The source's own parentheses are in the
+    .NET tree as ``ParenthesizedExpression``, but ``IRBuilder._visit_expr``
+    unwraps every one of them, so ``(a and b) or c`` and ``a and b or c``
+    build byte-identical IR and this function has no bracket left to
+    reproduce. ``BracketedExpr`` stays dropped here for the same reason:
     rendering the source's brackets would make ``(X) > 1`` and ``X > 1`` two
-    strings for one predicate. What the renderer owes the reader is that
-    the string it emits parses back to the tree it came from: ``a and (b or
-    c)`` keeps its parentheses because ``or`` binds looser than ``and``, and
-    ``x - (y - z)`` keeps them because arithmetic is left-associative, so a
-    right operand of equal precedence can only have got there by being
-    bracketed.
+    strings for one predicate. The string this emits parses back to the tree
+    it came from: ``a and (b or c)`` keeps its parentheses because ``or``
+    binds looser than ``and``, and ``x - (y - z)`` keeps them because
+    arithmetic is left-associative, so a right operand of equal precedence can
+    only have got there by being bracketed.
 
-    This is a *display and diffing* form, not the hash's key.
-    ``semantic_hash`` digests the model dump, and ``canonical_form`` is a
-    property rather than a field, so nothing here can move a digest.
+    This is a *display and diffing* form. ``semantic_hash`` digests the model
+    dump and ``canonical_form`` is a property rather than a field, so nothing
+    here can move a digest.
     """
 
     def _wrap(text: str, prec: int, parent_prec: int, parens_on_equal: bool) -> str:
@@ -206,24 +198,20 @@ def canonical(expr: Any) -> str:
         return text
 
     def _render(e: Any, parent_prec: int = 0, parens_on_equal: bool = False) -> str:
-        # Precedence-bearing shapes -- ``BinOp``, ``And``, ``Or``,
-        # ``UnaryOp`` -- compute their text and hand it to ``_wrap``. Every
-        # other shape is an atom: a leaf, a call, or something that renders
-        # with delimiters of its own (``not(...)``, ``case(...)``,
-        # ``X between (a .. b)``). An atom returns directly, is never
-        # parenthesized, never forces its parent to parenthesize it, and
-        # renders its children at ``parent_prec`` 0 -- its own delimiters
-        # already do the grouping.
+        # Precedence-bearing shapes (``BinOp``, ``And``, ``Or``, ``UnaryOp``)
+        # compute their text and hand it to ``_wrap``. Every other shape is an
+        # atom: a leaf, a call, or something with delimiters of its own
+        # (``not(...)``, ``case(...)``, ``X between (a .. b)``). An atom
+        # returns directly, unparenthesized, and renders its children at
+        # ``parent_prec`` 0, since its own delimiters do the grouping.
         if isinstance(e, LiteralExpr):
             return _kql_literal(e.value, e.literal_kind)
         if isinstance(e, ColumnRef):
             return f"{e.table}.{e.name}" if e.table else e.name
         if isinstance(e, LetValueRef):
             # The name as the query wrote it. A ``let``-bound scalar reads
-            # like a column at the use site and that is the faithful
-            # rendering of the source; the two are told apart by node type,
-            # and by the ``kind`` discriminator in the dump the hash actually
-            # digests.
+            # like a column at the use site; node type and the ``kind``
+            # discriminator in the digested dump tell the two apart.
             return e.name
         if isinstance(e, TypedNameDecl):
             # ``name:type`` — the KQL spelling. Rendering the bare name would
@@ -232,31 +220,26 @@ def canonical(expr: Any) -> str:
             return f"{e.name}:{e.declared_type}"
         if isinstance(e, BinOp):
             prec = _PREC_ARITHMETIC.get(e.op, _PREC_COMPARISON)
-            # The right operand always re-brackets at equal precedence; the
-            # left never does. That asymmetry is left-associativity, and it
-            # belongs to the *child's* position rather than to the parent
-            # operator: a right operand of equal precedence cannot have come
-            # from an unbracketed parse, because an unbracketed chain nests
-            # left. Attaching the rule to the parent operator instead (ask
-            # whether the parent is ``-``, ``/`` or ``%``) is the right
-            # observation on the wrong node -- it renders ``x * (y / z)`` as
-            # ``x * y / z``, and under integer division those are different
-            # numbers: ``2 * (7 / 2)`` is 6 and ``2 * 7 / 2`` is 7.
+            # The right operand re-brackets at equal precedence and the left
+            # never does. That asymmetry is left-associativity and belongs to
+            # the *child's* position: an unbracketed chain nests left, so a
+            # right operand of equal precedence must have been bracketed.
+            # Asking instead whether the parent is ``-``, ``/`` or ``%``
+            # renders ``x * (y / z)`` as ``x * y / z``, and under integer
+            # division ``2 * (7 / 2)`` is 6 while ``2 * 7 / 2`` is 7.
             text = (
                 f"{_render(e.left, prec)} {e.op} {_render(e.right, prec, True)}"
             )
             return _wrap(text, prec, parent_prec, parens_on_equal)
         if isinstance(e, And):
             # Sorted by each operand's *unparenthesized* rendering, so the
-            # order does not depend on whether a nested operand happened to
-            # need brackets -- a leading "(" would otherwise sort ahead of
-            # every letter and reorder the chain for that reason alone.
-            #
-            # That costs a second render per operand, and the cost compounds
-            # with the *alternating* and/or depth, since a chain of the same
-            # connective is already flattened into one node by
-            # ``normalize_in_place``. Real queries nest two or three deep;
-            # 64k renders over the corpus measure at 0.4s.
+            # order does not depend on whether a nested operand needed
+            # brackets: a leading "(" sorts ahead of every letter and would
+            # reorder the chain for that reason alone. The second render per
+            # operand costs with *alternating* and/or depth, since
+            # ``normalize_in_place`` flattens a chain of one connective into a
+            # single node. Real queries nest two or three deep; 64k renders
+            # over the corpus measure at 0.4s.
             ordered = sorted(e.operands, key=_render)
             return _wrap(
                 " and ".join(_render(o, _PREC_AND) for o in ordered),
@@ -280,9 +263,9 @@ def canonical(expr: Any) -> str:
             return f"{e.name}({', '.join(_render(a) for a in e.args)})"
         if isinstance(e, SetMembership):
             # Render the recorded operator. Rebuilding it from polarity plus
-            # case_sensitive can only ever emit one of four strings, which
-            # collapses has_any and has_all onto `in~` -- a different
-            # predicate. Same reason BinOp above renders `e.op` verbatim.
+            # case_sensitive emits one of four strings, collapsing has_any and
+            # has_all onto `in~`, a different predicate. BinOp above renders
+            # `e.op` verbatim for the same reason.
             vals = ", ".join(sorted(_render(v) for v in e.values))
             return f"{_render(e.column, _PREC_COMPARISON)} {e.op} ({vals})"
         if isinstance(e, Between):
@@ -303,22 +286,19 @@ def canonical(expr: Any) -> str:
             # rendered on top of it.
             return f"{e.op}({_render(e.target)})"
         if isinstance(e, RegexMatch):
-            # The pattern through ``_kql_string`` like any other string
-            # literal: a regex is where backslashes actually live, and
-            # ``\\d+`` rendered raw inside quotes is the ambiguity this
-            # function exists to remove.
+            # The pattern goes through ``_kql_string`` like any other string
+            # literal: a regex is where backslashes live, and ``\\d+``
+            # rendered raw inside quotes is the ambiguity to remove.
             return f"{_render(e.target, _PREC_COMPARISON)} matches regex {_kql_string(e.pattern)}"
         if isinstance(e, PathExpr):
             return f"{_render(e.expression)}.{_render(e.selector)}"
         if isinstance(e, ElementExpr):
             return f"{_render(e.expression)}[{_render(e.selector)}]"
         if isinstance(e, BracketedExpr):
-            # Parentheses carry no semantics once the tree is built, so they
-            # are dropped rather than rendered -- `(X) > 1` and `X > 1` are
-            # the same predicate and must produce the same string. The
-            # precedence table above puts back the ones that *do* carry
-            # grouping, which is a different question from what the source
-            # typed.
+            # Parentheses carry no semantics once the tree is built: `(X) > 1`
+            # and `X > 1` are the same predicate and must produce the same
+            # string. The precedence table above puts back the ones that *do*
+            # carry grouping.
             return _render(e.expression, parent_prec, parens_on_equal)
         if isinstance(e, NamedExpr):
             return f"{e.name} = {_render(e.expression)}"
@@ -334,16 +314,14 @@ def canonical(expr: Any) -> str:
         if isinstance(e, DataTableExpr):
             cols = ", ".join(f"{n}:{ty}" for n, ty in e.columns)
             # Every cell, row-major, through the same renderer as any other
-            # child -- a literal cell renders as its KQL literal, so two
-            # datatables that differ only in a value render (and hash)
-            # apart, the same fidelity the source-position twin has.
+            # child, so a literal cell renders as its KQL literal and two
+            # datatables differing only in a value render and hash apart.
             cells = ", ".join(_render(cell) for row in e.rows for cell in row)
             return f"datatable({cols})[{cells}]"
-        # Pipeline-bearing expressions. The inner pipeline is elided rather
-        # than rendered: canonical() is a pure Expr function and Pipeline is
-        # modeled in ir.query, so recursing would invert the dependency. The
-        # wrapper is still named, which is what distinguishes these from each
-        # other and from every other shape.
+        # Pipeline-bearing expressions. The inner pipeline is elided because
+        # canonical() is a pure Expr function and Pipeline lives in ir.query,
+        # so recursing would invert the dependency. Naming the wrapper is what
+        # tells these apart from each other and from every other shape.
         if isinstance(e, ToScalarExpr):
             return f"toscalar({_pipeline_head(e.pipeline)} | ...)"
         if isinstance(e, SubqueryExpr):

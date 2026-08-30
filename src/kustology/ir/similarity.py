@@ -3,12 +3,10 @@
 
 """Compute graded similarity between queries.
 
-Every subtree gets the digest ``compute_semantic_hash`` would give it in
-the context of its root, and two queries are compared by the overlap of
-those digest sets.
-
-See ``docs/similarity.md``. Corpus-level concerns — IDF weighting,
-clustering, LSH indexing, thresholds — stay with the consumer.
+Every subtree gets the digest ``compute_semantic_hash`` would give it in the
+context of its root, and two queries are compared by the overlap of those
+digest sets. Corpus-level concerns such as IDF weighting, clustering, LSH
+indexing and thresholds stay with the consumer. See ``docs/similarity.md``.
 """
 
 from __future__ import annotations
@@ -40,28 +38,24 @@ class SubtreeHash(NamedTuple):
 def subtree_hashes(node: BaseModel, *, min_size: int = 3, spans: bool = True) -> list[SubtreeHash]:
     """Return one entry per subtree of ``node`` with at least ``min_size`` nodes.
 
-    Entries come in post-order — children before parents, root last — and the
-    root's digest equals ``compute_semantic_hash(node)``. Pass the ``QueryIR``
-    root, not a bare ``Pipeline``, for ``let``-name-invariant digests: a bare
-    ``Pipeline`` keeps ``let`` names as written, the same rule
-    ``compute_semantic_hash`` follows.
+    Entries come in post-order, root last, and the root's digest equals
+    ``compute_semantic_hash(node)``. Pass the ``QueryIR`` root for
+    ``let``-name-invariant digests; a bare ``Pipeline`` keeps ``let`` names as
+    written, the rule ``compute_semantic_hash`` follows.
 
-    Digests are taken from one canonical copy of ``node``, so ``let`` names
-    are renamed and consecutive filters merged exactly as for the whole-query
-    digest — which is why a subtree's entry here can differ from
-    ``compute_semantic_hash`` called on that subtree by itself.
-
-    Returns ``[]`` when ``node`` itself has fewer than ``min_size`` nodes —
-    including the root, since it is entry ``[-1]`` rather than a guaranteed
-    one. Index the result with ``[-1]`` only after checking it is non-empty.
+    Digests come from one canonical copy of ``node``, so ``let`` names are
+    renamed and consecutive filters merged as for the whole-query digest. A
+    subtree's entry can therefore differ from ``compute_semantic_hash`` called
+    on that subtree by itself. Returns ``[]`` when ``node`` itself has fewer
+    than ``min_size`` nodes, so the root is entry ``[-1]`` only when the result
+    is non-empty. Check before indexing.
 
     ``spans=False`` leaves every ``SubtreeHash.span`` ``None`` and skips
-    building the map, which costs a ``span_of`` fold per node — each one a walk
-    of that node's whole subtree, so the saving grows with query size. Pass it
-    when only the digests are wanted: it takes about a fifth off the call on a
-    thousand-node query, and it is what :func:`similarity`,
+    building the map, which costs a ``span_of`` fold per node — each a walk of
+    that node's whole subtree, so the saving grows with query size, about a
+    fifth of the call on a thousand-node query. :func:`similarity`,
     :func:`containment`, :func:`similarity_sketch` and the ``b`` side of
-    :func:`differing_subtrees` use.
+    :func:`differing_subtrees` pass it.
     """
     if min_size < 1:
         raise ValueError("min_size must be at least 1")
@@ -93,11 +87,11 @@ def _collect(
     out: list[SubtreeHash],
     seen: set[int],
 ) -> int:
-    # Correct only because ``_clear_volatile`` empties
-    # ``LetBinding.inner_time_exprs`` on the canonical copy first: that field
-    # aliases nodes already reachable through ``rhs_pipeline``/``rhs_function``,
-    # so an uncleared index could be visited before a node's real structural
-    # position and short-circuit it there with the wrong subtree size.
+    # ``LetBinding.inner_time_exprs`` aliases nodes already reachable through
+    # ``rhs_pipeline``/``rhs_function``, so an uncleared index could be visited
+    # before a node's real structural position and short-circuit it there with
+    # the wrong subtree size. ``_clear_volatile`` empties it on the canonical
+    # copy first, which is what makes this correct.
     if id(node) in seen:
         return 0
     seen.add(id(node))
@@ -115,11 +109,10 @@ _MERSENNE = (1 << 61) - 1
 _MAX32 = (1 << 32) - 1
 
 # Which ``SEMANTIC_HASH_SCHEME`` the slots were minned from, folded to two
-# bytes. ``semantic_hash`` carries its scheme as a prefix so a mismatch is
-# visible rather than silently wrong; a sketch is built from those digests and
-# needs the same. Without it, comparing a sketch stored under one scheme
-# against one built under the next returns a number near 0.0 — which reads as
-# "these queries are unrelated" rather than "this sketch is stale".
+# bytes. A sketch is built from ``semantic_hash`` digests and needs the scheme
+# those digests carry as a prefix. Without it, comparing a sketch stored under
+# one scheme against one built under the next returns a number near 0.0, which
+# reads as "these queries are unrelated" when the sketch is stale.
 _SCHEME_TAG = int.from_bytes(
     hashlib.blake2b(SEMANTIC_HASH_SCHEME.encode(), digest_size=2).digest(), "little",
 )
@@ -152,12 +145,11 @@ def containment(a: Bag, b: Bag) -> float:
 def _coefficients(k: int) -> list[tuple[int, int]]:
     """Return ``k`` ``(multiplier, addend)`` pairs for the MinHash permutations.
 
-    Derived from a keyed hash rather than ``random.Random(seed).randrange``:
-    sketches must agree across processes *and* across interpreter versions, and
-    CPython's reproducibility promise covers ``random()``, not ``randrange`` —
-    whose ``_randbelow`` internals are free to change. A stored sketch invalid
-    after an interpreter upgrade would be undetectable, since the header has no
-    field that could catch it.
+    A keyed hash gives them, since sketches must agree across processes and
+    across interpreter versions. CPython's reproducibility promise covers
+    ``random()`` but not ``randrange``, whose ``_randbelow`` internals are free
+    to change, and the header has no field that would catch a sketch an
+    interpreter upgrade invalidated.
     """
     out = []
     for i in range(k):
@@ -180,9 +172,8 @@ def similarity_sketch(a: Bag, *, k: int = 128) -> bytes:
 
     The default ``k=128`` yields 520 bytes. Two sketches estimate
     ``similarity`` without the IR. The header records which
-    ``SEMANTIC_HASH_SCHEME`` built it, so a sketch stored across a scheme bump
-    is rejected by :func:`sketch_similarity` rather than silently compared;
-    recompute it from the IR.
+    ``SEMANTIC_HASH_SCHEME`` built it, so :func:`sketch_similarity` rejects a
+    sketch stored across a scheme bump. Recompute it from the IR.
     """
     if not 1 <= k <= 0xFFFF:
         raise ValueError("k must be between 1 and 65535")
@@ -202,8 +193,8 @@ def _slots(sketch: bytes) -> tuple[int, ...]:
             "sketch was built under a different digest scheme than this build's "
             f"{SEMANTIC_HASH_SCHEME}; recompute it from the IR",
         )
-    # ``k == 0`` passes the length check on its own -- an 8-byte header and no
-    # slots -- and then divides by zero in ``sketch_similarity``. Every other
+    # ``k == 0`` passes the length check on its own (an 8-byte header and no
+    # slots) and then divides by zero in ``sketch_similarity``. Every other
     # malformed-sketch path raises ``ValueError``, so this one does too.
     if k == 0 or len(sketch) != _HEADER.size + 4 * k:
         raise ValueError("sketch length does not match its k")
@@ -225,11 +216,11 @@ def sketch_similarity(s1: bytes, s2: bytes) -> float:
 def differing_subtrees(a: BaseModel, b: BaseModel, *, min_size: int = 3) -> list[SubtreeHash]:
     """Return the smallest subtrees of ``a`` that are absent from ``b``.
 
-    A changed node changes every ancestor's digest, so "largest differing
-    subtree" is always the root; this reports the other end — nodes whose
+    A changed node changes every ancestor's digest, so the largest differing
+    subtree is always the root. This reports the other end: nodes whose
     qualifying children are all present in ``b``, so ancestors of a reported
-    node are not reported. A change below ``min_size`` surfaces at its
-    smallest qualifying ancestor. Swap the arguments for ``b``'s side.
+    node are not reported. A change below ``min_size`` surfaces at its smallest
+    qualifying ancestor. Swap the arguments for ``b``'s side.
     """
     if min_size < 1:
         raise ValueError("min_size must be at least 1")

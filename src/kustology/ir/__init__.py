@@ -3,17 +3,16 @@
 
 """Semantic intermediate representation (IR) for KQL queries.
 
-A pydantic model of the parsed query — typed operators and expressions, source
-spans, and a schema binder. Activated by ``pip install 'kustology[ir]'``;
-importing without pydantic raises an ``ImportError`` with the install command.
+A pydantic model of the parsed query: typed operators and expressions, source
+spans, and a schema binder. Install with ``pip install 'kustology[ir]'``;
+importing without pydantic raises an ``ImportError`` naming that command.
 
-Stability: pre-1.0. Minor breaking changes are possible at minor versions
-until the IR survives one DLL upgrade cycle. See CHANGELOG.
+Stability is pre-1.0. Minor versions can break the IR until it survives one DLL
+upgrade cycle. See CHANGELOG.
 
-``IR_SCHEMA_VERSION`` and ``SEMANTIC_HASH_SCHEME`` are re-exported here, which
-is their public spelling; both are defined in :mod:`kustology._ir_tags`, a
-module with no imports, so :func:`kustology.build_info` can read them without
-loading this package. See that module for what each one tags and when it moves.
+``IR_SCHEMA_VERSION`` and ``SEMANTIC_HASH_SCHEME`` are re-exported here, the
+public spelling. :mod:`kustology._ir_tags` defines them and records what each
+one tags and when it moves.
 """
 
 from .._ir_tags import IR_SCHEMA_VERSION
