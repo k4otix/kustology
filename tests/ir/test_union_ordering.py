@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import types
 from enum import Enum
-from typing import Annotated, Literal, Union, get_args, get_origin
+from typing import Annotated, ForwardRef, Literal, Union, get_args, get_origin
 
 import pytest
 from pydantic import BaseModel
@@ -38,11 +38,31 @@ from kustology.ir.spans import Span
 _SPAN = Span(text_start=0, width=1)
 
 
+def _resolve(annotation):
+    """Return the class a forward reference names.
+
+    Python 3.10 leaves the string inside ``list["Pipeline"]`` unevaluated in
+    ``model_fields[...].annotation``; 3.11 and later hand back the class. The
+    IR declares its cycles that way, so a sampler that walks annotations has
+    to close them itself or it reaches ``_sample``'s fallback and builds a
+    ``str`` where a model belongs.
+    """
+    if isinstance(annotation, ForwardRef):
+        annotation = annotation.__forward_arg__
+    if isinstance(annotation, str):
+        for module in (Q, E):
+            resolved = getattr(module, annotation, None)
+            if resolved is not None:
+                return resolved
+        raise AssertionError(f"forward reference names nothing in the IR: {annotation!r}")
+    return annotation
+
+
 def _unwrap(annotation):
     """Strip ``Annotated[...]`` down to the type it decorates."""
     while get_origin(annotation) is Annotated:
         annotation = get_args(annotation)[0]
-    return annotation
+    return _resolve(annotation)
 
 
 def _union_members(annotation) -> tuple[type, ...]:
