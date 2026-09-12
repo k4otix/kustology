@@ -828,6 +828,12 @@ class SchemaAttacher:
         self._fill_children(expr, scope)
 
         if isinstance(expr, ColumnRef):
+            if expr.qualifier is not None:
+                # The qualifier is a ``scan`` step name, not a table.
+                # ``_resolve_column_table`` matches on the column name alone,
+                # so without this return it labels ``s1.p`` with whichever
+                # in-scope table happens to have a ``p``.
+                return
             side = expr.join_side
             sides = self._join_sides
             if side is not None:

@@ -193,6 +193,19 @@ def test_redundant_canonical_form_dropped_on_leaves(storm_ir):
     assert bin_op["canonical_form"] == 'StormEvents.State == "TEXAS"'
 
 
+def test_a_qualified_column_keeps_its_qualifier_and_drops_the_canonical_form():
+    """A ``scan`` step reference canonicalizes to ``"s1.p"``, which restates
+    ``qualifier`` and ``name`` the way a bound node's form restates ``table``.
+    """
+    ir = IRBuilder().build("T | scan declare(p:string='') with (step s1: a > 1 => p = s1.p;)")
+    out = to_llm_dict(ir)
+    ref = out["main_pipeline"]["operators"][0]["steps"][0]["assignments"][0]["expr"]
+
+    assert ref["qualifier"] == "s1"
+    assert ref["name"] == "p"
+    assert "canonical_form" not in ref
+
+
 def test_enum_values_unwrap_to_strings(storm_ir):
     out = to_llm_dict(storm_ir)
     column = out["main_pipeline"]["operators"][1]["columns"][0]

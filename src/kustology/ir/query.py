@@ -917,43 +917,47 @@ class ForkOp(Operator):
     branches: list[ForkBranch]
 
 
+class ScanStep(BaseModel):
+    """One ``step`` rule of a ``scan`` state machine.
+
+    ``condition`` is the guard and ``assignments`` the ``=>`` computations.
+    ``output`` selects which matched rows the step emits; ``None`` means the
+    query left it unwritten and KQL's own default applies. A step with no
+    ``=>`` records no assignments, and so does a bare ``=> ;``: the parser
+    builds one assignment there whose name is a zero-width missing node, and
+    recording it would put an empty column name in the digest.
+    """
+
+    model_config = {"extra": "forbid"}
+    kind: Literal["scan_step"] = "scan_step"
+    name: str
+    is_optional: bool = False
+    output: Literal["all", "last", "none"] | None = None
+    condition: AnyExpr
+    assignments: list[Assignment] = []
+    span: Span
+
+
 class ScanOp(Operator):
-    """``scan`` — kept as its own source text; the step machine is not modeled.
+    """``scan`` — a row-ordered state machine over the input stream.
 
-    This is the first of eight modeled operators the IR records on ``raw_text``
-    rather than in typed fields, the same register as :class:`LetFunction`'s:
-    the boundary is stated in the model instead of being left as fields that
-    read as implemented and are not. The other seven are :class:`TopNestedOp`,
-    :class:`MakeGraphOp`, :class:`MacroExpandOp`, :class:`GraphMatchOp`,
-    :class:`GraphMarkComponentsOp`, :class:`GraphShortestPathsOp` and
-    :class:`GraphToTableOp`.
+    ``declarations`` are the ``declare(...)`` accumulators, carried on
+    :class:`LetFunctionParameter` because the grammar node is the same
+    ``FunctionParameter`` a ``let`` function's parameter list uses.
 
-    Two exclusions, so the count is checkable. ``graph-where-edges`` and
-    ``graph-where-nodes`` carry a real ``predicate`` and no ``raw_text``.
-    :class:`UnknownOp` does carry one, so enumerating ``Operator`` subclasses
-    with a ``raw_text`` field gives nine; it is the builder's fallback for a
-    shape it could not dispatch rather than a modeling choice. Eight is the
-    register, nine the field count.
-
-    ``raw_text`` is ``ToString(IncludeTrivia.Minimal)``, so these operators
-    round-trip through ``model_dump_json`` and participate in ``semantic_hash``
-    as text. Nothing typed is inside them to walk: ``find_all(ir, ColumnRef)``
-    will not report a column that appears only in a ``scan`` step. Downstream
-    scope splits by bind state. ``Operator.result_schema`` carries Microsoft's
-    ``ResultType``, which knows the columns a ``scan``'s ``declare`` adds, and
-    :class:`SchemaAttacher` overlays it; an unbound parse has no such answer,
-    and nothing re-derives one, so the scope downstream is the one they
-    inherited. Hashing text carries the boundary :class:`UnknownSource`
-    documents: the text is re-lexed before it is hashed, so spacing between
-    tokens and an interior comment both drop out, while a canonicalization the
-    IR applies to a modeled node does not reach inside the text.
-
-    ``scan``'s own body is a state machine: ``declare`` variables plus ``step``
-    rules with guards and assignments. Modeling it would be a new feature.
+    A reference to a step's own view of a column is written ``s1.p`` and
+    lowers to a :class:`~kustology.ir.expr.ColumnRef` with ``qualifier`` set
+    to the step name, so ``find_all(ir, ColumnRef)`` reports ``p`` and never
+    reports a column called ``s1``.
     """
 
     kind: Literal["scan"] = "scan"
-    raw_text: str
+    with_match_id: str | None = None
+    with_step_name: str | None = None
+    declarations: list["LetFunctionParameter"] = []
+    order_by: list[SortKey] = []
+    partition_by: list[AnyExpr] = []
+    steps: list[ScanStep]
 
 
 class SerializeOp(Operator):
@@ -1023,7 +1027,29 @@ class SampleDistinctOp(Operator):
 
 
 class TopNestedOp(Operator):
-    """``top-nested`` — source text only; see :class:`ScanOp` for the register.
+    """``top-nested`` — kept as its own source text; the clauses are not modeled.
+
+    This is the first of the modeled operators the IR records on ``raw_text``
+    rather than in typed fields, the same register as :class:`LetFunction`'s:
+    the boundary is stated in the model instead of being left as fields that
+    read as implemented and are not. Every member of the register says so in
+    its own summary line, so the set is readable off the module. Two
+    exclusions keep it checkable. ``graph-where-edges`` and
+    ``graph-where-nodes`` carry a real ``predicate`` and no ``raw_text``.
+    :class:`UnknownOp` does carry one, but it is the builder's fallback for a
+    shape it could not dispatch rather than a modeling choice.
+
+    ``raw_text`` is ``ToString(IncludeTrivia.Minimal)``, so these operators
+    round-trip through ``model_dump_json`` and participate in ``semantic_hash``
+    as text. Nothing typed is inside them to walk: ``find_all(ir, ColumnRef)``
+    will not report a column that appears only in one of their clauses.
+    Downstream scope splits by bind state. ``Operator.result_schema`` carries
+    Microsoft's ``ResultType``, which knows the columns each of them adds, and
+    :class:`SchemaAttacher` overlays it; an unbound parse has no such answer,
+    and nothing re-derives one, so the scope downstream is the one they
+    inherited. Hashing text also brings the formatting sensitivity
+    :class:`UnknownSource` documents: interior comments and interior spacing
+    are part of the digest.
 
     A chained ``top-nested … by … with others=…`` clause is a list of levels,
     each with its own key expression, aggregate and ``others`` label. None of
@@ -1035,7 +1061,7 @@ class TopNestedOp(Operator):
 
 
 class MakeGraphOp(Operator):
-    """``make-graph`` — source text only; see :class:`ScanOp` for the register.
+    """``make-graph`` — source text only; see :class:`TopNestedOp` for the register.
 
     The edge columns, the ``with``-clause node table and its key are all inside
     ``raw_text``, so ``find_all(ir, TableRef)`` does not report the node table.
@@ -1054,7 +1080,7 @@ class MakeGraphOp(Operator):
 class MacroExpandOp(Operator):
     """``macro-expand`` — source text, plus the inner pipeline.
 
-    The one member of the :class:`ScanOp` register that is not opaque all the
+    The one member of the :class:`TopNestedOp` register that is not opaque all the
     way down. The entity-group name and the ``as`` alias stay in ``raw_text``,
     and the parenthesized body is built as a real :class:`Pipeline` on
     ``pipeline``, so its operators and columns are walkable. The scope it runs
@@ -1068,7 +1094,7 @@ class MacroExpandOp(Operator):
 
 
 class GraphMatchOp(Operator):
-    """``graph-match`` — source text only; see :class:`ScanOp` for the register.
+    """``graph-match`` — source text only; see :class:`TopNestedOp` for the register.
 
     The pattern, its ``where`` constraint and its ``project`` list are all
     text, so a column named only in a graph pattern does not reach
@@ -1083,7 +1109,7 @@ class GraphMatchOp(Operator):
 
 
 class GraphMarkComponentsOp(Operator):
-    """``graph-mark-components`` — text only; see :class:`ScanOp`.
+    """``graph-mark-components`` — text only; see :class:`TopNestedOp`.
 
     ``with_component_id=`` names a column this operator adds. It is inside
     ``raw_text``, so the added column is in no downstream scope, Microsoft's
@@ -1095,7 +1121,7 @@ class GraphMarkComponentsOp(Operator):
 
 
 class GraphShortestPathsOp(Operator):
-    """``graph-shortest-paths`` — text only; see :class:`ScanOp`.
+    """``graph-shortest-paths`` — text only; see :class:`TopNestedOp`.
 
     Same shape as :class:`GraphMatchOp`: pattern, constraint and
     projection are one string.
@@ -1106,7 +1132,7 @@ class GraphShortestPathsOp(Operator):
 
 
 class GraphToTableOp(Operator):
-    """``graph-to-table`` — text only; see :class:`ScanOp`.
+    """``graph-to-table`` — text only; see :class:`TopNestedOp`.
 
     Whether it emits ``nodes``, ``edges`` or both, and under which column
     names, is in ``raw_text``. That is the information a downstream scope would
@@ -1120,7 +1146,7 @@ class GraphToTableOp(Operator):
 class GraphWhereEdgesOp(Operator):
     """``graph-where-edges (…)`` — modeled, with a real predicate.
 
-    Not part of the :class:`ScanOp` register despite the family name: the
+    Not part of the :class:`TopNestedOp` register despite the family name: the
     parenthesized condition is an ordinary expression over edge properties, so
     it is built as one and its columns are walkable.
     """
@@ -1221,6 +1247,9 @@ class LetFunctionParameter(BaseModel):
     That is also why this class is a plain ``BaseModel`` rather than an
     ``Expr`` subclass: it is a slot holding a declaration and its default, with
     nothing for anything to evaluate.
+
+    :class:`ScanOp`'s ``declare(...)`` accumulators reuse this model because
+    the grammar node is the same ``FunctionParameter``.
 
     ``default`` is the ``=3`` of ``(w:int=3)``. The grammar restricts it to a
     literal; the field is ``AnyExpr`` for uniformity. Both its presence and its
@@ -1729,3 +1758,4 @@ FacetOp.model_rebuild()
 ForkBranch.model_rebuild()
 ForkOp.model_rebuild()
 MacroExpandOp.model_rebuild()
+ScanOp.model_rebuild()

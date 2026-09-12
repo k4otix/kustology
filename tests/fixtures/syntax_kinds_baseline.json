@@ -713,6 +713,9 @@
     "DefaultExpressionClause": [
       "DefaultExpressionClause"
     ],
+    "DefaultValueDeclaration": [
+      "DefaultValueDeclaration"
+    ],
     "DistinctOperator": [
       "DistinctOperator"
     ],
@@ -823,6 +826,7 @@
       "DataTableKeyword",
       "DatabaseKeyword",
       "DateTimeKeyword",
+      "DeclareKeyword",
       "DefaultKeyword",
       "DescKeyword",
       "DistinctKeyword",
@@ -836,6 +840,7 @@
       "EvaluateKeyword",
       "ExtendKeyword",
       "ExternalDataKeyword",
+      "FatArrowToken",
       "FindKeyword",
       "FirstKeyword",
       "FlagsKeyword",
@@ -875,8 +880,10 @@
       "OpenBraceToken",
       "OpenBracketToken",
       "OpenParenToken",
+      "OptionalKeyword",
       "OrKeyword",
       "OrderKeyword",
+      "OutputKeyword",
       "ParseKeyword",
       "ParseWhereKeyword",
       "PartitionKeyword",
@@ -890,6 +897,7 @@
       "RealKeyword",
       "RegexKeyword",
       "RenderKeyword",
+      "ScanKeyword",
       "SearchKeyword",
       "SemicolonToken",
       "SlashToken",
@@ -908,6 +916,7 @@
       "WhereKeyword",
       "WithItemIndexKeyword",
       "WithKeyword",
+      "WithMatchIdKeyword",
       "WithSourceKeyword"
     ],
     "LetStatement": [
@@ -1064,6 +1073,30 @@
     "RowSchema": [
       "RowSchema"
     ],
+    "ScanAssignment": [
+      "ScanAssignment"
+    ],
+    "ScanComputationClause": [
+      "ScanComputationClause"
+    ],
+    "ScanDeclareClause": [
+      "ScanDeclareClause"
+    ],
+    "ScanOperator": [
+      "ScanOperator"
+    ],
+    "ScanOrderByClause": [
+      "ScanOrderByClause"
+    ],
+    "ScanPartitionByClause": [
+      "ScanPartitionByClause"
+    ],
+    "ScanStep": [
+      "ScanStep"
+    ],
+    "ScanStepOutput": [
+      "ScanStepOutput"
+    ],
     "SearchOperator": [
       "SearchOperator"
     ],
@@ -1094,6 +1127,9 @@
     "SeparatedElement[NamedParameter]": [
       "SeparatedElement"
     ],
+    "SeparatedElement[ScanAssignment]": [
+      "SeparatedElement"
+    ],
     "SeparatedElement[Statement]": [
       "SeparatedElement"
     ],
@@ -1121,6 +1157,9 @@
     "SyntaxList[NamedParameter]": [
       "List"
     ],
+    "SyntaxList[ScanStep]": [
+      "List"
+    ],
     "SyntaxList[SeparatedElement[Expression]]": [
       "List"
     ],
@@ -1146,6 +1185,9 @@
       "List"
     ],
     "SyntaxList[SeparatedElement[NamedParameter]]": [
+      "List"
+    ],
+    "SyntaxList[SeparatedElement[ScanAssignment]]": [
       "List"
     ],
     "SyntaxList[SeparatedElement[Statement]]": [

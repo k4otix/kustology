@@ -154,6 +154,7 @@ from .query import (
     SampleDistinctOp,
     SampleOp,
     ScanOp,
+    ScanStep,
     SearchOp,
     SerializeOp,
     SetOptionStmt,
@@ -491,6 +492,13 @@ class IRBuilder:
         # this set from ``_let_names``. :meth:`_visit_function_declaration`
         # saves and restores both.
         self._param_names: set[str] = set()
+        # Names the enclosing operator declared as a scope: a ``scan`` step
+        # name. Empty everywhere else. A ``PathExpression`` whose left name is
+        # in this set is a qualified column reference, not a table read or a
+        # dynamic access. Every visitor that fills it restores it in a
+        # ``finally``, the way ``_visit_function_body`` restores
+        # ``_param_names``.
+        self._qualifier_names: set[str] = set()
 
     # -- entry points ----------------------------------------------------
 
@@ -628,6 +636,7 @@ class IRBuilder:
 
         self._let_names = set()
         self._param_names = set()
+        self._qualifier_names = set()
         let_bindings: list[LetBinding] = []
         # ``GetDescendants`` is recursive, so each sweep has to pick out the
         # query's own statements. A statement inside a ``FunctionDeclaration``
@@ -1922,9 +1931,10 @@ class IRBuilder:
         if kind == "GraphWhereNodesOperator":
             return GraphWhereNodesOp(predicate=self._visit_expr(n.Condition), span=span)
 
-        # Preserve-raw-text ops for elaborate state-machine operators.
         if kind == "ScanOperator":
-            return ScanOp(raw_text=node.ToString(IncludeTrivia.Minimal), span=span)
+            return self._visit_scan(n, span)
+
+        # Preserve-raw-text ops for elaborate state-machine operators.
         if kind == "TopNestedOperator":
             return TopNestedOp(raw_text=node.ToString(IncludeTrivia.Minimal), span=span)
         if kind == "MakeGraphOperator":
@@ -1969,6 +1979,95 @@ class IRBuilder:
         if str(node.Kind) in ("LongLiteralExpression", "IntLiteralExpression"):
             return int(node.LiteralValue)
         return self._visit_expr(node)
+
+    def _visit_scan(self, node: Any, span: Span) -> ScanOp:
+        """Build a :class:`ScanOp`, with the step names in scope.
+
+        Step names are pushed onto ``_qualifier_names`` for the length of the
+        clause bodies, so ``s1.p`` inside a step becomes a qualified
+        ``ColumnRef`` instead of a table read. The set is restored in
+        ``finally``: a ``scan`` inside a ``join``'s right-hand pipeline must
+        not leak its step names to the outer query.
+
+        The ``declare(...)`` list is the same ``FunctionParameter`` list a
+        ``let`` function's parameters are, so :meth:`_read_function_parameters`
+        reads it unchanged.
+        """
+        params = read_named_params(getattr(node, "Parameters", None))
+        declare_clause = getattr(node, "DeclareClause", None)
+        order_clause = getattr(node, "OrderByClause", None)
+        partition_clause = getattr(node, "PartitionByClause", None)
+
+        steps_list = getattr(node, "Steps", None)
+        raw_steps = list(_iter_elements(steps_list)) if steps_list is not None else []
+        saved = self._qualifier_names
+        self._qualifier_names = saved | {
+            visit_name(s.Name) for s in raw_steps if s.Name is not None
+        }
+        try:
+            steps = [self._visit_scan_step(s) for s in raw_steps]
+            order_by = (
+                [self._visit_sort_key(el)
+                 for el in _iter_elements(order_clause.Expressions)]
+                if order_clause is not None else []
+            )
+            partition_by = (
+                [self._visit_expr(el)
+                 for el in _iter_elements(partition_clause.Expressions)]
+                if partition_clause is not None else []
+            )
+        finally:
+            self._qualifier_names = saved
+
+        return ScanOp(
+            with_match_id=params.get("with_match_id"),
+            with_step_name=params.get("with_step_name"),
+            declarations=self._read_function_parameters(
+                declare_clause.Declarations if declare_clause is not None else None,
+            ),
+            order_by=order_by,
+            partition_by=partition_by,
+            steps=steps,
+            span=span,
+        )
+
+    def _visit_scan_step(self, node: Any) -> ScanStep:
+        """Build one :class:`ScanStep`.
+
+        ``optional`` follows the step name in the grammar, and an unwritten
+        one leaves ``OptionalKeyword`` at ``None``. ``output=`` goes through
+        :meth:`_ordering_keyword`, which validates the token text against the
+        ``Literal``'s own values: ``output=bogus`` builds a missing token
+        whose text is ``""``, and letting that reach pydantic turns a typo
+        into a ``ValidationError`` out of ``to_ir()``.
+
+        A ``=> ;`` with nothing after the arrow builds one assignment whose
+        name is a zero-width missing node; a name of width zero is skipped.
+        """
+        computation = getattr(node, "ComputationClause", None)
+        assignments: list[Assignment] = []
+        if computation is not None:
+            for el in _iter_elements(computation.Assignments):
+                name_node = getattr(el, "Name", None)
+                if name_node is None or name_node.Width == 0:
+                    continue
+                assignments.append(Assignment(
+                    name=visit_name(name_node),
+                    expr=self._visit_expr(el.Expression),
+                    span=to_span(el),
+                ))
+        optional_keyword = getattr(node, "OptionalKeyword", None)
+        return ScanStep(
+            name=visit_name(node.Name),
+            is_optional=optional_keyword is not None and optional_keyword.Width > 0,
+            output=self._ordering_keyword(
+                getattr(node, "ScanStepOutput", None), "OutputKind",
+                ("all", "last", "none"),
+            ),
+            condition=self._visit_expr(node.Condition),
+            assignments=assignments,
+            span=to_span(node),
+        )
 
     def _visit_sort_key(self, node: Any) -> SortKey:
         """One ``sort by`` / ``order by`` / ``top … by`` ordering key.
@@ -2158,7 +2257,12 @@ class IRBuilder:
             if expr_kind == "NameReference" and sel_kind == "NameReference":
                 lhs_name = visit_name(expr_node.Name)
                 rhs_name = visit_name(sel_node.Name)
-                if lhs_name in ("$left", "$right") or is_table_symbol(getattr(expr_node, "ReferencedSymbol", None)):
+                if lhs_name in self._qualifier_names:
+                    # A ``scan`` step name. Its ``ReferencedSymbol`` is a
+                    # ``VariableSymbol``, so the table test below declines and
+                    # the reference would otherwise read as a dynamic access.
+                    res = ColumnRef(name=rhs_name, qualifier=lhs_name, span=span)
+                elif lhs_name in ("$left", "$right") or is_table_symbol(getattr(expr_node, "ReferencedSymbol", None)):
                     side = lhs_name[1:] if lhs_name in ("$left", "$right") else None
                     res = ColumnRef(
                         name=rhs_name,

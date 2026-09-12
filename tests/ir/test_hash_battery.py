@@ -591,6 +591,22 @@ MUST_DIFFER = [
     # typeof(a:long, *)'s a, x, y. Recording only the last star's position
     # would make the two byte-identical.
     ("typeof-repeated-star", 'T | evaluate python(typeof(*, *, a:long), "c")', 'T | evaluate python(typeof(a:long, *), "c")'),
+    # --- Track E: scan ---
+    (
+        "scan-step-output",
+        "T | scan with (step s output=last: a > 1 => ;)",
+        "T | scan with (step s output=all: a > 1 => ;)",
+    ),
+    (
+        "scan-step-optional",
+        "T | scan with (step s optional: a > 1 => ;)",
+        "T | scan with (step s: a > 1 => ;)",
+    ),
+    (
+        "scan-qualifier-step",
+        "T | scan declare(p:string='') with (step s1: a > 1 => p = s1.p; step s2: b > 1 => p = s1.p;)",
+        "T | scan declare(p:string='') with (step s1: a > 1 => p = s1.p; step s2: b > 1 => p = s2.p;)",
+    ),
 ]
 
 
@@ -886,6 +902,15 @@ MUST_EQUAL = [
     # typeof(...) in argument position is a structural node, so its interior
     # spacing is gone by the time the digest is computed.
     ("typeof-interior-spacing", "T | extend y = f(typeof(string))", "T | extend y = f(typeof( string ))"),
+    # --- Track E: scan is structural ---
+    # One whitespace pair stands for every operator the track models: each
+    # reaches the digest as typed fields, so reflowing one is inert the way it
+    # is for every other operator.
+    (
+        "scan-reflowed",
+        "T | scan declare(n:long=0) with (step s: a > 1 => n = 1;)",
+        "T | scan\n    declare(n:long=0)\n    with (\n        step s: a > 1 => n = 1;\n    )",
+    ),
 ]
 
 
@@ -959,12 +984,12 @@ def test_no_battery_pair_discriminates_on_an_unmodelled_blob():
     whole battery is text-free is cheaper than reasoning about it pair by
     pair.
 
-    The check covers more than the ``Unknown*`` classes. Eight modeled
-    operators record their own source too (``ScanOp``, ``TopNestedOp``,
-    ``MacroExpandOp``, ``MakeGraphOp`` and the four ``graph-*`` operators),
-    because they are dispatched and only partly modeled. Nothing in the
+    The check covers more than the ``Unknown*`` classes. Several modeled
+    operators record their own source too (``TopNestedOp``, ``MacroExpandOp``,
+    ``MakeGraphOp`` and the four ``graph-*`` operators), because they are
+    dispatched and only partly modeled. Nothing in the
     battery reaches one today, so naming them in prose would protect nobody:
-    the first pair written against ``scan`` or ``graph-match`` would
+    the first pair written against ``graph-match`` would
     discriminate on ``raw_text`` and pass. Deriving the set from
     ``model_fields`` covers a node added to the partly-modeled list from the
     moment it is defined.

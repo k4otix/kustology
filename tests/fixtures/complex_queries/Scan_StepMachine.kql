@@ -1,0 +1,12 @@
+// Session reconstruction: a two-step scan with a declared accumulator,
+// an ordering key, a partition key, and an optional second step.
+Events
+| scan with_match_id=SessionId
+    order by Timestamp asc
+    partition by DeviceId
+    declare(Stage:string='', Hits:long=0)
+    with (
+        step Start output=last: EventType == "Login" => Stage = "start", Hits = 1;
+        step Escalate optional: EventType == "PrivilegeChange" => Stage = "escalated", Hits = Escalate.Hits + 1;
+    )
+| project DeviceId, SessionId, Stage, Hits

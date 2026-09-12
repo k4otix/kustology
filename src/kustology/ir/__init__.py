@@ -53,7 +53,8 @@ from .query import (
     ProjectReorderOp, QueryIR, QueryParametersStmt, RangeOp, RenderOp,
     ReorderKey, RestrictStmt,
     SampleDistinctOp, SampleOp,
-    ScanOp, SearchOp, SerializeOp, SetOptionStmt, SortKey, SortOp, SummarizeOp,
+    ScanOp, ScanStep, SearchOp, SerializeOp, SetOptionStmt, SortKey, SortOp,
+    SummarizeOp,
     TableRef,
     TabularSchema, TakeOp, TopHittersOp, TopNestedOp, TopOp, UnionOp,
     UnknownOp, UnknownSource, UnknownStmt,
@@ -93,7 +94,7 @@ __all__ = [
     "QueryIR", "Pipeline", "LetBinding", "LetFunction", "LetFunctionParameter",
     "Diagnostic", "Assignment",
     "ForkBranch", "MakeSeriesAggregate", "MvExpandColumn", "ReorderKey",
-    "SortKey", "Span",
+    "ScanStep", "SortKey", "Span",
     "KustoType", "TabularSchema",
     # Expressions
     "Expr", "AnyExpr", "ColumnRef", "BinOp", "SetMembership", "Between",

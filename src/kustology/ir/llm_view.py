@@ -172,18 +172,19 @@ def _drop_redundant_canonical_form(out: dict[str, Any], cls: type) -> None:
     Higher-level expressions (BinOp, And, …) keep theirs because the canonical
     form summarizes a subtree the LLM would otherwise walk.
 
-    For ColumnRef the bare-name match covers unbound nodes. Bound nodes
-    canonicalize to ``"table.name"``, which restates the surrounding ``table``
-    field, so that form drops too. ``LetValueRef`` is the same shape with no
-    ``table`` to qualify it.
+    For ColumnRef the bare-name match covers unbound nodes. A qualified or
+    bound node canonicalizes to ``"prefix.name"``, which restates the
+    surrounding ``qualifier`` or ``table`` field, so that form drops too.
+    ``qualifier`` is the prefix the canonical form uses when both are set.
+    ``LetValueRef`` is the same shape with neither field to qualify it.
     """
     cf = out.get("canonical_form")
     if cf is None:
         return
     if issubclass(cls, (ColumnRef, LetValueRef)):
         col_name = out.get("name")
-        table = out.get("table")
-        if cf == col_name or (table and cf == f"{table}.{col_name}"):
+        prefix = out.get("qualifier") or out.get("table")
+        if cf == col_name or (prefix and cf == f"{prefix}.{col_name}"):
             del out["canonical_form"]
     elif issubclass(cls, LiteralExpr) and cf == _canonical_literal_repr(out.get("value")):
         del out["canonical_form"]

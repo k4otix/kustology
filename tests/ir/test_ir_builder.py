@@ -29,6 +29,7 @@ from kustology.ir import (
     ToScalarExpr,
     UnknownSource,
     find_all,
+    walk,
 )
 from kustology.ir.binder import SchemaAttacher
 
@@ -1323,8 +1324,8 @@ def test_a_comment_before_a_let_function_does_not_change_the_hash(ir_builder):
 
 
 def test_reformatting_a_raw_text_operator_does_not_change_the_hash(ir_builder):
-    """The handful of operators the IR keeps as source text (``scan``,
-    ``top-nested``, the ``graph-*`` family) must not record the node's
+    """The handful of operators the IR keeps as source text
+    (``top-nested``, the ``graph-*`` family) must not record the node's
     *leading trivia* -- every space, newline and comment between the
     previous token and this one, which a bare ``node.ToString()`` includes.
     Recording it hashes two spellings of one operator differently.
@@ -1340,7 +1341,7 @@ def test_reformatting_a_raw_text_operator_does_not_change_the_hash(ir_builder):
     assert plain.semantic_hash == commented.semantic_hash
 
 
-def test_a_url_inside_raw_text_still_separates_two_scan_operators(ir_builder):
+def test_a_url_inside_raw_text_still_separates_two_unmodeled_operators(ir_builder):
     """Guard on the re-lex applied to ``raw_text`` before hashing: ``//`` is a
     comment introducer *and* the middle of every URL a detection rule ever
     matches on. Comments are already gone by this point (the builder records
@@ -1348,18 +1349,16 @@ def test_a_url_inside_raw_text_still_separates_two_scan_operators(ir_builder):
     again -- stripping from ``//`` to end-of-line would truncate both
     operators to ``Url == "http:`` and collide them.
     """
-    a = ir_builder.build(
-        "T | scan declare (x:string='') with (step s: Url == \"http://a\" => x = \"y\")"
-    )
-    b = ir_builder.build(
-        "T | scan declare (x:string='') with (step s: Url == \"http://b\" => x = \"y\")"
-    )
+    a = ir_builder.build('T | bogus Url == "http://a"')
+    b = ir_builder.build('T | bogus Url == "http://b"')
 
-    assert 'Url == "http://a"' in a.main_pipeline.operators[0].raw_text
+    carriers = [n.raw_text for n in walk(a) if n is not a and getattr(n, "raw_text", None)]
+    assert 'Url == "http://a"' in carriers
+
     assert a.semantic_hash != b.semantic_hash
 
 
-def test_interior_spacing_in_a_raw_text_string_literal_is_not_collapsed(ir_builder):
+def test_interior_spacing_in_an_unmodeled_string_literal_is_not_collapsed(ir_builder):
     """The same trap as the URL guard above, one step narrower.
 
     A string literal lexes as one token, so the run of spaces inside it
@@ -1370,15 +1369,11 @@ def test_interior_spacing_in_a_raw_text_string_literal_is_not_collapsed(ir_build
     ``top-nested 3  of  a`` as ``top-nested 3 of a``, and the re-lex gives
     every remaining spelling one form.
     """
-    a = ir_builder.build(
-        "T | scan declare (x:string='') with (step s: Msg == \"error  occurred\" => x = \"y\")"
-    )
-    b = ir_builder.build(
-        "T | scan declare (x:string='') with (step s: Msg == \"error occurred\" => x = \"y\")"
-    )
+    a = ir_builder.build('T | bogus Msg == "error  occurred"')
+    b = ir_builder.build('T | bogus Msg == "error occurred"')
 
-    assert 'Msg == "error  occurred"' in a.main_pipeline.operators[0].raw_text
-    assert 'Msg == "error occurred"' in b.main_pipeline.operators[0].raw_text
+    carriers = [n.raw_text for n in walk(a) if n is not a and getattr(n, "raw_text", None)]
+    assert 'Msg == "error  occurred"' in carriers
 
     assert a.semantic_hash != b.semantic_hash
 

@@ -113,6 +113,12 @@ class ColumnRef(Expr):
     # `$left.a == $right.b`, and losing it on a bound parse would collapse
     # the two.
     join_side: Literal["left", "right"] | None = None
+    # The scope name a reference was written against when that name is not a
+    # table: a ``scan`` step name. ``s1.p`` inside a step reads the column
+    # ``p`` as step ``s1`` saw it, and that name is not a table, so ``table``
+    # cannot hold it without the binder resolving it against the in-scope
+    # table by name. Source-derived, so it hashes and renders.
+    qualifier: str | None = None
 
 
 class LetValueRef(Expr):
