@@ -49,6 +49,28 @@ def test_statement_spans_exclude_separators_and_ignore_semicolons_in_strings():
     assert _spans(q, "statement_spans") == ['let s = "a;b"', "T | where x == s"]
 
 
+def test_a_command_block_skips_a_second_command_without_a_diagnostic():
+    q = ".show table T details\n.drop table Victim"
+    assert _spans(q, "skipped_token_spans") == [".drop table Victim"]
+    assert kustology.parse(q).diagnostics == []
+
+
+def test_a_query_block_skips_an_unparseable_tail_and_reports_it():
+    q = "T | where a == 1 )))"
+    assert _spans(q, "skipped_token_spans") == [")))"]
+    assert len(kustology.parse(q).diagnostics) == 1
+
+
+def test_a_clean_query_skips_nothing():
+    assert _spans("T | where a == 1 | take 5", "skipped_token_spans") == []
+
+
+def test_skipped_offsets_are_code_points():
+    q = "T | where a == '😀' )))"
+    (span,) = kustology.parse(q).skipped_token_spans()
+    assert span.text(q) == ")))"
+
+
 def test_tokens_expose_kind_text_and_trivia():
     q = "T | take 1"
     toks = kustology.parse(q).tokens()

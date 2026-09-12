@@ -144,6 +144,12 @@ def parse(query_text: str, schema: SchemaLike = None):
     extra ``Error`` diagnostic naming the .NET exception — see
     :func:`_analyze_guarded`.
 
+    A control command (``.show tables``, ``.drop table T``) parses too, into
+    a ``CommandBlock`` instead of a ``QueryBlock``. Read
+    :attr:`kustology.KustoQuery.is_command` before an accessor written for
+    query grammar, and :attr:`kustology.KustoQuery.command_kinds` for what
+    the command does.
+
     Raises ``ValueError`` when ``query_text`` holds an unpaired surrogate,
     which UTF-16 cannot encode; see
     :func:`kustology._text.check_utf16_encodable`.

@@ -11,6 +11,7 @@ from .bridge import GlobalState, KustoCode
 from .services import _analyze_guarded, _diagnostic_dicts
 from .spans import TextSpan, TimeExpr
 from .utils.analysis import (
+    collect_nodes,
     find_table_references,
     find_time_expressions,
     get_operator_chain,
@@ -79,6 +80,51 @@ class KustoQuery:
     def has_semantics(self) -> bool:
         """True when the underlying KustoCode was bound (parsed with a schema)."""
         return self._code.HasSemantics
+
+    @property
+    def is_command(self) -> bool:
+        """True when this parse is a control command rather than a query.
+
+        A control command starts with a dot: ``.show tables``,
+        ``.drop table Victim``. Microsoft's parser roots one in a
+        ``CommandBlock``. Everything else roots in a ``QueryBlock``,
+        including empty text, whitespace, a comment on its own, a
+        ``#connect`` directive, and a query that is nothing but ``let``
+        statements.
+
+        Tier 1 accessors answer on a command, but they were written for
+        query grammar and a command's arguments are not query positions.
+        ``parse(".show tables | project TableName").get_referenced_tables()``
+        returns an empty set. Branch on this property before you trust one
+        of those answers. :meth:`to_ir` raises on a command; read
+        :attr:`command_kinds` for what the command does.
+        """
+        return str(self.syntax.Kind) == "CommandBlock"
+
+    @property
+    def command_kinds(self) -> frozenset[str]:
+        """The ``CommandKind`` of every control command in this parse.
+
+        The values are Microsoft's own strings, such as ``"DropTable"`` and
+        ``"ShowTables"``, and they track the bundled ``Kusto.Language``
+        version. kustology neither maps them to an enum nor classifies them,
+        so deciding which commands your caller may run is your policy to
+        write.
+
+        One parse can hold several:
+        ``.execute database script <| .drop table X`` reports
+        ``ExecuteDatabaseScript`` and ``DropTable``. A query reports an
+        empty set.
+
+        The result is a ``frozenset`` because the walk runs on every read,
+        so an edit to a returned set would vanish on the next one.
+        """
+        return frozenset(
+            str(node.CommandKind)
+            for node in collect_nodes(
+                self.syntax, lambda n: str(n.Kind) == "CustomCommand"
+            )
+        )
 
     @property
     def diagnostics(self) -> list[dict]:
@@ -232,6 +278,15 @@ class KustoQuery:
         See :func:`kustology.lexical.statement_spans`.
         """
         return lexical.statement_spans(self._code)
+
+    def skipped_token_spans(self) -> list[TextSpan]:
+        """Return the span of every run of text the parser skipped.
+
+        See :func:`kustology.lexical.skipped_token_spans`. A command block
+        reports a skipped run with no diagnostic, so an empty
+        :attr:`diagnostics` list does not mean the whole text parsed.
+        """
+        return lexical.skipped_token_spans(self._code)
 
     def get_time_range(self) -> list[TimeExpr]:
         """Return :meth:`find_time_expressions`'s result under this deprecated name."""
