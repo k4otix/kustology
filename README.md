@@ -136,6 +136,7 @@ library without CI noticing.
 | [examples/walk_tree.py](https://github.com/k4otix/kustology/blob/main/examples/walk_tree.py) | Direct AST traversal |
 | [examples/query_analysis.py](https://github.com/k4otix/kustology/blob/main/examples/query_analysis.py) | End-to-end analysis of a non-trivial query |
 | [examples/binding_comparison.py](https://github.com/k4otix/kustology/blob/main/examples/binding_comparison.py) | What passing a schema adds |
+| [examples/safe_interpolation.py](https://github.com/k4otix/kustology/blob/main/examples/safe_interpolation.py) | Interpolating a caller-supplied name into KQL safely |
 | [examples/walk_ir.py](https://github.com/k4otix/kustology/blob/main/examples/walk_ir.py) | The same walk over the typed IR |
 | [examples/find_all_demo.py](https://github.com/k4otix/kustology/blob/main/examples/find_all_demo.py) | Generic IR traversal with `find_all` |
 | [examples/analyzer_demo.py](https://github.com/k4otix/kustology/blob/main/examples/analyzer_demo.py) | Composing analyzers and reading `Finding`s |

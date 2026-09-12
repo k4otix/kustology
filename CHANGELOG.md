@@ -10,6 +10,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **`KustoQuery.is_command` and `command_kinds`** (tier 1). `is_command` tells a dotted control command from a query; `command_kinds` returns Microsoft's `CommandKind` strings for every command in the parse. See [Control commands](docs/tier1-syntax-tree.md#control-commands).
 - **`skipped_token_spans()`** (tier 1) on `KustoQuery` and in `kustology.lexical` reports every run of text the parser skipped. A control command skips a trailing second command with no diagnostic, so an empty `diagnostics` list is not proof that all of the input parsed.
+- **`examples/safe_interpolation.py`** (tier 1) builds a query from a caller-supplied table name, quotes it, and verifies the parse against a canary shape before trusting it. Linked from the README's example table.
 
 ### Changed
 
