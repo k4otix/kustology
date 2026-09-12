@@ -59,6 +59,11 @@ _UNKNOWN_NAME_CODES = frozenset({
 # was built from an unbound tree.
 ANALYZE_FAILED_CODE = "KUSTOLOGY001"
 
+# kustology's own code for input whose tail the parser skipped. The CLI
+# issues it; the library's ``validate`` and ``KustoQuery.diagnostics``
+# report what Microsoft reports and leave the judgement to the caller.
+SKIPPED_TEXT_CODE = "KUSTOLOGY002"
+
 
 def _analyze_guarded(
     analyze: Callable[[], Any],

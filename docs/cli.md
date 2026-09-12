@@ -22,6 +22,9 @@ kustology format query.kql
 
 `format` runs the validator before it prints anything. See [Exit codes](#exit-codes) for what happens when the input fails validation.
 
+Input whose tail the parser skipped is Error-severity, so `format` refuses
+it as well.
+
 ### validate
 
 Prints parser diagnostics for a query.
@@ -37,6 +40,11 @@ kustology validate --schema s.json \
 - `--json` emits the diagnostics as a JSON array instead of text.
 - `--schema` binds the parse against a schema file, so `validate` also reports semantic diagnostics. See [Schema files](#schema-files).
 - `--ignore-unknown-tables` suppresses the "table not found" diagnostic (KS204) only. Other diagnostics still report.
+
+`validate` also reports text the parser skipped, under kustology's own code
+`KUSTOLOGY002` at `Error` severity. A control command followed by a second
+command carries no Microsoft diagnostic and leaves the second command
+unread, so `validate` names the unparsed run and exits 1.
 
 ### parse
 
@@ -59,7 +67,9 @@ kustology parse --ir --schema s.json query.kql # enriched IR: types + provenance
 kinds to stderr, prints nothing on stdout, and exits 1. `parse --ast` prints
 a command's syntax tree the same as a query's.
 
-`parse` also runs the validator before it prints anything, the same as `format`.
+`parse` also runs the validator before it prints anything, the same as
+`format`. Input whose tail the parser skipped is Error-severity, so `parse`
+refuses it under either `--ast` or `--ir`.
 
 ## Schema files
 
@@ -100,6 +110,10 @@ Input is capped at 10 MB. Set `KUSTOLOGY_MAX_INPUT_BYTES` to override the cap. T
 Code 1 means the query is wrong. Code 2 means the command is wrong. A CI job can branch on this distinction: an unreadable path or a malformed `--schema` file says nothing about the KQL itself.
 
 `format` and `parse` both run the validator before they emit anything. If the input has Error-severity diagnostics, neither command writes output derived from the rejected parse. The diagnostics go to stderr, stdout stays empty, and the command exits 1.
+
+`validate`, `format`, and `parse` all treat text the parser skipped as an
+Error-severity diagnostic with the code `KUSTOLOGY002`, so each of the three
+exits 1 on input whose tail went unread.
 
 `parse --ir` also exits 1 on a control command, which the Tier 2 IR does not
 model.

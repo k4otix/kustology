@@ -14,6 +14,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - **`to_ir()` raises on a control command** (tier 2). The IR models query grammar, so a `CommandBlock` parse raises `ValueError`; branch on `KustoQuery.is_command` first. `kustology parse --ir` exits 1 on the same input.
+- **`validate`, `format`, and `parse` reject input whose tail the parser skipped** (CLI). The diagnostic carries kustology's code `KUSTOLOGY002` at `Error` severity. The library's `validate()` and `KustoQuery.diagnostics` are unchanged.
 
 ## [0.3.0] — 2026-08-30
 
