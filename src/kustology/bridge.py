@@ -216,6 +216,7 @@ from Kusto.Language.Symbols import (
     ColumnSymbol,
     DatabaseSymbol,
     FunctionSymbol,
+    Parameter,
     ScalarTypes,
     TableSymbol,
 )
@@ -229,6 +230,7 @@ __all__ = [
     "KustoCode",
     "KustoCodeService",
     "KustoFacts",
+    "Parameter",
     "ScalarTypes",
     "TableSymbol",
     "TokenParser",

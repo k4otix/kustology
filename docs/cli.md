@@ -73,7 +73,7 @@ it writes the command kinds to stderr, prints nothing on stdout, and exits 1.
 
 ## Schema files
 
-A `--schema` file is JSON in the shape `parse(query, schema=...)` takes: `{"Table": {"column": "type"}}`.
+A `--schema` file is JSON in the shape `parse(query, schema=...)` takes: `{"Table": {"column": "type"}}`. A JSON schema file declares tables; to declare a function, call `parse` with a [`FunctionSchema`](tier1-syntax-tree.md#declaring-functions) from Python.
 
 On `validate` and `parse`, a schema file binds the parse. On `parse --ir`, `to_ir()` auto-attaches the schema from a bound parse, so the IR carries column types, table provenance, and `"schema_attached": true` instead of an unenriched skeleton.
 

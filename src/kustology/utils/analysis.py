@@ -10,7 +10,7 @@ from .._text import Utf16Offsets
 from ..bridge import ColumnSymbol, FunctionSymbol, KustoFacts, TableSymbol
 from ..reflection import syntax_kinds as _syntax_kinds
 from ..spans import TimeExpr
-from .schema_state import build_global_state  # re-exported
+from .schema_state import FunctionSchema, build_global_state  # re-exported
 from .walker import (  # re-exported
     KustoWalker,
     iter_elements,
@@ -20,6 +20,7 @@ from .walker import (  # re-exported
 )
 
 __all__ = [
+    "FunctionSchema",
     "KustoWalker",
     "build_global_state",
     "collect_nodes",

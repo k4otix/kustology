@@ -45,7 +45,7 @@ Both tiers use the same parser. Pick based on the shape of data your code wants.
 | **Returns** | `KustoQuery` wrapping Microsoft's syntax tree | `QueryIR` — Pydantic models |
 | **Traversal** | Microsoft AST, dispatching on `node.Kind` | Typed pipeline, dispatching on `isinstance` |
 | **Serialization** | `to_dict()` / `to_json()` | `model_dump_json()`, which round-trips, plus `to_llm_dict()` for language models |
-| **Schema binding** | `parse(query, schema=...)` runs Microsoft's binder for semantic diagnostics and symbol resolution | `to_ir()` on a bound parse carries per-operator schemas and column types; without a schema it still types literals and built-in calls |
+| **Schema binding** | `parse(query, schema=...)` runs Microsoft's binder for semantic diagnostics and symbol resolution; the dict declares tables, and a `FunctionSchema` value declares a function | `to_ir()` on a bound parse carries per-operator schemas and column types; without a schema it still types literals and built-in calls |
 | **Best for** | Formatting, linting, IDE integrations, extracting tables and columns, surgical table renames | Lineage and anti-pattern analyzers, JSON for APIs and UIs, schema-aware column flow, query graphs for language models |
 
 ## Prerequisites
