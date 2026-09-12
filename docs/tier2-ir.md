@@ -115,13 +115,15 @@ the root kind: `parse(".drop table A | getschema").to_ir()` reports a
 call.
 
 The IR records these operators as their own source text rather than
-structured fields, on `raw_text`: `top-nested`, `make-graph`,
-`graph-match`, `graph-mark-components`, `graph-shortest-paths`,
-`graph-to-table`, and `macro-expand` (which also keeps its inner
-pipeline). They round-trip and they hash, but there is nothing typed
-inside them to walk. `graph-where-edges` and `graph-where-nodes` are
-modeled, with a real predicate. `scan` is modeled as a step machine:
-each step's condition and assignments are typed IR.
+structured fields, on `raw_text`: `make-graph`, `graph-match`,
+`graph-mark-components`, `graph-shortest-paths`, `graph-to-table`, and
+`macro-expand` (which also keeps its inner pipeline). They round-trip
+and they hash, but there is nothing typed inside them to walk.
+`graph-where-edges` and `graph-where-nodes` are modeled, with a real
+predicate. `scan` is modeled as a step machine: each step's condition
+and assignments are typed IR. `top-nested` is modeled as a list of
+levels: each level's count, key, aggregate, direction and `others`
+label are typed IR.
 
 ### Function call sites are not inlined
 

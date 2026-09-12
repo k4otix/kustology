@@ -56,7 +56,7 @@ from .query import (
     ScanOp, ScanStep, SearchOp, SerializeOp, SetOptionStmt, SortKey, SortOp,
     SummarizeOp,
     TableRef,
-    TabularSchema, TakeOp, TopHittersOp, TopNestedOp, TopOp, UnionOp,
+    TabularSchema, TakeOp, TopHittersOp, TopNestedLevel, TopNestedOp, TopOp, UnionOp,
     UnknownOp, UnknownSource, UnknownStmt,
 )
 from .builder import IRBuilder
@@ -94,7 +94,7 @@ __all__ = [
     "QueryIR", "Pipeline", "LetBinding", "LetFunction", "LetFunctionParameter",
     "Diagnostic", "Assignment",
     "ForkBranch", "MakeSeriesAggregate", "MvExpandColumn", "ReorderKey",
-    "ScanStep", "SortKey", "Span",
+    "ScanStep", "SortKey", "Span", "TopNestedLevel",
     "KustoType", "TabularSchema",
     # Expressions
     "Expr", "AnyExpr", "ColumnRef", "BinOp", "SetMembership", "Between",

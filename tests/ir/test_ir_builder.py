@@ -1323,19 +1323,19 @@ def test_a_comment_before_a_let_function_does_not_change_the_hash(ir_builder):
     assert plain.semantic_hash == commented.semantic_hash
 
 
-def test_reformatting_a_raw_text_operator_does_not_change_the_hash(ir_builder):
-    """The handful of operators the IR keeps as source text
-    (``top-nested``, the ``graph-*`` family) must not record the node's
-    *leading trivia* -- every space, newline and comment between the
-    previous token and this one, which a bare ``node.ToString()`` includes.
-    Recording it hashes two spellings of one operator differently.
+def test_reformatting_an_unmodeled_operator_does_not_change_the_hash(ir_builder):
+    """An operator the builder could not dispatch keeps its own source text,
+    and must not record the node's *leading trivia* -- every space, newline
+    and comment between the previous token and this one, which a bare
+    ``node.ToString()`` includes. Recording it hashes two spellings of one
+    operator differently.
     """
-    plain = ir_builder.build("T | top-nested 3 of a by max(b)")
-    spaced = ir_builder.build("T\n|   top-nested 3 of a by max(b)")
-    commented = ir_builder.build("T | top-nested 3 // c\n of a by max(b)")
+    plain = ir_builder.build("T | bogus a b c")
+    spaced = ir_builder.build("T\n| bogus\n  a\n  b\n  c")
+    commented = ir_builder.build("T | bogus a // c\n b c")
 
     # The recorded text is the operator itself -- no leading blank, no comment.
-    assert plain.main_pipeline.operators[0].raw_text == "top-nested 3 of a by max(b)"
+    assert plain.main_pipeline.operators[0].raw_text == "bogus"
 
     assert plain.semantic_hash == spaced.semantic_hash
     assert plain.semantic_hash == commented.semantic_hash

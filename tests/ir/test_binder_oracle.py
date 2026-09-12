@@ -183,6 +183,7 @@ MATRIX: list[tuple[str, str]] = [
     ("toscalar-in-extend", "T | extend m = toscalar(U | count)"),
     ("let-then-pipeline", "let B = T | where a > 1; B | project k, a"),
     ("scan-step-machine", "T | scan declare(n:long=0) with (step s: a > 1 => n = 1;)"),
+    ("top-nested-levels", "T | top-nested 3 of k by max(a), top-nested 2 of s by count()"),
 ]
 
 # The bound leg's MATRIX run: one representative id per construct family. The

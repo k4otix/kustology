@@ -1026,8 +1026,50 @@ class SampleDistinctOp(Operator):
     of: AnyExpr
 
 
+class TopNestedLevel(BaseModel):
+    """One level of a chained ``top-nested``.
+
+    ``count`` is the ``N`` of ``top-nested N of ...``; ``None`` means the
+    level wrote none, which KQL reads as unlimited. ``of`` is the key, read
+    the way :class:`SummarizeOp`'s ``by`` is, so ``of bin(t, 1h)`` carries
+    Microsoft's own auto-name. ``by`` is the aggregate, named the same way an
+    unnamed ``summarize`` aggregate is.
+
+    ``direction`` is set only when the level wrote ``asc`` or ``desc``. The
+    parser wraps the aggregate in an ``OrderedExpression`` exactly then; a
+    bare ``by count()`` arrives as the function call itself.
+
+    ``others`` is the ``with others=`` label, written before ``by`` in the
+    grammar. It is the literal the extra bucket is named, so it is source
+    data and hashes.
+    """
+
+    model_config = {"extra": "forbid"}
+    kind: Literal["top_nested_level"] = "top_nested_level"
+    count: int | AnyExpr | None = None
+    # Discriminated by position, not by a union tag: the same annotation and
+    # reader ``ProjectOp.columns`` uses.
+    of: ColumnRef | Assignment | AnyExpr
+    by: Assignment
+    direction: Literal["asc", "desc"] | None = None
+    others: AnyExpr | None = None
+    span: Span
+
+
 class TopNestedOp(Operator):
-    """``top-nested`` — kept as its own source text; the clauses are not modeled.
+    """``top-nested`` — a hierarchical roll-up, one level per clause.
+
+    Each level carries its own key, aggregate, direction and ``others``
+    label, so a key named only in a nested level reaches
+    ``find_all(ir, ColumnRef)``.
+    """
+
+    kind: Literal["top_nested"] = "top_nested"
+    levels: list[TopNestedLevel]
+
+
+class MakeGraphOp(Operator):
+    """``make-graph`` — kept as its own source text; the clauses are not modeled.
 
     This is the first of the modeled operators the IR records on ``raw_text``
     rather than in typed fields, the same register as :class:`LetFunction`'s:
@@ -1051,26 +1093,15 @@ class TopNestedOp(Operator):
     :class:`UnknownSource` documents: interior comments and interior spacing
     are part of the digest.
 
-    A chained ``top-nested … by … with others=…`` clause is a list of levels,
-    each with its own key expression, aggregate and ``others`` label. None of
-    that is broken out, so a nested key is invisible to ``find_all``.
-    """
-
-    kind: Literal["top_nested"] = "top_nested"
-    raw_text: str
-
-
-class MakeGraphOp(Operator):
-    """``make-graph`` — source text only; see :class:`TopNestedOp` for the register.
-
-    The edge columns, the ``with``-clause node table and its key are all inside
-    ``raw_text``, so ``find_all(ir, TableRef)`` does not report the node table.
-    Tier 1 does, but only on a bound parse: over ``Edges | make-graph src -->
-    dst with Nodes on n``, ``parse(q).get_referenced_tables()`` answers
-    ``{"Edges"}`` and ``parse(q, schema=…)`` answers ``{"Edges", "Nodes"}``,
-    because the bound path reads the resolved symbol instead of the syntactic
-    source positions. ``replace_table("Nodes", …)`` splits the same way: a
-    no-op unbound, a correct rewrite bound.
+    The edge columns, the ``with``-clause node table and its key are all
+    inside ``raw_text``, so ``find_all(ir, TableRef)`` does not report the
+    node table. Tier 1 does, but only on a bound parse: over ``Edges |
+    make-graph src --> dst with Nodes on n``,
+    ``parse(q).get_referenced_tables()`` answers ``{"Edges"}`` and
+    ``parse(q, schema=…)`` answers ``{"Edges", "Nodes"}``, because the bound
+    path reads the resolved symbol instead of the syntactic source positions.
+    ``replace_table("Nodes", …)`` splits the same way: a no-op unbound, a
+    correct rewrite bound.
     """
 
     kind: Literal["make_graph"] = "make_graph"
@@ -1080,7 +1111,7 @@ class MakeGraphOp(Operator):
 class MacroExpandOp(Operator):
     """``macro-expand`` — source text, plus the inner pipeline.
 
-    The one member of the :class:`TopNestedOp` register that is not opaque all the
+    The one member of the :class:`MakeGraphOp` register that is not opaque all the
     way down. The entity-group name and the ``as`` alias stay in ``raw_text``,
     and the parenthesized body is built as a real :class:`Pipeline` on
     ``pipeline``, so its operators and columns are walkable. The scope it runs
@@ -1094,7 +1125,7 @@ class MacroExpandOp(Operator):
 
 
 class GraphMatchOp(Operator):
-    """``graph-match`` — source text only; see :class:`TopNestedOp` for the register.
+    """``graph-match`` — source text only; see :class:`MakeGraphOp` for the register.
 
     The pattern, its ``where`` constraint and its ``project`` list are all
     text, so a column named only in a graph pattern does not reach
@@ -1109,7 +1140,7 @@ class GraphMatchOp(Operator):
 
 
 class GraphMarkComponentsOp(Operator):
-    """``graph-mark-components`` — text only; see :class:`TopNestedOp`.
+    """``graph-mark-components`` — text only; see :class:`MakeGraphOp`.
 
     ``with_component_id=`` names a column this operator adds. It is inside
     ``raw_text``, so the added column is in no downstream scope, Microsoft's
@@ -1121,7 +1152,7 @@ class GraphMarkComponentsOp(Operator):
 
 
 class GraphShortestPathsOp(Operator):
-    """``graph-shortest-paths`` — text only; see :class:`TopNestedOp`.
+    """``graph-shortest-paths`` — text only; see :class:`MakeGraphOp`.
 
     Same shape as :class:`GraphMatchOp`: pattern, constraint and
     projection are one string.
@@ -1132,7 +1163,7 @@ class GraphShortestPathsOp(Operator):
 
 
 class GraphToTableOp(Operator):
-    """``graph-to-table`` — text only; see :class:`TopNestedOp`.
+    """``graph-to-table`` — text only; see :class:`MakeGraphOp`.
 
     Whether it emits ``nodes``, ``edges`` or both, and under which column
     names, is in ``raw_text``. That is the information a downstream scope would
@@ -1146,7 +1177,7 @@ class GraphToTableOp(Operator):
 class GraphWhereEdgesOp(Operator):
     """``graph-where-edges (…)`` — modeled, with a real predicate.
 
-    Not part of the :class:`TopNestedOp` register despite the family name: the
+    Not part of the :class:`MakeGraphOp` register despite the family name: the
     parenthesized condition is an ordinary expression over edge properties, so
     it is built as one and its columns are walkable.
     """

@@ -876,6 +876,7 @@
       "NotInKeyword",
       "NotStartsWithKeyword",
       "NullsKeyword",
+      "OfKeyword",
       "OnKeyword",
       "OpenBraceToken",
       "OpenBracketToken",
@@ -883,6 +884,7 @@
       "OptionalKeyword",
       "OrKeyword",
       "OrderKeyword",
+      "OthersKeyword",
       "OutputKeyword",
       "ParseKeyword",
       "ParseWhereKeyword",
@@ -911,6 +913,7 @@
       "ToKeyword",
       "ToScalarKeyword",
       "TopKeyword",
+      "TopNestedKeyword",
       "TypeOfKeyword",
       "UnionKeyword",
       "WhereKeyword",
@@ -1133,6 +1136,9 @@
     "SeparatedElement[Statement]": [
       "SeparatedElement"
     ],
+    "SeparatedElement[TopNestedClause]": [
+      "SeparatedElement"
+    ],
     "SimpleNamedExpression": [
       "SimpleNamedExpression"
     ],
@@ -1193,6 +1199,9 @@
     "SyntaxList[SeparatedElement[Statement]]": [
       "List"
     ],
+    "SyntaxList[SeparatedElement[TopNestedClause]]": [
+      "List"
+    ],
     "SyntaxList[SyntaxNode]": [
       "List"
     ],
@@ -1210,6 +1219,15 @@
     ],
     "TokenName": [
       "TokenName"
+    ],
+    "TopNestedClause": [
+      "TopNestedClause"
+    ],
+    "TopNestedOperator": [
+      "TopNestedOperator"
+    ],
+    "TopNestedWithOthersClause": [
+      "TopNestedWithOthersClause"
     ],
     "TopOperator": [
       "TopOperator"

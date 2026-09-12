@@ -607,6 +607,22 @@ MUST_DIFFER = [
         "T | scan declare(p:string='') with (step s1: a > 1 => p = s1.p; step s2: b > 1 => p = s1.p;)",
         "T | scan declare(p:string='') with (step s1: a > 1 => p = s1.p; step s2: b > 1 => p = s2.p;)",
     ),
+    # --- Track E: top-nested ---
+    (
+        "top-nested-others",
+        "T | top-nested 3 of a with others='O' by max(b)",
+        "T | top-nested 3 of a by max(b)",
+    ),
+    (
+        "top-nested-direction",
+        "T | top-nested 3 of a by max(b) asc",
+        "T | top-nested 3 of a by max(b) desc",
+    ),
+    (
+        "top-nested-level-count",
+        "T | top-nested 3 of a by max(b), top-nested 2 of c by count()",
+        "T | top-nested 3 of a by max(b)",
+    ),
 ]
 
 
@@ -985,9 +1001,9 @@ def test_no_battery_pair_discriminates_on_an_unmodelled_blob():
     pair.
 
     The check covers more than the ``Unknown*`` classes. Several modeled
-    operators record their own source too (``TopNestedOp``, ``MacroExpandOp``,
-    ``MakeGraphOp`` and the four ``graph-*`` operators), because they are
-    dispatched and only partly modeled. Nothing in the battery reaches one
+    operators record their own source too (``MacroExpandOp``, ``MakeGraphOp``
+    and the four ``graph-*`` operators), because they are dispatched and only
+    partly modeled. Nothing in the battery reaches one
     today, so naming them in prose would protect nobody: the first pair
     written against ``graph-match`` would discriminate on ``raw_text`` and
     pass. Deriving the set from ``model_fields`` covers a node added to the

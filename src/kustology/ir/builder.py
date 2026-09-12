@@ -165,6 +165,7 @@ from .query import (
     TabularSchema,
     TakeOp,
     TopHittersOp,
+    TopNestedLevel,
     TopNestedOp,
     TopOp,
     UnionOp,
@@ -418,8 +419,10 @@ class IRBuilder:
         #   TopOperator (``top N by``)                 -> ``_visit_sort_key``
         #   ProjectReorderOperator                     -> ``_visit_reorder_key``
         #   TopNestedOperator (``top-nested … by x asc``)
-        #       -> not visited. ``TopNestedOp`` preserves raw text, so no
-        #          child expression reaches ``_visit_expr``.
+        #       -> ``_visit_top_nested``, which unwraps the OrderedExpression
+        #          itself: the wrapper appears only when the level wrote a
+        #          direction, so the aggregate reaches ``_visit_assignment``
+        #          either way.
         #
         # A fifth owner needs its own case, or that shape lands on
         # ``UnknownExpr`` while this list claims coverage -- the way a missing
@@ -1934,9 +1937,10 @@ class IRBuilder:
         if kind == "ScanOperator":
             return self._visit_scan(n, span)
 
-        # Preserve-raw-text ops for elaborate state-machine operators.
         if kind == "TopNestedOperator":
-            return TopNestedOp(raw_text=node.ToString(IncludeTrivia.Minimal), span=span)
+            return self._visit_top_nested(n, span)
+
+        # Preserve-raw-text ops for elaborate state-machine operators.
         if kind == "MakeGraphOperator":
             return MakeGraphOp(raw_text=node.ToString(IncludeTrivia.Minimal), span=span)
         if kind == "MacroExpandOperator":
@@ -2070,6 +2074,40 @@ class IRBuilder:
             assignments=assignments,
             span=to_span(node),
         )
+
+    def _visit_top_nested(self, node: Any, span: Span) -> TopNestedOp:
+        """Build a :class:`TopNestedOp`, one level per clause.
+
+        ``ByExpression`` is an ``OrderedExpression`` only when the level wrote
+        ``asc`` or ``desc``; ``by count()`` is the ``FunctionCallExpression``
+        itself. Reading ``.Expression`` unconditionally raises
+        ``AttributeError`` out of ``to_ir()`` on the common spelling, so the
+        class name decides which shape is in hand.
+        """
+        levels: list[TopNestedLevel] = []
+        for clause in _iter_elements(node.Clauses):
+            count_node = getattr(clause, "Expression", None)
+            by_node = clause.ByExpression
+            direction: str | None = None
+            if type(by_node).__name__ == "OrderedExpression":
+                direction = self._ordering_keyword(
+                    getattr(by_node, "Ordering", None), "AscOrDescKeyword",
+                    ("asc", "desc"),
+                )
+                by_node = by_node.Expression
+            others_clause = getattr(clause, "WithOthersClause", None)
+            levels.append(TopNestedLevel(
+                count=self._visit_count(count_node) if count_node is not None else None,
+                of=self._visit_expr_as_assignment(clause.OfExpression, mode="grouping"),
+                by=self._visit_assignment(by_node, mode="aggregation"),
+                direction=direction,
+                others=(
+                    self._visit_expr(others_clause.Expression)
+                    if others_clause is not None else None
+                ),
+                span=to_span(clause),
+            ))
+        return TopNestedOp(levels=levels, span=span)
 
     def _visit_sort_key(self, node: Any) -> SortKey:
         """One ``sort by`` / ``order by`` / ``top … by`` ordering key.
