@@ -380,11 +380,11 @@ def _collect_source_refs(syntax) -> list:
         span = (ref.TextStart, ref.Width)
         if span in seen:
             continue
-        # `_is_wildcard_name` reads `Name`, which only a NameReference carries.
-        if source_kind == "table" and _is_wildcard_name(ref):
-            continue
         name = _source_name(source_kind, ref)
         if source_kind in _NAMED_SOURCE_KINDS:
+            # `_is_wildcard_name` reads `Name`, which only a NameReference carries.
+            if source_kind == "table" and _is_wildcard_name(ref):
+                continue
             if not name:
                 continue
             if _is_let_alias(name, span[0]) and span not in unshadowed:
