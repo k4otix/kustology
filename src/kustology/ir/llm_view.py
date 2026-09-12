@@ -175,7 +175,7 @@ def _drop_redundant_canonical_form(out: dict[str, Any], cls: type) -> None:
     For ColumnRef the bare-name match covers unbound nodes. A qualified or
     bound node canonicalizes to ``"prefix.name"``, which restates the
     surrounding ``qualifier`` or ``table`` field, so that form drops too.
-    ``qualifier`` is the prefix the canonical form uses when both are set.
+    A qualified node carries no ``table``, so at most one of the two is set.
     ``LetValueRef`` is the same shape with neither field to qualify it.
     """
     cf = out.get("canonical_form")

@@ -2000,8 +2000,8 @@ class IRBuilder:
 
         steps_list = getattr(node, "Steps", None)
         raw_steps = list(_iter_elements(steps_list)) if steps_list is not None else []
-        saved = self._qualifier_names
-        self._qualifier_names = saved | {
+        saved_qualifiers = self._qualifier_names
+        self._qualifier_names = saved_qualifiers | {
             visit_name(s.Name) for s in raw_steps if s.Name is not None
         }
         try:
@@ -2017,7 +2017,7 @@ class IRBuilder:
                 if partition_clause is not None else []
             )
         finally:
-            self._qualifier_names = saved
+            self._qualifier_names = saved_qualifiers
 
         return ScanOp(
             with_match_id=params.get("with_match_id"),
@@ -2058,6 +2058,8 @@ class IRBuilder:
                 ))
         optional_keyword = getattr(node, "OptionalKeyword", None)
         return ScanStep(
+            # A step with no written name still carries a condition and
+            # assignments, so it is recorded with an empty name.
             name=visit_name(node.Name),
             is_optional=optional_keyword is not None and optional_keyword.Width > 0,
             output=self._ordering_keyword(

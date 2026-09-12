@@ -987,12 +987,11 @@ def test_no_battery_pair_discriminates_on_an_unmodelled_blob():
     The check covers more than the ``Unknown*`` classes. Several modeled
     operators record their own source too (``TopNestedOp``, ``MacroExpandOp``,
     ``MakeGraphOp`` and the four ``graph-*`` operators), because they are
-    dispatched and only partly modeled. Nothing in the
-    battery reaches one today, so naming them in prose would protect nobody:
-    the first pair written against ``graph-match`` would
-    discriminate on ``raw_text`` and pass. Deriving the set from
-    ``model_fields`` covers a node added to the partly-modeled list from the
-    moment it is defined.
+    dispatched and only partly modeled. Nothing in the battery reaches one
+    today, so naming them in prose would protect nobody: the first pair
+    written against ``graph-match`` would discriminate on ``raw_text`` and
+    pass. Deriving the set from ``model_fields`` covers a node added to the
+    partly-modeled list from the moment it is defined.
     """
     offenders: dict[str, list[str]] = {}
     for query in sorted({q for _, a, b in MUST_DIFFER + MUST_EQUAL + KNOWN_COLLISIONS for q in (a, b)}):

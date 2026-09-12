@@ -63,12 +63,24 @@ def test_a_step_qualified_reference_is_a_qualified_column_not_a_step_name():
 
 def test_an_unqualified_reference_outside_a_scan_keeps_qualifier_unset():
     """Negative control for the qualifier scope: the step-name set is
-    restored after the operator, so ``s`` elsewhere reads as it always has.
+    restored after the operator, so ``s.p`` downstream is the dynamic access
+    it would be without the ``scan``.
     """
-    ir = parse("T | scan with (step s: a > 1 => ;) | where s > 1").to_ir()
-    outer = ir.main_pipeline.operators[1].predicate.left
-    assert isinstance(outer, ColumnRef)
-    assert outer.qualifier is None
+    ir = parse("T | scan with (step s: a > 1 => ;) | where s.p > 1").to_ir()
+    assert isinstance(ir.main_pipeline.operators[1].predicate.left, PathExpr)
+
+
+def test_a_qualified_reference_is_not_resolved_to_a_table():
+    """``_resolve_column_table`` matches on the column name alone, so a step
+    reference would take whichever in-scope table has that column.
+    """
+    ir = parse(
+        "T | scan declare(p:string='') with (step s1: a > 1 => p = s1.a;)",
+        schema={"T": {"a": "long"}},
+    ).to_ir()
+    ref = ir.main_pipeline.operators[0].steps[0].assignments[0].expr
+    assert ref.qualifier == "s1"
+    assert ref.table is None
 
 
 def test_a_dynamic_property_access_is_still_a_path_expression():
@@ -94,8 +106,9 @@ def test_an_empty_arrow_records_no_assignments():
 
 
 def test_a_let_bound_name_inside_a_step_stays_a_let_value_ref():
-    """Step names and ``let`` names share one namespace check. A ``let``
-    still wins for a name no step declared.
+    """A step name qualifies only the left side of a path expression. A bare
+    name inside a step still resolves through ``_let_names``, so ``n`` stays a
+    ``LetValueRef``.
     """
     ir = parse("let n = 5; T | scan with (step s: a > n => ;)").to_ir()
     op = ir.main_pipeline.operators[0]
