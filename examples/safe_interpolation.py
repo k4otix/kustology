@@ -46,7 +46,10 @@ def plain_quote(name: str) -> str:
 
 
 def facts(query_text: str) -> dict:
-    """Parse `query_text` and collect the facts a canary check compares."""
+    """Parse `query_text` and collect the facts that describe its shape.
+
+    `check` compares the first four. The rest are here to read.
+    """
     q = parse(query_text)
     return {
         "is_command": q.is_command,
@@ -87,9 +90,9 @@ def main() -> None:
     banner(
         "Safe interpolation",
         "A caller-supplied table name goes into the same fixed query "
-        "template two ways: quoted with `quote_name`, and left bare. A "
-        "canary built by parsing a trusted name decides which renderings "
-        "are safe to run.",
+        "template two ways: quoted with `quote_name`, and left bare. "
+        "Compare each rendering against a canary parsed from a trusted "
+        "name to find which ones are safe to run.",
         "which candidate names pass the canary check quoted, and what the "
         "same names do to the query when left bare.",
     )

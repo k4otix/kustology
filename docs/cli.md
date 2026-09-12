@@ -23,7 +23,7 @@ kustology format query.kql
 `format` runs the validator before it prints anything. See [Exit codes](#exit-codes) for what happens when the input fails validation.
 
 Input whose tail the parser skipped is Error-severity, so `format` refuses
-it as well.
+it as well. See [validate](#validate) for what that diagnostic carries.
 
 ### validate
 
@@ -63,13 +63,14 @@ kustology parse --ir --schema s.json query.kql # enriched IR: types + provenance
 - `--json` emits JSON instead of human-readable text, for either `--ast` or `--ir`.
 - `--schema` binds the parse. See [Schema files](#schema-files) for what that changes.
 
-`parse --ir` models queries. On a control command it writes the command
-kinds to stderr, prints nothing on stdout, and exits 1. `parse --ast` prints
-a command's syntax tree the same as a query's.
+`parse` runs the validator before it prints anything, the same as `format`,
+and that gate comes first. Input whose tail the parser skipped is
+Error-severity, so `parse` refuses it under either `--ast` or `--ir`, and
+reports the unparsed run rather than anything below.
 
-`parse` also runs the validator before it prints anything, the same as
-`format`. Input whose tail the parser skipped is Error-severity, so `parse`
-refuses it under either `--ast` or `--ir`.
+`parse --ir` models queries. On a control command that cleared the validator
+it writes the command kinds to stderr, prints nothing on stdout, and exits 1.
+`parse --ast` prints a command's syntax tree the same as a query's.
 
 ## Schema files
 

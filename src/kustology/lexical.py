@@ -3,9 +3,9 @@
 
 """Lexical helpers over Microsoft's token stream (Tier 1, pydantic-free).
 
-Each helper reports positions the lexer already decided (comments, string
-literals, statements) as code-point :class:`TextSpan`s. None reinterprets the
-tree: "the main pipeline without its joins" is a Tier 2 question, see
+Each helper reports positions Microsoft's parser already decided (comments,
+string literals, statements, skipped text) as code-point
+:class:`TextSpan`s. None reinterprets the tree: "the main pipeline without its joins" is a Tier 2 question, see
 ``kustology.ir.walk(prune=...)`` and ``span_of``.
 """
 
@@ -118,14 +118,16 @@ def skipped_token_spans(kusto_code: Any) -> list[TextSpan]:
     complete parse of part of its input. Both roots produce these nodes.
 
     Whether a diagnostic accompanies one depends on the root. ``T | where a
-    == 1 )))`` is a query block, and the parser reports an error over the
-    trailing ``)))`` as well as skipping it. A command block reports
+    == 1 )))`` is a query block, and the parser reports an error starting at
+    the same position as the trailing ``)))`` it skipped, one character wide
+    against the three. A command block reports
     nothing: ``.show table T details`` followed by ``.drop table Victim``
     parses with an empty ``diagnostics`` list and the second line as a
     skipped run. Read this alongside ``diagnostics`` when "did all of my
     input parse?" is the question.
 
-    Zero-width nodes are dropped, the rule ``statement_spans`` applies.
+    Zero-width nodes are dropped, the same filter ``statement_spans``
+    applies to its statements.
     """
     offsets = Utf16Offsets(str(kusto_code.Text))
     return [

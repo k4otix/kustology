@@ -198,12 +198,12 @@ Accessors written for query grammar still answer on a command, and their
 answers describe positions a command does not have. The parse above reports
 `get_referenced_tables() == set()`, because `tables` there is a command
 argument rather than a table reference. Branch on `is_command` first.
-[Tier 2](tier2-ir.md)'s `to_ir()` raises a `ValueError` on a command instead
-of modelling one.
+[Tier 2](tier2-ir.md)'s `to_ir()` raises a `ValueError` on a command. The
+message names the root kind it got.
 
 ## Lexical spans
 
-`kustology.lexical` reports positions the lexer already decided —
+`kustology.lexical` reports positions Microsoft's parser already decided —
 comments, string literals, statements, skipped text, and the tokens
 themselves — as code-point spans, with no pydantic and no dependency on
 Tier 2. Every `KustoQuery` exposes the same helpers as methods.
@@ -248,7 +248,8 @@ span.
 `skipped_token_spans(kusto_code)` finds every run of text the parser could
 not fit into the grammar and skipped. Whether a diagnostic covers the same
 text depends on the root. In the query `T | where a == 1 )))` the parser
-both skips the trailing `)))` and reports an error over it. In
+skips the trailing `)))` and reports an error that starts at the same
+position, one character wide against the three it skipped. In
 `.show table T details` followed by `.drop table Victim`, the command block
 takes the first command, skips the second, and reports nothing: the
 `diagnostics` list is empty and the span is the only sign that half the
