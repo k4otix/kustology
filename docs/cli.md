@@ -55,6 +55,10 @@ kustology parse --ir --schema s.json query.kql # enriched IR: types + provenance
 - `--json` emits JSON instead of human-readable text, for either `--ast` or `--ir`.
 - `--schema` binds the parse. See [Schema files](#schema-files) for what that changes.
 
+`parse --ir` models queries. On a control command it writes the command
+kinds to stderr, prints nothing on stdout, and exits 1. `parse --ast` prints
+a command's syntax tree the same as a query's.
+
 `parse` also runs the validator before it prints anything, the same as `format`.
 
 ## Schema files
@@ -90,12 +94,15 @@ Input is capped at 10 MB. Set `KUSTOLOGY_MAX_INPUT_BYTES` to override the cap. T
 | Code | Meaning |
 | --- | --- |
 | `0` | Success. |
-| `1` | The input had Error-severity diagnostics, or the command failed at runtime. |
+| `1` | The input had Error-severity diagnostics, the command failed at runtime, or `parse --ir` ran on a control command. |
 | `2` | The invocation was wrong: bad flags, a file that cannot be read, a `--schema` file that is not JSON, input over the byte cap, or `parse --ir` without the `[ir]` extra. |
 
 Code 1 means the query is wrong. Code 2 means the command is wrong. A CI job can branch on this distinction: an unreadable path or a malformed `--schema` file says nothing about the KQL itself.
 
 `format` and `parse` both run the validator before they emit anything. If the input has Error-severity diagnostics, neither command writes output derived from the rejected parse. The diagnostics go to stderr, stdout stays empty, and the command exits 1.
+
+`parse --ir` also exits 1 on a control command, which the Tier 2 IR does not
+model.
 
 ### Broken pipes
 

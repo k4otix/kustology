@@ -603,6 +603,16 @@ class IRBuilder:
             ))
 
         root = code.Syntax
+        root_kind = str(root.Kind)
+        # Covers ``build()`` too, which routes here. A command block's
+        # arguments are not query positions, so every visitor below would
+        # read a shape it was not written for and emit IR that looks like a
+        # query's.
+        if root_kind != "QueryBlock":
+            raise ValueError(
+                f"to_ir() models a QueryBlock; this parse is a {root_kind}. "
+                "Read KustoQuery.is_command and command_kinds before calling it."
+            )
         self._let_names = set()
         self._param_names = set()
         let_bindings: list[LetBinding] = []

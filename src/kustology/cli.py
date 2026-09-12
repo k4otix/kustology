@@ -337,7 +337,20 @@ def _cmd_parse(args: argparse.Namespace) -> int:
         # `parse().to_ir()` is what makes `--schema` mean anything here:
         # `to_ir()` auto-attaches the schema on a bound parse, so the IR
         # carries column types and table provenance.
-        ir = parse(body, schema=schema).to_ir()
+        query = parse(body, schema=schema)
+        if query.is_command:
+            # Exit 1 is the "input rejected" code; the invocation was fine.
+            kinds = ", ".join(sorted(query.command_kinds))
+            # Every CommandBlock the bundled DLL produces carries a
+            # CustomCommand; the empty arm guards a DLL that roots one on a
+            # shape without it.
+            suffix = f" ({kinds})" if kinds else ""
+            sys.stderr.write(
+                "kustology parse --ir models queries; this input is a "
+                f"control command{suffix}.\n"
+            )
+            return 1
+        ir = query.to_ir()
         if args.json:
             # Both version tags are the consumer's compatibility contract: a
             # stored payload naming neither cannot be checked against the IR

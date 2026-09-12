@@ -336,6 +336,12 @@ class KustoQuery:
         symbol-resolved nodes keep the types Microsoft's binder writes into
         ``Expr.result_type`` on the way through.
 
+        Raises ``ValueError`` when the parse is a control command rather
+        than a query: a command's arguments are not query positions, and
+        the IR models query grammar. Read
+        :attr:`is_command` before calling this, and
+        :attr:`command_kinds` for what the command does.
+
         **Without a schema the binder still runs**, against
         ``GlobalState.Default``. ``KustoCode.Analyze(globals)`` binds the tree
         in hand and hands back a *new* bound ``KustoCode``, so this object

@@ -654,3 +654,14 @@ def test_no_subcommand_is_also_a_systemexit_usage_error(capsys):
         main([])
     assert exc_info.value.code == 2
     capsys.readouterr()
+
+
+def test_parse_ir_refuses_a_control_command(monkeypatch, capsys):
+    """Exit 1: the input is rejected, the invocation was fine."""
+    pytest.importorskip("pydantic")
+    monkeypatch.setattr(sys, "stdin", _stdin(".show tables"))
+    rc = main(["parse", "--ir", "-"])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    assert "ShowTables" in captured.err
