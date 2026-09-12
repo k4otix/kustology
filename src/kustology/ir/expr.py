@@ -25,7 +25,8 @@ AnyExpr = Annotated[Union[
     "LiteralExpr",
     "FuncCall", "PathExpr", "ElementExpr", "StarExpr", "NamedExpr",
     "CompoundNamedExpr", "BracketedExpr", "ToScalarExpr",
-    "SubqueryExpr", "ExternalDataExpr", "DataTableExpr", "UnknownExpr", "Expr",
+    "SubqueryExpr", "ExternalDataExpr", "DataTableExpr", "TypeOfExpr",
+    "UnknownExpr", "Expr",
 ], Field(discriminator="kind")]
 
 
@@ -201,6 +202,41 @@ class TypedNameDecl(Expr):
     kind: Literal["typed_name"] = "typed_name"
     name: str
     declared_type: str
+
+
+class TypeOfExpr(Expr):
+    """A ``typeof(...)`` schema literal in argument position.
+
+    The plugin operators take their output schema this way:
+    ``evaluate python(typeof(*, Score:real), ...)`` extends the input schema,
+    ``evaluate python(typeof(a:long, b:string), ...)`` replaces it, and
+    ``extract(pattern, group, text, typeof(long))`` names one type for a
+    single capture. ``mv-expand ... to typeof(long)`` reaches the same parser
+    node through its own clause and stays a string on
+    :class:`~kustology.ir.query.MvExpandColumn`.
+
+    ``star_indexes`` is every index at which ``*`` was written among the
+    elements, because each position contributes to the output column order:
+    bound against ``T(x, y)``, ``typeof(*, a:long)`` returns ``x, y, a``,
+    ``typeof(a:long, *)`` returns ``a, x, y``, ``typeof(*, *, a:long)``
+    returns ``x, y, x, y, a``, and ``typeof(*, a:long, *)`` returns
+    ``x, y, a, x, y``. A single index cannot distinguish the third spelling
+    from the second: recording only the last star's position collapses
+    ``typeof(*, *, a:long)`` onto ``typeof(a:long, *)``, though they resolve
+    to different column lists.
+    """
+
+    kind: Literal["typeof"] = "typeof"
+    # Bare type names, as the query wrote them: typeof(string) -> ["string"].
+    type_names: list[str] = []
+    # Declared columns: typeof(a:long, b:string).
+    columns: list[TypedNameDecl] = []
+    star: bool = False
+    # Every index at which ``*`` was written among the elements, in written
+    # order; empty when none was written. ``star`` answers "is the input
+    # schema included"; this answers "where, and how many times", which is
+    # what the column order turns on.
+    star_indexes: list[int] = []
 
 
 class FuncCall(Expr):
@@ -483,5 +519,5 @@ REBUILT_BY_QUERY_MODULE: tuple[type[BaseModel], ...] = (
     Between, And, Or, Not,
     FuncCall, CaseExpr, RegexMatch, Exists, PathExpr, ElementExpr, StarExpr,
     NamedExpr, CompoundNamedExpr, UnaryOp, BracketedExpr,
-    ToScalarExpr, SubqueryExpr, ExternalDataExpr, DataTableExpr,
+    ToScalarExpr, SubqueryExpr, ExternalDataExpr, DataTableExpr, TypeOfExpr,
 )

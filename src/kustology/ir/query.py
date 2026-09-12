@@ -38,6 +38,7 @@ from .expr import (  # noqa: F401 — names referenced via forward refs
     SubqueryExpr,
     ToScalarExpr,
     TypedNameDecl,
+    TypeOfExpr,
     UnaryOp,
     UnknownExpr,
 )

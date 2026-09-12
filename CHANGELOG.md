@@ -20,6 +20,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - **Reflowing an unmodeled operator does not move `semantic_hash`** (tier 2). Its recorded source text is re-lexed before it is hashed, so line breaks and inter-token spacing stop splitting one operator into two digests.
+- **`typeof(...)` in argument position lowers to `TypeOfExpr`** (tier 2). The plugin operators' output schema reaches the IR as declared columns instead of source text, and the digest ignores its interior spacing.
 
 ## [0.3.0] — 2026-08-30
 

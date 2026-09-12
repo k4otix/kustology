@@ -38,6 +38,7 @@ from .expr import (
     SubqueryExpr,
     ToScalarExpr,
     TypedNameDecl,
+    TypeOfExpr,
     UnaryOp,
 )
 
@@ -218,6 +219,15 @@ def canonical(expr: Any) -> str:
             # make a typed capture indistinguishable from an untyped one,
             # which is the collision the node exists to close.
             return f"{e.name}:{e.declared_type}"
+        if isinstance(e, TypeOfExpr):
+            # Star position decides the output column order (see the class
+            # docstring), and KQL never interleaves a bare type with a named
+            # one. Concatenating type_names then columns, then inserting each
+            # star ascending by index, reconstructs the written order.
+            items = list(e.type_names) + [_render(c) for c in e.columns]
+            for index in sorted(e.star_indexes):
+                items.insert(index, "*")
+            return f"typeof({', '.join(items)})"
         if isinstance(e, BinOp):
             prec = _PREC_ARITHMETIC.get(e.op, _PREC_COMPARISON)
             # The right operand re-brackets at equal precedence and the left

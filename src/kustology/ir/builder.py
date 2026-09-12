@@ -83,6 +83,7 @@ from .expr import (
     SubqueryExpr,
     ToScalarExpr,
     TypedNameDecl,
+    TypeOfExpr,
     UnaryOp,
     UnknownExpr,
 )
@@ -425,6 +426,7 @@ class IRBuilder:
         # ``project-reorder x`` keeps.
         "InExpression", "HasAnyExpression", "HasAllExpression",
         "BetweenExpression", "FunctionCallExpression", "MaterializeExpression",
+        "TypeOfLiteralExpression",
         # MaterializeExpression is handled by ``_visit_pipeline``: the
         # grammar admits ``materialize`` only as a ``let`` right-hand side,
         # where ``_TABULAR_RHS_KINDS`` routes it to a nested ``Pipeline``. It
@@ -2387,6 +2389,29 @@ class IRBuilder:
 
         elif kind == "MakeSeriesExpression":
             res = self._visit_expr(node.Expression)
+
+        elif kind == "TypeOfLiteralExpression":
+            type_names: list[str] = []
+            columns: list[TypedNameDecl] = []
+            star_indexes: list[int] = []
+            for index, element in enumerate(_iter_elements(node.Types)):
+                element_kind = str(type(element).__name__)
+                if element_kind == "StarExpression":
+                    star_indexes.append(index)
+                elif element_kind == "NameAndTypeDeclaration":
+                    columns.append(self._visit_typed_name(element))
+                else:
+                    # PrimitiveTypeExpression. ``node_text`` rather than a bare
+                    # ``ToString()``, which is ``IncludeTrivia.All`` and would put a
+                    # preceding comment into the type string.
+                    type_names.append(_node_text(element).strip())
+            res = TypeOfExpr(
+                type_names=type_names,
+                columns=columns,
+                star=bool(star_indexes),
+                star_indexes=star_indexes,
+                span=span,
+            )
 
         if not res:
             res = UnknownExpr(

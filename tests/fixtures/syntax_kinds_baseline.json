@@ -887,6 +887,7 @@
       "ProjectRenameKeyword",
       "ProjectReorderKeyword",
       "RangeKeyword",
+      "RealKeyword",
       "RegexKeyword",
       "RenderKeyword",
       "SearchKeyword",
@@ -1210,6 +1211,7 @@
     "SimpleNamedExpression",
     "StarExpression",
     "ToScalarExpression",
+    "TypeOfLiteralExpression",
     "TypedColumnReference"
   ],
   "handled_operator_kinds": [
@@ -1669,7 +1671,6 @@
     "TopNestedWithOthersClause",
     "TreeMapKeyword",
     "TypeOfKeyword",
-    "TypeOfLiteralExpression",
     "UInt16Keyword",
     "UInt32Keyword",
     "UInt64Keyword",

@@ -30,7 +30,7 @@ from .expr import (
     ExternalDataExpr, FuncCall,
     LetValueRef, LiteralExpr, NamedExpr, Not, Or, PathExpr, RegexMatch,
     SetMembership, StarExpr, SubqueryExpr, ToScalarExpr, TypedNameDecl,
-    UnaryOp, UnknownExpr,
+    TypeOfExpr, UnaryOp, UnknownExpr,
 )
 from .query import (
     AliasStmt,
@@ -100,7 +100,7 @@ __all__ = [
     "And", "Or", "Not", "Exists", "RegexMatch", "CaseExpr", "UnknownExpr",
     "LiteralExpr", "FuncCall", "PathExpr", "ElementExpr", "StarExpr",
     "NamedExpr", "UnaryOp", "BracketedExpr", "CompoundNamedExpr",
-    "TypedNameDecl", "LetValueRef",
+    "TypedNameDecl", "LetValueRef", "TypeOfExpr",
     "ToScalarExpr", "SubqueryExpr", "ExternalDataExpr", "DataTableExpr",
     # Operators
     "Operator", "FilterOp", "ExtendOp", "SummarizeOp", "ProjectOp",

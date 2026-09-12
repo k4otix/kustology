@@ -1,0 +1,7 @@
+let lookback = 1d;
+SigninLogs
+| where TimeGenerated > ago(lookback)
+| extend Browser = extract(@"(\w+)", 1, DeviceDetail, typeof(string))
+| evaluate python(typeof(browser:string, operatingSystem:string), "result = df")
+| evaluate python(typeof(*, RiskScore:real), "result = df")
+| mv-apply Location to typeof(string) on (project Location)
