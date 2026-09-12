@@ -9,9 +9,10 @@ from . import lexical
 from ._text import Utf16Offsets
 from .bridge import GlobalState, KustoCode
 from .services import _analyze_guarded, _diagnostic_dicts
-from .spans import TextSpan, TimeExpr
+from .spans import SourceRef, TextSpan, TimeExpr
 from .utils.analysis import (
     collect_nodes,
+    find_source_references,
     find_table_references,
     find_time_expressions,
     get_operator_chain,
@@ -191,6 +192,15 @@ class KustoQuery:
         :func:`kustology.utils.analysis.find_table_references`.
         """
         return find_table_references(self._code, force_syntactic=force_syntactic)
+
+    def find_source_references(self, force_syntactic: bool = False) -> list[SourceRef]:
+        """Return a :class:`~kustology.spans.SourceRef` for every source the query reads, in source order.
+
+        Tables, function calls, ``externaldata`` and ``datatable`` all count as
+        sources; see :func:`kustology.utils.analysis.find_source_references`
+        for the ``kind`` values and what each span covers.
+        """
+        return find_source_references(self._code, force_syntactic=force_syntactic)
 
     def get_operator_chain(self) -> list:
         """Return the main pipeline's operator nodes, left to right.

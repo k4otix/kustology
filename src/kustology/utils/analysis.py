@@ -9,7 +9,7 @@ import warnings
 from .._text import Utf16Offsets
 from ..bridge import ColumnSymbol, FunctionSymbol, KustoFacts, TableSymbol
 from ..reflection import syntax_kinds as _syntax_kinds
-from ..spans import TimeExpr
+from ..spans import SourceRef, TextSpan, TimeExpr
 from .schema_state import FunctionSchema, build_global_state  # re-exported
 from .walker import (  # re-exported
     KustoWalker,
@@ -24,6 +24,7 @@ __all__ = [
     "KustoWalker",
     "build_global_state",
     "collect_nodes",
+    "find_source_references",
     "find_table_references",
     "find_time_expressions",
     "get_operator_chain",
@@ -138,41 +139,69 @@ _TIME_LITERAL_KINDS = frozenset({
 })
 
 
-def _path_expression_table(node):
-    """Yield the trailing NameReference of a PathExpression source.
+# The node kinds that stand in a source position, mapped to the ``kind`` of
+# :class:`~kustology.spans.SourceRef` each one produces. A ``NameReference``
+# there names a table; the other three are sources a query reads without
+# naming one. All four parse into the same positions, so the walk below
+# reaches them without a branch of its own.
+_SOURCE_EXPR_KINDS = {
+    "NameReference": "table",
+    "FunctionCallExpression": "function",
+    "ExternalDataExpression": "externaldata",
+    "DataTableExpression": "datatable",
+}
+
+# The kinds that carry a name, and so can be shadowed by a ``let``, an ``as``
+# alias, or a function parameter.
+_NAMED_SOURCE_KINDS = frozenset({"table", "function"})
+
+
+def _source_name(kind: str, node) -> str | None:
+    """Return the name a source of this kind carries, or ``None`` if it has none.
+
+    A ``FunctionCallExpression``'s own ``node_name`` is its whole source text,
+    arguments included, so the callee comes from its ``Name`` child.
+    """
+    if kind == "table":
+        return node_name(node)
+    if kind == "function":
+        return node_name(node.Name)
+    return None
+
+
+def _path_expression_source(node):
+    """Yield the trailing source of a PathExpression.
 
     ``database("d").T`` and ``cluster("c").database("d").T`` name the table
     in the rightmost child, so extraction and replacement target ``T``
-    alone, never the ``database(...)`` / ``cluster(...)`` calls.
+    alone, never the ``database(...)`` / ``cluster(...)`` calls. Those calls
+    are the left child, so they are not reported as function sources either.
     """
     right = node.GetChild(2)
     if right is None:
         return
-    yield from _unwrap_table_expr(right)
+    yield from _unwrap_source_expr(right)
 
 
-def _unwrap_table_expr(node):
-    """Yield candidate NameReference nodes that occupy a table-source position."""
+def _unwrap_source_expr(node):
+    """Yield ``(kind, node)`` for every construct occupying a source position."""
     if node is None:
         return
     kind = str(node.Kind)
-    if kind == "NameReference":
-        yield node
+    source_kind = _SOURCE_EXPR_KINDS.get(kind)
+    if source_kind is not None:
+        yield source_kind, node
         return
-    if kind == "ParenthesizedExpression":
+    if kind == "ParenthesizedExpression" or kind in _STRUCTURAL_NOISE_KINDS:
         for i in range(node.ChildCount):
-            yield from _unwrap_table_expr(node.GetChild(i))
-        return
-    if kind in _STRUCTURAL_NOISE_KINDS:
-        for i in range(node.ChildCount):
-            yield from _unwrap_table_expr(node.GetChild(i))
+            yield from _unwrap_source_expr(node.GetChild(i))
         return
     if kind == "PipeExpression":
-        # Leftmost child is the source table feeding this sub-pipeline.
-        yield from _unwrap_table_expr(node.GetChild(0))
+        # Leftmost child is the source feeding this sub-pipeline.
+        yield from _unwrap_source_expr(node.GetChild(0))
         return
     if kind == "PathExpression":
-        yield from _path_expression_table(node)
+        yield from _path_expression_source(node)
         return
 
 
@@ -206,11 +235,13 @@ def _is_wildcard_name(node) -> bool:
     return name is not None and str(name.Kind) == "WildcardedName"
 
 
-def _collect_table_refs(syntax) -> list:
-    """Return every (name, NameReference node) in a table-source position.
+def _collect_source_refs(syntax) -> list:
+    """Return every ``(kind, name, node)`` in a source position.
 
-    One entry per occurrence, deduplicated by source span and sorted by it,
-    since several of the branches below see the same node.
+    ``kind`` is one of :data:`_SOURCE_EXPR_KINDS`'s values and ``name`` is
+    ``None`` for the kinds that carry no name. One entry per occurrence,
+    deduplicated by source span and sorted by it, since several of the branches
+    below see the same node.
 
     Four kinds of name occupy a table-source position without being a table,
     and each is excluded here:
@@ -238,6 +269,11 @@ def _collect_table_refs(syntax) -> list:
     both, so the RHS occurrences of the name a statement is itself binding are
     recorded by source span and exempted from the filter. Names bound by
     earlier ``let`` statements are in scope on a RHS and stay excluded there.
+
+    A function call is filtered by the same three name-keyed rules, so a
+    function the query itself declares is not a source: ``let f = (){ T |
+    count }; f() | count`` reports ``T`` alone. The two anonymous kinds carry
+    no name, so only the span dedup applies to them.
     """
     # (name, TextStart of its binder) — a name is in scope from there on.
     let_vars: list[tuple[str, int]] = []
@@ -261,12 +297,13 @@ def _collect_table_refs(syntax) -> list:
             if kind == "LetStatement":
                 rhs = node.GetChild(3)
                 if rhs is not None:
-                    for ref in _unwrap_table_expr(rhs):
+                    for source_kind, ref in _unwrap_source_expr(rhs):
                         # `let_vars` here holds only the *earlier* bindings:
                         # this statement's own name is added below.
-                        if not _is_let_alias(node_name(ref), ref.TextStart):
+                        name = _source_name(source_kind, ref)
+                        if name and not _is_let_alias(name, ref.TextStart):
                             unshadowed.add((ref.TextStart, ref.Width))
-                        refs.append(ref)
+                        refs.append((source_kind, ref))
                 name_node = node.GetChild(1)
                 if name_node is not None:
                     let_vars.append((node_name(name_node), node.TextStart))
@@ -301,18 +338,18 @@ def _collect_table_refs(syntax) -> list:
                 return
 
             if kind in ("PipeExpression", "ExpressionStatement"):
-                refs.extend(_unwrap_table_expr(node.GetChild(0)))
+                refs.extend(_unwrap_source_expr(node.GetChild(0)))
                 return
 
             if kind in ("JoinOperator", "LookupOperator", "FacetOperator"):
                 expr = getattr(node, "Expression", None)
                 if expr is not None:
-                    refs.extend(_unwrap_table_expr(expr))
+                    refs.extend(_unwrap_source_expr(expr))
                 return
 
             if kind == "UnionOperator":
                 for i in range(node.ChildCount):
-                    refs.extend(_unwrap_table_expr(node.GetChild(i)))
+                    refs.extend(_unwrap_source_expr(node.GetChild(i)))
                 return
 
             if kind in ("FindOperator", "SearchOperator"):
@@ -322,7 +359,7 @@ def _collect_table_refs(syntax) -> list:
                 in_clause = getattr(node, "InClause", None)
                 if in_clause is not None:
                     for el in iter_elements(in_clause.Expressions):
-                        refs.extend(_unwrap_table_expr(el))
+                        refs.extend(_unwrap_source_expr(el))
 
     Walker().visit(syntax)
 
@@ -339,21 +376,38 @@ def _collect_table_refs(syntax) -> list:
 
     out = []
     seen = set()
-    for ref in refs:
+    for source_kind, ref in refs:
         span = (ref.TextStart, ref.Width)
-        if span in seen or _is_wildcard_name(ref):
+        if span in seen:
             continue
-        name = node_name(ref)
-        if not name:
+        # `_is_wildcard_name` reads `Name`, which only a NameReference carries.
+        if source_kind == "table" and _is_wildcard_name(ref):
             continue
-        if _is_let_alias(name, span[0]) and span not in unshadowed:
-            continue
-        if _is_as_alias(name, span[0]) or _is_function_parameter(name, span[0]):
-            continue
+        name = _source_name(source_kind, ref)
+        if source_kind in _NAMED_SOURCE_KINDS:
+            if not name:
+                continue
+            if _is_let_alias(name, span[0]) and span not in unshadowed:
+                continue
+            if _is_as_alias(name, span[0]) or _is_function_parameter(name, span[0]):
+                continue
         seen.add(span)
-        out.append((name, ref))
-    out.sort(key=lambda ref: (ref[1].TextStart, ref[1].Width))
+        out.append((source_kind, name, ref))
+    out.sort(key=lambda ref: (ref[2].TextStart, ref[2].Width))
     return out
+
+
+def _collect_table_refs(syntax) -> list:
+    """Return every ``(name, NameReference node)`` in a table-source position.
+
+    The table half of :func:`_collect_source_refs`, which documents the walk
+    and the four exclusions.
+    """
+    return [
+        (name, node)
+        for kind, name, node in _collect_source_refs(syntax)
+        if kind == "table"
+    ]
 
 
 def _collect_semantic_table_refs(syntax) -> list:
@@ -410,6 +464,45 @@ def find_table_references(kusto_code, force_syntactic: bool = False) -> list:
     if not force_syntactic and kusto_code.HasSemantics:
         return _merge_unresolved_table_refs(kusto_code.Syntax)
     return _collect_table_refs(kusto_code.Syntax)
+
+
+def find_source_references(kusto_code, force_syntactic: bool = False) -> list[SourceRef]:
+    """Return a :class:`~kustology.spans.SourceRef` for everything the query reads.
+
+    ``kind`` is ``"table"``, ``"function"``, ``"externaldata"``, or
+    ``"datatable"``. ``name`` carries the table or function name; an
+    ``externaldata`` or ``datatable`` literal has no name and carries ``None``.
+
+    ``span`` covers the name for a table and the whole construct for the other
+    three kinds. Where the binder expands a wildcard against a schema with
+    exactly one matching table, ``name`` is the table it resolved and ``span``
+    still holds the pattern, as :func:`replace_table` describes.
+
+    One entry per occurrence, in source order. Use ``get_referenced_tables``
+    for a deduplicated set of table names.
+
+    Tables come from :func:`find_table_references` and inherit its bind state,
+    so the node table in ``make-graph``'s ``with`` clause resolves on a bound
+    parse only, and ``force_syntactic=True`` picks the syntactic walk for them.
+    The other three kinds are syntactic on both paths.
+
+    :func:`get_referenced_functions` answers a different question: every
+    function the query calls anywhere, including a scalar call in a ``where``
+    clause. A function reaches this list only where it stands as a source.
+    """
+    offsets = Utf16Offsets(str(kusto_code.Text))
+    found = [
+        ("table", name, node)
+        for name, node in find_table_references(
+            kusto_code, force_syntactic=force_syntactic
+        )
+    ]
+    found += [ref for ref in _collect_source_refs(kusto_code.Syntax) if ref[0] != "table"]
+    found.sort(key=lambda ref: (ref[2].TextStart, ref[2].Width))
+    return [
+        SourceRef(kind, name, TextSpan(*offsets.span_to_codepoints(node.TextStart, node.Width)))
+        for kind, name, node in found
+    ]
 
 
 def get_tables_syntactic(kusto_code) -> set[str]:
