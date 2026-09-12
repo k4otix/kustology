@@ -2,20 +2,25 @@
 # Mirror of CI checks (.github/workflows/test.yml) so contributors fail fast.
 # Run once after cloning: pre-commit install
 # Run manually:           pre-commit run --all-files
+#
+# Both hooks shell out via `uv run`, which syncs and runs inside the same
+# uv.lock-resolved environment CI's `lint` job uses -- so ruff/mypy/pydantic
+# versions come from uv.lock alone. There is no version to keep in sync here.
 
 repos:
-  # Keep `rev` in step with the ruff pinned in uv.lock, or this lints with a
-  # different rule set than CI.
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.3
+  - repo: local
     hooks:
       - id: ruff
+        name: ruff
+        entry: uv run --extra dev ruff check
+        language: system
+        types: [python]
         args: [--fix, --exit-non-zero-on-fix]
 
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v2.1.0
-    hooks:
       - id: mypy
-        additional_dependencies: ["pydantic==2.13.5"]
-        args: [--config-file=pyproject.toml]
+        name: mypy
+        entry: uv run --extra dev mypy
+        language: system
+        types: [python]
         files: ^src/
+        args: [--config-file=pyproject.toml]

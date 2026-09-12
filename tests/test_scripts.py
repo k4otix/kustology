@@ -25,7 +25,6 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import os
-import re
 import stat
 import subprocess
 import sys
@@ -214,22 +213,6 @@ def test_refresh_dll_atomic_write_new_file_is_group_world_readable(tmp_path):
     mod._atomic_write_text(target, "package=x\nversion=1.2.3\n")
     mode = stat.S_IMODE(target.stat().st_mode)
     assert mode & 0o044 == 0o044
-
-
-def test_precommit_pydantic_pin_matches_uv_lock():
-    """.pre-commit-config.yaml pins pydantic for mypy's additional_dependencies
-    independently of uv.lock, so nothing else catches a relock that moves
-    pydantic. Mirrors the TFM parity check above."""
-    lock_text = (REPO_ROOT / "uv.lock").read_text()
-    m = re.search(r'name = "pydantic"\nversion = "([^"]+)"', lock_text)
-    assert m is not None, "pydantic entry not found in uv.lock"
-    locked_version = m.group(1)
-
-    precommit_text = (REPO_ROOT / ".pre-commit-config.yaml").read_text()
-    assert f"pydantic=={locked_version}" in precommit_text, (
-        f"uv.lock pins pydantic=={locked_version} but .pre-commit-config.yaml "
-        "does not pin the same version"
-    )
 
 
 # ---------------------------------------------------------------------------
