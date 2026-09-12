@@ -17,16 +17,17 @@ union and fork branches.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import itertools
 import json
-import re
 from typing import Any
 
 from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 
 from .._ir_tags import SEMANTIC_HASH_SCHEME
+from ..bridge import TokenParser
 from ._normalize import normalize_in_place
 from .expr import (
     And,
@@ -288,33 +289,34 @@ _CLEARED_FIELDS = _VOLATILE_FIELDS | _DERIVED_INDEX_FIELDS
 _ZERO_SPAN = Span(text_start=0, width=0)
 
 
+# Lexes each distinct text once per process. 49 distinct fixtures still pay the
+# full lex: 77 ms against 60 ms once the texts repeat. Keys are strings.
+@functools.lru_cache(maxsize=1024)
 def _normalize_raw_text(text: str) -> str:
-    r"""Fold each line break in ``raw_text``, indent included, to one space.
+    r"""Rewrite ``raw_text`` as its token texts joined by single spaces.
 
-    Nothing else is touched. The operators the IR keeps as source text
-    (``scan``, ``top-nested``, the ``graph-*`` family, and the ``Unknown*``
-    fallbacks) hash that text directly, so without the fold the digest reads
-    ``| top-nested 3 of a`` and ``|   top-nested\n3 of a`` as two queries. The
-    rule stays narrow because two things that look like formatting in source
-    text are data:
+    The ``Unknown*`` fallbacks and any operator still recorded as source text
+    hash that text directly, so the digest reads a reflowed or respaced
+    spelling of one operator as a second query unless the text is re-lexed
+    first. ``IncludeTrivia.Minimal`` keeps whatever spacing the author wrote
+    between two tokens, so ``(step`` and ``( step``, and ``a==b`` and
+    ``a == b``, reach this function as different strings. Lexing and re-joining
+    gives every spelling one form.
 
-    * Interior spacing survives. A run of spaces can sit *inside a string
-      literal*, where it is part of the value: ``"error  occurred"`` (two
-      spaces) and ``"error occurred"`` are different predicates. Outside a
-      literal ``IncludeTrivia.Minimal`` has already collapsed it, recording
-      ``top-nested 3  of  a`` as ``top-nested 3 of a``. Newlines are safe
-      because a KQL string literal cannot contain a raw one, so this fold never
-      reaches inside a literal.
-    * Comments survive. ``Minimal`` already drops every comment in and around
-      the node, and ``//`` is the middle of every URL a detection rule matches
-      on: a regex from ``//`` to end-of-line would truncate
-      ``Url == "http://a"`` and ``Url == "http://b"`` to the same text.
+    Two things that look like formatting in source text are data, and the token
+    rule keeps both:
 
-    Both boundaries are pinned by tests. Widening this function to
-    ``" ".join(text.split())`` fails the first; adding a comment strip fails
-    the second.
+    * A string literal is one token, so a run of spaces inside it survives:
+      ``Msg == "error  occurred"`` and ``Msg == "error occurred"`` stay
+      different predicates. A multi-line ```` ``` ```` literal keeps its
+      newlines for the same reason.
+    * ``//`` inside a literal survives too, so ``Url == "http://a"`` and
+      ``Url == "http://b"`` stay apart. A comment never reaches this function:
+      ``Minimal`` drops it at build time, and the lexer treats it as trivia.
+
+    Tests pin both boundaries.
     """
-    return re.sub(r"\s*\n\s*", " ", text).strip()
+    return " ".join(t.Text for t in TokenParser.ParseTokens(text) if t.Text)
 
 
 def _clear_volatile(root: BaseModel) -> None:

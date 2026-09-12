@@ -1341,12 +1341,12 @@ def test_reformatting_a_raw_text_operator_does_not_change_the_hash(ir_builder):
 
 
 def test_a_url_inside_raw_text_still_separates_two_scan_operators(ir_builder):
-    """Guard on the whitespace normalization applied to ``raw_text`` before
-    hashing: ``//`` is a comment introducer *and* the middle of every URL a
-    detection rule ever matches on. Comments are already gone by this point
-    (the builder records ``IncludeTrivia.Minimal``), so the normalizer must
-    not go looking for them again -- stripping from ``//`` to end-of-line
-    would truncate both operators to ``Url == "http:`` and collide them.
+    """Guard on the re-lex applied to ``raw_text`` before hashing: ``//`` is a
+    comment introducer *and* the middle of every URL a detection rule ever
+    matches on. Comments are already gone by this point (the builder records
+    ``IncludeTrivia.Minimal``), so the normalizer must not go looking for them
+    again -- stripping from ``//`` to end-of-line would truncate both
+    operators to ``Url == "http:`` and collide them.
     """
     a = ir_builder.build(
         "T | scan declare (x:string='') with (step s: Url == \"http://a\" => x = \"y\")"
@@ -1362,14 +1362,13 @@ def test_a_url_inside_raw_text_still_separates_two_scan_operators(ir_builder):
 def test_interior_spacing_in_a_raw_text_string_literal_is_not_collapsed(ir_builder):
     """The same trap as the URL guard above, one step narrower.
 
-    Collapsing every whitespace run flattens the run **inside a string
-    literal**, where it is data, so a rule matching ``"error  occurred"`` and
-    one matching ``"error occurred"`` become one query. Only a newline and
-    its surrounding indent may be collapsed: a KQL string literal cannot
-    contain a raw newline, so that rule never reaches inside one. Interior
-    spacing outside a literal needs no handling, because
-    ``IncludeTrivia.Minimal`` normalizes it already (``top-nested 3  of  a``
-    is recorded as ``top-nested 3 of a``).
+    A string literal lexes as one token, so the run of spaces inside it
+    reaches the digest intact and a rule matching ``"error  occurred"`` stays
+    apart from one matching ``"error occurred"``. Collapsing whitespace ahead
+    of the lex merges the two predicates. Spacing between tokens needs no
+    collapsing rule of its own: ``IncludeTrivia.Minimal`` records
+    ``top-nested 3  of  a`` as ``top-nested 3 of a``, and the re-lex gives
+    every remaining spelling one form.
     """
     a = ir_builder.build(
         "T | scan declare (x:string='') with (step s: Msg == \"error  occurred\" => x = \"y\")"
@@ -1382,6 +1381,34 @@ def test_interior_spacing_in_a_raw_text_string_literal_is_not_collapsed(ir_build
     assert 'Msg == "error occurred"' in b.main_pipeline.operators[0].raw_text
 
     assert a.semantic_hash != b.semantic_hash
+
+
+def test_a_multi_line_scan_hashes_as_its_single_line_spelling(ir_builder):
+    """A formatted ``scan`` rule and its one-line source are one query.
+
+    ``IncludeTrivia.Minimal`` records the spacing the author wrote between two
+    tokens, so reflowing a ``scan`` across lines changes ``raw_text`` at every
+    line break and indent. The digest re-lexes that text. Narrow the rule to
+    folding whitespace and the two spellings split into two digests.
+    """
+    one_line = ir_builder.build(
+        'T | scan declare (x:string="") with (step s: a == 1 => x = "y")'
+    )
+    reflowed = ir_builder.build(
+        'T | scan declare (x:string="")\n'
+        "  with (\n"
+        '    step s: a == 1 => x = "y"\n'
+        "  )"
+    )
+
+    # Pin that the two IRs genuinely differ, so the equality below is a claim
+    # about the digest rather than about two identical trees.
+    assert (
+        one_line.main_pipeline.operators[0].raw_text
+        != reflowed.main_pipeline.operators[0].raw_text
+    )
+
+    assert one_line.semantic_hash == reflowed.semantic_hash
 
 
 def test_double_negation_collapses_at_the_root_of_a_bare_expr(ir_builder):

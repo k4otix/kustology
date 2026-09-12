@@ -502,23 +502,27 @@ volatile field is one name in the frozenset; nothing else changes.
 
 `raw_text` is not in the set but is normalized on the same copy: the builder
 records `ToString(IncludeTrivia.Minimal)` (no leading trivia, comments gone),
-and `_normalize_raw_text` folds line breaks. The rule is **newlines collapse,
-interior spacing does not** — and both halves of that are load-bearing,
-because `raw_text` is source text and some of what looks like formatting in
-it is data:
+and `_normalize_raw_text` re-lexes that text with
+`Kusto.Language.Parsing.TokenParser.ParseTokens`, then joins the token texts
+with single spaces. `Minimal` keeps whatever spacing the author wrote between
+two tokens, so `(step` and `( step`, and `a==b` and `a == b`, arrive here as
+different strings. Re-lexing gives every spelling of one operator the same
+form.
 
-- A run of spaces can be inside a **string literal**, where it is part of the
-  value: `Msg == "error  occurred"` and `Msg == "error occurred"` are
-  different predicates. `" ".join(text.split())` merged them. Outside a
-  literal there is nothing left to collapse anyway — the DLL already
-  normalized it, recording `top-nested 3  of  a` as `top-nested 3 of a`.
-  Newlines are the safe thing to fold precisely because a KQL string literal
-  cannot contain a raw one.
-- Do not add a `//`-comment strip either — `Minimal` already removed them,
-  and `//` is also the middle of every URL a rule matches on.
+Two things that look like formatting in `raw_text` are data, and the token
+rule keeps both:
 
-Both boundaries have tests. Widening the function fails the first; adding a
-comment strip fails the second.
+- A string literal is **one token**, so its interior survives. `Msg ==
+  "error  occurred"` and `Msg == "error occurred"` stay different predicates,
+  and a multi-line backtick literal keeps its newlines. Folding whitespace
+  ahead of the lex breaks both.
+- A comment **never reaches this function**. `Minimal` drops it at build
+  time, and the lexer treats it as trivia. Do not add a `//`-comment strip:
+  `//` is the middle of every URL a rule matches on, so a strip from `//` to
+  end of line would truncate `Url == "http://a"` and `Url == "http://b"` to
+  one string.
+
+Both boundaries have tests in `tests/ir/test_normalize_raw_text.py`.
 
 ### `extra="forbid"` on every IR `BaseModel`
 Strict validation: JSON dumps with extra top-level fields fail to
