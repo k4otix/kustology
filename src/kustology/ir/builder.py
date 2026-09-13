@@ -2163,9 +2163,12 @@ class IRBuilder:
         statements = getattr(node, "StatementList", None)
         if statements is not None and statements.Count > 0:
             for stmt in _iter_elements(statements):
-                expr = getattr(stmt, "Expression", None)
-                if expr is not None:
-                    inner = self._visit_pipeline(expr)
+                # A ``LetStatement`` also exposes ``.Expression`` (its
+                # right-hand-side value), so picking the first statement with
+                # a non-``None`` ``.Expression`` would bind ``pipeline`` to a
+                # ``let``'s value instead of the body's tabular expression.
+                if type(stmt).__name__ == "ExpressionStatement":
+                    inner = self._visit_pipeline(stmt.Expression)
                     break
 
         return MacroExpandOp(

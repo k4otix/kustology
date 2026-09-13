@@ -650,6 +650,26 @@ MUST_DIFFER = [
         "macro-expand entity_group [cluster('c1').database('d1')] as X (X.T | count)",
         "macro-expand entity_group [cluster('c1').database('d1'), cluster('c2').database('d2')] as X (X.T | count)",
     ),
+    (
+        "graph-to-table-alias",
+        "T | graph-to-table nodes as N",
+        "T | graph-to-table nodes",
+    ),
+    (
+        "graph-mark-components-kind-unwritten",
+        "T | graph-mark-components kind=weak",
+        "T | graph-mark-components",
+    ),
+    (
+        "macro-expand-entity-group-spelling",
+        "macro-expand EG as X (X.T | count)",
+        "macro-expand entity_group [cluster('c1').database('d1')] as X (X.T | count)",
+    ),
+    (
+        "graph-to-table-output-order",
+        "T | graph-to-table nodes as N, edges as E",
+        "T | graph-to-table edges as E, nodes as N",
+    ),
 ]
 
 

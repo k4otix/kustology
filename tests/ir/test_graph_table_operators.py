@@ -16,6 +16,7 @@ from kustology.ir import (
     GraphToTableOp,
     MacroExpandOp,
     PathExpr,
+    TableRef,
     find_all,
 )
 
@@ -89,3 +90,29 @@ def test_macro_expand_over_an_inline_entity_group_types_each_entity():
     assert all(isinstance(e, PathExpr) for e in op.entities)
     assert {c.name for c in find_all(op.entities[0], FuncCall)} == {"cluster", "database"}
     assert op.alias == "X"
+
+
+def test_macro_expand_body_pipeline_skips_a_leading_let_statement():
+    """A ``LetStatement`` in the body exposes ``.Expression`` too (its
+    right-hand-side value), so the statement that fills ``pipeline`` must be
+    picked by class, not by duck-typing on that attribute alone.
+    """
+    ir = parse("macro-expand EG as X (let y = 1; X.T | where a > y)").to_ir()
+    op = ir.main_pipeline.operators[0]
+    assert isinstance(op, MacroExpandOp)
+    assert isinstance(op.pipeline.source, TableRef)
+    assert op.pipeline.source.name == "T"
+    assert [o.kind for o in op.pipeline.operators] == ["filter"]
+    assert ir.additional_pipelines == []
+
+
+def test_macro_expand_body_let_binding_reaches_no_ir_field():
+    """The body's own ``let`` is excluded from the top-level ``let`` and
+    statement sweeps the same way its ``ExpressionStatement`` sibling is, so
+    it does not surface in ``let_bindings``, ``additional_pipelines``, or
+    ``statements``.
+    """
+    ir = parse("macro-expand EG as X (let y = 1; X.T | where a > y)").to_ir()
+    assert ir.let_bindings == []
+    assert ir.additional_pipelines == []
+    assert ir.statements == []
