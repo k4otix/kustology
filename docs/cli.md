@@ -20,10 +20,7 @@ Reformats a KQL query into canonical form.
 kustology format query.kql
 ```
 
-`format` runs the validator before it prints anything. See [Exit codes](#exit-codes) for what happens when the input fails validation.
-
-Input whose tail the parser skipped is Error-severity, so `format` refuses
-it as well. See [validate](#validate) for what that diagnostic carries.
+`format` runs the validator before it prints anything, including its check for text the parser skipped. See [Exit codes](#exit-codes) for what happens when validation fails.
 
 ### validate
 
@@ -41,10 +38,11 @@ kustology validate --schema s.json \
 - `--schema` binds the parse against a schema file, so `validate` also reports semantic diagnostics. See [Schema files](#schema-files).
 - `--ignore-unknown-tables` suppresses the "table not found" diagnostic (KS204) only. Other diagnostics still report.
 
-`validate` also reports text the parser skipped, under kustology's own code
-`KUSTOLOGY002` at `Error` severity. A control command followed by a second
-command carries no Microsoft diagnostic and leaves the second command
-unread, so `validate` names the unparsed run and exits 1.
+`validate` also reports text the parser skipped, as `KUSTOLOGY002`. See
+[Exit codes](#exit-codes) for the shape of that diagnostic. A control
+command followed by a second command carries no Microsoft diagnostic and
+leaves the second command unread; `validate` is what names that unparsed
+run.
 
 ### parse
 
@@ -63,10 +61,11 @@ kustology parse --ir --schema s.json query.kql # enriched IR: types + provenance
 - `--json` emits JSON instead of human-readable text, for either `--ast` or `--ir`.
 - `--schema` binds the parse. See [Schema files](#schema-files) for what that changes.
 
-`parse` runs the validator before it prints anything, the same as `format`,
-and that gate comes first. Input whose tail the parser skipped is
-Error-severity, so `parse` refuses it under either `--ast` or `--ir`, and
-reports the unparsed run rather than anything below.
+`parse` runs the validator before it prints anything, the same as `format`.
+See [Exit codes](#exit-codes) for what a skipped tail does. That validator
+gate fires before the `--ir` control-command gate described below, so a
+control command whose tail the parser skipped reports the unparsed run; it
+never reaches the command message.
 
 `parse --ir` models queries. On a control command that cleared the validator
 it writes the command kinds to stderr, prints nothing on stdout, and exits 1.
@@ -112,9 +111,11 @@ Code 1 means the query is wrong. Code 2 means the command is wrong. A CI job can
 
 `format` and `parse` both run the validator before they emit anything. If the input has Error-severity diagnostics, neither command writes output derived from the rejected parse. The diagnostics go to stderr, stdout stays empty, and the command exits 1.
 
-`validate`, `format`, and `parse` all treat text the parser skipped as an
-Error-severity diagnostic with the code `KUSTOLOGY002`, so each of the three
-exits 1 on input whose tail went unread.
+Text the parser skipped is one such diagnostic: kustology's own code
+`KUSTOLOGY002`, at `Error` severity. Its message states the offset and
+length of the skipped run; the skipped text itself is in the diagnostic's
+`detail` field. `validate`, `format`, and `parse` all treat it this way, so
+each of the three exits 1 on input whose tail went unread.
 
 `parse --ir` also exits 1 on a control command, which the Tier 2 IR does not
 model.

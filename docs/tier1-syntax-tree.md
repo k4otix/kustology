@@ -182,9 +182,9 @@ only of `let` statements. `KustoQuery.is_command` reports which.
 every command in the parse, as a `frozenset`. One parse can hold several:
 `.execute database script <| .drop table X` reports `ExecuteDatabaseScript`
 and `DropTable`. A query reports an empty set. The strings track the bundled
-`Kusto.Language` version, and kustology neither maps them to an enum nor
-sorts them into read-only and destructive. That policy is yours to write,
-against the strings your DLL emits.
+`Kusto.Language` version. kustology neither maps them to an enum nor sorts
+them into read-only and destructive; the caller decides against the strings
+the bundled DLL emits.
 
 ```python
 from kustology import parse
@@ -196,16 +196,17 @@ q.command_kinds     # frozenset({'ShowTables'})
 
 Accessors written for query grammar still answer on a command, and their
 answers describe positions a command does not have. The parse above reports
-`get_referenced_tables() == set()`, because `tables` there is a command
-argument rather than a table reference. Branch on `is_command` first.
+`get_referenced_tables() == set()`: `get_referenced_tables()` reports table
+references only, and `tables` there is a command argument. Branch on
+`is_command` first.
 [Tier 2](tier2-ir.md)'s `to_ir()` raises a `ValueError` on a command. The
 message names the root kind it got.
 
 ## Lexical spans
 
-`kustology.lexical` reports positions Microsoft's parser already decided —
-comments, string literals, statements, skipped text, and the tokens
-themselves — as code-point spans, with no pydantic and no dependency on
+`kustology.lexical` reports positions Microsoft's parser already decided
+(comments, string literals, statements, skipped text, and the tokens
+themselves) as code-point spans, with no pydantic and no dependency on
 Tier 2. Every `KustoQuery` exposes the same helpers as methods.
 
 `TextSpan` is the plain type they all return: a `start`/`length`

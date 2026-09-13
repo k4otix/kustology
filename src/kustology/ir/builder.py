@@ -581,6 +581,19 @@ class IRBuilder:
         arguments are not query positions. Read
         :attr:`kustology.KustoQuery.is_command` first.
         """
+        root = code.Syntax
+        root_kind = str(root.Kind)
+        # Covers ``build()`` too, which routes here. A command block's
+        # arguments are not query positions, so every visitor below would
+        # read a shape it was not written for and emit IR that looks like a
+        # query's.
+        if root_kind != "QueryBlock":
+            raise ValueError(
+                f"The Tier 2 IR models a QueryBlock; this parse is a {root_kind}. "
+                "Read KustoQuery.is_command and command_kinds before building "
+                "IR from it."
+            )
+
         # Kusto evaluates a literal against the culture live at the moment of
         # access, and the visits below read literal values.
         ensure_invariant_culture()
@@ -611,18 +624,6 @@ class IRBuilder:
                 category=category_val,
             ))
 
-        root = code.Syntax
-        root_kind = str(root.Kind)
-        # Covers ``build()`` too, which routes here. A command block's
-        # arguments are not query positions, so every visitor below would
-        # read a shape it was not written for and emit IR that looks like a
-        # query's.
-        if root_kind != "QueryBlock":
-            raise ValueError(
-                f"The Tier 2 IR models a QueryBlock; this parse is a {root_kind}. "
-                "Read KustoQuery.is_command and command_kinds before building "
-                "IR from it."
-            )
         self._let_names = set()
         self._param_names = set()
         let_bindings: list[LetBinding] = []

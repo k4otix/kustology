@@ -21,13 +21,17 @@ TEMPLATE = "{} | getschema"
 # Names a caller might supply. The third targets an unquoted interpolation
 # with its own pipe and comment. The fourth targets the string literal
 # quoting produces, with a raw newline. The fifth lands at the head of the
-# template, where a leading dot makes the whole query a control command.
+# template, where a leading dot makes the whole query a control command. The
+# sixth, empty, quotes to a query with no diagnostics, no command shape, and
+# the canary's own structural hash; only the referenced-table check catches
+# it.
 CANDIDATE_NAMES = (
     "StormEvents",
     "weird-name",
     "sensitive_data | project Secret //",
     "StormEvents\n.drop table Victim",
     ".drop table Victim",
+    "",
 )
 
 # Bracket-quoted, each of these is only ever a table name. Bare, each is also
@@ -48,7 +52,7 @@ def plain_quote(name: str) -> str:
 def facts(query_text: str) -> dict:
     """Parse `query_text` and collect the facts that describe its shape.
 
-    `check` compares the first four. The rest are here to read.
+    `check` compares the first five. The rest are here to read.
     """
     q = parse(query_text)
     return {
@@ -69,20 +73,26 @@ def summarize(result: dict) -> str:
     return f"table name {sorted(result['referenced_tables'])}"
 
 
-def check(candidate: dict, canary: dict) -> tuple[bool, str]:
-    """Compare `candidate`'s facts to `canary`'s and return (accepted, reason)."""
+def check(candidate: dict, canary: dict, name: str) -> tuple[bool, str]:
+    """Compare `candidate`'s facts to `canary`'s and return (accepted, reason).
+
+    `name` is the table name interpolated into `candidate`'s query. An
+    accepted candidate's `referenced_tables` must equal `{name}`.
+    """
     if candidate["diagnostics"]:
         return False, f"{len(candidate['diagnostics'])} diagnostic(s)"
     # Ahead of the hash test, so a rendering that became a command is named
     # as one. A command block also changes the hash, which reports less.
-    if (candidate["is_command"], candidate["command_kinds"]) != (
-        canary["is_command"],
-        canary["command_kinds"],
-    ):
+    if candidate["is_command"]:
         kinds = ", ".join(sorted(candidate["command_kinds"])) or "no command kind"
         return False, f"control command: {kinds}"
     if candidate["structural_hash"] != canary["structural_hash"]:
         return False, "different structural hash"
+    if candidate["referenced_tables"] != {name}:
+        return False, (
+            f"references {sorted(candidate['referenced_tables'])}; expected "
+            f"{name!r}"
+        )
     return True, "matches the canary"
 
 
@@ -156,7 +166,7 @@ def main() -> None:
             ("quoted", TEMPLATE.format(quote_name(name))),
         ):
             candidate = facts(rendered)
-            accepted, reason = check(candidate, canary)
+            accepted, reason = check(candidate, canary, name)
             rows.append([repr(name), form, "accept" if accepted else "reject", reason])
             if not accepted:
                 rejections.append((name, form, candidate))
@@ -185,7 +195,7 @@ def main() -> None:
         "against a quoted canary.",
     )
     bare_canary = facts(TEMPLATE.format("StormEvents"))
-    quoted_canary = facts(TEMPLATE.format(quote_name("StormEvents")))
+    quoted_canary = canary
 
     keyword_rows = []
     bare_changed = []

@@ -107,17 +107,16 @@ class KustoQuery:
 
         The values are Microsoft's own strings, such as ``"DropTable"`` and
         ``"ShowTables"``, and they track the bundled ``Kusto.Language``
-        version. kustology neither maps them to an enum nor classifies them,
-        so deciding which commands your caller may run is your policy to
-        write.
+        version. kustology neither maps them to an enum nor sorts them into
+        read-only and destructive; the caller decides against the strings the
+        bundled DLL emits.
 
         One parse can hold several:
         ``.execute database script <| .drop table X`` reports
         ``ExecuteDatabaseScript`` and ``DropTable``. A query reports an
         empty set.
 
-        The result is a ``frozenset`` because the walk runs on every read,
-        so an edit to a returned set would vanish on the next one.
+        The result is a ``frozenset``: a fact about this parse.
         """
         return frozenset(
             str(node.CommandKind)

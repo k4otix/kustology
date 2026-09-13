@@ -276,11 +276,13 @@ def _cli_diagnostics(
         diagnostics.append({
             "start": span.start,
             "length": span.length,
-            "message": f"unparsed text: {span.text(body)!r}",
+            "message": (
+                f"unparsed text at offset {span.start}, {span.length} characters"
+            ),
             "severity": "Error",
             "category": "Kustology",
             "code": SKIPPED_TEXT_CODE,
-            "detail": None,
+            "detail": span.text(body),
         })
     return diagnostics
 
@@ -382,11 +384,15 @@ def _cmd_parse(args: argparse.Namespace) -> int:
         try:
             from .ir import IR_SCHEMA_VERSION, SEMANTIC_HASH_SCHEME
         except ImportError as e:
-            sys.stderr.write(
-                "kustology parse --ir requires the [ir] extras (pydantic). "
-                "Install with: pip install 'kustology[ir]'\n"
-            )
-            sys.stderr.write(f"({e})\n")
+            # Guarded for the same reason as the rejection below: exit 2 is
+            # already decided, and a reader that hung up must not turn this
+            # usage error into main's `except BrokenPipeError: return 0`.
+            with contextlib.suppress(BrokenPipeError):
+                sys.stderr.write(
+                    "kustology parse --ir requires the [ir] extras (pydantic). "
+                    "Install with: pip install 'kustology[ir]'\n"
+                )
+                sys.stderr.write(f"({e})\n")
             return 2
         # `parse().to_ir()` is what makes `--schema` mean anything here:
         # `to_ir()` auto-attaches the schema on a bound parse, so the IR
@@ -395,14 +401,17 @@ def _cmd_parse(args: argparse.Namespace) -> int:
         if query.is_command:
             # Exit 1 is the "input rejected" code; the invocation was fine.
             kinds = ", ".join(sorted(query.command_kinds))
-            # Every CommandBlock the bundled DLL produces carries a
-            # CustomCommand; the empty arm guards a DLL that roots one on a
-            # shape without it.
-            suffix = f" ({kinds})" if kinds else ""
-            sys.stderr.write(
-                "kustology parse --ir models queries; this input is a "
-                f"control command{suffix}.\n"
-            )
+            # A dotted command the bundled DLL does not recognize still roots
+            # in a CommandBlock, with an empty command_kinds.
+            suffix = f" ({kinds})" if kinds else " (unrecognized command)"
+            # Same rule as every other write in this module: the exit code is
+            # already decided, so a reader that hung up must not turn this
+            # rejection into main's own `except BrokenPipeError: return 0`.
+            with contextlib.suppress(BrokenPipeError):
+                sys.stderr.write(
+                    "kustology parse --ir models queries; this input is a "
+                    f"control command{suffix}.\n"
+                )
             return 1
         ir = query.to_ir()
         if args.json:
