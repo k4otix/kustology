@@ -1246,9 +1246,7 @@ class GraphPattern(BaseModel):
     model_config = {"extra": "forbid"}
     kind: Literal["graph_pattern"] = "graph_pattern"
     # Discriminated on the kind literal; member order is not load-bearing.
-    elements: list[Annotated[
-        GraphPatternNode | GraphPatternEdge, Field(discriminator="kind"),
-    ]]
+    elements: list[Annotated[GraphPatternNode | GraphPatternEdge, Field(discriminator="kind")]]
     span: Span
 
 
