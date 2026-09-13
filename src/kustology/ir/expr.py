@@ -231,6 +231,8 @@ class TypeOfExpr(Expr):
     type_names: list[str] = []
     # Declared columns: typeof(a:long, b:string).
     columns: list[TypedNameDecl] = []
+    # Equals ``bool(star_indexes)``. The builder keeps the two in step and the
+    # canonical render reads only ``star_indexes``.
     star: bool = False
     # Every index at which ``*`` was written among the elements, in written
     # order; empty when none was written. ``star`` answers "is the input

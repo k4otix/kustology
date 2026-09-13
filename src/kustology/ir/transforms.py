@@ -310,6 +310,9 @@ def _normalize_raw_text(text: str) -> str:
       ``Minimal`` drops it at build time, and the lexer treats it as trivia.
 
     Tests pin both boundaries.
+
+    ``_clear_volatile`` calls this for every ``raw_text`` the digest reads.
+    ``QueryIR.raw_text`` is the one it skips, because no digest reads it.
     """
     return " ".join(t.Text for t in TokenParser.ParseTokens(text) if t.Text)
 

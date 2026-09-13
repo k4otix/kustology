@@ -239,7 +239,9 @@ class UnknownSource(BaseModel):
     different queries never share a digest through it, and it reaches only the
     sources the builder already could not model.
     :class:`~kustology.ir.expr.UnknownExpr` and :class:`UnknownOp` carry the
-    same property, since every ``raw_text`` field is normalized the same way.
+    same property: every ``raw_text`` the digest reads is normalized this way.
+    :class:`QueryIR` holds the whole query source in its own ``raw_text``,
+    which the digest does not read and which keeps the spelling it was given.
     """
 
     model_config = {"extra": "forbid"}
@@ -941,9 +943,10 @@ class ScanOp(Operator):
     ``ResultType``, which knows the columns a ``scan``'s ``declare`` adds, and
     :class:`SchemaAttacher` overlays it; an unbound parse has no such answer,
     and nothing re-derives one, so the scope downstream is the one they
-    inherited. Hashing text also brings the formatting sensitivity
-    :class:`UnknownSource` documents: interior comments and interior spacing
-    are part of the digest.
+    inherited. Hashing text carries the boundary :class:`UnknownSource`
+    documents: the text is re-lexed before it is hashed, so spacing between
+    tokens and an interior comment both drop out, while a canonicalization the
+    IR applies to a modeled node does not reach inside the text.
 
     ``scan``'s own body is a state machine: ``declare`` variables plus ``step``
     rules with guards and assignments. Modeling it would be a new feature.
