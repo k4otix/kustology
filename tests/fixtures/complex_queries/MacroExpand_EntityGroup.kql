@@ -1,0 +1,12 @@
+// Fan a detection across two databases through an inline entity group.
+macro-expand entity_group [cluster('contoso').database('SecurityA'), cluster('contoso').database('SecurityB')] as Scope
+(
+    let failure_threshold = 5;
+    Scope.SecurityEvent
+    | where EventID == 4625
+    | summarize Failures = count() by Account
+    | where Failures > failure_threshold;
+    Scope.SecurityEvent
+    | where EventID == 4624
+    | summarize Successes = count() by Account
+)

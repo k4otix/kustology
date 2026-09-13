@@ -1,0 +1,10 @@
+// Lateral-movement path: a variable-length account chain reaching a
+// sensitive host, projected with the properties each element carries.
+// AccountNodes carries an inline schema: unbound, a bare node table leaves
+// its key column's type unresolved, which the with-clause rejects.
+let AccountNodes = datatable(AccountName: string)[];
+SigninEdges
+| make-graph SourceAccount --> TargetAccount with AccountNodes on AccountName
+| graph-match cycles=none (src)-[hop*1..4]->(dst)
+    where src.IsExternal == true and dst.IsSensitive == true
+    project SourceName = src.AccountName, TargetName = dst.AccountName, Hops = hop

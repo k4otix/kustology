@@ -591,6 +591,175 @@ MUST_DIFFER = [
     # typeof(a:long, *)'s a, x, y. Recording only the last star's position
     # would make the two byte-identical.
     ("typeof-repeated-star", 'T | evaluate python(typeof(*, *, a:long), "c")', 'T | evaluate python(typeof(a:long, *), "c")'),
+    # --- Track E: scan ---
+    (
+        "scan-step-output",
+        "T | scan with (step s output=last: a > 1 => ;)",
+        "T | scan with (step s output=all: a > 1 => ;)",
+    ),
+    (
+        "scan-step-optional",
+        "T | scan with (step s optional: a > 1 => ;)",
+        "T | scan with (step s: a > 1 => ;)",
+    ),
+    (
+        "scan-qualifier-step",
+        "T | scan declare(p:string='') with (step s1: a > 1 => p = s1.p; step s2: b > 1 => p = s1.p;)",
+        "T | scan declare(p:string='') with (step s1: a > 1 => p = s1.p; step s2: b > 1 => p = s2.p;)",
+    ),
+    # --- Track E: top-nested ---
+    (
+        "top-nested-others",
+        "T | top-nested 3 of a with others='O' by max(b)",
+        "T | top-nested 3 of a by max(b)",
+    ),
+    (
+        "top-nested-direction",
+        "T | top-nested 3 of a by max(b) asc",
+        "T | top-nested 3 of a by max(b) desc",
+    ),
+    (
+        "top-nested-level-count",
+        "T | top-nested 3 of a by max(b), top-nested 2 of c by count()",
+        "T | top-nested 3 of a by max(b)",
+    ),
+    # --- Track E: graph-mark-components, graph-to-table, macro-expand ---
+    # ``graph-mark-components``/``graph-to-table`` dispatch on their own
+    # SyntaxKind regardless of what precedes them, so the bare pipe still
+    # exercises the field each pair guards.
+    (
+        "graph-to-table-entity",
+        "T | graph-to-table nodes",
+        "T | graph-to-table edges",
+    ),
+    (
+        "graph-mark-components-id",
+        "T | graph-mark-components with_component_id=a",
+        "T | graph-mark-components with_component_id=b",
+    ),
+    (
+        "graph-mark-components-kind",
+        "T | graph-mark-components kind=weak",
+        "T | graph-mark-components kind=strong",
+    ),
+    (
+        "macro-expand-entity-count",
+        "macro-expand entity_group [cluster('c1').database('d1')] as X (X.T | count)",
+        "macro-expand entity_group [cluster('c1').database('d1'), cluster('c2').database('d2')] as X (X.T | count)",
+    ),
+    (
+        "graph-to-table-alias",
+        "T | graph-to-table nodes as N",
+        "T | graph-to-table nodes",
+    ),
+    (
+        "graph-mark-components-kind-unwritten",
+        "T | graph-mark-components kind=weak",
+        "T | graph-mark-components",
+    ),
+    (
+        "macro-expand-entity-group-spelling",
+        "macro-expand EG as X (X.T | count)",
+        "macro-expand entity_group [cluster('c1').database('d1')] as X (X.T | count)",
+    ),
+    (
+        "graph-to-table-output-order",
+        "T | graph-to-table nodes as N, edges as E",
+        "T | graph-to-table edges as E, nodes as N",
+    ),
+    (
+        "macro-expand-body-let-value",
+        "macro-expand EG as X (let y = 1; X.T | where a > y)",
+        "macro-expand EG as X (let y = 2; X.T | where a > y)",
+    ),
+    (
+        "macro-expand-body-set-two-values",
+        "macro-expand EG as X (set query_now=datetime(2020-01-01); X.T | count)",
+        "macro-expand EG as X (set query_now=datetime(2021-01-01); X.T | count)",
+    ),
+    (
+        "macro-expand-body-alias-two-databases",
+        "macro-expand EG as X (alias database D = cluster('c').database('d'); X.T | count)",
+        "macro-expand EG as X (alias database D = cluster('c').database('e'); X.T | count)",
+    ),
+    (
+        "macro-expand-body-restrict-two-targets",
+        'macro-expand EG as X (restrict access to (database("d")); X.T | count)',
+        'macro-expand EG as X (restrict access to (database("e")); X.T | count)',
+    ),
+    (
+        "macro-expand-body-pattern-two-bodies",
+        'macro-expand EG as X (declare pattern P = (a:string) { ("x") = { T | take 1 }; }; X.T | count)',
+        'macro-expand EG as X (declare pattern P = (a:string) { ("x") = { U | take 9 }; }; X.T | count)',
+    ),
+    (
+        "macro-expand-body-query-parameters-two-defaults",
+        "macro-expand EG as X (declare query_parameters(n:long = 5); X.T | count)",
+        "macro-expand EG as X (declare query_parameters(n:long = 9); X.T | count)",
+    ),
+    # --- Track E: make-graph ---
+    (
+        "make-graph-direction",
+        "T | make-graph a --> b",
+        "T | make-graph a -- b",
+    ),
+    (
+        "make-graph-node-table",
+        "T | make-graph a --> b with N1 on k",
+        "T | make-graph a --> b with N2 on k",
+    ),
+    (
+        "make-graph-node-id-vs-table",
+        "T | make-graph a --> b with_node_id=k",
+        "T | make-graph a --> b with N on k",
+    ),
+    # --- Track E: graph-match and graph-shortest-paths ---
+    (
+        "graph-pattern-direction",
+        "T | make-graph a --> b | graph-match (x)-[e]->(y) project x",
+        "T | make-graph a --> b | graph-match (x)<-[e]-(y) project x",
+    ),
+    (
+        "graph-pattern-hop-range",
+        "T | make-graph a --> b | graph-match (x)-[e*1..3]->(y) project x",
+        "T | make-graph a --> b | graph-match (x)-[e*1..4]->(y) project x",
+    ),
+    (
+        "graph-pattern-qualifier",
+        "T | make-graph a --> b | graph-match (x)-[e]->(y) project x.p",
+        "T | make-graph a --> b | graph-match (x)-[e]->(y) project y.p",
+    ),
+    (
+        "graph-match-cycles",
+        "T | make-graph a --> b | graph-match cycles=none (x)-[e]->(y) project x",
+        "T | make-graph a --> b | graph-match cycles=all (x)-[e]->(y) project x",
+    ),
+    (
+        "graph-shortest-paths-output",
+        "T | make-graph a --> b | graph-shortest-paths output=any (x)-[e*1..2]->(y) project x",
+        "T | make-graph a --> b | graph-shortest-paths output=all (x)-[e*1..2]->(y) project x",
+    ),
+    (
+        "graph-pattern-bracket-free-direction",
+        "T | make-graph a --> b | graph-match (x)-->(y) project x",
+        "T | make-graph a --> b | graph-match (x)<--(y) project x",
+    ),
+    (
+        "graph-pattern-computed-hop-bound",
+        "T | make-graph a --> b | graph-match (x)-[e*1..toint(3)]->(y) project x",
+        "T | make-graph a --> b | graph-match (x)-[e*1..]->(y) project x",
+    ),
+    # --- Track E: a macro-expand body past its first tabular statement ---
+    (
+        "macro-expand-body-second-pipeline",
+        "T | macro-expand EG as X (X.T | take 1; X.T | take 2)",
+        "T | macro-expand EG as X (X.T | take 1; X.T | take 3)",
+    ),
+    (
+        "macro-expand-body-let-after-the-tail",
+        "T | macro-expand EG as X (X.T | take 1; let y = 1; X.T | take 2)",
+        "T | macro-expand EG as X (X.T | take 1; let y = 2; X.T | take 2)",
+    ),
 ]
 
 
@@ -886,6 +1055,15 @@ MUST_EQUAL = [
     # typeof(...) in argument position is a structural node, so its interior
     # spacing is gone by the time the digest is computed.
     ("typeof-interior-spacing", "T | extend y = f(typeof(string))", "T | extend y = f(typeof( string ))"),
+    # --- Track E: scan is structural ---
+    # One whitespace pair stands for every operator the track models: each
+    # reaches the digest as typed fields, so reflowing one is inert the way it
+    # is for every other operator.
+    (
+        "scan-reflowed",
+        "T | scan declare(n:long=0) with (step s: a > 1 => n = 1;)",
+        "T | scan\n    declare(n:long=0)\n    with (\n        step s: a > 1 => n = 1;\n    )",
+    ),
 ]
 
 
@@ -959,15 +1137,10 @@ def test_no_battery_pair_discriminates_on_an_unmodelled_blob():
     whole battery is text-free is cheaper than reasoning about it pair by
     pair.
 
-    The check covers more than the ``Unknown*`` classes. Eight modeled
-    operators record their own source too (``ScanOp``, ``TopNestedOp``,
-    ``MacroExpandOp``, ``MakeGraphOp`` and the four ``graph-*`` operators),
-    because they are dispatched and only partly modeled. Nothing in the
-    battery reaches one today, so naming them in prose would protect nobody:
-    the first pair written against ``scan`` or ``graph-match`` would
-    discriminate on ``raw_text`` and pass. Deriving the set from
-    ``model_fields`` covers a node added to the partly-modeled list from the
-    moment it is defined.
+    The check covers more than the ``Unknown*`` classes by construction: the
+    carrier set is derived from ``model_fields`` at run time, so a node is
+    covered from the moment it gains a ``raw_text`` field. Nobody has to
+    name it here.
     """
     offenders: dict[str, list[str]] = {}
     for query in sorted({q for _, a, b in MUST_DIFFER + MUST_EQUAL + KNOWN_COLLISIONS for q in (a, b)}):

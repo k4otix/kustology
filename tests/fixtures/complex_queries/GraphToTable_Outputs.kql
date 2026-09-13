@@ -1,0 +1,4 @@
+// Both projections of one graph, each with its own alias and id columns.
+NetworkSessions
+| make-graph SrcIp --> DstIp
+| graph-to-table nodes as Hosts with_node_id=HostId, edges as Flows with_source_id=FromId with_target_id=ToId

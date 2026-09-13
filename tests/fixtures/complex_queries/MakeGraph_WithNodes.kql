@@ -1,0 +1,8 @@
+// Build an identity graph from sign-in edges and label its nodes.
+// AccountNodes carries an inline schema: unbound, a bare node table leaves
+// its key column's type unresolved, which the with-clause rejects.
+let AccountNodes = datatable(AccountName: string)[];
+SigninEdges
+| make-graph SourceAccount --> TargetAccount with AccountNodes on AccountName
+| graph-mark-components kind=weak with_component_id=ClusterId
+| graph-to-table nodes as LabelledAccounts with_node_id=NodeId

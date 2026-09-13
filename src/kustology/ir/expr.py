@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 AnyExpr = Annotated[Union[
     "BinOp", "UnaryOp", "SetMembership", "Between", "And", "Or", "Not",
     "Exists", "RegexMatch", "CaseExpr", "ColumnRef", "LetValueRef",
-    "TypedNameDecl",
+    "GraphElementRef", "TypedNameDecl",
     "LiteralExpr",
     "FuncCall", "PathExpr", "ElementExpr", "StarExpr", "NamedExpr",
     "CompoundNamedExpr", "BracketedExpr", "ToScalarExpr",
@@ -113,6 +113,13 @@ class ColumnRef(Expr):
     # `$left.a == $right.b`, and losing it on a bound parse would collapse
     # the two.
     join_side: Literal["left", "right"] | None = None
+    # The scope name a reference was written against when that name is not a
+    # table: a ``scan`` step name, a graph pattern element name. ``s1.p``
+    # inside a step reads the column ``p`` as step ``s1`` saw it, and that
+    # name is not a table, so ``table`` cannot hold it without the binder
+    # resolving it against the in-scope table by name. Source-derived, so it
+    # hashes and renders.
+    qualifier: str | None = None
 
 
 class LetValueRef(Expr):
@@ -176,6 +183,25 @@ class LetValueRef(Expr):
     """
 
     kind: Literal["let_value_ref"] = "let_value_ref"
+    name: str
+
+
+class GraphElementRef(Expr):
+    """A bare pattern-element name in a graph operator's where or project.
+
+    ``project n`` returns the node bound to ``n`` as a property bag, and
+    ``where isnotnull(e)`` asks whether the edge matched. Neither reads a
+    column, so lowering the name to a :class:`ColumnRef` would make
+    ``find_all(ir, ColumnRef)`` report a column no table has. It is not a
+    ``ColumnRef`` subclass, for the reason :class:`LetValueRef` records: the
+    binder places columns by ``isinstance``, so a subclass would inherit the
+    resolution this node exists to stop.
+
+    A *property* of an element is a column: ``n.p`` lowers to a
+    :class:`ColumnRef` whose ``qualifier`` is ``n``.
+    """
+
+    kind: Literal["graph_element_ref"] = "graph_element_ref"
     name: str
 
 
@@ -513,7 +539,8 @@ class UnknownExpr(Expr):
 # fails. ``query.py`` imports this one, so a module-level rebuild there runs
 # after these classes are defined.
 REBUILT_BY_QUERY_MODULE: tuple[type[BaseModel], ...] = (
-    LiteralExpr, ColumnRef, LetValueRef, TypedNameDecl, BinOp, SetMembership,
+    LiteralExpr, ColumnRef, LetValueRef, GraphElementRef, TypedNameDecl, BinOp,
+    SetMembership,
     Between, And, Or, Not,
     FuncCall, CaseExpr, RegexMatch, Exists, PathExpr, ElementExpr, StarExpr,
     NamedExpr, CompoundNamedExpr, UnaryOp, BracketedExpr,

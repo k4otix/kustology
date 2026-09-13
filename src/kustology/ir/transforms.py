@@ -706,16 +706,19 @@ def _operand_sort_key(child: BaseModel) -> str:
     return json.dumps(child.model_dump(mode="json"), sort_keys=True)
 
 
-# Operator ``kind`` -> the fields whose *unwritten* defaults must dump as
-# though the field were never declared, mapped to those exact defaults. Add a
-# row here for the next modeled modifier; :func:`_strip_unwritten_fields` reads
-# the whole table in one pass.
+# Node ``kind`` -> the fields whose *unwritten* defaults must dump as though
+# the field were never declared, mapped to those exact defaults. The key is
+# any node's ``kind``, an expression's as much as an operator's, so a field
+# added to :class:`~kustology.ir.expr.ColumnRef` keeps the digest of every
+# query that does not write it. Add a row here for the next modeled modifier;
+# :func:`_strip_unwritten_fields` reads the whole table in one pass.
 _UNWRITTEN_DEFAULTS: dict[str, dict[str, Any]] = {
     "evaluate": {"declared_schema": None, "declared_schema_star": False},
     "mv_apply": {"to_typeof": None, "row_limit": None, "item_index": None},
     "parse_kv": {"properties": []},
     "getschema": {"output_kind": None},
     "consume": {"decodeblocks": None},
+    "column_ref": {"qualifier": None},
 }
 
 
@@ -738,10 +741,13 @@ def _at_default(actual: Any, default: Any) -> bool:
 
 
 def _strip_unwritten_fields(payload: Any) -> None:
-    """Delete an operator dict's modifier keys when every one is unwritten.
+    """Delete a node dict's modifier keys when every one is unwritten.
 
     Operates in place on the *dumped* JSON structure, in a single pass that
     dispatches on each dict's ``kind`` against :data:`_UNWRITTEN_DEFAULTS`.
+    An expression's ``kind`` dispatches the same way an operator's does:
+    :class:`~kustology.ir.expr.ColumnRef`'s ``qualifier`` is written only
+    inside a ``scan`` step, and every other reference dumps without it.
     This is the sibling of :func:`_clear_volatile` above, for the opposite kind
     of field: a plain, non-volatile one whose *written* value must reach the
     digest, so clearing it to a canonical default would hide real differences,

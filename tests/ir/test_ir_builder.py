@@ -29,6 +29,7 @@ from kustology.ir import (
     ToScalarExpr,
     UnknownSource,
     find_all,
+    walk,
 )
 from kustology.ir.binder import SchemaAttacher
 
@@ -1322,25 +1323,25 @@ def test_a_comment_before_a_let_function_does_not_change_the_hash(ir_builder):
     assert plain.semantic_hash == commented.semantic_hash
 
 
-def test_reformatting_a_raw_text_operator_does_not_change_the_hash(ir_builder):
-    """The handful of operators the IR keeps as source text (``scan``,
-    ``top-nested``, the ``graph-*`` family) must not record the node's
-    *leading trivia* -- every space, newline and comment between the
-    previous token and this one, which a bare ``node.ToString()`` includes.
-    Recording it hashes two spellings of one operator differently.
+def test_reformatting_an_unmodeled_operator_does_not_change_the_hash(ir_builder):
+    """An operator the builder could not dispatch keeps its own source text,
+    and must not record the node's *leading trivia* -- every space, newline
+    and comment between the previous token and this one, which a bare
+    ``node.ToString()`` includes. Recording it hashes two spellings of one
+    operator differently.
     """
-    plain = ir_builder.build("T | top-nested 3 of a by max(b)")
-    spaced = ir_builder.build("T\n|   top-nested 3 of a by max(b)")
-    commented = ir_builder.build("T | top-nested 3 // c\n of a by max(b)")
+    plain = ir_builder.build("T | bogus a b c")
+    spaced = ir_builder.build("T\n| bogus\n  a\n  b\n  c")
+    commented = ir_builder.build("T | bogus a // c\n b c")
 
     # The recorded text is the operator itself -- no leading blank, no comment.
-    assert plain.main_pipeline.operators[0].raw_text == "top-nested 3 of a by max(b)"
+    assert plain.main_pipeline.operators[0].raw_text == "bogus"
 
     assert plain.semantic_hash == spaced.semantic_hash
     assert plain.semantic_hash == commented.semantic_hash
 
 
-def test_a_url_inside_raw_text_still_separates_two_scan_operators(ir_builder):
+def test_a_url_inside_raw_text_still_separates_two_unmodeled_operators(ir_builder):
     """Guard on the re-lex applied to ``raw_text`` before hashing: ``//`` is a
     comment introducer *and* the middle of every URL a detection rule ever
     matches on. Comments are already gone by this point (the builder records
@@ -1348,18 +1349,16 @@ def test_a_url_inside_raw_text_still_separates_two_scan_operators(ir_builder):
     again -- stripping from ``//`` to end-of-line would truncate both
     operators to ``Url == "http:`` and collide them.
     """
-    a = ir_builder.build(
-        "T | scan declare (x:string='') with (step s: Url == \"http://a\" => x = \"y\")"
-    )
-    b = ir_builder.build(
-        "T | scan declare (x:string='') with (step s: Url == \"http://b\" => x = \"y\")"
-    )
+    a = ir_builder.build('T | bogus Url == "http://a"')
+    b = ir_builder.build('T | bogus Url == "http://b"')
 
-    assert 'Url == "http://a"' in a.main_pipeline.operators[0].raw_text
+    carriers = [n.raw_text for n in walk(a) if n is not a and getattr(n, "raw_text", None)]
+    assert 'Url == "http://a"' in carriers
+
     assert a.semantic_hash != b.semantic_hash
 
 
-def test_interior_spacing_in_a_raw_text_string_literal_is_not_collapsed(ir_builder):
+def test_interior_spacing_in_an_unmodeled_string_literal_is_not_collapsed(ir_builder):
     """The same trap as the URL guard above, one step narrower.
 
     A string literal lexes as one token, so the run of spaces inside it
@@ -1370,43 +1369,33 @@ def test_interior_spacing_in_a_raw_text_string_literal_is_not_collapsed(ir_build
     ``top-nested 3  of  a`` as ``top-nested 3 of a``, and the re-lex gives
     every remaining spelling one form.
     """
-    a = ir_builder.build(
-        "T | scan declare (x:string='') with (step s: Msg == \"error  occurred\" => x = \"y\")"
-    )
-    b = ir_builder.build(
-        "T | scan declare (x:string='') with (step s: Msg == \"error occurred\" => x = \"y\")"
-    )
+    a = ir_builder.build('T | bogus Msg == "error  occurred"')
+    b = ir_builder.build('T | bogus Msg == "error occurred"')
 
-    assert 'Msg == "error  occurred"' in a.main_pipeline.operators[0].raw_text
-    assert 'Msg == "error occurred"' in b.main_pipeline.operators[0].raw_text
+    carriers = [n.raw_text for n in walk(a) if n is not a and getattr(n, "raw_text", None)]
+    assert 'Msg == "error  occurred"' in carriers
 
     assert a.semantic_hash != b.semantic_hash
 
 
-def test_a_multi_line_scan_hashes_as_its_single_line_spelling(ir_builder):
-    """A formatted ``scan`` rule and its one-line source are one query.
+def test_a_reflowed_unmodeled_operator_hashes_as_its_single_line_spelling(ir_builder):
+    """A formatted operator the IR records as source text and its one-line
+    source are one query.
 
     ``IncludeTrivia.Minimal`` records the spacing the author wrote between two
-    tokens, so reflowing a ``scan`` across lines changes ``raw_text`` at every
-    line break and indent. The digest re-lexes that text. Narrow the rule to
+    tokens, so reflowing such an operator changes ``raw_text`` at every line
+    break and indent. The digest re-lexes that text. Narrow the rule to
     folding whitespace and the two spellings split into two digests.
     """
-    one_line = ir_builder.build(
-        'T | scan declare (x:string="") with (step s: a == 1 => x = "y")'
-    )
-    reflowed = ir_builder.build(
-        'T | scan declare (x:string="")\n'
-        "  with (\n"
-        '    step s: a == 1 => x = "y"\n'
-        "  )"
-    )
+    one_line = ir_builder.build('T | bogus Msg == "x" and Code == 1')
+    reflowed = ir_builder.build('T | bogus\n    Msg == "x"\n    and\n    Code == 1')
 
     # Pin that the two IRs genuinely differ, so the equality below is a claim
     # about the digest rather than about two identical trees.
-    assert (
-        one_line.main_pipeline.operators[0].raw_text
-        != reflowed.main_pipeline.operators[0].raw_text
-    )
+    def carriers(ir):
+        return [n.raw_text for n in walk(ir) if n is not ir and getattr(n, "raw_text", None)]
+
+    assert carriers(one_line) != carriers(reflowed)
 
     assert one_line.semantic_hash == reflowed.semantic_hash
 
@@ -2182,3 +2171,28 @@ def test_auto_names_hold_a_prefix_even_without_a_bare_column_argument():
 def test_to_ir_rejects_a_control_command():
     with pytest.raises(ValueError, match="CommandBlock"):
         parse(".drop table A | getschema").to_ir()
+
+
+def test_the_docs_raw_text_enumeration_names_every_carrier():
+    """``docs/tier2-ir.md`` enumerates the models that declare ``raw_text``.
+
+    A hand-maintained list of classes goes stale the moment one gains or
+    drops the field, and the page then tells a reader to look for source text
+    where there is none, or hides the model that carries it. The list is
+    rebuilt here from ``model_fields``.
+    """
+    import re
+    from pathlib import Path
+
+    import kustology.ir as ir_module
+
+    carriers = {
+        name for name in ir_module.__all__
+        if isinstance(getattr(ir_module, name), type)
+        and "raw_text" in getattr(getattr(ir_module, name), "model_fields", {})
+    }
+    page = Path(__file__).resolve().parents[2] / "docs" / "tier2-ir.md"
+    paragraph = next(
+        p for p in page.read_text().split("\n\n") if "declare `raw_text`" in p
+    )
+    assert set(re.findall(r"`([A-Z]\w+)`", paragraph)) == carriers

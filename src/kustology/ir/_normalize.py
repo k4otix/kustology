@@ -26,6 +26,7 @@ from .expr import (
     Exists,
     ExternalDataExpr,
     FuncCall,
+    GraphElementRef,
     LetValueRef,
     LiteralExpr,
     NamedExpr,
@@ -208,11 +209,19 @@ def canonical(expr: Any) -> str:
         if isinstance(e, LiteralExpr):
             return _kql_literal(e.value, e.literal_kind)
         if isinstance(e, ColumnRef):
+            # A qualifier outranks a table: it is what the query wrote, while
+            # ``table`` is what the binder resolved.
+            if e.qualifier:
+                return f"{e.qualifier}.{e.name}"
             return f"{e.table}.{e.name}" if e.table else e.name
         if isinstance(e, LetValueRef):
             # The name as the query wrote it. A ``let``-bound scalar reads
             # like a column at the use site; node type and the ``kind``
             # discriminator in the digested dump tell the two apart.
+            return e.name
+        if isinstance(e, GraphElementRef):
+            # The bare element name, with no qualifier: a qualified use is a
+            # ``ColumnRef`` and takes the branch above.
             return e.name
         if isinstance(e, TypedNameDecl):
             # ``name:type`` — the KQL spelling. Rendering the bare name would

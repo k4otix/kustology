@@ -26,6 +26,7 @@ from .expr import (  # noqa: F401 — names referenced via forward refs
     Expr,
     ExternalDataExpr,
     FuncCall,
+    GraphElementRef,
     LetValueRef,
     LiteralExpr,
     NamedExpr,
@@ -917,43 +918,47 @@ class ForkOp(Operator):
     branches: list[ForkBranch]
 
 
+class ScanStep(BaseModel):
+    """One ``step`` rule of a ``scan`` state machine.
+
+    ``condition`` is the guard and ``assignments`` the ``=>`` computations.
+    ``output`` selects which matched rows the step emits; ``None`` means the
+    query left it unwritten and KQL's own default applies. A step with no
+    ``=>`` records no assignments, and so does a bare ``=> ;``: the parser
+    builds one assignment there whose name is a zero-width missing node, and
+    recording it would put an empty column name in the digest.
+    """
+
+    model_config = {"extra": "forbid"}
+    kind: Literal["scan_step"] = "scan_step"
+    name: str
+    is_optional: bool = False
+    output: Literal["all", "last", "none"] | None = None
+    condition: AnyExpr
+    assignments: list[Assignment] = []
+    span: Span
+
+
 class ScanOp(Operator):
-    """``scan`` — kept as its own source text; the step machine is not modeled.
+    """``scan`` — a row-ordered state machine over the input stream.
 
-    This is the first of eight modeled operators the IR records on ``raw_text``
-    rather than in typed fields, the same register as :class:`LetFunction`'s:
-    the boundary is stated in the model instead of being left as fields that
-    read as implemented and are not. The other seven are :class:`TopNestedOp`,
-    :class:`MakeGraphOp`, :class:`MacroExpandOp`, :class:`GraphMatchOp`,
-    :class:`GraphMarkComponentsOp`, :class:`GraphShortestPathsOp` and
-    :class:`GraphToTableOp`.
+    ``declarations`` are the ``declare(...)`` accumulators, carried on
+    :class:`LetFunctionParameter` because the grammar node is the same
+    ``FunctionParameter`` a ``let`` function's parameter list uses.
 
-    Two exclusions, so the count is checkable. ``graph-where-edges`` and
-    ``graph-where-nodes`` carry a real ``predicate`` and no ``raw_text``.
-    :class:`UnknownOp` does carry one, so enumerating ``Operator`` subclasses
-    with a ``raw_text`` field gives nine; it is the builder's fallback for a
-    shape it could not dispatch rather than a modeling choice. Eight is the
-    register, nine the field count.
-
-    ``raw_text`` is ``ToString(IncludeTrivia.Minimal)``, so these operators
-    round-trip through ``model_dump_json`` and participate in ``semantic_hash``
-    as text. Nothing typed is inside them to walk: ``find_all(ir, ColumnRef)``
-    will not report a column that appears only in a ``scan`` step. Downstream
-    scope splits by bind state. ``Operator.result_schema`` carries Microsoft's
-    ``ResultType``, which knows the columns a ``scan``'s ``declare`` adds, and
-    :class:`SchemaAttacher` overlays it; an unbound parse has no such answer,
-    and nothing re-derives one, so the scope downstream is the one they
-    inherited. Hashing text carries the boundary :class:`UnknownSource`
-    documents: the text is re-lexed before it is hashed, so spacing between
-    tokens and an interior comment both drop out, while a canonicalization the
-    IR applies to a modeled node does not reach inside the text.
-
-    ``scan``'s own body is a state machine: ``declare`` variables plus ``step``
-    rules with guards and assignments. Modeling it would be a new feature.
+    A reference to a step's own view of a column is written ``s1.p`` and
+    lowers to a :class:`~kustology.ir.expr.ColumnRef` with ``qualifier`` set
+    to the step name, so ``find_all(ir, ColumnRef)`` reports ``p`` and never
+    reports a column called ``s1``.
     """
 
     kind: Literal["scan"] = "scan"
-    raw_text: str
+    with_match_id: str | None = None
+    with_step_name: str | None = None
+    declarations: list["LetFunctionParameter"] = []
+    order_by: list[SortKey] = []
+    partition_by: list[AnyExpr] = []
+    steps: list[ScanStep]
 
 
 class SerializeOp(Operator):
@@ -1022,107 +1027,289 @@ class SampleDistinctOp(Operator):
     of: AnyExpr
 
 
-class TopNestedOp(Operator):
-    """``top-nested`` — source text only; see :class:`ScanOp` for the register.
+class TopNestedLevel(BaseModel):
+    """One level of a chained ``top-nested``.
 
-    A chained ``top-nested … by … with others=…`` clause is a list of levels,
-    each with its own key expression, aggregate and ``others`` label. None of
-    that is broken out, so a nested key is invisible to ``find_all``.
+    ``count`` is the ``N`` of ``top-nested N of ...``; ``None`` means the
+    level wrote none, which KQL reads as unlimited. ``of`` is the key, read
+    the way :class:`SummarizeOp`'s ``by`` is, so ``of bin(t, 1h)`` carries
+    Microsoft's own auto-name. ``by`` is the aggregate, named the same way an
+    unnamed ``summarize`` aggregate is.
+
+    ``direction`` is set only when the level wrote ``asc`` or ``desc``. The
+    parser wraps the aggregate in an ``OrderedExpression`` exactly then; a
+    bare ``by count()`` arrives as the function call itself.
+
+    ``others`` is the ``with others=`` label, written before ``by`` in the
+    grammar. It is the literal the extra bucket is named, so it is source
+    data and hashes.
+    """
+
+    model_config = {"extra": "forbid"}
+    kind: Literal["top_nested_level"] = "top_nested_level"
+    count: int | AnyExpr | None = None
+    # Discriminated by position, not by a union tag: the same annotation and
+    # reader ``ProjectOp.columns`` uses.
+    of: ColumnRef | Assignment | AnyExpr
+    by: Assignment
+    direction: Literal["asc", "desc"] | None = None
+    others: AnyExpr | None = None
+    span: Span
+
+
+class TopNestedOp(Operator):
+    """``top-nested`` — a hierarchical roll-up, one level per clause.
+
+    Each level carries its own key, aggregate, direction and ``others``
+    label, so a key named only in a nested level reaches
+    ``find_all(ir, ColumnRef)``.
     """
 
     kind: Literal["top_nested"] = "top_nested"
-    raw_text: str
+    levels: list[TopNestedLevel]
+
+
+class MakeGraphNodes(BaseModel):
+    """One ``with <Table> on <key>`` clause of a ``make-graph``.
+
+    ``node_table`` goes through the shared table reader, so a ``let`` alias
+    reads as a :class:`LetRef` and ``find_all(ir, TableRef)`` reports a real
+    node table on both bind states. The field carries the name
+    ``node_table`` because :data:`~kustology.ir.transforms._VOLATILE_FIELDS`
+    clears every field named ``table`` across the whole IR for
+    :class:`ColumnRef`'s sake. This field is source-derived, and a query that
+    changes only its node table must still hash apart.
+    """
+
+    model_config = {"extra": "forbid"}
+    kind: Literal["make_graph_nodes"] = "make_graph_nodes"
+    # Discriminated on the kind literal; member order is not load-bearing.
+    node_table: Annotated[TableRef | LetRef, Field(discriminator="kind")]
+    key: AnyExpr
+    span: Span
 
 
 class MakeGraphOp(Operator):
-    """``make-graph`` — source text only; see :class:`ScanOp` for the register.
+    """``make-graph`` — build a graph from an edge stream.
 
-    The edge columns, the ``with``-clause node table and its key are all inside
-    ``raw_text``, so ``find_all(ir, TableRef)`` does not report the node table.
-    Tier 1 does, but only on a bound parse: over ``Edges | make-graph src -->
-    dst with Nodes on n``, ``parse(q).get_referenced_tables()`` answers
-    ``{"Edges"}`` and ``parse(q, schema=…)`` answers ``{"Edges", "Nodes"}``,
-    because the bound path reads the resolved symbol instead of the syntactic
-    source positions. ``replace_table("Nodes", …)`` splits the same way: a
-    no-op unbound, a correct rewrite bound.
+    ``source`` and ``target`` are the edge columns and ``direction`` the
+    written arrow: ``-->`` is directed and ``--`` undirected, and the two
+    build different graphs. ``direction`` stays unset on a query that writes
+    no arrow and on one whose arrow Microsoft rejects; picking one of the two
+    values there would put an edge semantics in the IR that the query does
+    not state.
+
+    The node side is written two ways and each has its own field. ``with
+    <Table> on <key>`` fills ``nodes``, and ``with_node_id=<column>`` fills
+    ``node_id``, which asks the engine to take node identity from the edge
+    stream itself.
+
+    ``partitioned-by`` carries its key on ``partition_by`` and its body on
+    ``partition_pipeline``, a real :class:`Pipeline` whose graph operators
+    are walkable.
     """
 
     kind: Literal["make_graph"] = "make_graph"
-    raw_text: str
-
-
-class MacroExpandOp(Operator):
-    """``macro-expand`` — source text, plus the inner pipeline.
-
-    The one member of the :class:`ScanOp` register that is not opaque all the
-    way down. The entity-group name and the ``as`` alias stay in ``raw_text``,
-    and the parenthesized body is built as a real :class:`Pipeline` on
-    ``pipeline``, so its operators and columns are walkable. The scope it runs
-    against is not: the alias resolves to one entity per expansion, which the
-    IR has no way to enumerate.
-    """
-
-    kind: Literal["macro_expand"] = "macro_expand"
-    raw_text: str
-    pipeline: Optional["Pipeline"] = None
-
-
-class GraphMatchOp(Operator):
-    """``graph-match`` — source text only; see :class:`ScanOp` for the register.
-
-    The pattern, its ``where`` constraint and its ``project`` list are all
-    text, so a column named only in a graph pattern does not reach
-    ``find_all(ir, ColumnRef)``, and the columns this operator emits are in no
-    downstream scope. That second half is a boundary of the graph surface:
-    Microsoft's binder does not place them either, and reports KS142 for a
-    ``| project`` naming one on a bound parse.
-    """
-
-    kind: Literal["graph_match"] = "graph_match"
-    raw_text: str
+    source: AnyExpr
+    target: AnyExpr
+    direction: Literal["-->", "--"] | None = None
+    nodes: list[MakeGraphNodes] = []
+    node_id: str | None = None
+    partition_by: str | None = None
+    partition_pipeline: Optional["Pipeline"] = None
 
 
 class GraphMarkComponentsOp(Operator):
-    """``graph-mark-components`` — text only; see :class:`ScanOp`.
+    """``graph-mark-components`` — label each connected component.
 
-    ``with_component_id=`` names a column this operator adds. It is inside
-    ``raw_text``, so the added column is in no downstream scope, Microsoft's
-    included.
+    ``with_component_id`` names the column the operator adds.
+    ``component_kind`` is the operator's ``kind=`` parameter, renamed because
+    ``kind`` is the discriminator every IR model carries. A value outside
+    ``weak``/``strong`` stays ``None``; Microsoft reports it as a diagnostic
+    rather than the IR raising on a typo.
     """
 
     kind: Literal["graph_mark_components"] = "graph_mark_components"
-    raw_text: str
+    with_component_id: str | None = None
+    component_kind: Literal["weak", "strong"] | None = None
 
 
-class GraphShortestPathsOp(Operator):
-    """``graph-shortest-paths`` — text only; see :class:`ScanOp`.
+class GraphToTableOutput(BaseModel):
+    """One ``nodes`` or ``edges`` projection of a ``graph-to-table``.
 
-    Same shape as :class:`GraphMatchOp`: pattern, constraint and
-    projection are one string.
+    ``alias`` is the ``as N`` name. The three id fields are the operator's
+    ``with_node_id=`` / ``with_source_id=`` / ``with_target_id=`` parameters,
+    each naming a column the projection adds.
     """
 
-    kind: Literal["graph_shortest_paths"] = "graph_shortest_paths"
-    raw_text: str
+    model_config = {"extra": "forbid"}
+    kind: Literal["graph_to_table_output"] = "graph_to_table_output"
+    entity: Literal["nodes", "edges"]
+    alias: str | None = None
+    node_id: str | None = None
+    source_id: str | None = None
+    target_id: str | None = None
+    span: Span
 
 
 class GraphToTableOp(Operator):
-    """``graph-to-table`` — text only; see :class:`ScanOp`.
+    """``graph-to-table`` — project a graph back to one or two tables.
 
-    Whether it emits ``nodes``, ``edges`` or both, and under which column
-    names, is in ``raw_text``. That is the information a downstream scope would
-    need, so the scope stays whatever the graph operators inherited.
+    Which entities it emits and the columns each projection adds are typed,
+    so a downstream consumer can read them without parsing text.
     """
 
     kind: Literal["graph_to_table"] = "graph_to_table"
-    raw_text: str
+    outputs: list[GraphToTableOutput]
+
+
+class MacroExpandOp(Operator):
+    """``macro-expand`` — run one body once per entity in a group.
+
+    The group is written two ways and each has its own field:
+    ``macro-expand EG as X (…)`` names a declared group on
+    ``entity_group_name``, and ``macro-expand entity_group [c, d] as X (…)``
+    puts one expression per entity on ``entities``. The entities are typed
+    rather than text, so a cluster or database name in one reaches
+    ``find_all``.
+
+    ``alias`` is the ``as X`` name. The body's first tabular statement is a
+    real :class:`Pipeline` on ``pipeline`` and every later one lands on
+    ``additional_pipelines``, the split :class:`QueryIR` makes over the
+    top-level query's own statement list. A ``let`` written anywhere in the
+    body lands on ``body_lets``, scoped here rather than hoisted into
+    :attr:`QueryIR.let_bindings` — the query writes it inside the
+    parentheses, a scope of its own, the way :attr:`LetFunction.body_lets`
+    is scoped to a function's body. A name a body ``let`` binds reads as a
+    :class:`~kustology.ir.expr.LetValueRef` for the rest of the body and
+    nowhere else, the reach a ``let``-function's own body ``let`` gets.
+
+    Every other statement the body writes (``set``, ``declare pattern``,
+    ``alias database``, ``restrict access to``, ``declare
+    query_parameters``) lands on ``body_statements``, in source order,
+    scoped here rather than hoisted into ``QueryIR.statements``. One list
+    covers every kind rather than a field per kind, mirroring
+    ``QueryIR.statements`` itself: the body's ``.StatementList`` admits the
+    same statement kinds the top-level query's own statement list does, and
+    :class:`AnyStatement`'s own ``kind`` discriminator already names each
+    one, so a per-kind field would only repeat that naming once per kind.
+
+    A named group is a boundary: ``entity_group_name`` is the name the query
+    wrote, and the IR has no way to enumerate the entities that group holds.
+    An inline group carries its entities on ``entities``, so the same question
+    is answered from the IR alone.
+    """
+
+    kind: Literal["macro_expand"] = "macro_expand"
+    entity_group_name: str | None = None
+    entities: list[AnyExpr] = []
+    # ``None`` when the query wrote no ``as`` name, which Microsoft reports as
+    # a diagnostic. Inventing one would put a name in the IR that the query
+    # does not contain.
+    alias: str | None = None
+    # ``let``s written inside the body, in declaration order, scoped to the
+    # operator like ``LetFunction.body_lets``.
+    body_lets: list["LetBinding"] = []
+    # Every non-``let``, non-tabular statement the body writes, in source
+    # order, scoped here like ``body_lets``.
+    body_statements: list["AnyStatement"] = []
+    pipeline: Optional["Pipeline"] = None
+    # The body's second and later tabular statements, in source order. A body
+    # separates statements with ``;`` the way the top-level query does, so
+    # keeping only the first would give two different bodies one IR and one
+    # digest. Consumers that want every one iterate
+    # ``[op.pipeline, *op.additional_pipelines]``.
+    additional_pipelines: list["Pipeline"] = []
+
+
+class GraphPatternNode(BaseModel):
+    """One ``(name)`` element of a graph pattern; ``()`` leaves ``name`` unset."""
+
+    model_config = {"extra": "forbid"}
+    kind: Literal["graph_pattern_node"] = "graph_pattern_node"
+    name: str | None = None
+    span: Span
+
+
+class GraphPatternEdge(BaseModel):
+    """One ``-[name]->`` element of a graph pattern.
+
+    ``direction`` comes from the written arrow tokens: ``-[ ]->`` is
+    ``forward``, ``<-[ ]-`` is ``backward``, and ``-[ ]-`` is ``any``. The
+    three match different paths. The bracket-free spellings ``-->``, ``<--``
+    and ``--`` carry the same three directions, and name no edge.
+
+    ``variable_length`` is the ``*`` of ``-[e*1..3]->``. ``min_hops`` and
+    ``max_hops`` are the bounds the query wrote. A bound is an expression
+    position, so a computed one such as ``*1..toint(3)`` keeps its own IR
+    node. An omitted bound stays ``None``; the IR substitutes no default
+    for it.
+    """
+
+    model_config = {"extra": "forbid"}
+    kind: Literal["graph_pattern_edge"] = "graph_pattern_edge"
+    name: str | None = None
+    direction: Literal["forward", "backward", "any"]
+    variable_length: bool = False
+    min_hops: int | AnyExpr | None = None
+    max_hops: int | AnyExpr | None = None
+    span: Span
+
+
+class GraphPattern(BaseModel):
+    """One comma-separated pattern of a graph operator, in source order."""
+
+    model_config = {"extra": "forbid"}
+    kind: Literal["graph_pattern"] = "graph_pattern"
+    # Discriminated on the kind literal; member order is not load-bearing.
+    elements: list[Annotated[GraphPatternNode | GraphPatternEdge, Field(discriminator="kind")]]
+    span: Span
+
+
+class GraphMatchOp(Operator):
+    """``graph-match`` — find every path matching a pattern.
+
+    ``where`` and ``project`` are read against the pattern's element names,
+    so ``a.x`` is a :class:`~kustology.ir.expr.ColumnRef` qualified by ``a``
+    and bare ``a`` is a :class:`~kustology.ir.expr.GraphElementRef`.
+
+    ``cycles`` is the operator's only named parameter; ``output=`` is a
+    syntax error here. A value outside the three the engine accepts stays
+    ``None``.
+    """
+
+    kind: Literal["graph_match"] = "graph_match"
+    patterns: list[GraphPattern]
+    where: AnyExpr | None = None
+    # The same annotation and reader ``ProjectOp.columns`` uses.
+    project: list[ColumnRef | Assignment | AnyExpr] = []
+    cycles: Literal["all", "none", "unique_edges"] | None = None
+
+
+class GraphShortestPathsOp(Operator):
+    """``graph-shortest-paths`` — the shortest path matching a pattern.
+
+    The pattern, ``where`` and ``project`` read exactly as
+    :class:`GraphMatchOp`'s. It takes both named parameters: ``output``
+    selects how many paths per pair, and ``cycles`` is the same parameter
+    ``graph-match`` carries. The two are written space-separated; a comma
+    between them is a syntax error.
+    """
+
+    kind: Literal["graph_shortest_paths"] = "graph_shortest_paths"
+    patterns: list[GraphPattern]
+    where: AnyExpr | None = None
+    project: list[ColumnRef | Assignment | AnyExpr] = []
+    output: Literal["all", "any"] | None = None
+    cycles: Literal["all", "none", "unique_edges"] | None = None
 
 
 class GraphWhereEdgesOp(Operator):
-    """``graph-where-edges (…)`` — modeled, with a real predicate.
+    """``graph-where-edges (…)`` — keep the edges a predicate matches.
 
-    Not part of the :class:`ScanOp` register despite the family name: the
-    parenthesized condition is an ordinary expression over edge properties, so
-    it is built as one and its columns are walkable.
+    The parenthesized condition is an ordinary expression over edge
+    properties, so it is built as one and ``find_all(ir, ColumnRef)`` reaches
+    every column it names.
     """
 
     kind: Literal["graph_where_edges"] = "graph_where_edges"
@@ -1221,6 +1408,9 @@ class LetFunctionParameter(BaseModel):
     That is also why this class is a plain ``BaseModel`` rather than an
     ``Expr`` subclass: it is a slot holding a declaration and its default, with
     nothing for anything to evaluate.
+
+    :class:`ScanOp`'s ``declare(...)`` accumulators reuse this model because
+    the grammar node is the same ``FunctionParameter``.
 
     ``default`` is the ``=3`` of ``(w:int=3)``. The grammar restricts it to a
     literal; the field is ``AnyExpr`` for uniformity. Both its presence and its
@@ -1729,3 +1919,4 @@ FacetOp.model_rebuild()
 ForkBranch.model_rebuild()
 ForkOp.model_rebuild()
 MacroExpandOp.model_rebuild()
+ScanOp.model_rebuild()

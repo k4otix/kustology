@@ -1,0 +1,7 @@
+// Hierarchical roll-up: three nested levels with a named aggregate, an
+// explicit direction, an "others" bucket, and a binned key.
+StormEvents
+| top-nested 3 of State with others='Other states' by TotalDamage=sum(DamageProperty) desc,
+  top-nested 2 of bin(StartTime, 1d) by count(),
+  top-nested 1 of EventType by max(DamageCrops) asc
+| project State, StartTime, EventType, TotalDamage

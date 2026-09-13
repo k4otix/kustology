@@ -7,15 +7,21 @@
 still at its unwritten default, so declaring a modifier does not move the
 digest of a query that never writes one. ``tests/ir/test_hash_battery.py``
 covers that end to end; these tests pin the helper's own contract, down to the
-parts an end-to-end test cannot isolate.
+parts an end-to-end test cannot isolate, and hold one row of the table to a
+real parse.
 """
+
+import json
 
 import pytest
 
 pytest.importorskip("pydantic")
 
+from kustology import parse
 from kustology.ir.transforms import (
     _UNWRITTEN_DEFAULTS,
+    _canonicalize,
+    _payload,
     _strip_unwritten_fields,
 )
 
@@ -110,3 +116,14 @@ def test_every_row_in_the_table_strips(kind):
     _strip_unwritten_fields(payload)
 
     assert payload == {"kind": kind}
+
+
+def test_an_unqualified_column_ref_leaves_no_qualifier_key_in_the_payload():
+    """A real parse holds the ``column_ref`` row to the digest it guards.
+
+    Every reference in this query writes no qualifier, so the key is absent
+    from the payload the digest is computed over.
+    """
+    payload = _payload(_canonicalize(parse("T | where a > 1").to_ir()))
+
+    assert "qualifier" not in json.dumps(payload)

@@ -15,7 +15,7 @@ coverage audit script.
 from __future__ import annotations
 
 import logging
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from .._text import Utf16Offsets
 from ..bridge import (  # re-export-friendly; also triggers CLR init
@@ -71,6 +71,7 @@ from .expr import (
     Exists,
     ExternalDataExpr,
     FuncCall,
+    GraphElementRef,
     LetValueRef,
     LiteralExpr,
     NamedExpr,
@@ -111,8 +112,12 @@ from .query import (
     GetSchemaOp,
     GraphMarkComponentsOp,
     GraphMatchOp,
+    GraphPattern,
+    GraphPatternEdge,
+    GraphPatternNode,
     GraphShortestPathsOp,
     GraphToTableOp,
+    GraphToTableOutput,
     GraphWhereEdgesOp,
     GraphWhereNodesOp,
     ImplicitSource,
@@ -124,6 +129,7 @@ from .query import (
     LetRef,
     LookupOp,
     MacroExpandOp,
+    MakeGraphNodes,
     MakeGraphOp,
     MakeSeriesAggregate,
     MakeSeriesOp,
@@ -154,6 +160,7 @@ from .query import (
     SampleDistinctOp,
     SampleOp,
     ScanOp,
+    ScanStep,
     SearchOp,
     SerializeOp,
     SetOptionStmt,
@@ -164,6 +171,7 @@ from .query import (
     TabularSchema,
     TakeOp,
     TopHittersOp,
+    TopNestedLevel,
     TopNestedOp,
     TopOp,
     UnionOp,
@@ -187,6 +195,7 @@ from Kusto.Language.Syntax import (
     FunctionDeclaration,
     IncludeTrivia,
     LetStatement,
+    MacroExpandOperator,
     PatternStatement,
     QueryParametersStatement,
     RestrictStatement,
@@ -417,8 +426,10 @@ class IRBuilder:
         #   TopOperator (``top N by``)                 -> ``_visit_sort_key``
         #   ProjectReorderOperator                     -> ``_visit_reorder_key``
         #   TopNestedOperator (``top-nested … by x asc``)
-        #       -> not visited. ``TopNestedOp`` preserves raw text, so no
-        #          child expression reaches ``_visit_expr``.
+        #       -> ``_visit_top_nested``, which unwraps the OrderedExpression
+        #          itself: the wrapper appears only when the level wrote a
+        #          direction, so the aggregate reaches ``_visit_assignment``
+        #          either way.
         #
         # A fifth owner needs its own case, or that shape lands on
         # ``UnknownExpr`` while this list claims coverage -- the way a missing
@@ -491,6 +502,19 @@ class IRBuilder:
         # this set from ``_let_names``. :meth:`_visit_function_declaration`
         # saves and restores both.
         self._param_names: set[str] = set()
+        # Names the enclosing operator declared as a scope: a ``scan`` step
+        # name, a graph pattern element name. Empty everywhere else. A
+        # ``PathExpression`` whose left name is in this set is a qualified
+        # column reference, not a table read or a dynamic access. Every
+        # visitor that fills it restores it in a ``finally``, the way
+        # ``_visit_function_body`` restores ``_param_names``.
+        self._qualifier_names: set[str] = set()
+        # The graph pattern element names alone, a subset of
+        # ``_qualifier_names``. A bare name in this set is the element itself
+        # and builds a ``GraphElementRef``; a bare ``scan`` step name stays a
+        # ``ColumnRef``, so the two scopes are read separately here even
+        # though they share the qualified path above.
+        self._element_names: set[str] = set()
 
     # -- entry points ----------------------------------------------------
 
@@ -628,6 +652,8 @@ class IRBuilder:
 
         self._let_names = set()
         self._param_names = set()
+        self._qualifier_names = set()
+        self._element_names = set()
         let_bindings: list[LetBinding] = []
         # ``GetDescendants`` is recursive, so each sweep has to pick out the
         # query's own statements. A statement inside a ``FunctionDeclaration``
@@ -711,13 +737,17 @@ class IRBuilder:
         """Return True when ``node`` is one of the *query's* own statements.
 
         ``GetDescendants`` is recursive, so every statement sweep needs this:
-        a statement inside a ``let``-function body or a ``declare pattern``
-        arm belongs to that body and is built there. The two ancestor kinds
-        are the only two the grammar puts a ``FunctionBody`` under.
+        a statement inside a ``let``-function body, a ``declare pattern`` arm,
+        or a ``macro-expand`` body belongs to that construct and is built
+        there instead. Each ancestor kind below owns a body the grammar fills
+        with statements. A construct that opens such a body and is missing
+        from this list has its statements built twice, once here and once by
+        the visitor that owns the body.
         """
         return (
             node.GetFirstAncestor[FunctionDeclaration]() is None
             and node.GetFirstAncestor[PatternStatement]() is None
+            and node.GetFirstAncestor[MacroExpandOperator]() is None
         )
 
     def _visit_statements(self, root: Any) -> list[AnyStatement]:
@@ -729,11 +759,16 @@ class IRBuilder:
         statements the other way round are different queries, and a per-kind
         concatenation renders them identically.
 
-        ``QueryParametersStatement`` is the only kind the ancestor filter can
-        exclude: it is the one statement besides ``let`` a ``FunctionBody``
-        admits, and it lands on ``LetFunction.body_query_parameters``. The
-        other four are a parse error inside a body (probed), so there the
-        filter is the belt to those braces.
+        The ancestor filter excludes a different subset per body kind. A
+        ``FunctionBody`` admits only ``let`` and ``QueryParametersStatement``
+        beside its tail expression (the other four are a parse error there),
+        so a ``FunctionDeclaration`` or ``PatternStatement`` ancestor only
+        ever excludes a ``QueryParametersStatement``, which lands on
+        ``LetFunction.body_query_parameters``. A ``macro-expand`` body admits
+        all five kinds beside ``let`` (probed on a real parse), each landing
+        on ``MacroExpandOp.body_statements`` (:meth:`_visit_macro_expand`)
+        instead of here, so a ``MacroExpandOperator`` ancestor excludes the
+        full set.
         """
         found: list[tuple[int, Any]] = []
         for net_cls, visit in (
@@ -1161,7 +1196,22 @@ class IRBuilder:
                 ):
                     source = ref
 
-        walk(node)
+        # A pipeline reads its own source, so the names the enclosing
+        # operator declared as a scope do not reach it: the ``n`` in
+        # ``graph-match (n)-[e]->(m) project p = toscalar(Tbl | where n > 1)``
+        # is a column of ``Tbl``, and both a bare ``n`` and an ``n.p`` here
+        # would otherwise report a graph element that pipeline cannot see.
+        # Both sets are restored in ``finally``, the way
+        # :meth:`_visit_graph_clauses` restores them.
+        saved_qualifiers = self._qualifier_names
+        saved_elements = self._element_names
+        self._qualifier_names = set()
+        self._element_names = set()
+        try:
+            walk(node)
+        finally:
+            self._qualifier_names = saved_qualifiers
+            self._element_names = saved_elements
         # Operators-but-no-explicit-source means the source is implicit (parent
         # rows: union-at-root, mv-apply/partition/fork subqueries, join RHS).
         if isinstance(source, UnknownSource) and operators:
@@ -1922,33 +1972,24 @@ class IRBuilder:
         if kind == "GraphWhereNodesOperator":
             return GraphWhereNodesOp(predicate=self._visit_expr(n.Condition), span=span)
 
-        # Preserve-raw-text ops for elaborate state-machine operators.
         if kind == "ScanOperator":
-            return ScanOp(raw_text=node.ToString(IncludeTrivia.Minimal), span=span)
+            return self._visit_scan(n, span)
+
         if kind == "TopNestedOperator":
-            return TopNestedOp(raw_text=node.ToString(IncludeTrivia.Minimal), span=span)
+            return self._visit_top_nested(n, span)
+
         if kind == "MakeGraphOperator":
-            return MakeGraphOp(raw_text=node.ToString(IncludeTrivia.Minimal), span=span)
+            return self._visit_make_graph(n, span)
         if kind == "MacroExpandOperator":
-            # The body is a ``StatementList``. Neither ``Subquery`` nor
-            # ``Body`` is a member of MacroExpandOperator.
-            inner = None
-            statements = getattr(n, "StatementList", None)
-            if statements is not None and statements.Count > 0:
-                for stmt in _iter_elements(statements):
-                    expr = getattr(stmt, "Expression", None)
-                    if expr is not None:
-                        inner = self._visit_pipeline(expr)
-                        break
-            return MacroExpandOp(raw_text=node.ToString(IncludeTrivia.Minimal), pipeline=inner, span=span)
+            return self._visit_macro_expand(n, span)
         if kind == "GraphMatchOperator":
-            return GraphMatchOp(raw_text=node.ToString(IncludeTrivia.Minimal), span=span)
+            return self._visit_graph_match(n, span)
         if kind == "GraphMarkComponentsOperator":
-            return GraphMarkComponentsOp(raw_text=node.ToString(IncludeTrivia.Minimal), span=span)
+            return self._visit_graph_mark_components(n, span)
         if kind == "GraphShortestPathsOperator":
-            return GraphShortestPathsOp(raw_text=node.ToString(IncludeTrivia.Minimal), span=span)
+            return self._visit_graph_shortest_paths(n, span)
         if kind == "GraphToTableOperator":
-            return GraphToTableOp(raw_text=node.ToString(IncludeTrivia.Minimal), span=span)
+            return self._visit_graph_to_table(n, span)
 
         return UnknownOp(
             raw_text=node.ToString(IncludeTrivia.Minimal),
@@ -1969,6 +2010,470 @@ class IRBuilder:
         if str(node.Kind) in ("LongLiteralExpression", "IntLiteralExpression"):
             return int(node.LiteralValue)
         return self._visit_expr(node)
+
+    def _visit_scan(self, node: Any, span: Span) -> ScanOp:
+        """Build a :class:`ScanOp`, with the step names in scope.
+
+        Step names are pushed onto ``_qualifier_names`` for the length of the
+        clause bodies, so ``s1.p`` inside a step becomes a qualified
+        ``ColumnRef`` instead of a table read. The set is restored in
+        ``finally``: a ``scan`` inside a ``join``'s right-hand pipeline must
+        not leak its step names to the outer query.
+
+        The ``declare(...)`` list is the same ``FunctionParameter`` list a
+        ``let`` function's parameters are, so :meth:`_read_function_parameters`
+        reads it unchanged.
+        """
+        params = read_named_params(getattr(node, "Parameters", None))
+        declare_clause = getattr(node, "DeclareClause", None)
+        order_clause = getattr(node, "OrderByClause", None)
+        partition_clause = getattr(node, "PartitionByClause", None)
+
+        steps_list = getattr(node, "Steps", None)
+        raw_steps = list(_iter_elements(steps_list)) if steps_list is not None else []
+        saved_qualifiers = self._qualifier_names
+        self._qualifier_names = saved_qualifiers | {
+            visit_name(s.Name) for s in raw_steps if s.Name is not None
+        }
+        try:
+            steps = [self._visit_scan_step(s) for s in raw_steps]
+            order_by = (
+                [self._visit_sort_key(el)
+                 for el in _iter_elements(order_clause.Expressions)]
+                if order_clause is not None else []
+            )
+            partition_by = (
+                [self._visit_expr(el)
+                 for el in _iter_elements(partition_clause.Expressions)]
+                if partition_clause is not None else []
+            )
+        finally:
+            self._qualifier_names = saved_qualifiers
+
+        return ScanOp(
+            with_match_id=params.get("with_match_id"),
+            with_step_name=params.get("with_step_name"),
+            declarations=self._read_function_parameters(
+                declare_clause.Declarations if declare_clause is not None else None,
+            ),
+            order_by=order_by,
+            partition_by=partition_by,
+            steps=steps,
+            span=span,
+        )
+
+    def _visit_scan_step(self, node: Any) -> ScanStep:
+        """Build one :class:`ScanStep`.
+
+        ``optional`` follows the step name in the grammar, and an unwritten
+        one leaves ``OptionalKeyword`` at ``None``. ``output=`` goes through
+        :meth:`_ordering_keyword`, which validates the token text against the
+        ``Literal``'s own values: ``output=bogus`` builds a missing token
+        whose text is ``""``, and letting that reach pydantic turns a typo
+        into a ``ValidationError`` out of ``to_ir()``.
+
+        A ``=> ;`` with nothing after the arrow builds one assignment whose
+        name is a zero-width missing node; a name of width zero is skipped.
+        """
+        computation = getattr(node, "ComputationClause", None)
+        assignments: list[Assignment] = []
+        if computation is not None:
+            for el in _iter_elements(computation.Assignments):
+                name_node = getattr(el, "Name", None)
+                if name_node is None or name_node.Width == 0:
+                    continue
+                assignments.append(Assignment(
+                    name=visit_name(name_node),
+                    expr=self._visit_expr(el.Expression),
+                    span=to_span(el),
+                ))
+        optional_keyword = getattr(node, "OptionalKeyword", None)
+        return ScanStep(
+            # A step with no written name still carries a condition and
+            # assignments, so it is recorded with an empty name.
+            name=visit_name(node.Name),
+            is_optional=optional_keyword is not None and optional_keyword.Width > 0,
+            output=self._ordering_keyword(
+                getattr(node, "ScanStepOutput", None), "OutputKind",
+                ("all", "last", "none"),
+            ),
+            condition=self._visit_expr(node.Condition),
+            assignments=assignments,
+            span=to_span(node),
+        )
+
+    def _visit_top_nested(self, node: Any, span: Span) -> TopNestedOp:
+        """Build a :class:`TopNestedOp`, one level per clause.
+
+        ``ByExpression`` is an ``OrderedExpression`` only when the level wrote
+        ``asc`` or ``desc``; ``by count()`` is the ``FunctionCallExpression``
+        itself. Reading ``.Expression`` unconditionally raises
+        ``AttributeError`` out of ``to_ir()`` on the common spelling, so the
+        class name decides which shape is in hand.
+        """
+        levels: list[TopNestedLevel] = []
+        for clause in _iter_elements(node.Clauses):
+            count_node = getattr(clause, "Expression", None)
+            by_node = clause.ByExpression
+            direction: str | None = None
+            if type(by_node).__name__ == "OrderedExpression":
+                direction = self._ordering_keyword(
+                    getattr(by_node, "Ordering", None), "AscOrDescKeyword",
+                    ("asc", "desc"),
+                )
+                by_node = by_node.Expression
+            others_clause = getattr(clause, "WithOthersClause", None)
+            levels.append(TopNestedLevel(
+                count=self._visit_count(count_node) if count_node is not None else None,
+                of=self._visit_expr_as_assignment(clause.OfExpression, mode="grouping"),
+                by=self._visit_assignment(by_node, mode="aggregation"),
+                direction=direction,
+                others=(
+                    self._visit_expr(others_clause.Expression)
+                    if others_clause is not None else None
+                ),
+                span=to_span(clause),
+            ))
+        return TopNestedOp(levels=levels, span=span)
+
+    def _visit_make_graph(self, node: Any, span: Span) -> MakeGraphOp:
+        """Build a :class:`MakeGraphOp`.
+
+        ``WithClause`` is one of two clause classes or ``None``, so ``nodes``
+        and ``node_id`` are filled by two different queries and never both.
+        ``PartitionedByClause.Subquery`` is a bare operator node, which
+        :meth:`_visit_pipeline` handles through its ``endswith("Operator")``
+        case.
+
+        ``DirectionToken`` carries the written arrow. ``Direction`` is a
+        member of no ``MakeGraphOperator``, so reading it raises
+        ``AttributeError``. The token is read through
+        :meth:`_ordering_keyword`, which validates the text against the
+        ``Literal``'s own two values: ``make-graph a`` leaves a token that
+        exists holding ``""``, and letting that reach the ``Literal`` raises
+        ``ValidationError`` out of ``to_ir()`` on a half-typed operator.
+        """
+        nodes: list[MakeGraphNodes] = []
+        node_id: str | None = None
+        with_clause = getattr(node, "WithClause", None)
+        if with_clause is not None:
+            tables_and_keys = getattr(with_clause, "TablesAndKeys", None)
+            if tables_and_keys is not None:
+                for el in _iter_elements(tables_and_keys):
+                    nodes.append(MakeGraphNodes(
+                        node_table=self._visit_table_ref(el.Table),
+                        key=self._visit_expr(el.Column),
+                        span=to_span(el),
+                    ))
+            else:
+                name_node = getattr(with_clause, "Name", None)
+                node_id = visit_name(name_node) if name_node is not None else None
+
+        partition_by: str | None = None
+        partition_pipeline: Pipeline | None = None
+        partitioned = getattr(node, "PartitionedByClause", None)
+        if partitioned is not None:
+            partition_by = visit_name(partitioned.Entity)
+            subquery = getattr(partitioned, "Subquery", None)
+            partition_pipeline = self._visit_pipeline(subquery) if subquery is not None else None
+
+        return MakeGraphOp(
+            source=self._visit_expr(node.SourceColumn),
+            target=self._visit_expr(node.TargetColumn),
+            direction=self._ordering_keyword(
+                node, "DirectionToken", ("-->", "--"),
+            ),
+            nodes=nodes,
+            node_id=node_id,
+            partition_by=partition_by,
+            partition_pipeline=partition_pipeline,
+            span=span,
+        )
+
+    def _visit_graph_mark_components(self, node: Any, span: Span) -> GraphMarkComponentsOp:
+        """Build a :class:`GraphMarkComponentsOp` from its named parameters."""
+        params = read_named_params(getattr(node, "Parameters", None))
+        component_kind = params.get("kind")
+        return GraphMarkComponentsOp(
+            with_component_id=params.get("with_component_id"),
+            # Microsoft reports an out-of-vocabulary kind itself; letting the
+            # text reach the Literal would raise ValidationError out of
+            # ``to_ir()`` on a query the parser accepted.
+            component_kind=component_kind if component_kind in ("weak", "strong") else None,
+            span=span,
+        )
+
+    def _visit_graph_to_table(self, node: Any, span: Span) -> GraphToTableOp:
+        """Build a :class:`GraphToTableOp`, one entry per output clause.
+
+        A malformed clause carries a missing ``EntityKeyword`` whose text is
+        empty and no ``Parameters`` at all, so a clause whose entity is not
+        ``nodes`` or ``edges`` is skipped rather than raising on the Literal.
+        """
+        outputs: list[GraphToTableOutput] = []
+        clauses = getattr(node, "OutputClause", None)
+        if clauses is not None:
+            for clause in _iter_elements(clauses):
+                entity = clause.EntityKeyword.Text
+                if entity not in ("nodes", "edges"):
+                    continue
+                as_clause = getattr(clause, "AsClause", None)
+                params = read_named_params(getattr(clause, "Parameters", None))
+                outputs.append(GraphToTableOutput(
+                    entity=entity,
+                    alias=visit_name(as_clause.Name) if as_clause is not None else None,
+                    node_id=params.get("with_node_id"),
+                    source_id=params.get("with_source_id"),
+                    target_id=params.get("with_target_id"),
+                    span=to_span(clause),
+                ))
+        return GraphToTableOp(outputs=outputs, span=span)
+
+    # Keyed by an edge's first and last token text, the only record of which
+    # arrow the pattern wrote. A bracket-free arrow is a single token, so its
+    # ``LastToken`` is ``None`` and the key carries ``None`` in that slot.
+    _EDGE_DIRECTIONS: ClassVar[dict[tuple[str, str | None], str]] = {
+        ("-[", "]->"): "forward",
+        ("<-[", "]-"): "backward",
+        ("-[", "]-"): "any",
+        ("-->", None): "forward",
+        ("<--", None): "backward",
+        ("--", None): "any",
+    }
+
+    def _visit_graph_patterns(self, node: Any) -> tuple[list[GraphPattern], set[str]]:
+        """Read a graph operator's patterns and the names they bind.
+
+        Shared by ``graph-match`` and ``graph-shortest-paths``, which write
+        the same pattern grammar. The returned name set scopes the ``where``
+        and ``project`` clauses.
+
+        ``GraphMatchPatternNode`` has no ``FirstToken``/``LastToken``
+        property, so the direction read stays on the edge branch.
+        """
+        patterns: list[GraphPattern] = []
+        names: set[str] = set()
+        for pattern_node in _iter_elements(node.Patterns):
+            elements: list[GraphPatternNode | GraphPatternEdge] = []
+            for el in _iter_elements(pattern_node.PatternElements):
+                name_node = getattr(el, "Name", None)
+                name = visit_name(name_node) if name_node is not None else None
+                if name:
+                    names.add(name)
+                if str(type(el).__name__) == "GraphMatchPatternEdge":
+                    elements.append(self._visit_graph_pattern_edge(el, name))
+                else:
+                    elements.append(GraphPatternNode(name=name, span=to_span(el)))
+            patterns.append(GraphPattern(elements=elements, span=to_span(pattern_node)))
+        return patterns, names
+
+    def _visit_graph_pattern_edge(self, node: Any, name: str | None) -> GraphPatternEdge:
+        """Build one :class:`GraphPatternEdge`, hop range included.
+
+        ``Range`` is ``None`` unless the pattern wrote ``*``. Its bounds are
+        expressions rather than tokens, so each one goes through
+        :meth:`_hop_bound`. An arrow whose tokens match none of the six
+        spellings records ``any``, which is what an undirected edge matches.
+        """
+        last_token = node.LastToken
+        edge_range = getattr(node, "Range", None)
+        return GraphPatternEdge(
+            name=name,
+            direction=self._EDGE_DIRECTIONS.get(
+                (
+                    str(node.FirstToken.Text),
+                    None if last_token is None else str(last_token.Text),
+                ),
+                "any",
+            ),
+            variable_length=edge_range is not None,
+            min_hops=self._hop_bound(getattr(edge_range, "RangeStart", None)),
+            max_hops=self._hop_bound(getattr(edge_range, "RangeEnd", None)),
+            span=to_span(node),
+        )
+
+    def _hop_bound(self, node: Any) -> int | AnyExpr | None:
+        """One written hop bound, or ``None`` when the pattern omitted it.
+
+        An unwritten bound is a ``NameReference`` the parser marks missing, so
+        ``IsMissing`` is what separates it from a written one. A written bound
+        is an expression, and only a whole-number literal shortcuts to ``int``:
+        ``*1..toint(3)`` keeps the call as its own IR node, and ``*1..true``
+        keeps the boolean, which ``int`` would read as one hop.
+        """
+        if node is None or node.IsMissing:
+            return None
+        value = getattr(node, "LiteralValue", None)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        return self._visit_expr(node)
+
+    def _visit_graph_match(self, node: Any, span: Span) -> GraphMatchOp:
+        """Build a :class:`GraphMatchOp` with the pattern names in scope."""
+        patterns, names = self._visit_graph_patterns(node)
+        where, project = self._visit_graph_clauses(node, names)
+        return GraphMatchOp(
+            patterns=patterns,
+            where=where,
+            project=project,
+            cycles=self._graph_param(node, "cycles", ("all", "none", "unique_edges")),
+            span=span,
+        )
+
+    def _visit_graph_shortest_paths(self, node: Any, span: Span) -> GraphShortestPathsOp:
+        """Build a :class:`GraphShortestPathsOp` with the pattern names in scope."""
+        patterns, names = self._visit_graph_patterns(node)
+        where, project = self._visit_graph_clauses(node, names)
+        return GraphShortestPathsOp(
+            patterns=patterns,
+            where=where,
+            project=project,
+            output=self._graph_param(node, "output", ("all", "any")),
+            cycles=self._graph_param(node, "cycles", ("all", "none", "unique_edges")),
+            span=span,
+        )
+
+    def _visit_graph_clauses(
+        self, node: Any, names: set[str],
+    ) -> tuple[AnyExpr | None, list[ColumnRef | Assignment | AnyExpr]]:
+        """Read ``where`` and ``project`` with the pattern names in scope.
+
+        Both sets are restored in ``finally``: a graph operator inside a
+        ``make-graph``'s ``partitioned-by`` body must not leak its element
+        names outward.
+        """
+        saved_qualifiers = self._qualifier_names
+        saved_elements = self._element_names
+        self._qualifier_names = saved_qualifiers | names
+        self._element_names = saved_elements | names
+        try:
+            where_clause = getattr(node, "WhereClause", None)
+            where = (
+                self._visit_expr(where_clause.Condition)
+                if where_clause is not None else None
+            )
+            project_clause = getattr(node, "ProjectClause", None)
+            project = [
+                self._visit_expr_as_assignment(el)
+                for el in _iter_elements(project_clause.Expressions)
+            ] if project_clause is not None else []
+        finally:
+            self._qualifier_names = saved_qualifiers
+            self._element_names = saved_elements
+        return where, project
+
+    @staticmethod
+    def _graph_param(node: Any, name: str, allowed: tuple[str, ...]) -> str | None:
+        """One graph operator named parameter, validated against its Literal.
+
+        The parser accepts any value here without a diagnostic, so an
+        unrecognized one would reach pydantic and raise ``ValidationError``
+        out of ``to_ir()`` on a query Microsoft parsed clean. Membership in
+        ``allowed`` is the check the ``Literal`` itself applies, the policy
+        :meth:`_ordering_keyword` records.
+        """
+        value = extract_named_param(node, name)
+        return value if value in allowed else None
+
+    def _visit_macro_expand(self, node: Any, span: Span) -> MacroExpandOp:
+        """Build a :class:`MacroExpandOp`.
+
+        ``EntityGroup`` is a ``NameReference`` for a declared group and an
+        ``EntityGroup`` node carrying ``.Entities`` for an inline one, so the
+        two spellings fill different fields and neither is a text field.
+
+        ``.StatementList`` is one linear list in source order, so a single
+        pass keeps both ``body_lets`` and ``body_statements`` in that order
+        with no separate sort — unlike :meth:`_visit_statements`, which
+        merges five independent ``GetDescendants`` sweeps and sorts on
+        ``TextStart`` for that reason. A ``LetStatement`` goes to
+        ``body_lets``; the five kinds :meth:`_visit_statements` also handles
+        (``set``, ``declare pattern``, ``alias``, ``restrict``, ``declare
+        query_parameters``) go to ``body_statements`` through the same five
+        visitor methods; the first ``ExpressionStatement`` is the body's own
+        ``pipeline`` and each later one joins ``additional_pipelines``, the
+        split :meth:`build` makes over the query's own statement list. The
+        loop reads the whole list, so a ``let`` or a ``set`` a query writes
+        after the tail is kept: the top-level sweeps skip it, because
+        :meth:`_is_a_top_level_statement` excludes a ``MacroExpandOperator``
+        ancestor. ``_let_names`` is saved before the loop and restored in
+        ``finally``, so a name a body ``let`` binds does not survive the
+        operator — the same restore :meth:`_visit_function_body` does around
+        a ``let``-function's body.
+        """
+        # Kusto's error recovery has two ways of saying the ``as`` name is
+        # not there: ``macro-expand EG`` leaves ``ScopeReferenceName``
+        # ``None``, and ``macro-expand EG as`` builds the clause around a
+        # zero-width missing name. Both mean the query wrote no alias.
+        scope = getattr(node, "ScopeReferenceName", None)
+        alias_node = (
+            getattr(scope, "EntityGroupReferenceName", None)
+            if scope is not None else None
+        )
+        alias = (
+            visit_name(alias_node)
+            if alias_node is not None and alias_node.Width > 0 else None
+        )
+
+        group = node.EntityGroup
+        entities: list[AnyExpr] = []
+        entity_group_name: str | None = None
+        if getattr(group, "Entities", None) is not None:
+            entities = [self._visit_expr(el) for el in _iter_elements(group.Entities)]
+        else:
+            entity_group_name = visit_name(group.Name)
+
+        inner: Pipeline | None = None
+        extra_pipelines: list[Pipeline] = []
+        body_lets: list[LetBinding] = []
+        body_statements: list[AnyStatement] = []
+        statements = getattr(node, "StatementList", None)
+        saved_lets = set(self._let_names)
+        try:
+            if statements is not None and statements.Count > 0:
+                for stmt in _iter_elements(statements):
+                    net_kind = type(stmt).__name__
+                    # A ``LetStatement`` also exposes ``.Expression`` (its
+                    # right-hand-side value), so picking the first statement
+                    # with a non-``None`` ``.Expression`` would bind
+                    # ``pipeline`` to a ``let``'s value instead of the
+                    # body's tabular expression -- dispatch by class
+                    # instead.
+                    if net_kind == "LetStatement":
+                        binding = self._visit_let_statement(stmt)
+                        body_lets.append(binding)
+                        self._let_names.add(binding.name)
+                    elif net_kind == "ExpressionStatement":
+                        pipeline = self._visit_pipeline(stmt.Expression)
+                        if inner is None:
+                            inner = pipeline
+                        else:
+                            extra_pipelines.append(pipeline)
+                    elif net_kind == "SetOptionStatement":
+                        body_statements.append(self._visit_set_option_statement(stmt))
+                    elif net_kind == "QueryParametersStatement":
+                        body_statements.append(
+                            self._visit_query_parameters_statement(stmt),
+                        )
+                    elif net_kind == "PatternStatement":
+                        body_statements.append(self._visit_pattern_statement(stmt))
+                    elif net_kind == "AliasStatement":
+                        body_statements.append(self._visit_alias_statement(stmt))
+                    elif net_kind == "RestrictStatement":
+                        body_statements.append(self._visit_restrict_statement(stmt))
+        finally:
+            self._let_names = saved_lets
+
+        return MacroExpandOp(
+            entity_group_name=entity_group_name,
+            entities=entities,
+            alias=alias,
+            body_lets=body_lets,
+            body_statements=body_statements,
+            pipeline=inner,
+            additional_pipelines=extra_pipelines,
+            span=span,
+        )
 
     def _visit_sort_key(self, node: Any) -> SortKey:
         """One ``sort by`` / ``order by`` / ``top … by`` ordering key.
@@ -2108,6 +2613,13 @@ class IRBuilder:
             # collapses every prefix wildcard onto ``*``.
             if name == "*" and is_wildcarded_name(node.Name):
                 res = StarExpr(span=span)
+            # A graph pattern element name shadows a same-named ``let`` for
+            # the length of the operator, the way a function parameter
+            # shadows one, so this test precedes the ``let`` test. The
+            # element is neither a table nor a column: ``project n`` returns
+            # the bound node as a property bag.
+            elif name in self._element_names:
+                res = GraphElementRef(name=name, span=span)
             # A name an earlier ``let`` bound is a query-local value, the
             # expression-position twin of the ``LetRef`` check in
             # ``_visit_table_ref``. It is decided from the statement text
@@ -2158,7 +2670,12 @@ class IRBuilder:
             if expr_kind == "NameReference" and sel_kind == "NameReference":
                 lhs_name = visit_name(expr_node.Name)
                 rhs_name = visit_name(sel_node.Name)
-                if lhs_name in ("$left", "$right") or is_table_symbol(getattr(expr_node, "ReferencedSymbol", None)):
+                if lhs_name in self._qualifier_names:
+                    # A ``scan`` step name. Its ``ReferencedSymbol`` is a
+                    # ``VariableSymbol``, so the table test below declines and
+                    # the reference would otherwise read as a dynamic access.
+                    res = ColumnRef(name=rhs_name, qualifier=lhs_name, span=span)
+                elif lhs_name in ("$left", "$right") or is_table_symbol(getattr(expr_node, "ReferencedSymbol", None)):
                     side = lhs_name[1:] if lhs_name in ("$left", "$right") else None
                     res = ColumnRef(
                         name=rhs_name,

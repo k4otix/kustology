@@ -182,6 +182,16 @@ MATRIX: list[tuple[str, str]] = [
     ("project-assignment", "T | project n = a + 1, k"),
     ("toscalar-in-extend", "T | extend m = toscalar(U | count)"),
     ("let-then-pipeline", "let B = T | where a > 1; B | project k, a"),
+    ("scan-step-machine", "T | scan declare(n:long=0) with (step s: a > 1 => n = 1;)"),
+    ("top-nested-levels", "T | top-nested 3 of k by max(a), top-nested 2 of s by count()"),
+    ("graph-mark-components", "T | make-graph k --> s | graph-mark-components kind=weak with_component_id=cid"),
+    ("graph-to-table", "T | make-graph k --> s | graph-to-table nodes as N with_node_id=nid"),
+    ("make-graph-with-nodes", "T | make-graph k --> s with U on k"),
+    ("graph-match-pattern", "T | make-graph k --> s | graph-match (x)-[e]->(y) project x"),
+    (
+        "graph-shortest-paths",
+        "T | make-graph k --> s | graph-shortest-paths output=any (x)-[e*1..2]->(y) project x",
+    ),
 ]
 
 # The bound leg's MATRIX run: one representative id per construct family. The

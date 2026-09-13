@@ -123,8 +123,8 @@ def test_a_dict_attach_reaches_microsofts_binder():
     """`attach_schema=dict` must bind through build_global_state + Analyze.
 
     `scan declare` adds columns (`v`, `match_id`) that only Microsoft's binder
-    computes, since ScanOp is modeled as raw text and the hand rules do not
-    answer for it. Their presence proves the dict reached Microsoft."""
+    computes: the hand rules do not answer for a step machine's output schema.
+    Their presence proves the dict reached Microsoft."""
     q = "T | scan declare (v: long = 0) with (step s1: true => v = 1;)"
     ir = parse(q).to_ir(attach_schema={"T": {"a": "long"}})
     cols = list(ir.main_pipeline.result_schema.columns)

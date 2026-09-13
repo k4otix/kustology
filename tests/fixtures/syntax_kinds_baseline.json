@@ -713,6 +713,9 @@
     "DefaultExpressionClause": [
       "DefaultExpressionClause"
     ],
+    "DefaultValueDeclaration": [
+      "DefaultValueDeclaration"
+    ],
     "DistinctOperator": [
       "DistinctOperator"
     ],
@@ -721,6 +724,9 @@
     ],
     "ElementExpression": [
       "ElementExpression"
+    ],
+    "EntityGroup": [
+      "EntityGroupExpression"
     ],
     "EvaluateOperator": [
       "EvaluateOperator"
@@ -773,6 +779,36 @@
     "FunctionParameters": [
       "FunctionParameters"
     ],
+    "GraphMarkComponentsOperator": [
+      "GraphMarkComponentsOperator"
+    ],
+    "GraphMatchOperator": [
+      "GraphMatchOperator"
+    ],
+    "GraphMatchPattern": [
+      "GraphMatchPattern"
+    ],
+    "GraphMatchPatternEdge": [
+      "GraphMatchPatternEdge"
+    ],
+    "GraphMatchPatternEdgeRange": [
+      "GraphMatchPatternEdgeRange"
+    ],
+    "GraphMatchPatternNode": [
+      "GraphMatchPatternNode"
+    ],
+    "GraphShortestPathsOperator": [
+      "GraphShortestPathsOperator"
+    ],
+    "GraphToTableAsClause": [
+      "GraphToTableAsClause"
+    ],
+    "GraphToTableOperator": [
+      "GraphToTableOperator"
+    ],
+    "GraphToTableOutputClause": [
+      "GraphToTableOutputClause"
+    ],
     "HasAllExpression": [
       "HasAllExpression"
     ],
@@ -804,6 +840,7 @@
     ],
     "KindToken": [
       "AndKeyword",
+      "AsKeyword",
       "AscKeyword",
       "AsteriskToken",
       "BagExpansionKeyword",
@@ -820,9 +857,11 @@
       "CommaToken",
       "ContainsKeyword",
       "CountKeyword",
+      "CyclesKeyword",
       "DataTableKeyword",
       "DatabaseKeyword",
       "DateTimeKeyword",
+      "DeclareKeyword",
       "DefaultKeyword",
       "DescKeyword",
       "DistinctKeyword",
@@ -830,17 +869,24 @@
       "DotToken",
       "DoubleKeyword",
       "DynamicKeyword",
+      "EntityGroupKeyword",
       "EqualEqualToken",
       "EqualTildeToken",
       "EqualToken",
       "EvaluateKeyword",
       "ExtendKeyword",
       "ExternalDataKeyword",
+      "FatArrowToken",
       "FindKeyword",
       "FirstKeyword",
       "FlagsKeyword",
       "ForkKeyword",
       "FromKeyword",
+      "GraphEdgesKeyword",
+      "GraphMarkComponentsKeyword",
+      "GraphMatchKeyword",
+      "GraphShortestPathsKeyword",
+      "GraphToTableKeyword",
       "GreaterThanOrEqualToken",
       "GreaterThanToken",
       "HasAllKeyword",
@@ -861,22 +907,29 @@
       "LimitKeyword",
       "LongKeyword",
       "LookupKeyword",
+      "MacroExpandKeyword",
+      "MakeGraphKeyword",
       "MakeSeriesKeyword",
       "MatchesRegexKeyword",
       "MaterializeKeyword",
       "MinusToken",
       "MvDashApplyKeyword",
       "MvDashExpandKeyword",
+      "NodesKeyword",
       "NotBangContainsCsKeyword",
       "NotInKeyword",
       "NotStartsWithKeyword",
       "NullsKeyword",
+      "OfKeyword",
       "OnKeyword",
       "OpenBraceToken",
       "OpenBracketToken",
       "OpenParenToken",
+      "OptionalKeyword",
       "OrKeyword",
       "OrderKeyword",
+      "OthersKeyword",
+      "OutputKeyword",
       "ParseKeyword",
       "ParseWhereKeyword",
       "PartitionKeyword",
@@ -890,6 +943,7 @@
       "RealKeyword",
       "RegexKeyword",
       "RenderKeyword",
+      "ScanKeyword",
       "SearchKeyword",
       "SemicolonToken",
       "SlashToken",
@@ -903,11 +957,14 @@
       "ToKeyword",
       "ToScalarKeyword",
       "TopKeyword",
+      "TopNestedKeyword",
       "TypeOfKeyword",
       "UnionKeyword",
       "WhereKeyword",
       "WithItemIndexKeyword",
       "WithKeyword",
+      "WithMatchIdKeyword",
+      "WithNodeIdKeyword",
       "WithSourceKeyword"
     ],
     "LetStatement": [
@@ -934,6 +991,21 @@
     ],
     "LookupOperator": [
       "LookupOperator"
+    ],
+    "MacroExpandOperator": [
+      "MacroExpandOperator"
+    ],
+    "MacroExpandScopeReferenceName": [
+      "MacroExpandScopeReferenceName"
+    ],
+    "MakeGraphOperator": [
+      "MakeGraphOperator"
+    ],
+    "MakeGraphTableAndKeyClause": [
+      "MakeGraphTableAndKeyClause"
+    ],
+    "MakeGraphWithTablesAndKeysClause": [
+      "MakeGraphWithTablesAndKeysClause"
     ],
     "MakeSeriesByClause": [
       "MakeSeriesByClause"
@@ -1040,6 +1112,9 @@
     "ProjectAwayOperator": [
       "ProjectAwayOperator"
     ],
+    "ProjectClause": [
+      "ProjectClause"
+    ],
     "ProjectOperator": [
       "ProjectOperator"
     ],
@@ -1064,6 +1139,30 @@
     "RowSchema": [
       "RowSchema"
     ],
+    "ScanAssignment": [
+      "ScanAssignment"
+    ],
+    "ScanComputationClause": [
+      "ScanComputationClause"
+    ],
+    "ScanDeclareClause": [
+      "ScanDeclareClause"
+    ],
+    "ScanOperator": [
+      "ScanOperator"
+    ],
+    "ScanOrderByClause": [
+      "ScanOrderByClause"
+    ],
+    "ScanPartitionByClause": [
+      "ScanPartitionByClause"
+    ],
+    "ScanStep": [
+      "ScanStep"
+    ],
+    "ScanStepOutput": [
+      "ScanStepOutput"
+    ],
     "SearchOperator": [
       "SearchOperator"
     ],
@@ -1073,7 +1172,16 @@
     "SeparatedElement[FunctionParameter]": [
       "SeparatedElement"
     ],
+    "SeparatedElement[GraphMatchPattern]": [
+      "SeparatedElement"
+    ],
+    "SeparatedElement[GraphToTableOutputClause]": [
+      "SeparatedElement"
+    ],
     "SeparatedElement[JsonPair]": [
+      "SeparatedElement"
+    ],
+    "SeparatedElement[MakeGraphTableAndKeyClause]": [
       "SeparatedElement"
     ],
     "SeparatedElement[MakeSeriesExpression]": [
@@ -1094,7 +1202,13 @@
     "SeparatedElement[NamedParameter]": [
       "SeparatedElement"
     ],
+    "SeparatedElement[ScanAssignment]": [
+      "SeparatedElement"
+    ],
     "SeparatedElement[Statement]": [
+      "SeparatedElement"
+    ],
+    "SeparatedElement[TopNestedClause]": [
       "SeparatedElement"
     ],
     "SimpleNamedExpression": [
@@ -1118,7 +1232,13 @@
     "SyntaxList[ForkExpression]": [
       "List"
     ],
+    "SyntaxList[GraphMatchPatternNotation]": [
+      "List"
+    ],
     "SyntaxList[NamedParameter]": [
+      "List"
+    ],
+    "SyntaxList[ScanStep]": [
       "List"
     ],
     "SyntaxList[SeparatedElement[Expression]]": [
@@ -1127,7 +1247,16 @@
     "SyntaxList[SeparatedElement[FunctionParameter]]": [
       "List"
     ],
+    "SyntaxList[SeparatedElement[GraphMatchPattern]]": [
+      "List"
+    ],
+    "SyntaxList[SeparatedElement[GraphToTableOutputClause]]": [
+      "List"
+    ],
     "SyntaxList[SeparatedElement[JsonPair]]": [
+      "List"
+    ],
+    "SyntaxList[SeparatedElement[MakeGraphTableAndKeyClause]]": [
       "List"
     ],
     "SyntaxList[SeparatedElement[MakeSeriesExpression]]": [
@@ -1148,7 +1277,13 @@
     "SyntaxList[SeparatedElement[NamedParameter]]": [
       "List"
     ],
+    "SyntaxList[SeparatedElement[ScanAssignment]]": [
+      "List"
+    ],
     "SyntaxList[SeparatedElement[Statement]]": [
+      "List"
+    ],
+    "SyntaxList[SeparatedElement[TopNestedClause]]": [
       "List"
     ],
     "SyntaxList[SyntaxNode]": [
@@ -1158,6 +1293,9 @@
       "TakeOperator"
     ],
     "TextAndKindToken": [
+      "BracketDashGreaterThanToken",
+      "DashBracketToken",
+      "DashDashGreaterThanToken",
       "EndOfTextToken"
     ],
     "ToScalarExpression": [
@@ -1169,6 +1307,15 @@
     "TokenName": [
       "TokenName"
     ],
+    "TopNestedClause": [
+      "TopNestedClause"
+    ],
+    "TopNestedOperator": [
+      "TopNestedOperator"
+    ],
+    "TopNestedWithOthersClause": [
+      "TopNestedWithOthersClause"
+    ],
     "TopOperator": [
       "TopOperator"
     ],
@@ -1177,6 +1324,9 @@
     ],
     "UnionOperator": [
       "UnionOperator"
+    ],
+    "WhereClause": [
+      "WhereClause"
     ],
     "WildcardedName": [
       "WildcardedName"
