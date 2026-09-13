@@ -16,6 +16,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **`to_ir()` raises on a control command** (tier 2). The IR models query grammar, so a `CommandBlock` parse raises `ValueError`; branch on `KustoQuery.is_command` first. `kustology parse --ir` exits 1 on the same input.
 - **`validate`, `format`, and `parse` reject input whose tail the parser skipped** (CLI). The diagnostic carries kustology's code `KUSTOLOGY002` at `Error` severity. The library's `validate()` and `KustoQuery.diagnostics` are unchanged.
+- **`Span` is immutable and shared across copies of an IR** (tier 2). Copying an IR hands every span over by reference, so `copy.deepcopy(ir)` and the private copy each digest is built from stop rebuilding them. Assigning to a span's fields raises; build a new `Span` instead.
+
+### Fixed
+
+- **Reflowing an unmodeled operator does not move `semantic_hash`** (tier 2). Its recorded source text is re-lexed before it is hashed, so line breaks and inter-token spacing stop splitting one operator into two digests.
+- **`typeof(...)` in argument position lowers to `TypeOfExpr`** (tier 2). The plugin operators' output schema reaches the IR as declared columns instead of source text, and the digest ignores its interior spacing.
 
 ## [0.3.0] — 2026-08-30
 

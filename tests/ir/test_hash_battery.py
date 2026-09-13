@@ -581,6 +581,16 @@ MUST_DIFFER = [
         'declare pattern P = (a:string) { ("x") = { let z = 5; T | take z }; }; T | take 1',
         'declare pattern P = (a:string) { ("x") = { let z = 9; T | take z }; }; T | take 1',
     ),
+    ("typeof-type-name", "T | extend y = f(typeof(string))", "T | extend y = f(typeof(long))"),
+    # The position of `*` decides the output column order: bound against
+    # T(x, y), typeof(*, a:long) returns x, y, a and typeof(a:long, *)
+    # returns a, x, y.
+    ("typeof-star-position", 'T | evaluate python(typeof(*, a:long), "c")', 'T | evaluate python(typeof(a:long, *), "c")'),
+    # A repeated star needs every one of its positions: bound against T(x, y),
+    # typeof(*, *, a:long) returns x, y, x, y, a, which differs from
+    # typeof(a:long, *)'s a, x, y. Recording only the last star's position
+    # would make the two byte-identical.
+    ("typeof-repeated-star", 'T | evaluate python(typeof(*, *, a:long), "c")', 'T | evaluate python(typeof(a:long, *), "c")'),
 ]
 
 
@@ -873,6 +883,9 @@ MUST_EQUAL = [
         "let V = T | take 1; restrict access to (V); T | count",
         "let W = T | take 1; restrict access to (W); T | count",
     ),
+    # typeof(...) in argument position is a structural node, so its interior
+    # spacing is gone by the time the digest is computed.
+    ("typeof-interior-spacing", "T | extend y = f(typeof(string))", "T | extend y = f(typeof( string ))"),
 ]
 
 

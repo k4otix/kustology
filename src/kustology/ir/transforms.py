@@ -20,13 +20,13 @@ from __future__ import annotations
 import hashlib
 import itertools
 import json
-import re
 from typing import Any
 
 from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 
 from .._ir_tags import SEMANTIC_HASH_SCHEME
+from ..bridge import TokenParser
 from ._normalize import normalize_in_place
 from .expr import (
     And,
@@ -282,39 +282,39 @@ _CLEARED_FIELDS = _VOLATILE_FIELDS | _DERIVED_INDEX_FIELDS
 # 2.13 will serialize ``None`` through a ``Span``-typed field, emitting
 # ``null`` with no warning, but that payload fails to validate back, and the
 # copy is a live IR that ``walk`` and ``model_dump`` both traverse. One
-# instance is shared by every node on the copy, never observably -- the copy is
-# dumped and discarded inside ``compute_semantic_hash``, and nothing mutates a
-# ``Span`` in place.
+# instance is shared by every node on the copy, which a frozen ``Span``
+# supports.
 _ZERO_SPAN = Span(text_start=0, width=0)
 
 
 def _normalize_raw_text(text: str) -> str:
-    r"""Fold each line break in ``raw_text``, indent included, to one space.
+    r"""Rewrite ``raw_text`` as its token texts joined by single spaces.
 
-    Nothing else is touched. The operators the IR keeps as source text
-    (``scan``, ``top-nested``, the ``graph-*`` family, and the ``Unknown*``
-    fallbacks) hash that text directly, so without the fold the digest reads
-    ``| top-nested 3 of a`` and ``|   top-nested\n3 of a`` as two queries. The
-    rule stays narrow because two things that look like formatting in source
-    text are data:
+    The ``Unknown*`` fallbacks and any operator still recorded as source text
+    hash that text directly, so the digest reads a reflowed or respaced
+    spelling of one operator as a second query unless the text is re-lexed
+    first. ``IncludeTrivia.Minimal`` keeps whatever spacing the author wrote
+    between two tokens, so ``(step`` and ``( step``, and ``a==b`` and
+    ``a == b``, reach this function as different strings. Lexing and re-joining
+    gives every spelling one form.
 
-    * Interior spacing survives. A run of spaces can sit *inside a string
-      literal*, where it is part of the value: ``"error  occurred"`` (two
-      spaces) and ``"error occurred"`` are different predicates. Outside a
-      literal ``IncludeTrivia.Minimal`` has already collapsed it, recording
-      ``top-nested 3  of  a`` as ``top-nested 3 of a``. Newlines are safe
-      because a KQL string literal cannot contain a raw one, so this fold never
-      reaches inside a literal.
-    * Comments survive. ``Minimal`` already drops every comment in and around
-      the node, and ``//`` is the middle of every URL a detection rule matches
-      on: a regex from ``//`` to end-of-line would truncate
-      ``Url == "http://a"`` and ``Url == "http://b"`` to the same text.
+    Two things that look like formatting in source text are data, and the token
+    rule keeps both:
 
-    Both boundaries are pinned by tests. Widening this function to
-    ``" ".join(text.split())`` fails the first; adding a comment strip fails
-    the second.
+    * A string literal is one token, so a run of spaces inside it survives:
+      ``Msg == "error  occurred"`` and ``Msg == "error occurred"`` stay
+      different predicates. A multi-line ```` ``` ```` literal keeps its
+      newlines for the same reason.
+    * ``//`` inside a literal survives too, so ``Url == "http://a"`` and
+      ``Url == "http://b"`` stay apart. A comment never reaches this function:
+      ``Minimal`` drops it at build time, and the lexer treats it as trivia.
+
+    Tests pin both boundaries.
+
+    ``_clear_volatile`` calls this for every ``raw_text`` the digest reads.
+    ``QueryIR.raw_text`` is the one it skips, because no digest reads it.
     """
-    return re.sub(r"\s*\n\s*", " ", text).strip()
+    return " ".join(t.Text for t in TokenParser.ParseTokens(text) if t.Text)
 
 
 def _clear_volatile(root: BaseModel) -> None:
@@ -342,7 +342,12 @@ def _clear_volatile(root: BaseModel) -> None:
                 object.__setattr__(
                     node, name, None if default is PydanticUndefined else default,
                 )
-        if "raw_text" in fields:
+        # ``QueryIR.raw_text`` holds the whole query source, so it is the
+        # longest text any node offers this function, and nothing reads it back
+        # off the canonical copy: ``_payload``'s ``QueryIR`` branch names its
+        # four keys by hand, and ``similarity`` digests every node through that
+        # same branch. Every other ``raw_text`` reaches the digest and is lexed.
+        if "raw_text" in fields and not isinstance(node, QueryIR):
             object.__setattr__(node, "raw_text", _normalize_raw_text(node.raw_text))
 
 

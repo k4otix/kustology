@@ -71,6 +71,11 @@ returns. Within `kustology-sem-v2` these are ignored:
   first, so `| where A | where B` joins them. Only consecutive `where`
   operators merge: `| where A | take 5` and `| take 5 | where A` still
   differ.
+- **How an unmodeled operator is spelled.** An operator the IR keeps as
+  source text is re-lexed before it is hashed, so reflowing it across
+  lines or changing the spacing between its tokens does not move the
+  digest. A string literal is one token, so the spacing inside it still
+  counts.
 - **`let` names.** Each is replaced by its position in a scope-ordered
   walk, so `let n = 5; T | where a > n` and `let m = 5; T | where a > m`
   collide. The same holds for a `let` written inside a function body or a

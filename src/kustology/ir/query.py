@@ -38,6 +38,7 @@ from .expr import (  # noqa: F401 — names referenced via forward refs
     SubqueryExpr,
     ToScalarExpr,
     TypedNameDecl,
+    TypeOfExpr,
     UnaryOp,
     UnknownExpr,
 )
@@ -223,18 +224,24 @@ class UnknownSource(BaseModel):
     A shared constant there would make every unmodeled source hash identically
     no matter what the query said.
 
-    Known boundary: an unmodeled source is formatting-sensitive in the hash.
-    ``Minimal`` drops the node's leading trivia but not trivia interior to it,
-    and no ``IncludeTrivia`` mode does (checked against all four), so
-    ``let /*c*/ x = 1;`` and ``let x = 1;`` produce different ``semantic_hash``
-    values. Stripping comments textually is ruled out for the reason
-    ``transforms._normalize_raw_text`` records: ``//`` is the middle of every
-    URL, and a run of spaces inside a string literal is data. The residue is a
-    false split, where a deduplicating consumer fails to merge two spellings of
-    one query; two different queries never share a digest through it, and it
-    reaches only the sources the builder already could not model.
+    Known boundary: an unmodeled source hashes as the token spelling of its
+    source text. ``transforms._normalize_raw_text`` re-lexes that text, so a
+    line break or a change to the spacing between two tokens drops out.
+    ``let x=1;`` and ``let x = 1;`` are one digest, as is the same statement
+    reflowed across two lines. The canonicalizations the IR applies to
+    modeled nodes do not reach inside the text, so some spellings still
+    split. ``let``-name renaming, operand ordering, and literal normalization
+    each collide on modeled input and hash apart here:
+    ``let x = toscalar(T | where a == 'q' | count);`` and the same query with
+    ``"q"`` are two digests, while ``T | where a == 'q'`` and
+    ``T | where a == "q"`` are one. The residue is a false split, where a
+    deduplicating consumer fails to merge two spellings of one query; two
+    different queries never share a digest through it, and it reaches only the
+    sources the builder already could not model.
     :class:`~kustology.ir.expr.UnknownExpr` and :class:`UnknownOp` carry the
-    same property.
+    same property: every ``raw_text`` the digest reads is normalized this way.
+    :class:`QueryIR` holds the whole query source in its own ``raw_text``,
+    which the digest does not read and which keeps the spelling it was given.
     """
 
     model_config = {"extra": "forbid"}
@@ -936,9 +943,10 @@ class ScanOp(Operator):
     ``ResultType``, which knows the columns a ``scan``'s ``declare`` adds, and
     :class:`SchemaAttacher` overlays it; an unbound parse has no such answer,
     and nothing re-derives one, so the scope downstream is the one they
-    inherited. Hashing text also brings the formatting sensitivity
-    :class:`UnknownSource` documents: interior comments and interior spacing
-    are part of the digest.
+    inherited. Hashing text carries the boundary :class:`UnknownSource`
+    documents: the text is re-lexed before it is hashed, so spacing between
+    tokens and an interior comment both drop out, while a canonicalization the
+    IR applies to a modeled node does not reach inside the text.
 
     ``scan``'s own body is a state machine: ``declare`` variables plus ``step``
     rules with guards and assignments. Modeling it would be a new feature.
