@@ -33,7 +33,6 @@ def test_a_bare_type_name_reports_type_names_only():
     node = _typeof("T | extend y = f(typeof(string))")
     assert node.type_names == ["string"]
     assert node.columns == []
-    assert node.star is False
     assert node.star_indexes == []
 
 
@@ -48,12 +47,10 @@ def test_star_position_is_recorded_not_only_star_presence():
     """Each spelling carries a star, but at different positions: the field the
     output column order turns on."""
     leading = _typeof('T | evaluate python(typeof(*, a:long), "c")')
-    assert leading.star is True
     assert leading.star_indexes == [0]
     assert len(leading.columns) == 1
 
     trailing = _typeof('T | evaluate python(typeof(a:long, *), "c")')
-    assert trailing.star is True
     assert trailing.star_indexes == [1]
     assert len(trailing.columns) == 1
 
@@ -62,7 +59,6 @@ def test_every_star_position_is_recorded_not_only_the_last():
     """A repeated star needs every one of its positions: recording only the
     last would make this indistinguishable from a single trailing star."""
     node = _typeof('T | evaluate python(typeof(*, *, a:long), "c")')
-    assert node.star is True
     assert node.star_indexes == [0, 1]
     assert len(node.columns) == 1
 

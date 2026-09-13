@@ -2408,7 +2408,6 @@ class IRBuilder:
             res = TypeOfExpr(
                 type_names=type_names,
                 columns=columns,
-                star=bool(star_indexes),
                 star_indexes=star_indexes,
                 span=span,
             )

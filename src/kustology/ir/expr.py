@@ -216,14 +216,14 @@ class TypeOfExpr(Expr):
     :class:`~kustology.ir.query.MvExpandColumn`.
 
     ``star_indexes`` is every index at which ``*`` was written among the
-    elements, because each position contributes to the output column order:
-    bound against ``T(x, y)``, ``typeof(*, a:long)`` returns ``x, y, a``,
-    ``typeof(a:long, *)`` returns ``a, x, y``, ``typeof(*, *, a:long)``
-    returns ``x, y, x, y, a``, and ``typeof(*, a:long, *)`` returns
-    ``x, y, a, x, y``. A single index cannot distinguish the third spelling
-    from the second: recording only the last star's position collapses
-    ``typeof(*, *, a:long)`` onto ``typeof(a:long, *)``, though they resolve
-    to different column lists.
+    elements, empty when none was written, because each position contributes
+    to the output column order: bound against ``T(x, y)``,
+    ``typeof(*, a:long)`` returns ``x, y, a``, ``typeof(a:long, *)`` returns
+    ``a, x, y``, ``typeof(*, *, a:long)`` returns ``x, y, x, y, a``, and
+    ``typeof(*, a:long, *)`` returns ``x, y, a, x, y``. A single index cannot
+    distinguish the third spelling from the second: recording only the last
+    star's position collapses ``typeof(*, *, a:long)`` onto
+    ``typeof(a:long, *)``, though they resolve to different column lists.
     """
 
     kind: Literal["typeof"] = "typeof"
@@ -231,13 +231,9 @@ class TypeOfExpr(Expr):
     type_names: list[str] = []
     # Declared columns: typeof(a:long, b:string).
     columns: list[TypedNameDecl] = []
-    # Equals ``bool(star_indexes)``. The builder keeps the two in step and the
-    # canonical render reads only ``star_indexes``.
-    star: bool = False
     # Every index at which ``*`` was written among the elements, in written
-    # order; empty when none was written. ``star`` answers "is the input
-    # schema included"; this answers "where, and how many times", which is
-    # what the column order turns on.
+    # order; empty when none was written. Position and count are what the
+    # output column order turns on.
     star_indexes: list[int] = []
 
 
