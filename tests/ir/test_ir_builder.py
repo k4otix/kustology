@@ -2171,3 +2171,28 @@ def test_auto_names_hold_a_prefix_even_without_a_bare_column_argument():
 def test_to_ir_rejects_a_control_command():
     with pytest.raises(ValueError, match="CommandBlock"):
         parse(".drop table A | getschema").to_ir()
+
+
+def test_the_docs_raw_text_enumeration_names_every_carrier():
+    """``docs/tier2-ir.md`` enumerates the models that declare ``raw_text``.
+
+    A hand-maintained list of classes goes stale the moment one gains or
+    drops the field, and the page then tells a reader to look for source text
+    where there is none, or hides the model that carries it. The list is
+    rebuilt here from ``model_fields``.
+    """
+    import re
+    from pathlib import Path
+
+    import kustology.ir as ir_module
+
+    carriers = {
+        name for name in ir_module.__all__
+        if isinstance(getattr(ir_module, name), type)
+        and "raw_text" in getattr(getattr(ir_module, name), "model_fields", {})
+    }
+    page = Path(__file__).resolve().parents[2] / "docs" / "tier2-ir.md"
+    paragraph = next(
+        p for p in page.read_text().split("\n\n") if "declare `raw_text`" in p
+    )
+    assert set(re.findall(r"`([A-Z]\w+)`", paragraph)) == carriers

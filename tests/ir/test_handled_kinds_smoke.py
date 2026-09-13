@@ -87,3 +87,49 @@ def test_every_handled_operator_builds_without_unknown_op(kind, q):
     )
     ir = query.to_ir()                           # must not raise
     assert not list(find_all(ir, UnknownOp)), kind
+
+
+# -- a truncated spelling degrades, it does not raise ----------------------
+
+_GRAPH = "T | make-graph a --> b | "
+
+TRUNCATED = [
+    "T | scan", "T | scan with", "T | scan with (", "T | scan with (step",
+    "T | scan with (step s1:", "T | scan declare",
+    "T | top-nested", "T | top-nested 1", "T | top-nested 1 of",
+    "T | top-nested 1 of a", "T | top-nested 1 of a by",
+    "T | top-nested of a by count()",
+    "T | make-graph", "T | make-graph a", "T | make-graph a -->",
+    "T | make-graph a <-- b", "T | make-graph a --> b with",
+    "T | make-graph a --> b with N", "T | make-graph a --> b partitioned-by",
+    "macro-expand", "T | macro-expand", "T | macro-expand EG",
+    "T | macro-expand EG as", "T | macro-expand EG as X",
+    "T | macro-expand EG as X (",
+    _GRAPH + "graph-match", _GRAPH + "graph-match (", _GRAPH + "graph-match (n)",
+    _GRAPH + "graph-match (n)-[e]->", _GRAPH + "graph-match (n)-[e]->(m) project",
+    _GRAPH + "graph-match (n)-[e*", _GRAPH + "graph-match cycles=",
+    _GRAPH + "graph-shortest-paths",
+    _GRAPH + "graph-shortest-paths (n)-[e*1..2]->(m) project",
+    _GRAPH + "graph-shortest-paths output=",
+    _GRAPH + "graph-mark-components", _GRAPH + "graph-mark-components kind=",
+    _GRAPH + "graph-mark-components with_component_id=",
+    _GRAPH + "graph-to-table", _GRAPH + "graph-to-table nodes as",
+    _GRAPH + "graph-to-table nodes with_node_id=",
+]
+
+
+@pytest.mark.parametrize("q", TRUNCATED)
+def test_a_truncated_operator_builds_instead_of_raising(q):
+    """``to_ir()`` must not be the thing that fails on bad KQL.
+
+    An editor integration or a linter feeds half-typed text on every
+    keystroke, so each operator with an inner grammar is swept here one
+    token at a time. Kusto's error recovery has two ways of saying a clause
+    is not there and only one is ``None``: ``make-graph a`` leaves a
+    ``DirectionToken`` that exists holding a missing token whose ``Text`` is
+    ``""``, and ``macro-expand EG`` leaves ``ScopeReferenceName`` itself
+    ``None``. A field read that handles one shape and not the other turns a
+    parser complaint into a ``ValidationError`` or an ``AttributeError`` out
+    of ``to_ir()``.
+    """
+    parse(q).to_ir()                             # must not raise

@@ -171,3 +171,36 @@ def test_the_element_scope_does_not_leak_past_the_operator():
     outer = ir.main_pipeline.operators[-1].predicate.left
     assert isinstance(outer, ColumnRef)
     assert outer.qualifier is None
+
+
+def test_the_element_scope_does_not_leak_into_a_nested_pipeline():
+    """A nested pipeline reads its own table, so its columns are columns.
+
+    ``Tbl``'s own ``n`` is not the pattern element ``n``, and as a
+    ``GraphElementRef`` it would make ``find_all(ir, ColumnRef)`` miss a
+    column the query reads and ``find_all(ir, GraphElementRef)`` name an
+    element that pipeline cannot see.
+    """
+    query = (
+        GRAPH + "graph-match (n)-[e]->(m) "
+        "project p = toscalar(Tbl | where n > 1 | summarize max(n))"
+    )
+    assert not parse(query).diagnostics, "the spelling under test parses clean"
+    inner = _last_op(query).project[0].expr.pipeline
+    assert [c.name for c in find_all(inner, ColumnRef)] == ["n", "n"]
+    assert list(find_all(inner, GraphElementRef)) == []
+
+
+def test_a_qualified_element_name_does_not_leak_into_a_nested_pipeline():
+    """``_qualifier_names`` is cleared with the element scope, so ``n.p``
+    inside a nested pipeline is the dynamic access the outer query wrote it
+    as, not a column qualified by an element that pipeline cannot see.
+    """
+    query = (
+        GRAPH + "graph-match (n)-[e]->(m) "
+        "project p = toscalar(Tbl | summarize max(n.p))"
+    )
+    inner = _last_op(query).project[0].expr.pipeline
+    assert [(c.name, c.qualifier) for c in find_all(inner, ColumnRef)] == [
+        ("n", None), ("p", None),
+    ]

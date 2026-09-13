@@ -73,3 +73,38 @@ def test_the_edge_columns_reach_find_all():
     ir = parse("Edges | make-graph src --> dst with Nodes on n").to_ir()
     names = {c.name for c in find_all(ir.main_pipeline.operators[0], ColumnRef)}
     assert {"src", "dst", "n"} <= names
+
+
+# -- malformed input degrades, it does not raise --------------------------
+
+MALFORMED_DIRECTION = [
+    ("no-columns", "Edges | make-graph", None),
+    ("source-only", "Edges | make-graph a", "a"),
+    ("unsupported-arrow", "Edges | make-graph a <-- b", "a"),
+]
+
+
+@pytest.mark.parametrize(
+    "case_id, query, source", MALFORMED_DIRECTION,
+    ids=[c[0] for c in MALFORMED_DIRECTION],
+)
+def test_a_make_graph_without_a_written_arrow_degrades_instead_of_raising(
+    case_id, query, source,
+):
+    """``to_ir()`` must not be the thing that fails on bad KQL.
+
+    An unwritten arrow leaves a ``DirectionToken`` that exists, holding a
+    missing token whose ``Text`` is ``""``. A presence check alone lets that
+    empty string reach ``Literal["-->", "--"]`` and turns a half-typed
+    operator into a ``ValidationError`` out of ``to_ir()``, where
+    ``T | take``, ``T | where`` and ``T | sort by`` all build a degraded
+    operator and leave the complaint to the diagnostics. ``<--`` is the same
+    shape by another route: Microsoft rejects it and writes no token.
+    """
+    parsed = parse(query)
+    assert parsed.diagnostics, f"{case_id}: expected the parser to complain about {query!r}"
+    ir = parsed.to_ir()                          # must not raise
+    op = ir.main_pipeline.operators[0]
+    assert isinstance(op, MakeGraphOp)
+    assert op.direction is None, "an unwritten arrow is not invented"
+    assert (op.source.name or None) == source, "the written columns survive"

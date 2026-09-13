@@ -114,14 +114,17 @@ the root kind: `parse(".drop table A | getschema").to_ir()` reports a
 `command_kinds`](tier1-syntax-tree.md#control-commands) to branch before the
 call.
 
-`raw_text` marks a shape the builder could not model: `UnknownSource`,
-`UnknownExpr`, `UnknownOp`, and `UnknownStmt` each carry the node's own
-source, so a consumer can see what the builder did not reach. Every operator
-the builder dispatches has typed fields.
+Five models declare `raw_text`. On `UnknownSource`, `UnknownExpr`,
+`UnknownOp`, and `UnknownStmt` it marks a shape the builder could not model
+and holds that node's own source, so a consumer can see what the builder did
+not reach. On `QueryIR` it holds the whole query text. Every operator the
+builder dispatches has typed fields.
 
-One boundary survives that. `macro-expand` records the entity group it fans
-over and the alias each expansion binds; the IR has no way to enumerate the
-entities one expansion covers.
+One boundary survives that. A `macro-expand` over a named entity group
+records the name and the alias each expansion binds, and the IR has no way
+to enumerate the entities that group holds. An inline group is the other
+spelling and has no such boundary: it puts one expression per entity on
+`entities`.
 
 The operators with an inner grammar of their own are modeled field by field.
 `scan` is a step machine: each step's condition and assignments are typed IR.
@@ -136,14 +139,16 @@ hop range, and the `where` and `project` clauses read against the element
 names, so `a.x` is a `ColumnRef` qualified by `a` and bare `a` is a
 `GraphElementRef`. `graph-where-edges` and `graph-where-nodes` carry a real
 predicate. `macro-expand` records its entity group (named or a typed list of
-entity expressions) and its inner pipeline.
+entity expressions) and its body: the first tabular statement on `pipeline`
+and every later one on `additional_pipelines`.
 
 A `let` written inside a `macro-expand` body reaches `body_lets`, scoped to
 the operator the way a `let`-declared function's own body `let`s are. Every
 other statement the body writes (`set`, `declare pattern`, `alias database`,
 `restrict access to`, `declare query_parameters`) reaches `body_statements`,
 in source order, the same statement kinds `QueryIR.statements` carries at the
-top level.
+top level. A statement the query writes after the body's first tabular
+statement is scoped the same way, wherever in the body it sits.
 
 ### Function call sites are not inlined
 

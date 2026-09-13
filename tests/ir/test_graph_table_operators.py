@@ -181,3 +181,67 @@ def test_macro_expand_bodys_statements_are_scoped_to_the_operator_in_source_orde
     assert [p.decl.name for p in op.body_statements[4].parameters] == ["p"]
     assert ir.statements == []
     assert ir.let_bindings == []
+
+
+def test_macro_expand_body_keeps_every_tabular_statement_after_the_tail():
+    """A body holds as many tabular statements as the query writes.
+
+    The first fills ``pipeline`` and the rest fill ``additional_pipelines``,
+    the split :class:`QueryIR` makes at the top level. Keeping only the first
+    gives two different bodies one IR and one ``semantic_hash``.
+    """
+    ir = parse("T | macro-expand EG as X (X.T | take 1; X.T | take 2)").to_ir()
+    op = ir.main_pipeline.operators[0]
+    assert isinstance(op, MacroExpandOp)
+    assert [o.kind for o in op.pipeline.operators] == ["take"]
+    assert op.pipeline.operators[0].count == 1
+    assert [p.operators[0].count for p in op.additional_pipelines] == [2]
+    assert ir.additional_pipelines == []
+
+
+def test_macro_expand_body_statements_written_after_the_tail_stay_in_the_body():
+    """A ``let`` or a ``set`` after the tail reaches ``body_lets`` and
+    ``body_statements`` in source order, not the top-level sweeps, which skip
+    anything under a ``MacroExpandOperator``.
+    """
+    ir = parse(
+        "T | macro-expand EG as X (X.T | take 1; let y = 2; set querytrace; X.T | take 3)"
+    ).to_ir()
+    op = ir.main_pipeline.operators[0]
+    assert [lb.name for lb in op.body_lets] == ["y"]
+    assert [s.name for s in op.body_statements] == ["querytrace"]
+    assert len(op.additional_pipelines) == 1
+    assert ir.let_bindings == []
+    assert ir.statements == []
+    assert ir.additional_pipelines == []
+
+
+MALFORMED_ALIAS = [
+    ("no-group", "T | macro-expand", None),
+    ("group-only", "T | macro-expand EG", "EG"),
+    ("as-with-no-name", "T | macro-expand EG as", "EG"),
+]
+
+
+@pytest.mark.parametrize(
+    "case_id, query, group", MALFORMED_ALIAS, ids=[c[0] for c in MALFORMED_ALIAS],
+)
+def test_a_macro_expand_without_an_alias_degrades_instead_of_raising(
+    case_id, query, group,
+):
+    """``to_ir()`` must not be the thing that fails on bad KQL.
+
+    Kusto's error recovery has two ways of saying the ``as`` name is not
+    there. ``macro-expand EG`` leaves ``ScopeReferenceName`` ``None``, so an
+    unguarded read raises ``AttributeError`` out of ``to_ir()``.
+    ``macro-expand EG as`` builds the clause and fills it with a zero-width
+    missing name, which reads as an empty string. Both mean the query wrote
+    no alias, so both leave the field unset.
+    """
+    parsed = parse(query)
+    assert parsed.diagnostics, f"{case_id}: expected the parser to complain about {query!r}"
+    ir = parsed.to_ir()                          # must not raise
+    op = ir.main_pipeline.operators[0]
+    assert isinstance(op, MacroExpandOp)
+    assert op.alias is None, "an unwritten alias is not invented"
+    assert (op.entity_group_name or None) == group, "the written group survives"

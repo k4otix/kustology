@@ -206,6 +206,21 @@ def test_a_qualified_column_keeps_its_qualifier_and_drops_the_canonical_form():
     assert "canonical_form" not in ref
 
 
+def test_a_graph_element_reference_drops_a_canonical_form_that_restates_its_name():
+    """``GraphElementRef`` renders as its bare name, so the form carries
+    nothing the ``name`` beside it does not already say.
+    """
+    ir = IRBuilder().build(
+        "T | make-graph a --> b | graph-match (x)-[e]->(y) project x"
+    )
+    out = to_llm_dict(ir)
+    ref = out["main_pipeline"]["operators"][1]["project"][0]
+
+    assert ref["kind"] == "graph_element_ref"
+    assert ref["name"] == "x"
+    assert "canonical_form" not in ref
+
+
 def test_enum_values_unwrap_to_strings(storm_ir):
     out = to_llm_dict(storm_ir)
     column = out["main_pipeline"]["operators"][1]["columns"][0]

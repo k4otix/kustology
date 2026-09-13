@@ -1094,7 +1094,10 @@ class MakeGraphOp(Operator):
 
     ``source`` and ``target`` are the edge columns and ``direction`` the
     written arrow: ``-->`` is directed and ``--`` undirected, and the two
-    build different graphs.
+    build different graphs. ``direction`` stays unset on a query that writes
+    no arrow and on one whose arrow Microsoft rejects; picking one of the two
+    values there would put an edge semantics in the IR that the query does
+    not state.
 
     The node side is written two ways and each has its own field. ``with
     <Table> on <key>`` fills ``nodes``, and ``with_node_id=<column>`` fills
@@ -1109,7 +1112,7 @@ class MakeGraphOp(Operator):
     kind: Literal["make_graph"] = "make_graph"
     source: AnyExpr
     target: AnyExpr
-    direction: Literal["-->", "--"]
+    direction: Literal["-->", "--"] | None = None
     nodes: list[MakeGraphNodes] = []
     node_id: str | None = None
     partition_by: str | None = None
@@ -1170,9 +1173,11 @@ class MacroExpandOp(Operator):
     rather than text, so a cluster or database name in one reaches
     ``find_all``.
 
-    ``alias`` is the ``as X`` name. The body's tabular tail is a real
-    :class:`Pipeline` on ``pipeline``. A ``let`` written before it lands on
-    ``body_lets``, scoped here rather than hoisted into
+    ``alias`` is the ``as X`` name. The body's first tabular statement is a
+    real :class:`Pipeline` on ``pipeline`` and every later one lands on
+    ``additional_pipelines``, the split :class:`QueryIR` makes over the
+    top-level query's own statement list. A ``let`` written anywhere in the
+    body lands on ``body_lets``, scoped here rather than hoisted into
     :attr:`QueryIR.let_bindings` — the query writes it inside the
     parentheses, a scope of its own, the way :attr:`LetFunction.body_lets`
     is scoped to a function's body. A name a body ``let`` binds reads as a
@@ -1189,21 +1194,32 @@ class MacroExpandOp(Operator):
     :class:`AnyStatement`'s own ``kind`` discriminator already names each
     one, so a per-kind field would only repeat that naming once per kind.
 
-    The scope the alias resolves to is a boundary: the IR has no way to
-    enumerate the entities one expansion covers.
+    A named group is a boundary: ``entity_group_name`` is the name the query
+    wrote, and the IR has no way to enumerate the entities that group holds.
+    An inline group carries its entities on ``entities``, so the same question
+    is answered from the IR alone.
     """
 
     kind: Literal["macro_expand"] = "macro_expand"
     entity_group_name: str | None = None
     entities: list[AnyExpr] = []
-    alias: str
+    # ``None`` when the query wrote no ``as`` name, which Microsoft reports as
+    # a diagnostic. Inventing one would put a name in the IR that the query
+    # does not contain.
+    alias: str | None = None
     # ``let``s written inside the body, in declaration order, scoped to the
     # operator like ``LetFunction.body_lets``.
     body_lets: list["LetBinding"] = []
-    # Every non-``let``, non-tail statement the body writes, in source
+    # Every non-``let``, non-tabular statement the body writes, in source
     # order, scoped here like ``body_lets``.
     body_statements: list["AnyStatement"] = []
     pipeline: Optional["Pipeline"] = None
+    # The body's second and later tabular statements, in source order. A body
+    # separates statements with ``;`` the way the top-level query does, so
+    # keeping only the first would give two different bodies one IR and one
+    # digest. Consumers that want every one iterate
+    # ``[op.pipeline, *op.additional_pipelines]``.
+    additional_pipelines: list["Pipeline"] = []
 
 
 class GraphPatternNode(BaseModel):

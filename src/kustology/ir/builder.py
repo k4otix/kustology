@@ -1196,7 +1196,22 @@ class IRBuilder:
                 ):
                     source = ref
 
-        walk(node)
+        # A pipeline reads its own source, so the names the enclosing
+        # operator declared as a scope do not reach it: the ``n`` in
+        # ``graph-match (n)-[e]->(m) project p = toscalar(Tbl | where n > 1)``
+        # is a column of ``Tbl``, and both a bare ``n`` and an ``n.p`` here
+        # would otherwise report a graph element that pipeline cannot see.
+        # Both sets are restored in ``finally``, the way
+        # :meth:`_visit_graph_clauses` restores them.
+        saved_qualifiers = self._qualifier_names
+        saved_elements = self._element_names
+        self._qualifier_names = set()
+        self._element_names = set()
+        try:
+            walk(node)
+        finally:
+            self._qualifier_names = saved_qualifiers
+            self._element_names = saved_elements
         # Operators-but-no-explicit-source means the source is implicit (parent
         # rows: union-at-root, mv-apply/partition/fork subqueries, join RHS).
         if isinstance(source, UnknownSource) and operators:
@@ -2132,7 +2147,11 @@ class IRBuilder:
 
         ``DirectionToken`` carries the written arrow. ``Direction`` is a
         member of no ``MakeGraphOperator``, so reading it raises
-        ``AttributeError``.
+        ``AttributeError``. The token is read through
+        :meth:`_ordering_keyword`, which validates the text against the
+        ``Literal``'s own two values: ``make-graph a`` leaves a token that
+        exists holding ``""``, and letting that reach the ``Literal`` raises
+        ``ValidationError`` out of ``to_ir()`` on a half-typed operator.
         """
         nodes: list[MakeGraphNodes] = []
         node_id: str | None = None
@@ -2161,7 +2180,9 @@ class IRBuilder:
         return MakeGraphOp(
             source=self._visit_expr(node.SourceColumn),
             target=self._visit_expr(node.TargetColumn),
-            direction=node.DirectionToken.Text,
+            direction=self._ordering_keyword(
+                node, "DirectionToken", ("-->", "--"),
+            ),
             nodes=nodes,
             node_id=node_id,
             partition_by=partition_by,
@@ -2369,12 +2390,31 @@ class IRBuilder:
         ``body_lets``; the five kinds :meth:`_visit_statements` also handles
         (``set``, ``declare pattern``, ``alias``, ``restrict``, ``declare
         query_parameters``) go to ``body_statements`` through the same five
-        visitor methods; the ``ExpressionStatement`` is the body's own
-        ``pipeline``. ``_let_names`` is saved before the loop and restored in
+        visitor methods; the first ``ExpressionStatement`` is the body's own
+        ``pipeline`` and each later one joins ``additional_pipelines``, the
+        split :meth:`build` makes over the query's own statement list. The
+        loop reads the whole list, so a ``let`` or a ``set`` a query writes
+        after the tail is kept: the top-level sweeps skip it, because
+        :meth:`_is_a_top_level_statement` excludes a ``MacroExpandOperator``
+        ancestor. ``_let_names`` is saved before the loop and restored in
         ``finally``, so a name a body ``let`` binds does not survive the
         operator — the same restore :meth:`_visit_function_body` does around
         a ``let``-function's body.
         """
+        # Kusto's error recovery has two ways of saying the ``as`` name is
+        # not there: ``macro-expand EG`` leaves ``ScopeReferenceName``
+        # ``None``, and ``macro-expand EG as`` builds the clause around a
+        # zero-width missing name. Both mean the query wrote no alias.
+        scope = getattr(node, "ScopeReferenceName", None)
+        alias_node = (
+            getattr(scope, "EntityGroupReferenceName", None)
+            if scope is not None else None
+        )
+        alias = (
+            visit_name(alias_node)
+            if alias_node is not None and alias_node.Width > 0 else None
+        )
+
         group = node.EntityGroup
         entities: list[AnyExpr] = []
         entity_group_name: str | None = None
@@ -2384,6 +2424,7 @@ class IRBuilder:
             entity_group_name = visit_name(group.Name)
 
         inner: Pipeline | None = None
+        extra_pipelines: list[Pipeline] = []
         body_lets: list[LetBinding] = []
         body_statements: list[AnyStatement] = []
         statements = getattr(node, "StatementList", None)
@@ -2403,8 +2444,11 @@ class IRBuilder:
                         body_lets.append(binding)
                         self._let_names.add(binding.name)
                     elif net_kind == "ExpressionStatement":
-                        inner = self._visit_pipeline(stmt.Expression)
-                        break
+                        pipeline = self._visit_pipeline(stmt.Expression)
+                        if inner is None:
+                            inner = pipeline
+                        else:
+                            extra_pipelines.append(pipeline)
                     elif net_kind == "SetOptionStatement":
                         body_statements.append(self._visit_set_option_statement(stmt))
                     elif net_kind == "QueryParametersStatement":
@@ -2423,10 +2467,11 @@ class IRBuilder:
         return MacroExpandOp(
             entity_group_name=entity_group_name,
             entities=entities,
-            alias=visit_name(node.ScopeReferenceName.EntityGroupReferenceName),
+            alias=alias,
             body_lets=body_lets,
             body_statements=body_statements,
             pipeline=inner,
+            additional_pipelines=extra_pipelines,
             span=span,
         )
 

@@ -749,6 +749,17 @@ MUST_DIFFER = [
         "T | make-graph a --> b | graph-match (x)-[e*1..toint(3)]->(y) project x",
         "T | make-graph a --> b | graph-match (x)-[e*1..]->(y) project x",
     ),
+    # --- Track E: a macro-expand body past its first tabular statement ---
+    (
+        "macro-expand-body-second-pipeline",
+        "T | macro-expand EG as X (X.T | take 1; X.T | take 2)",
+        "T | macro-expand EG as X (X.T | take 1; X.T | take 3)",
+    ),
+    (
+        "macro-expand-body-let-after-the-tail",
+        "T | macro-expand EG as X (X.T | take 1; let y = 1; X.T | take 2)",
+        "T | macro-expand EG as X (X.T | take 1; let y = 2; X.T | take 2)",
+    ),
 ]
 
 

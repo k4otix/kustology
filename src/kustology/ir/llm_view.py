@@ -60,6 +60,7 @@ from .expr import (
     BinOp,
     ColumnRef,
     Exists,
+    GraphElementRef,
     LetValueRef,
     LiteralExpr,
     SetMembership,
@@ -176,12 +177,13 @@ def _drop_redundant_canonical_form(out: dict[str, Any], cls: type) -> None:
     bound node canonicalizes to ``"prefix.name"``, which restates the
     surrounding ``qualifier`` or ``table`` field, so that form drops too.
     A qualified node carries no ``table``, so at most one of the two is set.
-    ``LetValueRef`` is the same shape with neither field to qualify it.
+    ``LetValueRef`` and ``GraphElementRef`` are the same shape with neither
+    field to qualify them.
     """
     cf = out.get("canonical_form")
     if cf is None:
         return
-    if issubclass(cls, (ColumnRef, LetValueRef)):
+    if issubclass(cls, (ColumnRef, LetValueRef, GraphElementRef)):
         col_name = out.get("name")
         prefix = out.get("qualifier") or out.get("table")
         if cf == col_name or (prefix and cf == f"{prefix}.{col_name}"):
