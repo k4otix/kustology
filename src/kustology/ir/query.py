@@ -1162,15 +1162,39 @@ class MacroExpandOp(Operator):
     rather than text, so a cluster or database name in one reaches
     ``find_all``.
 
-    ``alias`` is the ``as X`` name. The body is a real :class:`Pipeline`. The
-    scope the alias resolves to is a boundary: the IR has no way to enumerate
-    the entities one expansion covers.
+    ``alias`` is the ``as X`` name. The body's tabular tail is a real
+    :class:`Pipeline` on ``pipeline``. A ``let`` written before it lands on
+    ``body_lets``, scoped here rather than hoisted into
+    :attr:`QueryIR.let_bindings` — the query writes it inside the
+    parentheses, a scope of its own, the way :attr:`LetFunction.body_lets`
+    is scoped to a function's body. A name a body ``let`` binds reads as a
+    :class:`~kustology.ir.expr.LetValueRef` for the rest of the body and
+    nowhere else, the reach a ``let``-function's own body ``let`` gets.
+
+    Every other statement the body writes (``set``, ``declare pattern``,
+    ``alias database``, ``restrict access to``, ``declare
+    query_parameters``) lands on ``body_statements``, in source order,
+    scoped here rather than hoisted into ``QueryIR.statements``. One list
+    covers every kind rather than a field per kind, mirroring
+    ``QueryIR.statements`` itself: the body's ``.StatementList`` admits the
+    same statement kinds the top-level query's own statement list does, and
+    :class:`AnyStatement`'s own ``kind`` discriminator already names each
+    one, so a per-kind field would only repeat that naming once per kind.
+
+    The scope the alias resolves to is a boundary: the IR has no way to
+    enumerate the entities one expansion covers.
     """
 
     kind: Literal["macro_expand"] = "macro_expand"
     entity_group_name: str | None = None
     entities: list[AnyExpr] = []
     alias: str
+    # ``let``s written inside the body, in declaration order, scoped to the
+    # operator like ``LetFunction.body_lets``.
+    body_lets: list["LetBinding"] = []
+    # Every non-``let``, non-tail statement the body writes, in source
+    # order, scoped here like ``body_lets``.
+    body_statements: list["AnyStatement"] = []
     pipeline: Optional["Pipeline"] = None
 
 

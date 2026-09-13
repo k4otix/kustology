@@ -90,11 +90,17 @@ def _sample(annotation):
         return _SPAN
     if isinstance(annotation, type) and issubclass(annotation, Enum):
         return next(iter(annotation))
-    # Break the two cycles by hand. ``AnyExpr``'s first member is ``BinOp``,
-    # whose operands are ``AnyExpr`` again; ``Pipeline`` nests through
-    # ``JoinOp.right`` and friends.
+    # Break the recursive cycles by hand. ``AnyExpr``'s first member is
+    # ``BinOp``, whose operands are ``AnyExpr`` again, closed below by the
+    # ``StarExpr`` short-circuit in the union branch. ``Pipeline`` nests
+    # through ``JoinOp.right`` and friends. ``LetFunction.body_lets`` is a
+    # ``list[LetBinding]`` and ``LetBinding.rhs_function`` is a
+    # ``LetFunction``; ``MacroExpandOp.body_lets`` puts this cycle behind an
+    # operator field too.
     if annotation is Q.Pipeline:
         return Q.Pipeline(source=Q.ImplicitSource(span=_SPAN), operators=[])
+    if annotation is Q.LetFunction:
+        return Q.LetFunction(body_span=_SPAN)
     origin = get_origin(annotation)
     if origin is Literal:
         return get_args(annotation)[0]

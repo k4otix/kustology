@@ -11,9 +11,12 @@ pytest.importorskip("pydantic")
 
 from kustology import parse
 from kustology.ir import (
+    ColumnRef,
     FuncCall,
     GraphMarkComponentsOp,
     GraphToTableOp,
+    LetValueRef,
+    LiteralExpr,
     MacroExpandOp,
     PathExpr,
     TableRef,
@@ -106,13 +109,75 @@ def test_macro_expand_body_pipeline_skips_a_leading_let_statement():
     assert ir.additional_pipelines == []
 
 
-def test_macro_expand_body_let_binding_reaches_no_ir_field():
+def test_macro_expand_body_let_binding_reaches_body_lets_not_the_top_level():
     """The body's own ``let`` is excluded from the top-level ``let`` and
     statement sweeps the same way its ``ExpressionStatement`` sibling is, so
     it does not surface in ``let_bindings``, ``additional_pipelines``, or
-    ``statements``.
+    ``statements`` — it lands on ``MacroExpandOp.body_lets`` instead.
     """
     ir = parse("macro-expand EG as X (let y = 1; X.T | where a > y)").to_ir()
+    op = ir.main_pipeline.operators[0]
+    assert isinstance(op, MacroExpandOp)
+    assert [lb.name for lb in op.body_lets] == ["y"]
+    assert isinstance(op.body_lets[0].rhs_expr, LiteralExpr)
+    assert op.body_lets[0].rhs_expr.value == 1
     assert ir.let_bindings == []
     assert ir.additional_pipelines == []
     assert ir.statements == []
+
+
+def test_macro_expand_body_let_is_a_let_value_ref_inside_the_body():
+    """A name a body ``let`` binds reads as a value reference inside the
+    body's own pipeline, the same reach a ``let``-function's body ``let``
+    gets — not a plain column, which would make ``find_all(ir, ColumnRef)``
+    report a column that does not exist.
+    """
+    ir = parse("macro-expand EG as X (let y = 1; X.T | where a > y)").to_ir()
+    op = ir.main_pipeline.operators[0]
+    predicate = op.pipeline.operators[0].predicate
+    assert isinstance(predicate.right, LetValueRef)
+    assert predicate.right.name == "y"
+
+
+def test_macro_expand_body_let_does_not_leak_past_the_operator():
+    """``_let_names`` is restored once the body closes, so a same-named
+    column read after the operator is an ordinary column, not a value
+    reference into a binding the outer query never wrote.
+    """
+    ir = parse(
+        "macro-expand EG as X (let y = 1; X.T | where a > y) | where y == 2"
+    ).to_ir()
+    outer_filter = ir.main_pipeline.operators[1]
+    assert isinstance(outer_filter.predicate.left, ColumnRef)
+    assert outer_filter.predicate.left.name == "y"
+    assert list(find_all(outer_filter, LetValueRef)) == []
+
+
+def test_macro_expand_bodys_statements_are_scoped_to_the_operator_in_source_order():
+    """``.StatementList`` admits every statement kind the top-level query's
+    own statement list does, beside ``let`` and the tabular tail, so each
+    lands on ``body_statements`` in source order rather than being dropped
+    the way the top-level sweep drops it (``_is_a_top_level_statement``
+    excludes a ``MacroExpandOperator`` ancestor).
+    """
+    ir = parse(
+        "macro-expand EG as X ("
+        "set querytrace; "
+        'declare pattern P = (a:string) { ("x") = { T | take 1 }; }; '
+        "alias database d = cluster('c').database('d'); "
+        "restrict access to (V); "
+        "declare query_parameters(p:long = 1); "
+        "X.T | count)"
+    ).to_ir()
+    op = ir.main_pipeline.operators[0]
+    assert [type(s).__name__ for s in op.body_statements] == [
+        "SetOptionStmt", "PatternStmt", "AliasStmt", "RestrictStmt",
+        "QueryParametersStmt",
+    ]
+    assert op.body_statements[0].name == "querytrace"
+    assert op.body_statements[1].name == "P"
+    assert op.body_statements[2].name == "d"
+    assert isinstance(op.body_statements[3].expressions[0], ColumnRef)
+    assert [p.decl.name for p in op.body_statements[4].parameters] == ["p"]
+    assert ir.statements == []
+    assert ir.let_bindings == []

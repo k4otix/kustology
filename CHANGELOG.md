@@ -16,16 +16,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **`to_ir()` raises on a control command** (tier 2). The IR models query grammar, so a `CommandBlock` parse raises `ValueError`; branch on `KustoQuery.is_command` first. `kustology parse --ir` exits 1 on the same input.
 - **`validate`, `format`, and `parse` reject input whose tail the parser skipped** (CLI). The diagnostic carries kustology's code `KUSTOLOGY002` at `Error` severity. The library's `validate()` and `KustoQuery.diagnostics` are unchanged.
-<<<<<<< HEAD
-<<<<<<< HEAD
 - **`Span` is immutable and shared across copies of an IR** (tier 2). Copying an IR hands every span over by reference, so `copy.deepcopy(ir)` and the private copy each digest is built from stop rebuilding them. Assigning to a span's fields raises; build a new `Span` instead.
-- **`scan` is modeled as a step machine** (tier 2). `ScanOp` drops `raw_text` for `with_match_id`, `with_step_name`, `declarations`, `order_by`, `partition_by` and `steps` (a new `ScanStep`), so `find_all(ir, ColumnRef)` reports the columns a step reads. Every `scan` query's `semantic_hash` moves.
-=======
-- **`scan` and `top-nested` are modeled with typed fields** (tier 2). `ScanOp` drops `raw_text` for `with_match_id`, `with_step_name`, `declarations`, `order_by`, `partition_by` and `steps` (a new `ScanStep`); `TopNestedOp` drops it for `levels` (a new `TopNestedLevel`, one per clause, carrying its count, key, aggregate, direction and `others` label). `find_all(ir, ColumnRef)` now reports the columns each reads, and every `scan` or `top-nested` query's `semantic_hash` moves.
->>>>>>> a388ba6 (feat(ir): model top-nested as a list of levels (#47))
-=======
-- **Operators that carried their own source text are modeled with typed fields** (tier 2). `scan`, `top-nested`, `graph-mark-components`, `graph-to-table` and `macro-expand` drop `raw_text` for typed clauses, so `find_all` reaches the columns and tables inside them. Every query using one of them gets a different `semantic_hash`, and a stored IR dump that carries `raw_text` for one fails validation.
->>>>>>> f434baa (feat(ir): model graph-mark-components, graph-to-table, and macro-expand (#47))
+- **Operators that carried their own source text are modeled with typed fields** (tier 2). `scan`, `top-nested`, `graph-mark-components`, `graph-to-table` and `macro-expand` drop `raw_text` for typed clauses, so `find_all` reaches the columns and tables inside them, and a `macro-expand` body's own `let` and statements stay scoped to the operator. Every query using one of them gets a different `semantic_hash`, and a stored IR dump that carries `raw_text` for one fails validation.
 - **`ColumnRef.qualifier`** (tier 2) carries the scope name a reference was written against when that name is not a table, as `s1.p` inside a `scan` step is. An unqualified reference dumps as before, so no other digest moves.
 
 ### Fixed

@@ -670,6 +670,36 @@ MUST_DIFFER = [
         "T | graph-to-table nodes as N, edges as E",
         "T | graph-to-table edges as E, nodes as N",
     ),
+    (
+        "macro-expand-body-let-value",
+        "macro-expand EG as X (let y = 1; X.T | where a > y)",
+        "macro-expand EG as X (let y = 2; X.T | where a > y)",
+    ),
+    (
+        "macro-expand-body-set-two-values",
+        "macro-expand EG as X (set query_now=datetime(2020-01-01); X.T | count)",
+        "macro-expand EG as X (set query_now=datetime(2021-01-01); X.T | count)",
+    ),
+    (
+        "macro-expand-body-alias-two-databases",
+        "macro-expand EG as X (alias database D = cluster('c').database('d'); X.T | count)",
+        "macro-expand EG as X (alias database D = cluster('c').database('e'); X.T | count)",
+    ),
+    (
+        "macro-expand-body-restrict-two-targets",
+        'macro-expand EG as X (restrict access to (database("d")); X.T | count)',
+        'macro-expand EG as X (restrict access to (database("e")); X.T | count)',
+    ),
+    (
+        "macro-expand-body-pattern-two-bodies",
+        'macro-expand EG as X (declare pattern P = (a:string) { ("x") = { T | take 1 }; }; X.T | count)',
+        'macro-expand EG as X (declare pattern P = (a:string) { ("x") = { U | take 9 }; }; X.T | count)',
+    ),
+    (
+        "macro-expand-body-query-parameters-two-defaults",
+        "macro-expand EG as X (declare query_parameters(n:long = 5); X.T | count)",
+        "macro-expand EG as X (declare query_parameters(n:long = 9); X.T | count)",
+    ),
 ]
 
 

@@ -747,11 +747,16 @@ class IRBuilder:
         statements the other way round are different queries, and a per-kind
         concatenation renders them identically.
 
-        ``QueryParametersStatement`` is the only kind the ancestor filter can
-        exclude: it is the one statement besides ``let`` a ``FunctionBody``
-        admits, and it lands on ``LetFunction.body_query_parameters``. The
-        other four are a parse error inside a body (probed), so there the
-        filter is the belt to those braces.
+        The ancestor filter excludes a different subset per body kind. A
+        ``FunctionBody`` admits only ``let`` and ``QueryParametersStatement``
+        beside its tail expression (the other four are a parse error there),
+        so a ``FunctionDeclaration`` or ``PatternStatement`` ancestor only
+        ever excludes a ``QueryParametersStatement``, which lands on
+        ``LetFunction.body_query_parameters``. A ``macro-expand`` body admits
+        all five kinds beside ``let`` (probed on a real parse), each landing
+        on ``MacroExpandOp.body_statements`` (:meth:`_visit_macro_expand`)
+        instead of here, so a ``MacroExpandOperator`` ancestor excludes the
+        full set.
         """
         found: list[tuple[int, Any]] = []
         for net_cls, visit in (
@@ -2150,6 +2155,20 @@ class IRBuilder:
         ``EntityGroup`` is a ``NameReference`` for a declared group and an
         ``EntityGroup`` node carrying ``.Entities`` for an inline one, so the
         two spellings fill different fields and neither is a text field.
+
+        ``.StatementList`` is one linear list in source order, so a single
+        pass keeps both ``body_lets`` and ``body_statements`` in that order
+        with no separate sort — unlike :meth:`_visit_statements`, which
+        merges five independent ``GetDescendants`` sweeps and sorts on
+        ``TextStart`` for that reason. A ``LetStatement`` goes to
+        ``body_lets``; the five kinds :meth:`_visit_statements` also handles
+        (``set``, ``declare pattern``, ``alias``, ``restrict``, ``declare
+        query_parameters``) go to ``body_statements`` through the same five
+        visitor methods; the ``ExpressionStatement`` is the body's own
+        ``pipeline``. ``_let_names`` is saved before the loop and restored in
+        ``finally``, so a name a body ``let`` binds does not survive the
+        operator — the same restore :meth:`_visit_function_body` does around
+        a ``let``-function's body.
         """
         group = node.EntityGroup
         entities: list[AnyExpr] = []
@@ -2160,21 +2179,48 @@ class IRBuilder:
             entity_group_name = visit_name(group.Name)
 
         inner: Pipeline | None = None
+        body_lets: list[LetBinding] = []
+        body_statements: list[AnyStatement] = []
         statements = getattr(node, "StatementList", None)
-        if statements is not None and statements.Count > 0:
-            for stmt in _iter_elements(statements):
-                # A ``LetStatement`` also exposes ``.Expression`` (its
-                # right-hand-side value), so picking the first statement with
-                # a non-``None`` ``.Expression`` would bind ``pipeline`` to a
-                # ``let``'s value instead of the body's tabular expression.
-                if type(stmt).__name__ == "ExpressionStatement":
-                    inner = self._visit_pipeline(stmt.Expression)
-                    break
+        saved_lets = set(self._let_names)
+        try:
+            if statements is not None and statements.Count > 0:
+                for stmt in _iter_elements(statements):
+                    net_kind = type(stmt).__name__
+                    # A ``LetStatement`` also exposes ``.Expression`` (its
+                    # right-hand-side value), so picking the first statement
+                    # with a non-``None`` ``.Expression`` would bind
+                    # ``pipeline`` to a ``let``'s value instead of the
+                    # body's tabular expression -- dispatch by class
+                    # instead.
+                    if net_kind == "LetStatement":
+                        binding = self._visit_let_statement(stmt)
+                        body_lets.append(binding)
+                        self._let_names.add(binding.name)
+                    elif net_kind == "ExpressionStatement":
+                        inner = self._visit_pipeline(stmt.Expression)
+                        break
+                    elif net_kind == "SetOptionStatement":
+                        body_statements.append(self._visit_set_option_statement(stmt))
+                    elif net_kind == "QueryParametersStatement":
+                        body_statements.append(
+                            self._visit_query_parameters_statement(stmt),
+                        )
+                    elif net_kind == "PatternStatement":
+                        body_statements.append(self._visit_pattern_statement(stmt))
+                    elif net_kind == "AliasStatement":
+                        body_statements.append(self._visit_alias_statement(stmt))
+                    elif net_kind == "RestrictStatement":
+                        body_statements.append(self._visit_restrict_statement(stmt))
+        finally:
+            self._let_names = saved_lets
 
         return MacroExpandOp(
             entity_group_name=entity_group_name,
             entities=entities,
             alias=visit_name(node.ScopeReferenceName.EntityGroupReferenceName),
+            body_lets=body_lets,
+            body_statements=body_statements,
             pipeline=inner,
             span=span,
         )

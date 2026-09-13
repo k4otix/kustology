@@ -126,7 +126,13 @@ count, key, aggregate, direction and `others` label are typed IR.
 column it adds are typed IR. `graph-to-table` is modeled as a list of
 outputs: each output's entity, alias and id columns are typed IR.
 `macro-expand` is modeled: its entity group (named or a typed list of
-entity expressions) and its inner pipeline are typed IR.
+entity expressions) and its inner pipeline are typed IR. A `let`
+written inside its body reaches `body_lets`, scoped to the operator the
+way a `let`-declared function's own body `let`s are. Every other
+statement the body writes — `set`, `declare pattern`, `alias database`,
+`restrict access to`, `declare query_parameters` — reaches
+`body_statements`, in source order, the same statement kinds
+`QueryIR.statements` carries at the top level.
 
 ### Function call sites are not inlined
 
