@@ -2138,8 +2138,7 @@ class IRBuilder:
                     ))
             else:
                 name_node = getattr(with_clause, "Name", None)
-                if name_node is not None:
-                    node_id = visit_name(name_node)
+                node_id = visit_name(name_node) if name_node is not None else None
 
         partition_by: str | None = None
         partition_pipeline: Pipeline | None = None
@@ -2147,8 +2146,7 @@ class IRBuilder:
         if partitioned is not None:
             partition_by = visit_name(partitioned.Entity)
             subquery = getattr(partitioned, "Subquery", None)
-            if subquery is not None:
-                partition_pipeline = self._visit_pipeline(subquery)
+            partition_pipeline = self._visit_pipeline(subquery) if subquery is not None else None
 
         return MakeGraphOp(
             source=self._visit_expr(node.SourceColumn),
