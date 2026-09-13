@@ -1378,30 +1378,24 @@ def test_interior_spacing_in_an_unmodeled_string_literal_is_not_collapsed(ir_bui
     assert a.semantic_hash != b.semantic_hash
 
 
-def test_a_multi_line_scan_hashes_as_its_single_line_spelling(ir_builder):
-    """A formatted ``scan`` rule and its one-line source are one query.
+def test_a_reflowed_unmodeled_operator_hashes_as_its_single_line_spelling(ir_builder):
+    """A formatted operator the IR records as source text and its one-line
+    source are one query.
 
     ``IncludeTrivia.Minimal`` records the spacing the author wrote between two
-    tokens, so reflowing a ``scan`` across lines changes ``raw_text`` at every
-    line break and indent. The digest re-lexes that text. Narrow the rule to
+    tokens, so reflowing such an operator changes ``raw_text`` at every line
+    break and indent. The digest re-lexes that text. Narrow the rule to
     folding whitespace and the two spellings split into two digests.
     """
-    one_line = ir_builder.build(
-        'T | scan declare (x:string="") with (step s: a == 1 => x = "y")'
-    )
-    reflowed = ir_builder.build(
-        'T | scan declare (x:string="")\n'
-        "  with (\n"
-        '    step s: a == 1 => x = "y"\n'
-        "  )"
-    )
+    one_line = ir_builder.build('T | bogus Msg == "x" and Code == 1')
+    reflowed = ir_builder.build('T | bogus\n    Msg == "x"\n    and\n    Code == 1')
 
     # Pin that the two IRs genuinely differ, so the equality below is a claim
     # about the digest rather than about two identical trees.
-    assert (
-        one_line.main_pipeline.operators[0].raw_text
-        != reflowed.main_pipeline.operators[0].raw_text
-    )
+    def carriers(ir):
+        return [n.raw_text for n in walk(ir) if n is not ir and getattr(n, "raw_text", None)]
+
+    assert carriers(one_line) != carriers(reflowed)
 
     assert one_line.semantic_hash == reflowed.semantic_hash
 
