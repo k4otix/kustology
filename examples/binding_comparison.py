@@ -6,7 +6,8 @@
 Without a schema the parser only checks syntax. With a schema, Microsoft's
 binder resolves every name to a symbol and surfaces real semantic errors
 (typos, unknown columns, type mismatches) — the kind of feedback that pure
-parsing cannot produce.
+parsing cannot produce. A schema entry declares either a table's columns or
+a function's parameters and return columns through ``FunctionSchema``.
 
 This example uses the canonical Azure Data Explorer ``StormEvents`` schema
 and a query containing a deliberate typo (``EvenType`` instead of
@@ -15,7 +16,7 @@ and a query containing a deliberate typo (``EvenType`` instead of
 
 from _display import banner, kql, note, paint, section, takeaway
 
-from kustology import parse, validate
+from kustology import FunctionSchema, parse, validate
 
 # Canonical Azure Data Explorer sample table — used by every ADX tutorial.
 # Each value is a KQL scalar type that kustology resolves via
@@ -56,6 +57,22 @@ QUERY = (
     '| where EvenType == "Tornado" and State == "TEXAS" '
     '| summarize count() by State'
 )
+
+
+# `_GetWatchlist` stands in for a workspace function such as an ASIM parser.
+# It has no table, so its schema entry names its parameters and its result
+# columns.
+WATCHLIST_SCHEMA = {
+    "_GetWatchlist": FunctionSchema(
+        parameters=(("name", "string"),),
+        returns={"SearchKey": "string", "Note": "string"},
+    ),
+}
+
+GOOD_WATCHLIST_QUERY = "_GetWatchlist('bad-ips') | where isnotempty(SearchKey)"
+# `SearchKeyy` is a typo for `SearchKey`, the same shape of mistake as
+# `EvenType` above, here against a function's declared result columns.
+TYPO_WATCHLIST_QUERY = "_GetWatchlist('bad-ips') | where isnotempty(SearchKeyy)"
 
 
 def print_diagnostics(diags: list[dict]) -> None:
@@ -128,6 +145,25 @@ def main() -> None:
     note("validate parses the text again, and for a bound query it re-runs "
          "the binder against a schema you supply a second time. Read the "
          "`diagnostics` property when you already hold the parse.")
+
+    section(
+        "Declaring a function: FunctionSchema",
+        "A schema entry can declare a function instead of a table. "
+        "`_GetWatchlist` has no table of its own, so its declaration gives "
+        "the binder its parameter and its result columns.",
+    )
+    kql(GOOD_WATCHLIST_QUERY)
+    good = parse(GOOD_WATCHLIST_QUERY, schema=WATCHLIST_SCHEMA)
+    print_diagnostics(good.diagnostics)
+    note(f"`SearchKey` is a column `_GetWatchlist` declares, so the bound "
+         f"parse reports {len(good.diagnostics)} diagnostic(s).")
+
+    kql(TYPO_WATCHLIST_QUERY)
+    typo = parse(TYPO_WATCHLIST_QUERY, schema=WATCHLIST_SCHEMA)
+    print_diagnostics(typo.diagnostics)
+    note(f"`SearchKeyy` names no column `_GetWatchlist` declares, so the "
+         f"binder reports {len(typo.diagnostics)} diagnostic(s), Microsoft's "
+         "own unknown-column diagnostic.")
 
     takeaway(
         "Pass a schema whenever you want the binder's opinion: unknown "

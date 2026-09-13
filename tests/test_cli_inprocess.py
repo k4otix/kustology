@@ -754,3 +754,136 @@ def test_a_skipped_tail_the_parser_already_reported_is_not_doubled(
     assert rc == 1
     assert len(rows) == 1
     assert rows[0]["code"] != "KUSTOLOGY002"
+
+
+_FUNCTION_SCHEMA_JSON = """\
+{
+  "SignInEvents": {"IPAddress": "string", "TimeGenerated": "datetime"},
+  "imProcessCreate": {
+    "function": {
+      "parameters": [["starttime", "datetime"], ["endtime", "datetime"]],
+      "returns": "(TimeGenerated:datetime, ActorUsername:string)",
+      "required": 0
+    }
+  }
+}
+"""
+
+_ASIM_IDIOM = (
+    "imProcessCreate(starttime=ago(1h), endtime=now()) "
+    "| where isnotempty(ActorUsername)"
+)
+
+_MALFORMED_FUNCTION_SCHEMA_JSON = """\
+{
+  "SignInEvents": {"IPAddress": "string", "TimeGenerated": "datetime"},
+  "imProcessCreate": {
+    "function": {
+      "parameters": "starttime",
+      "returns": "(TimeGenerated:datetime, ActorUsername:string)",
+      "required": 0
+    }
+  }
+}
+"""
+
+
+def test_validate_binds_a_function_declared_in_a_schema_file(tmp_path, capsys):
+    """A `--schema` entry whose value carries a `function` key binds the ASIM
+    idiom clean. `ActorUsername` resolves as a column of the declared return
+    schema."""
+    schema = tmp_path / "schema.json"
+    schema.write_text(_FUNCTION_SCHEMA_JSON, encoding="utf-8")
+    query = tmp_path / "q.kql"
+    query.write_text(_ASIM_IDIOM, encoding="utf-8")
+
+    rc = main(["validate", str(query), "--schema", str(schema)])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert captured.err == ""
+
+
+def test_a_malformed_function_declaration_is_a_usage_error(tmp_path, capsys):
+    """`parameters` is not a list of `[name, type]` pairs, so the schema file
+    is malformed input: exit 2, naming both the entry and the offending key."""
+    schema = tmp_path / "schema.json"
+    schema.write_text(_MALFORMED_FUNCTION_SCHEMA_JSON, encoding="utf-8")
+    query = tmp_path / "q.kql"
+    query.write_text(_ASIM_IDIOM, encoding="utf-8")
+
+    rc = main(["validate", str(query), "--schema", str(schema)])
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "imProcessCreate" in captured.err
+    assert "parameters" in captured.err
+
+
+@pytest.mark.parametrize(
+    "required", ["zero", -1, 3], ids=["string", "negative", "too-large"]
+)
+def test_a_malformed_required_is_a_usage_error(tmp_path, capsys, required):
+    """`required` must be an int between zero and the parameter count, so a
+    string, a negative int, or one past the parameter count is a usage
+    error: exit 2, naming the entry and the key."""
+    schema = tmp_path / "schema.json"
+    schema.write_text(
+        json.dumps(
+            {
+                "imProcessCreate": {
+                    "function": {
+                        "parameters": [
+                            ["starttime", "datetime"],
+                            ["endtime", "datetime"],
+                        ],
+                        "returns": "(TimeGenerated:datetime, ActorUsername:string)",
+                        "required": required,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    query = tmp_path / "q.kql"
+    query.write_text(_ASIM_IDIOM, encoding="utf-8")
+
+    rc = main(["validate", str(query), "--schema", str(schema)])
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "imProcessCreate" in captured.err
+    assert "required" in captured.err
+
+
+def test_a_table_with_a_column_named_function_binds(tmp_path, capsys):
+    """The declaration marker is discriminated by its value being an object,
+    so a column literally named `function` with a type-string value stays a
+    table column and binds like any other."""
+    schema = tmp_path / "schema.json"
+    schema.write_text(json.dumps({"MyTable": {"function": "string"}}), encoding="utf-8")
+    query = tmp_path / "q.kql"
+    query.write_text("MyTable | where isnotempty(function)", encoding="utf-8")
+
+    rc = main(["validate", str(query), "--schema", str(schema)])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert captured.err == ""
+
+
+@pytest.mark.parametrize("decl", [["a", "b"], 5, None], ids=["list", "int", "null"])
+def test_a_function_value_that_is_neither_shape_is_a_usage_error(
+    tmp_path, capsys, decl
+):
+    """A `function` value that is neither an object nor a type-name string
+    declares nothing and types no column, so the CLI names it as malformed
+    input at exit 2 instead of letting the schema builder raise on it."""
+    schema = tmp_path / "schema.json"
+    schema.write_text(
+        json.dumps({"imProcessCreate": {"function": decl}}), encoding="utf-8"
+    )
+    query = tmp_path / "q.kql"
+    query.write_text(_ASIM_IDIOM, encoding="utf-8")
+
+    rc = main(["validate", str(query), "--schema", str(schema)])
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "imProcessCreate" in captured.err
+    assert "function" in captured.err

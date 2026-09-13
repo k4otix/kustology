@@ -42,6 +42,7 @@ import sys
 from . import __version__
 from .services import SKIPPED_TEXT_CODE, format_query, parse, validate
 from .spans import TextSpan
+from .utils.schema_state import FunctionSchema
 from .utils.walker import MAX_AST_DEPTH, node_to_dict
 
 # Bound on the bytes read from stdin or a file. KQL queries are not large, so
@@ -321,6 +322,62 @@ def _cmd_format(args: argparse.Namespace) -> int:
     return 0
 
 
+def _schema_entry(name: str, value: object) -> object:
+    """Convert one schema-file entry, building a `FunctionSchema` for the marker.
+
+    A table entry maps column names to type-name strings, and a type name is
+    never an object. An entry whose `function` key holds an object declares a
+    function. An entry whose `function` key holds a string is a table with a
+    column of that name, and passes through untouched. Any other `function`
+    value is neither shape, so it is a usage error here instead of a column
+    type error from deeper in the schema builder.
+    """
+    if not isinstance(value, dict) or "function" not in value:
+        return value
+    decl = value["function"]
+    if isinstance(decl, str):
+        return value
+    if not isinstance(decl, dict):
+        raise _UsageError(
+            f"Schema entry {name!r}: the 'function' key must hold an object "
+            "declaring the function, or a type-name string for a table column "
+            f"called 'function'. Got {type(decl).__name__}."
+        )
+    unknown = set(decl) - {"parameters", "returns", "required"}
+    if unknown:
+        raise _UsageError(
+            f"Schema entry {name!r}: unknown key(s) in the function "
+            f"declaration: {', '.join(sorted(unknown))}. Use 'parameters', "
+            "'returns', and 'required'."
+        )
+    params = decl.get("parameters", [])
+    if not isinstance(params, list) or any(
+        not isinstance(p, list) or len(p) != 2 for p in params
+    ):
+        raise _UsageError(
+            f"Schema entry {name!r}: 'parameters' must be a list of "
+            '[name, type] pairs, for example [["starttime", "datetime"]].'
+        )
+    required = decl.get("required")
+    if required is not None:
+        if isinstance(required, bool) or not isinstance(required, int):
+            raise _UsageError(
+                f"Schema entry {name!r}: 'required' must be an int or null; "
+                f"got {type(required).__name__}."
+            )
+        if not 0 <= required <= len(params):
+            raise _UsageError(
+                f"Schema entry {name!r}: 'required' is {required}, but the "
+                f"declaration has {len(params)} parameter(s). It counts the "
+                "leading parameters a call has to pass."
+            )
+    return FunctionSchema(
+        parameters=tuple((p[0], p[1]) for p in params),
+        returns=decl.get("returns"),
+        required=required,
+    )
+
+
 def _load_schema(path: str | None) -> dict | None:
     if not path:
         return None
@@ -331,9 +388,12 @@ def _load_schema(path: str | None) -> dict | None:
     except OSError as e:
         raise _UsageError(f"{type(e).__name__}: {e}") from e
     try:
-        return _json.loads(body)
+        raw = _json.loads(body)
     except _json.JSONDecodeError as e:
         raise _UsageError(f"JSONDecodeError: {e}") from e
+    if not isinstance(raw, dict):
+        return raw
+    return {name: _schema_entry(name, value) for name, value in raw.items()}
 
 
 def _cmd_validate(args: argparse.Namespace) -> int:

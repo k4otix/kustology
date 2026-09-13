@@ -13,6 +13,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`examples/safe_interpolation.py`** (tier 1). The example builds a query from a caller-supplied table name, quotes it, and checks the parse against a canary shape before trusting it. Linked from the README's example table.
 - **`GraphElementRef`** (tier 2). A bare pattern-element name in a `graph-match` or `graph-shortest-paths` clause is its own expression node, so `find_all(ir, ColumnRef)` does not report it as a column. A property of an element, `n.p`, stays a `ColumnRef` carrying `qualifier="n"`.
 - **`FunctionSchema` declares a tabular or scalar function in the schema dict** (tier 1). Put one under the function's name beside the table entries to give Microsoft's binder its parameters and its result columns; `returns=None` leaves the result columns open. See [Declaring functions](docs/tier1-syntax-tree.md#declaring-functions).
+- **Schema files declare functions** (CLI). A `--schema` entry whose value is `{"function": {...}}` declares a tabular or scalar function instead of a table.
 
 ### Changed
 
