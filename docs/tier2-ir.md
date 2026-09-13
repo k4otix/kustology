@@ -114,11 +114,12 @@ the root kind: `parse(".drop table A | getschema").to_ir()` reports a
 `command_kinds`](tier1-syntax-tree.md#control-commands) to branch before the
 call.
 
-Five models declare `raw_text`. On `UnknownSource`, `UnknownExpr`,
-`UnknownOp`, and `UnknownStmt` it marks a shape the builder could not model
-and holds that node's own source, so a consumer can see what the builder did
-not reach. On `QueryIR` it holds the whole query text. Every operator the
-builder dispatches has typed fields.
+The `Unknown*` fallbacks — `UnknownSource`, `UnknownExpr`, `UnknownOp`, and
+`UnknownStmt` — and `QueryIR` declare `raw_text`. On each `Unknown*` node it
+marks a shape the builder could not model and holds that node's own source,
+so a consumer can see what the builder did not reach. On `QueryIR` it holds
+the whole query text. Every operator the builder dispatches has typed
+fields.
 
 One boundary survives that. A `macro-expand` over a named entity group
 records the name and the alias each expansion binds, and the IR has no way

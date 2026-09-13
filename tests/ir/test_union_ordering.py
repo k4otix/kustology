@@ -59,10 +59,20 @@ def _resolve(annotation):
 
 
 def _unwrap(annotation):
-    """Strip ``Annotated[...]`` down to the type it decorates."""
-    while get_origin(annotation) is Annotated:
-        annotation = get_args(annotation)[0]
-    return _resolve(annotation)
+    """Strip ``Annotated[...]`` and resolve forward references to a fixed point.
+
+    A forward reference can name an ``Annotated`` alias (``AnyStatement`` is
+    one), so one pass of each in a fixed order leaves the other's wrapper in
+    place. Alternating both until neither changes the annotation resolves and
+    strips it whichever order they nest in.
+    """
+    while True:
+        before = annotation
+        while get_origin(annotation) is Annotated:
+            annotation = get_args(annotation)[0]
+        annotation = _resolve(annotation)
+        if annotation is before:
+            return annotation
 
 
 def _union_members(annotation) -> tuple[type, ...]:
@@ -126,6 +136,7 @@ def _sample(annotation):
         return 1
     if annotation is float:
         return 1.0
+    assert annotation is str, f"_sample has no branch for {annotation!r}"
     return "x"
 
 
