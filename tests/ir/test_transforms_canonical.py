@@ -114,3 +114,18 @@ def test_the_digest_still_serializes_after_a_copy():
     ir = parse("T | where a > 1 | take 1").to_ir()
     assert ir.model_dump()["semantic_hash"] == ir.semantic_hash
     assert ir.model_copy(deep=True).model_dump()["semantic_hash"] == ir.semantic_hash
+
+
+def test_a_deep_copy_of_an_ir_shares_its_spans():
+    """A deep copy rebuilds every node except the spans, which it hands over by reference.
+
+    A ``Span`` is frozen, so a shared instance cannot let one copy rewrite
+    another's offsets. Spans are the largest single class in an IR, and
+    ``compute_semantic_hash`` deep-copies the whole tree on every call.
+    """
+    ir = _ir("T | where a == 1 | project b")
+    copied = copy.deepcopy(ir)
+
+    assert copied is not ir
+    assert copied.main_pipeline.operators[0] is not ir.main_pipeline.operators[0]
+    assert copied.main_pipeline.operators[0].span is ir.main_pipeline.operators[0].span

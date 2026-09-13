@@ -16,7 +16,7 @@ from typing import Any
 from .._text import Utf16Offsets
 from .spans import Span
 from .types import KustoType
-from .walk import find_all
+from .walk import model_bearing_fields, walk
 
 logger = logging.getLogger(__name__)
 
@@ -112,13 +112,32 @@ def retarget_spans_to_codepoints(root: Any, offsets: Utf16Offsets) -> None:
     The conversion needs the query text, which the builder holds and the visit
     methods do not, so it runs as one pass over the finished IR. All-BMP text
     returns immediately, paying one length comparison and no traversal.
+
+    A ``Span`` is frozen, so each one is replaced on the field that holds it.
+    Reading model fields reaches every span because no IR model holds one
+    inside a container. ``tests/ir/test_span_of.py`` asserts that over every
+    model's annotations, and re-parses the corpus behind an astral character
+    to check the conversion end to end.
     """
     if offsets.is_identity:
         return
-    for span in find_all(root, Span):
-        span.text_start, span.width = offsets.span_to_codepoints(
-            span.text_start, span.width,
-        )
+    # ``walk`` reads a node's fields after this body has run on it, so it
+    # descends into the replacement instead of the original. That is safe
+    # while the loop skips ``Span`` nodes and a ``Span`` has no children.
+    # Installing a node that has any would need the traversal materialized
+    # first.
+    for node in walk(root):
+        if isinstance(node, Span):
+            continue
+        for name in model_bearing_fields(type(node)):
+            value = getattr(node, name, None)
+            if isinstance(value, Span):
+                text_start, width = offsets.span_to_codepoints(
+                    value.text_start, value.width,
+                )
+                object.__setattr__(
+                    node, name, Span(text_start=text_start, width=width),
+                )
 
 
 def read_row_schema(node: Any) -> list[tuple[str, str]]:

@@ -14,14 +14,30 @@ class Span(BaseModel):
     builder translates over the whole tree once after the build. A raw syntax
     node's ``TextStart`` is still UTF-16, so cross it with
     :func:`kustology.utf16_to_codepoint`.
+
+    A ``Span`` is immutable. Assigning to ``text_start`` or ``width`` raises;
+    build a new ``Span`` and install it on the field that holds the old one.
     """
 
-    # Project-wide default for IR models: validating existing JSON fails
-    # loudly when fields drift instead of silently dropping data.
-    model_config = {"extra": "forbid"}
+    # ``extra="forbid"`` is the project-wide default for IR models: validating
+    # existing JSON fails loudly when fields drift instead of silently dropping
+    # data. ``frozen`` is what makes :meth:`__deepcopy__` below safe, since a
+    # shared instance that could be mutated would let one copy of an IR rewrite
+    # another's offsets.
+    model_config = {"extra": "forbid", "frozen": True}
 
     text_start: int
     width: int
+
+    def __deepcopy__(self, memo: dict[int, object] | None = None) -> "Span":
+        """Return this instance: a frozen value needs no copy.
+
+        Spans are about half the nodes in an IR, and copying one costs what
+        copying any pydantic model costs. Sharing the instance keeps that cost
+        out of ``copy.deepcopy(ir)`` and out of the private copy each digest is
+        built from.
+        """
+        return self
 
     @property
     def text_end(self) -> int:

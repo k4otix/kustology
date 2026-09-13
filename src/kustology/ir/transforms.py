@@ -17,7 +17,6 @@ union and fork branches.
 
 from __future__ import annotations
 
-import functools
 import hashlib
 import itertools
 import json
@@ -283,15 +282,11 @@ _CLEARED_FIELDS = _VOLATILE_FIELDS | _DERIVED_INDEX_FIELDS
 # 2.13 will serialize ``None`` through a ``Span``-typed field, emitting
 # ``null`` with no warning, but that payload fails to validate back, and the
 # copy is a live IR that ``walk`` and ``model_dump`` both traverse. One
-# instance is shared by every node on the copy, never observably -- the copy is
-# dumped and discarded inside ``compute_semantic_hash``, and nothing mutates a
-# ``Span`` in place.
+# instance is shared by every node on the copy, which a frozen ``Span``
+# supports.
 _ZERO_SPAN = Span(text_start=0, width=0)
 
 
-# Lexes each distinct text once per process. 49 distinct fixtures still pay the
-# full lex: 77 ms against 60 ms once the texts repeat. Keys are strings.
-@functools.lru_cache(maxsize=1024)
 def _normalize_raw_text(text: str) -> str:
     r"""Rewrite ``raw_text`` as its token texts joined by single spaces.
 
@@ -344,7 +339,12 @@ def _clear_volatile(root: BaseModel) -> None:
                 object.__setattr__(
                     node, name, None if default is PydanticUndefined else default,
                 )
-        if "raw_text" in fields:
+        # ``QueryIR.raw_text`` holds the whole query source, so it is the
+        # longest text any node offers this function, and nothing reads it back
+        # off the canonical copy: ``_payload``'s ``QueryIR`` branch names its
+        # four keys by hand, and ``similarity`` digests every node through that
+        # same branch. Every other ``raw_text`` reaches the digest and is lexed.
+        if "raw_text" in fields and not isinstance(node, QueryIR):
             object.__setattr__(node, "raw_text", _normalize_raw_text(node.raw_text))
 
 

@@ -509,6 +509,12 @@ two tokens, so `(step` and `( step`, and `a==b` and `a == b`, arrive here as
 different strings. Re-lexing gives every spelling of one operator the same
 form.
 
+`QueryIR.raw_text` is the one field skipped. It holds the whole query source,
+so it is the longest text in the tree, and nothing reads it back off the
+canonical copy: `_payload` names the root's four digest keys by hand, and
+`similarity` digests every node through that same branch. Add a `QueryIR`
+payload key carrying source text and the skip has to go with it.
+
 Two things that look like formatting in `raw_text` are data, and the token
 rule keeps both:
 
