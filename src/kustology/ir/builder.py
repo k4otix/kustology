@@ -125,6 +125,7 @@ from .query import (
     LetRef,
     LookupOp,
     MacroExpandOp,
+    MakeGraphNodes,
     MakeGraphOp,
     MakeSeriesAggregate,
     MakeSeriesOp,
@@ -1953,7 +1954,7 @@ class IRBuilder:
 
         # Preserve-raw-text ops for elaborate state-machine operators.
         if kind == "MakeGraphOperator":
-            return MakeGraphOp(raw_text=node.ToString(IncludeTrivia.Minimal), span=span)
+            return self._visit_make_graph(n, span)
         if kind == "MacroExpandOperator":
             return self._visit_macro_expand(n, span)
         if kind == "GraphMatchOperator":
@@ -2109,6 +2110,56 @@ class IRBuilder:
                 span=to_span(clause),
             ))
         return TopNestedOp(levels=levels, span=span)
+
+    def _visit_make_graph(self, node: Any, span: Span) -> MakeGraphOp:
+        """Build a :class:`MakeGraphOp`.
+
+        ``WithClause`` is one of two clause classes or ``None``, so ``nodes``
+        and ``node_id`` are filled by two different queries and never both.
+        ``PartitionedByClause.Subquery`` is a bare operator node, which
+        :meth:`_visit_pipeline` handles through its ``endswith("Operator")``
+        case.
+
+        ``DirectionToken`` carries the written arrow. ``Direction`` is a
+        member of no ``MakeGraphOperator``, so reading it raises
+        ``AttributeError``.
+        """
+        nodes: list[MakeGraphNodes] = []
+        node_id: str | None = None
+        with_clause = getattr(node, "WithClause", None)
+        if with_clause is not None:
+            tables_and_keys = getattr(with_clause, "TablesAndKeys", None)
+            if tables_and_keys is not None:
+                for el in _iter_elements(tables_and_keys):
+                    nodes.append(MakeGraphNodes(
+                        node_table=self._visit_table_ref(el.Table),
+                        key=self._visit_expr(el.Column),
+                        span=to_span(el),
+                    ))
+            else:
+                name_node = getattr(with_clause, "Name", None)
+                if name_node is not None:
+                    node_id = visit_name(name_node)
+
+        partition_by: str | None = None
+        partition_pipeline: Pipeline | None = None
+        partitioned = getattr(node, "PartitionedByClause", None)
+        if partitioned is not None:
+            partition_by = visit_name(partitioned.Entity)
+            subquery = getattr(partitioned, "Subquery", None)
+            if subquery is not None:
+                partition_pipeline = self._visit_pipeline(subquery)
+
+        return MakeGraphOp(
+            source=self._visit_expr(node.SourceColumn),
+            target=self._visit_expr(node.TargetColumn),
+            direction=node.DirectionToken.Text,
+            nodes=nodes,
+            node_id=node_id,
+            partition_by=partition_by,
+            partition_pipeline=partition_pipeline,
+            span=span,
+        )
 
     def _visit_graph_mark_components(self, node: Any, span: Span) -> GraphMarkComponentsOp:
         """Build a :class:`GraphMarkComponentsOp` from its named parameters."""

@@ -624,9 +624,6 @@ MUST_DIFFER = [
         "T | top-nested 3 of a by max(b)",
     ),
     # --- Track E: graph-mark-components, graph-to-table, macro-expand ---
-    # No ``make-graph`` prefix: it stays in the register (raw_text) this
-    # task, and ``test_no_battery_pair_discriminates_on_an_unmodelled_blob``
-    # requires every battery query to lower with no source-text carrier.
     # ``graph-mark-components``/``graph-to-table`` dispatch on their own
     # SyntaxKind regardless of what precedes them, so the bare pipe still
     # exercises the field each pair guards.
@@ -699,6 +696,22 @@ MUST_DIFFER = [
         "macro-expand-body-query-parameters-two-defaults",
         "macro-expand EG as X (declare query_parameters(n:long = 5); X.T | count)",
         "macro-expand EG as X (declare query_parameters(n:long = 9); X.T | count)",
+    ),
+    # --- Track E: make-graph ---
+    (
+        "make-graph-direction",
+        "T | make-graph a --> b",
+        "T | make-graph a -- b",
+    ),
+    (
+        "make-graph-node-table",
+        "T | make-graph a --> b with N1 on k",
+        "T | make-graph a --> b with N2 on k",
+    ),
+    (
+        "make-graph-node-id-vs-table",
+        "T | make-graph a --> b with_node_id=k",
+        "T | make-graph a --> b with N on k",
     ),
 ]
 
@@ -1078,13 +1091,12 @@ def test_no_battery_pair_discriminates_on_an_unmodelled_blob():
     pair.
 
     The check covers more than the ``Unknown*`` classes. Several modeled
-    operators record their own source too (``MakeGraphOp`` and the
-    ``graph-*`` matchers), because they are dispatched and only
-    partly modeled. Nothing in the battery reaches one
-    today, so naming them in prose would protect nobody: the first pair
-    written against ``graph-match`` would discriminate on ``raw_text`` and
-    pass. Deriving the set from ``model_fields`` covers a node added to the
-    partly-modeled list from the moment it is defined.
+    operators record their own source too (the ``graph-*`` matchers), because
+    they are dispatched and only partly modeled. Nothing in the battery
+    reaches one today, so naming them in prose would protect nobody: the
+    first pair written against ``graph-match`` would discriminate on
+    ``raw_text`` and pass. Deriving the set from ``model_fields`` covers a
+    node added to the partly-modeled list from the moment it is defined.
     """
     offenders: dict[str, list[str]] = {}
     for query in sorted({q for _, a, b in MUST_DIFFER + MUST_EQUAL + KNOWN_COLLISIONS for q in (a, b)}):

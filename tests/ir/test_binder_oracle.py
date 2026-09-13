@@ -186,6 +186,7 @@ MATRIX: list[tuple[str, str]] = [
     ("top-nested-levels", "T | top-nested 3 of k by max(a), top-nested 2 of s by count()"),
     ("graph-mark-components", "T | make-graph k --> s | graph-mark-components kind=weak with_component_id=cid"),
     ("graph-to-table", "T | make-graph k --> s | graph-to-table nodes as N with_node_id=nid"),
+    ("make-graph-with-nodes", "T | make-graph k --> s with U on k"),
 ]
 
 # The bound leg's MATRIX run: one representative id per construct family. The

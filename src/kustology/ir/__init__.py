@@ -44,7 +44,7 @@ from .query import (
     GraphWhereNodesOp, ImplicitSource,
     InvokeOp, JoinOp, LetBinding, LetFunction, LetFunctionParameter, LetRef,
     LookupOp, MacroExpandOp,
-    MakeGraphOp, MakeSeriesAggregate, MakeSeriesOp, MvApplyOp,
+    MakeGraphNodes, MakeGraphOp, MakeSeriesAggregate, MakeSeriesOp, MvApplyOp,
     MvExpandColumn, MvExpandOp,
     Operator, ParseKvOp,
     ParseOp, ParseWhereOp, PartitionOp, PatternMatch, PatternStmt, Pipeline,
@@ -95,6 +95,7 @@ __all__ = [
     "Diagnostic", "Assignment",
     "ForkBranch", "MakeSeriesAggregate", "MvExpandColumn", "ReorderKey",
     "ScanStep", "SortKey", "Span", "TopNestedLevel", "GraphToTableOutput",
+    "MakeGraphNodes",
     "KustoType", "TabularSchema",
     # Expressions
     "Expr", "AnyExpr", "ColumnRef", "BinOp", "SetMembership", "Between",

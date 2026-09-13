@@ -123,7 +123,7 @@ independent version tags (`__version__`, `IR_SCHEMA_VERSION`,
 
 If the operator's inner structure is genuinely not worth modeling yet, the
 honest fallback is a single `raw_text` field plus a class docstring saying
-what is inside the string and what that costs — see `MakeGraphOp` and the
+what is inside the string and what that costs — see `GraphMatchOp` and the
 register it heads. Do **not** declare typed fields you cannot populate: a
 declared-but-unfilled field reads as implemented, is invisible to tests, and
 a downstream consumer can design against it before discovering it never fills.

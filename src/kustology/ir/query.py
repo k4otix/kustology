@@ -1068,44 +1068,51 @@ class TopNestedOp(Operator):
     levels: list[TopNestedLevel]
 
 
+class MakeGraphNodes(BaseModel):
+    """One ``with <Table> on <key>`` clause of a ``make-graph``.
+
+    ``node_table`` goes through the shared table reader, so a ``let`` alias
+    reads as a :class:`LetRef` and ``find_all(ir, TableRef)`` reports a real
+    node table on both bind states. The field carries the name
+    ``node_table`` because :data:`~kustology.ir.transforms._VOLATILE_FIELDS`
+    clears every field named ``table`` across the whole IR for
+    :class:`ColumnRef`'s sake. This field is source-derived, and a query that
+    changes only its node table must still hash apart.
+    """
+
+    model_config = {"extra": "forbid"}
+    kind: Literal["make_graph_nodes"] = "make_graph_nodes"
+    # Discriminated on the kind literal; member order is not load-bearing.
+    node_table: Annotated[TableRef | LetRef, Field(discriminator="kind")]
+    key: AnyExpr
+    span: Span
+
+
 class MakeGraphOp(Operator):
-    """``make-graph`` — kept as its own source text; the clauses are not modeled.
+    """``make-graph`` — build a graph from an edge stream.
 
-    This is the first of the modeled operators the IR records on ``raw_text``
-    rather than in typed fields, the same register as :class:`LetFunction`'s:
-    the boundary is stated in the model instead of being left as fields that
-    read as implemented and are not. Every member of the register says so in
-    its own summary line, so the set is readable off the module. Two
-    exclusions keep it checkable. ``graph-where-edges`` and
-    ``graph-where-nodes`` carry a real ``predicate`` and no ``raw_text``.
-    :class:`UnknownOp` does carry one, but it is the builder's fallback for a
-    shape it could not dispatch rather than a modeling choice.
+    ``source`` and ``target`` are the edge columns and ``direction`` the
+    written arrow: ``-->`` is directed and ``--`` undirected, and the two
+    build different graphs.
 
-    ``raw_text`` is ``ToString(IncludeTrivia.Minimal)``, so these operators
-    round-trip through ``model_dump_json`` and participate in ``semantic_hash``
-    as text. Nothing typed is inside them to walk: ``find_all(ir, ColumnRef)``
-    will not report a column that appears only in one of their clauses.
-    Downstream scope splits by bind state. ``Operator.result_schema`` carries
-    Microsoft's ``ResultType``, which knows the columns each of them adds, and
-    :class:`SchemaAttacher` overlays it; an unbound parse has no such answer,
-    and nothing re-derives one, so the scope downstream is the one they
-    inherited. Hashing text also brings the formatting sensitivity
-    :class:`UnknownSource` documents: interior comments and interior spacing
-    are part of the digest.
+    The node side is written two ways and each has its own field. ``with
+    <Table> on <key>`` fills ``nodes``, and ``with_node_id=<column>`` fills
+    ``node_id``, which asks the engine to take node identity from the edge
+    stream itself.
 
-    The edge columns, the ``with``-clause node table and its key are all
-    inside ``raw_text``, so ``find_all(ir, TableRef)`` does not report the
-    node table. Tier 1 does, but only on a bound parse: over ``Edges |
-    make-graph src --> dst with Nodes on n``,
-    ``parse(q).get_referenced_tables()`` answers ``{"Edges"}`` and
-    ``parse(q, schema=…)`` answers ``{"Edges", "Nodes"}``, because the bound
-    path reads the resolved symbol instead of the syntactic source positions.
-    ``replace_table("Nodes", …)`` splits the same way: a no-op unbound, a
-    correct rewrite bound.
+    ``partitioned-by`` carries its key on ``partition_by`` and its body on
+    ``partition_pipeline``, a real :class:`Pipeline` whose graph operators
+    are walkable.
     """
 
     kind: Literal["make_graph"] = "make_graph"
-    raw_text: str
+    source: AnyExpr
+    target: AnyExpr
+    direction: Literal["-->", "--"]
+    nodes: list[MakeGraphNodes] = []
+    node_id: str | None = None
+    partition_by: str | None = None
+    partition_pipeline: Optional["Pipeline"] = None
 
 
 class GraphMarkComponentsOp(Operator):
@@ -1199,7 +1206,29 @@ class MacroExpandOp(Operator):
 
 
 class GraphMatchOp(Operator):
-    """``graph-match`` — source text only; see :class:`MakeGraphOp` for the register.
+    """``graph-match`` — kept as its own source text; the pattern is not modeled.
+
+    This is the first of the modeled operators the IR records on ``raw_text``
+    rather than in typed fields, the same register as :class:`LetFunction`'s:
+    the boundary is stated in the model instead of being left as fields that
+    read as implemented and are not. Every member of the register says so in
+    its own summary line, so the set is readable off the module. Two
+    exclusions keep it checkable. ``graph-where-edges`` and
+    ``graph-where-nodes`` carry a real ``predicate`` and no ``raw_text``.
+    :class:`UnknownOp` does carry one, but it is the builder's fallback for a
+    shape it could not dispatch rather than a modeling choice.
+
+    ``raw_text`` is ``ToString(IncludeTrivia.Minimal)``, so these operators
+    round-trip through ``model_dump_json`` and participate in ``semantic_hash``
+    as text. Nothing typed is inside them to walk: ``find_all(ir, ColumnRef)``
+    will not report a column that appears only in one of their clauses.
+    Downstream scope splits by bind state. ``Operator.result_schema`` carries
+    Microsoft's ``ResultType``, which knows the columns each of them adds, and
+    :class:`SchemaAttacher` overlays it; an unbound parse has no such answer,
+    and nothing re-derives one, so the scope downstream is the one they
+    inherited. Hashing text also brings the formatting sensitivity
+    :class:`UnknownSource` documents: interior comments and interior spacing
+    are part of the digest.
 
     The pattern, its ``where`` constraint and its ``project`` list are all
     text, so a column named only in a graph pattern does not reach
@@ -1214,7 +1243,7 @@ class GraphMatchOp(Operator):
 
 
 class GraphShortestPathsOp(Operator):
-    """``graph-shortest-paths`` — text only; see :class:`MakeGraphOp`.
+    """``graph-shortest-paths`` — text only; see :class:`GraphMatchOp`.
 
     Same shape as :class:`GraphMatchOp`: pattern, constraint and
     projection are one string.
@@ -1227,9 +1256,9 @@ class GraphShortestPathsOp(Operator):
 class GraphWhereEdgesOp(Operator):
     """``graph-where-edges (…)`` — modeled, with a real predicate.
 
-    Not part of the :class:`MakeGraphOp` register despite the family name: the
-    parenthesized condition is an ordinary expression over edge properties, so
-    it is built as one and its columns are walkable.
+    Not part of the :class:`GraphMatchOp` register despite the family name:
+    the parenthesized condition is an ordinary expression over edge
+    properties, so it is built as one and its columns are walkable.
     """
 
     kind: Literal["graph_where_edges"] = "graph_where_edges"

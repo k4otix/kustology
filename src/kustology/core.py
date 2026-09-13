@@ -173,7 +173,8 @@ class KustoQuery:
         n").get_referenced_tables()`` answers ``{"Edges"}`` while the same
         query bound answers ``{"Edges", "Nodes"}``. :meth:`replace_table`
         inherits the split. Bind before migrating tables in a query that
-        builds a graph.
+        builds a graph. ``to_ir()`` reports the node table on both bind
+        states, because the IR reads the source position.
         """
         return {
             name
