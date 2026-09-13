@@ -13,9 +13,11 @@ from kustology import parse
 from kustology.ir import (
     Assignment,
     ColumnRef,
+    FuncCall,
     GraphElementRef,
     GraphMatchOp,
     GraphShortestPathsOp,
+    LiteralExpr,
     find_all,
 )
 
@@ -58,6 +60,48 @@ def test_an_unwritten_hop_bound_stays_none():
     assert (edge.min_hops, edge.max_hops) == (1, None)
 
 
+@pytest.mark.parametrize(
+    "arrow,direction",
+    [("-->", "forward"), ("<--", "backward"), ("--", "any")],
+    ids=["forward", "backward", "any"],
+)
+def test_a_bracket_free_arrow_carries_the_direction_it_is_written_with(arrow, direction):
+    """Each bracket-free arrow is one token, so the edge writes no name and no
+    hop range. The clean-parse assertion is the claim that all three spellings
+    are accepted.
+    """
+    ir = parse(f"{GRAPH}graph-match (x){arrow}(y) project x").to_ir()
+    assert not [d for d in ir.diagnostics if d.severity == "Error"], ir.diagnostics
+    edge = ir.main_pipeline.operators[-1].patterns[0].elements[1]
+    assert edge.kind == "graph_pattern_edge"
+    assert edge.direction == direction
+    assert edge.name is None
+    assert edge.variable_length is False
+
+
+def test_a_computed_hop_bound_is_the_expression_the_query_wrote():
+    """A hop bound is an expression position. Narrowing the field to ``int``
+    would hash ``*1..toint(3)`` as an unbounded pattern.
+    """
+    ir = parse(f"{GRAPH}graph-match (x)-[e*1..toint(3)]->(y) project x").to_ir()
+    assert not [d for d in ir.diagnostics if d.severity == "Error"], ir.diagnostics
+    edge = ir.main_pipeline.operators[-1].patterns[0].elements[1]
+    assert edge.min_hops == 1
+    assert isinstance(edge.max_hops, FuncCall)
+    assert edge.max_hops.name == "toint"
+
+
+def test_a_boolean_hop_bound_keeps_its_literal_kind():
+    """``*1..true`` parses without a diagnostic and its ``LiteralValue`` is a
+    Python ``bool``, which ``int()`` reads as 1. The bound stays the literal
+    the query wrote, so it does not collide with ``*1..1``.
+    """
+    op = _last_op(f"{GRAPH}graph-match (x)-[e*1..true]->(y) project x")
+    bound = op.patterns[0].elements[1].max_hops
+    assert isinstance(bound, LiteralExpr)
+    assert bound.value is True
+
+
 def test_an_anonymous_element_keeps_its_name_unset():
     op = _last_op(GRAPH + "graph-match ()-[]->(m) project m")
     assert [e.name for e in op.patterns[0].elements] == [None, None, "m"]
@@ -86,9 +130,16 @@ def test_a_named_projection_is_an_assignment():
     assert op.project[0].name == "n1"
 
 
-def test_two_comma_separated_patterns_are_two_patterns():
-    op = _last_op(GRAPH + "graph-match (x)-[e]->(y), (y)-[f]->(z) project x")
-    assert len(op.patterns) == 2
+def test_two_comma_separated_patterns_are_two_patterns_in_source_order():
+    query = GRAPH + "graph-match (x)-[e]->(y), (z)-[f]->(w) project x"
+    op = _last_op(query)
+    assert [[el.name for el in p.elements] for p in op.patterns] == [
+        ["x", "e", "y"], ["z", "f", "w"],
+    ]
+    spans = [p.span for p in op.patterns]
+    assert [query[s.text_start:s.text_start + s.width] for s in spans] == [
+        "(x)-[e]->(y)", "(z)-[f]->(w)",
+    ]
 
 
 def test_graph_shortest_paths_records_output_and_cycles():

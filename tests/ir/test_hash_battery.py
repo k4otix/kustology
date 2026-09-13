@@ -739,6 +739,16 @@ MUST_DIFFER = [
         "T | make-graph a --> b | graph-shortest-paths output=any (x)-[e*1..2]->(y) project x",
         "T | make-graph a --> b | graph-shortest-paths output=all (x)-[e*1..2]->(y) project x",
     ),
+    (
+        "graph-pattern-bracket-free-direction",
+        "T | make-graph a --> b | graph-match (x)-->(y) project x",
+        "T | make-graph a --> b | graph-match (x)<--(y) project x",
+    ),
+    (
+        "graph-pattern-computed-hop-bound",
+        "T | make-graph a --> b | graph-match (x)-[e*1..toint(3)]->(y) project x",
+        "T | make-graph a --> b | graph-match (x)-[e*1..]->(y) project x",
+    ),
 ]
 
 
@@ -1117,9 +1127,9 @@ def test_no_battery_pair_discriminates_on_an_unmodelled_blob():
     pair.
 
     The check covers more than the ``Unknown*`` classes by construction: the
-    carrier set is derived from ``model_fields`` at run time, so a node that
-    gains a ``raw_text`` field is covered from the moment it is defined
-    rather than from the moment somebody remembers to name it here.
+    carrier set is derived from ``model_fields`` at run time, so a node is
+    covered from the moment it gains a ``raw_text`` field. Nobody has to
+    name it here.
     """
     offenders: dict[str, list[str]] = {}
     for query in sorted({q for _, a, b in MUST_DIFFER + MUST_EQUAL + KNOWN_COLLISIONS for q in (a, b)}):

@@ -2209,11 +2209,15 @@ class IRBuilder:
         return GraphToTableOp(outputs=outputs, span=span)
 
     # Keyed by an edge's first and last token text, the only record of which
-    # arrow the pattern wrote.
-    _EDGE_DIRECTIONS: ClassVar[dict[tuple[str, str], str]] = {
+    # arrow the pattern wrote. A bracket-free arrow is a single token, so its
+    # ``LastToken`` is ``None`` and the key carries ``None`` in that slot.
+    _EDGE_DIRECTIONS: ClassVar[dict[tuple[str, str | None], str]] = {
         ("-[", "]->"): "forward",
         ("<-[", "]-"): "backward",
         ("-[", "]-"): "any",
+        ("-->", None): "forward",
+        ("<--", None): "backward",
+        ("--", None): "any",
     }
 
     def _visit_graph_patterns(self, node: Any) -> tuple[list[GraphPattern], set[str]]:
@@ -2247,14 +2251,19 @@ class IRBuilder:
 
         ``Range`` is ``None`` unless the pattern wrote ``*``. Its bounds are
         expressions rather than tokens, so each one goes through
-        :meth:`_hop_bound`. An arrow whose tokens match none of the three
+        :meth:`_hop_bound`. An arrow whose tokens match none of the six
         spellings records ``any``, which is what an undirected edge matches.
         """
+        last_token = node.LastToken
         edge_range = getattr(node, "Range", None)
         return GraphPatternEdge(
             name=name,
             direction=self._EDGE_DIRECTIONS.get(
-                (str(node.FirstToken.Text), str(node.LastToken.Text)), "any",
+                (
+                    str(node.FirstToken.Text),
+                    None if last_token is None else str(last_token.Text),
+                ),
+                "any",
             ),
             variable_length=edge_range is not None,
             min_hops=self._hop_bound(getattr(edge_range, "RangeStart", None)),
@@ -2262,23 +2271,21 @@ class IRBuilder:
             span=to_span(node),
         )
 
-    @staticmethod
-    def _hop_bound(node: Any) -> int | None:
+    def _hop_bound(self, node: Any) -> int | AnyExpr | None:
         """One written hop bound, or ``None`` when the pattern omitted it.
 
-        An unwritten bound is a zero-width ``NameReference`` the parser marks
-        missing. Reading it as a literal would record a hop count the query
-        never wrote.
+        An unwritten bound is a ``NameReference`` the parser marks missing, so
+        ``IsMissing`` is what separates it from a written one. A written bound
+        is an expression, and only a whole-number literal shortcuts to ``int``:
+        ``*1..toint(3)`` keeps the call as its own IR node, and ``*1..true``
+        keeps the boolean, which ``int`` would read as one hop.
         """
-        if node is None or node.Width == 0 or node.IsMissing:
+        if node is None or node.IsMissing:
             return None
         value = getattr(node, "LiteralValue", None)
-        if value is None:
-            return None
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return None
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        return self._visit_expr(node)
 
     def _visit_graph_match(self, node: Any, span: Span) -> GraphMatchOp:
         """Build a :class:`GraphMatchOp` with the pattern names in scope."""
@@ -2346,7 +2353,6 @@ class IRBuilder:
         """
         value = extract_named_param(node, name)
         return value if value in allowed else None
-
 
     def _visit_macro_expand(self, node: Any, span: Span) -> MacroExpandOp:
         """Build a :class:`MacroExpandOp`.

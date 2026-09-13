@@ -1220,12 +1220,14 @@ class GraphPatternEdge(BaseModel):
 
     ``direction`` comes from the written arrow tokens: ``-[ ]->`` is
     ``forward``, ``<-[ ]-`` is ``backward``, and ``-[ ]-`` is ``any``. The
-    three match different paths.
+    three match different paths. The bracket-free spellings ``-->``, ``<--``
+    and ``--`` carry the same three directions, and name no edge.
 
     ``variable_length`` is the ``*`` of ``-[e*1..3]->``. ``min_hops`` and
-    ``max_hops`` are the bounds the query wrote; an omitted bound stays
-    ``None``, which is the pattern's own answer rather than a substituted
-    default.
+    ``max_hops`` are the bounds the query wrote. A bound is an expression
+    position, so a computed one such as ``*1..toint(3)`` keeps its own IR
+    node. An omitted bound stays ``None``; the IR substitutes no default
+    for it.
     """
 
     model_config = {"extra": "forbid"}
@@ -1233,8 +1235,8 @@ class GraphPatternEdge(BaseModel):
     name: str | None = None
     direction: Literal["forward", "backward", "any"]
     variable_length: bool = False
-    min_hops: int | None = None
-    max_hops: int | None = None
+    min_hops: int | AnyExpr | None = None
+    max_hops: int | AnyExpr | None = None
     span: Span
 
 
@@ -1260,10 +1262,6 @@ class GraphMatchOp(Operator):
     ``cycles`` is the operator's only named parameter; ``output=`` is a
     syntax error here. A value outside the three the engine accepts stays
     ``None``.
-
-    The columns this operator emits are a boundary: they are in no downstream
-    scope, and Microsoft's binder does not place them either, reporting KS142
-    for a ``| project`` naming one on a bound parse.
     """
 
     kind: Literal["graph_match"] = "graph_match"
@@ -1282,8 +1280,6 @@ class GraphShortestPathsOp(Operator):
     selects how many paths per pair, and ``cycles`` is the same parameter
     ``graph-match`` carries. The two are written space-separated; a comma
     between them is a syntax error.
-
-    Its output columns are the same boundary :class:`GraphMatchOp` records.
     """
 
     kind: Literal["graph_shortest_paths"] = "graph_shortest_paths"

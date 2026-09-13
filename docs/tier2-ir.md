@@ -119,11 +119,9 @@ call.
 source, so a consumer can see what the builder did not reach. Every operator
 the builder dispatches has typed fields.
 
-Two boundaries survive that. `macro-expand` records the entity group it fans
+One boundary survives that. `macro-expand` records the entity group it fans
 over and the alias each expansion binds; the IR has no way to enumerate the
-entities one expansion covers. `graph-match` and `graph-shortest-paths` emit
-columns that reach no downstream scope. Microsoft's binder does not place
-them either, and reports KS142 for a `| project` naming one on a bound parse.
+entities one expansion covers.
 
 The operators with an inner grammar of their own are modeled field by field.
 `scan` is a step machine: each step's condition and assignments are typed IR.
