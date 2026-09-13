@@ -1108,19 +1108,69 @@ class MakeGraphOp(Operator):
     raw_text: str
 
 
-class MacroExpandOp(Operator):
-    """``macro-expand`` — source text, plus the inner pipeline.
+class GraphMarkComponentsOp(Operator):
+    """``graph-mark-components`` — label each connected component.
 
-    The one member of the :class:`MakeGraphOp` register that is not opaque all the
-    way down. The entity-group name and the ``as`` alias stay in ``raw_text``,
-    and the parenthesized body is built as a real :class:`Pipeline` on
-    ``pipeline``, so its operators and columns are walkable. The scope it runs
-    against is not: the alias resolves to one entity per expansion, which the
-    IR has no way to enumerate.
+    ``with_component_id`` names the column the operator adds.
+    ``component_kind`` is the operator's ``kind=`` parameter, renamed because
+    ``kind`` is the discriminator every IR model carries. A value outside
+    ``weak``/``strong`` stays ``None``; Microsoft reports it as a diagnostic
+    rather than the IR raising on a typo.
+    """
+
+    kind: Literal["graph_mark_components"] = "graph_mark_components"
+    with_component_id: str | None = None
+    component_kind: Literal["weak", "strong"] | None = None
+
+
+class GraphToTableOutput(BaseModel):
+    """One ``nodes`` or ``edges`` projection of a ``graph-to-table``.
+
+    ``alias`` is the ``as N`` name. The three id fields are the operator's
+    ``with_node_id=`` / ``with_source_id=`` / ``with_target_id=`` parameters,
+    each naming a column the projection adds.
+    """
+
+    model_config = {"extra": "forbid"}
+    kind: Literal["graph_to_table_output"] = "graph_to_table_output"
+    entity: Literal["nodes", "edges"]
+    alias: str | None = None
+    node_id: str | None = None
+    source_id: str | None = None
+    target_id: str | None = None
+    span: Span
+
+
+class GraphToTableOp(Operator):
+    """``graph-to-table`` — project a graph back to one or two tables.
+
+    Which entities it emits and the columns each projection adds are typed,
+    so a downstream consumer can read them without parsing text.
+    """
+
+    kind: Literal["graph_to_table"] = "graph_to_table"
+    outputs: list[GraphToTableOutput]
+
+
+class MacroExpandOp(Operator):
+    """``macro-expand`` — run one body once per entity in a group.
+
+    The group is written two ways and each has its own field:
+    ``macro-expand EG as X (…)`` names a declared group on
+    ``entity_group_name``, and ``macro-expand entity_group [c, d] as X (…)``
+    puts one expression per entity on ``entities``. The entities are typed
+    rather than text, so a cluster or database name in one reaches
+    ``find_all``.
+
+    ``alias`` is the ``as X`` name. The body is a real :class:`Pipeline`. The
+    scope the alias resolves to is a boundary: the IR has no way to enumerate
+    the entities one expansion covers.
     """
 
     kind: Literal["macro_expand"] = "macro_expand"
-    raw_text: str
+    entity_group_name: str | None = None
+    entities: list[AnyExpr] = []
+    alias: str
     pipeline: Optional["Pipeline"] = None
 
 
@@ -1139,18 +1189,6 @@ class GraphMatchOp(Operator):
     raw_text: str
 
 
-class GraphMarkComponentsOp(Operator):
-    """``graph-mark-components`` — text only; see :class:`MakeGraphOp`.
-
-    ``with_component_id=`` names a column this operator adds. It is inside
-    ``raw_text``, so the added column is in no downstream scope, Microsoft's
-    included.
-    """
-
-    kind: Literal["graph_mark_components"] = "graph_mark_components"
-    raw_text: str
-
-
 class GraphShortestPathsOp(Operator):
     """``graph-shortest-paths`` — text only; see :class:`MakeGraphOp`.
 
@@ -1159,18 +1197,6 @@ class GraphShortestPathsOp(Operator):
     """
 
     kind: Literal["graph_shortest_paths"] = "graph_shortest_paths"
-    raw_text: str
-
-
-class GraphToTableOp(Operator):
-    """``graph-to-table`` — text only; see :class:`MakeGraphOp`.
-
-    Whether it emits ``nodes``, ``edges`` or both, and under which column
-    names, is in ``raw_text``. That is the information a downstream scope would
-    need, so the scope stays whatever the graph operators inherited.
-    """
-
-    kind: Literal["graph_to_table"] = "graph_to_table"
     raw_text: str
 
 

@@ -623,6 +623,33 @@ MUST_DIFFER = [
         "T | top-nested 3 of a by max(b), top-nested 2 of c by count()",
         "T | top-nested 3 of a by max(b)",
     ),
+    # --- Track E: graph-mark-components, graph-to-table, macro-expand ---
+    # No ``make-graph`` prefix: it stays in the register (raw_text) this
+    # task, and ``test_no_battery_pair_discriminates_on_an_unmodelled_blob``
+    # requires every battery query to lower with no source-text carrier.
+    # ``graph-mark-components``/``graph-to-table`` dispatch on their own
+    # SyntaxKind regardless of what precedes them, so the bare pipe still
+    # exercises the field each pair guards.
+    (
+        "graph-to-table-entity",
+        "T | graph-to-table nodes",
+        "T | graph-to-table edges",
+    ),
+    (
+        "graph-mark-components-id",
+        "T | graph-mark-components with_component_id=a",
+        "T | graph-mark-components with_component_id=b",
+    ),
+    (
+        "graph-mark-components-kind",
+        "T | graph-mark-components kind=weak",
+        "T | graph-mark-components kind=strong",
+    ),
+    (
+        "macro-expand-entity-count",
+        "macro-expand entity_group [cluster('c1').database('d1')] as X (X.T | count)",
+        "macro-expand entity_group [cluster('c1').database('d1'), cluster('c2').database('d2')] as X (X.T | count)",
+    ),
 ]
 
 
@@ -1001,8 +1028,8 @@ def test_no_battery_pair_discriminates_on_an_unmodelled_blob():
     pair.
 
     The check covers more than the ``Unknown*`` classes. Several modeled
-    operators record their own source too (``MacroExpandOp``, ``MakeGraphOp``
-    and the four ``graph-*`` operators), because they are dispatched and only
+    operators record their own source too (``MakeGraphOp`` and the
+    ``graph-*`` matchers), because they are dispatched and only
     partly modeled. Nothing in the battery reaches one
     today, so naming them in prose would protect nobody: the first pair
     written against ``graph-match`` would discriminate on ``raw_text`` and

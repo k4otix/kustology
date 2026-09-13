@@ -40,7 +40,7 @@ from .query import (
     ExternalDataSource, FacetOp, FilterOp,
     FindOp, ForkBranch, ForkOp, FuncCallSource, GetSchemaOp,
     GraphMarkComponentsOp, GraphMatchOp, GraphShortestPathsOp,
-    GraphToTableOp, GraphWhereEdgesOp,
+    GraphToTableOp, GraphToTableOutput, GraphWhereEdgesOp,
     GraphWhereNodesOp, ImplicitSource,
     InvokeOp, JoinOp, LetBinding, LetFunction, LetFunctionParameter, LetRef,
     LookupOp, MacroExpandOp,
@@ -94,7 +94,7 @@ __all__ = [
     "QueryIR", "Pipeline", "LetBinding", "LetFunction", "LetFunctionParameter",
     "Diagnostic", "Assignment",
     "ForkBranch", "MakeSeriesAggregate", "MvExpandColumn", "ReorderKey",
-    "ScanStep", "SortKey", "Span", "TopNestedLevel",
+    "ScanStep", "SortKey", "Span", "TopNestedLevel", "GraphToTableOutput",
     "KustoType", "TabularSchema",
     # Expressions
     "Expr", "AnyExpr", "ColumnRef", "BinOp", "SetMembership", "Between",

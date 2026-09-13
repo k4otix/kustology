@@ -1,0 +1,5 @@
+// Connected-component labelling over a device/account graph.
+SigninLogs
+| make-graph AccountName --> DeviceName
+| graph-mark-components kind=weak with_component_id=ClusterId
+| graph-to-table nodes as Accounts with_node_id=NodeName

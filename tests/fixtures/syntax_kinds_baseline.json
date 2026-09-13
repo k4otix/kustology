@@ -725,6 +725,9 @@
     "ElementExpression": [
       "ElementExpression"
     ],
+    "EntityGroup": [
+      "EntityGroupExpression"
+    ],
     "EvaluateOperator": [
       "EvaluateOperator"
     ],
@@ -776,6 +779,18 @@
     "FunctionParameters": [
       "FunctionParameters"
     ],
+    "GraphMarkComponentsOperator": [
+      "GraphMarkComponentsOperator"
+    ],
+    "GraphToTableAsClause": [
+      "GraphToTableAsClause"
+    ],
+    "GraphToTableOperator": [
+      "GraphToTableOperator"
+    ],
+    "GraphToTableOutputClause": [
+      "GraphToTableOutputClause"
+    ],
     "HasAllExpression": [
       "HasAllExpression"
     ],
@@ -807,6 +822,7 @@
     ],
     "KindToken": [
       "AndKeyword",
+      "AsKeyword",
       "AscKeyword",
       "AsteriskToken",
       "BagExpansionKeyword",
@@ -834,6 +850,7 @@
       "DotToken",
       "DoubleKeyword",
       "DynamicKeyword",
+      "EntityGroupKeyword",
       "EqualEqualToken",
       "EqualTildeToken",
       "EqualToken",
@@ -846,6 +863,9 @@
       "FlagsKeyword",
       "ForkKeyword",
       "FromKeyword",
+      "GraphEdgesKeyword",
+      "GraphMarkComponentsKeyword",
+      "GraphToTableKeyword",
       "GreaterThanOrEqualToken",
       "GreaterThanToken",
       "HasAllKeyword",
@@ -866,12 +886,15 @@
       "LimitKeyword",
       "LongKeyword",
       "LookupKeyword",
+      "MacroExpandKeyword",
+      "MakeGraphKeyword",
       "MakeSeriesKeyword",
       "MatchesRegexKeyword",
       "MaterializeKeyword",
       "MinusToken",
       "MvDashApplyKeyword",
       "MvDashExpandKeyword",
+      "NodesKeyword",
       "NotBangContainsCsKeyword",
       "NotInKeyword",
       "NotStartsWithKeyword",
@@ -920,6 +943,7 @@
       "WithItemIndexKeyword",
       "WithKeyword",
       "WithMatchIdKeyword",
+      "WithNodeIdKeyword",
       "WithSourceKeyword"
     ],
     "LetStatement": [
@@ -946,6 +970,15 @@
     ],
     "LookupOperator": [
       "LookupOperator"
+    ],
+    "MacroExpandOperator": [
+      "MacroExpandOperator"
+    ],
+    "MacroExpandScopeReferenceName": [
+      "MacroExpandScopeReferenceName"
+    ],
+    "MakeGraphOperator": [
+      "MakeGraphOperator"
     ],
     "MakeSeriesByClause": [
       "MakeSeriesByClause"
@@ -1109,6 +1142,9 @@
     "SeparatedElement[FunctionParameter]": [
       "SeparatedElement"
     ],
+    "SeparatedElement[GraphToTableOutputClause]": [
+      "SeparatedElement"
+    ],
     "SeparatedElement[JsonPair]": [
       "SeparatedElement"
     ],
@@ -1172,6 +1208,9 @@
     "SyntaxList[SeparatedElement[FunctionParameter]]": [
       "List"
     ],
+    "SyntaxList[SeparatedElement[GraphToTableOutputClause]]": [
+      "List"
+    ],
     "SyntaxList[SeparatedElement[JsonPair]]": [
       "List"
     ],
@@ -1209,6 +1248,7 @@
       "TakeOperator"
     ],
     "TextAndKindToken": [
+      "DashDashGreaterThanToken",
       "EndOfTextToken"
     ],
     "ToScalarExpression": [

@@ -113,6 +113,7 @@ from .query import (
     GraphMatchOp,
     GraphShortestPathsOp,
     GraphToTableOp,
+    GraphToTableOutput,
     GraphWhereEdgesOp,
     GraphWhereNodesOp,
     ImplicitSource,
@@ -189,6 +190,7 @@ from Kusto.Language.Syntax import (
     FunctionDeclaration,
     IncludeTrivia,
     LetStatement,
+    MacroExpandOperator,
     PatternStatement,
     QueryParametersStatement,
     RestrictStatement,
@@ -723,13 +725,17 @@ class IRBuilder:
         """Return True when ``node`` is one of the *query's* own statements.
 
         ``GetDescendants`` is recursive, so every statement sweep needs this:
-        a statement inside a ``let``-function body or a ``declare pattern``
-        arm belongs to that body and is built there. The two ancestor kinds
-        are the only two the grammar puts a ``FunctionBody`` under.
+        a statement inside a ``let``-function body, a ``declare pattern`` arm,
+        or a ``macro-expand`` body belongs to that construct and is built
+        there instead. Each ancestor kind below owns a body the grammar fills
+        with statements. A construct that opens such a body and is missing
+        from this list has its statements built twice, once here and once by
+        the visitor that owns the body.
         """
         return (
             node.GetFirstAncestor[FunctionDeclaration]() is None
             and node.GetFirstAncestor[PatternStatement]() is None
+            and node.GetFirstAncestor[MacroExpandOperator]() is None
         )
 
     def _visit_statements(self, root: Any) -> list[AnyStatement]:
@@ -1944,25 +1950,15 @@ class IRBuilder:
         if kind == "MakeGraphOperator":
             return MakeGraphOp(raw_text=node.ToString(IncludeTrivia.Minimal), span=span)
         if kind == "MacroExpandOperator":
-            # The body is a ``StatementList``. Neither ``Subquery`` nor
-            # ``Body`` is a member of MacroExpandOperator.
-            inner = None
-            statements = getattr(n, "StatementList", None)
-            if statements is not None and statements.Count > 0:
-                for stmt in _iter_elements(statements):
-                    expr = getattr(stmt, "Expression", None)
-                    if expr is not None:
-                        inner = self._visit_pipeline(expr)
-                        break
-            return MacroExpandOp(raw_text=node.ToString(IncludeTrivia.Minimal), pipeline=inner, span=span)
+            return self._visit_macro_expand(n, span)
         if kind == "GraphMatchOperator":
             return GraphMatchOp(raw_text=node.ToString(IncludeTrivia.Minimal), span=span)
         if kind == "GraphMarkComponentsOperator":
-            return GraphMarkComponentsOp(raw_text=node.ToString(IncludeTrivia.Minimal), span=span)
+            return self._visit_graph_mark_components(n, span)
         if kind == "GraphShortestPathsOperator":
             return GraphShortestPathsOp(raw_text=node.ToString(IncludeTrivia.Minimal), span=span)
         if kind == "GraphToTableOperator":
-            return GraphToTableOp(raw_text=node.ToString(IncludeTrivia.Minimal), span=span)
+            return self._visit_graph_to_table(n, span)
 
         return UnknownOp(
             raw_text=node.ToString(IncludeTrivia.Minimal),
@@ -2108,6 +2104,77 @@ class IRBuilder:
                 span=to_span(clause),
             ))
         return TopNestedOp(levels=levels, span=span)
+
+    def _visit_graph_mark_components(self, node: Any, span: Span) -> GraphMarkComponentsOp:
+        """Build a :class:`GraphMarkComponentsOp` from its named parameters."""
+        params = read_named_params(getattr(node, "Parameters", None))
+        component_kind = params.get("kind")
+        return GraphMarkComponentsOp(
+            with_component_id=params.get("with_component_id"),
+            # Microsoft reports an out-of-vocabulary kind itself; letting the
+            # text reach the Literal would raise ValidationError out of
+            # ``to_ir()`` on a query the parser accepted.
+            component_kind=component_kind if component_kind in ("weak", "strong") else None,
+            span=span,
+        )
+
+    def _visit_graph_to_table(self, node: Any, span: Span) -> GraphToTableOp:
+        """Build a :class:`GraphToTableOp`, one entry per output clause.
+
+        A malformed clause carries a missing ``EntityKeyword`` whose text is
+        empty and no ``Parameters`` at all, so a clause whose entity is not
+        ``nodes`` or ``edges`` is skipped rather than raising on the Literal.
+        """
+        outputs: list[GraphToTableOutput] = []
+        clauses = getattr(node, "OutputClause", None)
+        if clauses is not None:
+            for clause in _iter_elements(clauses):
+                entity = clause.EntityKeyword.Text
+                if entity not in ("nodes", "edges"):
+                    continue
+                as_clause = getattr(clause, "AsClause", None)
+                params = read_named_params(getattr(clause, "Parameters", None))
+                outputs.append(GraphToTableOutput(
+                    entity=entity,
+                    alias=visit_name(as_clause.Name) if as_clause is not None else None,
+                    node_id=params.get("with_node_id"),
+                    source_id=params.get("with_source_id"),
+                    target_id=params.get("with_target_id"),
+                    span=to_span(clause),
+                ))
+        return GraphToTableOp(outputs=outputs, span=span)
+
+    def _visit_macro_expand(self, node: Any, span: Span) -> MacroExpandOp:
+        """Build a :class:`MacroExpandOp`.
+
+        ``EntityGroup`` is a ``NameReference`` for a declared group and an
+        ``EntityGroup`` node carrying ``.Entities`` for an inline one, so the
+        two spellings fill different fields and neither is a text field.
+        """
+        group = node.EntityGroup
+        entities: list[AnyExpr] = []
+        entity_group_name: str | None = None
+        if getattr(group, "Entities", None) is not None:
+            entities = [self._visit_expr(el) for el in _iter_elements(group.Entities)]
+        else:
+            entity_group_name = visit_name(group.Name)
+
+        inner: Pipeline | None = None
+        statements = getattr(node, "StatementList", None)
+        if statements is not None and statements.Count > 0:
+            for stmt in _iter_elements(statements):
+                expr = getattr(stmt, "Expression", None)
+                if expr is not None:
+                    inner = self._visit_pipeline(expr)
+                    break
+
+        return MacroExpandOp(
+            entity_group_name=entity_group_name,
+            entities=entities,
+            alias=visit_name(node.ScopeReferenceName.EntityGroupReferenceName),
+            pipeline=inner,
+            span=span,
+        )
 
     def _visit_sort_key(self, node: Any) -> SortKey:
         """One ``sort by`` / ``order by`` / ``top … by`` ordering key.
