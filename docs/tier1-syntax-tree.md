@@ -171,12 +171,43 @@ from `validate()` or `KustoQuery.diagnostics`, the offsets from
 `find_time_expressions()`, and [Tier 2](tier2-ir.md)'s `Span`. `replace_table()`
 translates internally.
 
+## Control commands
+
+Microsoft's parser accepts control commands as well as queries. A dotted
+command roots in a `CommandBlock`; everything else roots in a `QueryBlock`,
+including empty text, whitespace, a comment on its own, and a query made
+only of `let` statements. `KustoQuery.is_command` reports which.
+
+`KustoQuery.command_kinds` returns Microsoft's `CommandKind` string for
+every command in the parse, as a `frozenset`. One parse can hold several:
+`.execute database script <| .drop table X` reports `ExecuteDatabaseScript`
+and `DropTable`. A query reports an empty set. The strings track the bundled
+`Kusto.Language` version. kustology neither maps them to an enum nor sorts
+them into read-only and destructive; the caller decides against the strings
+the bundled DLL emits.
+
+```python
+from kustology import parse
+
+q = parse(".show tables | project TableName")
+q.is_command        # True
+q.command_kinds     # frozenset({'ShowTables'})
+```
+
+Accessors written for query grammar still answer on a command, and their
+answers describe positions a command does not have. The parse above reports
+`get_referenced_tables() == set()`: `get_referenced_tables()` reports table
+references only, and `tables` there is a command argument. Branch on
+`is_command` first.
+[Tier 2](tier2-ir.md)'s `to_ir()` raises a `ValueError` on a command. The
+message names the root kind it got.
+
 ## Lexical spans
 
-`kustology.lexical` reports positions the lexer already decided —
-comments, string literals, statements, the tokens themselves — as
-code-point spans, with no pydantic and no dependency on Tier 2. Every
-`KustoQuery` exposes the same four helpers as methods.
+`kustology.lexical` reports positions Microsoft's parser already decided
+(comments, string literals, statements, skipped text, and the tokens
+themselves) as code-point spans, with no pydantic and no dependency on
+Tier 2. Every `KustoQuery` exposes the same helpers as methods.
 
 `TextSpan` is the plain type they all return: a `start`/`length`
 `NamedTuple` with an `end` property and a `text(query)` method that
@@ -214,6 +245,17 @@ backtick instead.
 `statement_spans(kusto_code)` finds the top-level statements in source
 order. The `;` separator between statements is excluded from every
 span.
+
+`skipped_token_spans(kusto_code)` finds every run of text the parser could
+not fit into the grammar and skipped. Whether a diagnostic covers the same
+text depends on the root. In the query `T | where a == 1 )))` the parser
+skips the trailing `)))` and reports an error that starts at the same
+position, one character wide against the three it skipped. In
+`.show table T details` followed by `.drop table Victim`, the command block
+takes the first command, skips the second, and reports nothing: the
+`diagnostics` list is empty and the span is the only sign that half the
+input went unread. Read both when you need to know that all of your input
+parsed.
 
 Everything above is code points, like every other span kustology
 reports — see [Node offsets count UTF-16 code

@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`KustoQuery.is_command` and `command_kinds`** (tier 1). `is_command` tells a dotted control command from a query; `command_kinds` returns Microsoft's `CommandKind` strings for every command in the parse. See [Control commands](docs/tier1-syntax-tree.md#control-commands).
+- **`skipped_token_spans()`** (tier 1). `KustoQuery` and `kustology.lexical` report every run of text the parser skipped. A control command skips a trailing second command with no diagnostic, so an empty `diagnostics` list is not proof that all of the input parsed.
+- **`examples/safe_interpolation.py`** (tier 1). The example builds a query from a caller-supplied table name, quotes it, and checks the parse against a canary shape before trusting it. Linked from the README's example table.
+
+### Changed
+
+- **`to_ir()` raises on a control command** (tier 2). The IR models query grammar, so a `CommandBlock` parse raises `ValueError`; branch on `KustoQuery.is_command` first. `kustology parse --ir` exits 1 on the same input.
+- **`validate`, `format`, and `parse` reject input whose tail the parser skipped** (CLI). The diagnostic carries kustology's code `KUSTOLOGY002` at `Error` severity. The library's `validate()` and `KustoQuery.diagnostics` are unchanged.
+
 ## [0.3.0] — 2026-08-30
 
 `IR_SCHEMA_VERSION` stays `0.2` and `SEMANTIC_HASH_SCHEME` stays `kustology-sem-v2`. No digest moves, and IR JSON stored by 0.2.x loads into 0.3.0 unchanged — a stored `semantic_hash` is dropped and recomputed, and `Diagnostic.detail` defaults to `None`. What the tags do not promise is the other direction: a 0.3.0 dump carries a `detail` key on every diagnostic, and every IR model sets `extra="forbid"`, so 0.2.x refuses it. Rebuild from source rather than downgrading a dump.

@@ -2150,3 +2150,8 @@ def test_auto_names_hold_a_prefix_even_without_a_bare_column_argument():
     # Bind-stable, and pinned at today's (known-divergent) answer: "tree_",
     # not Microsoft's "tree_D_0" -- see the docstring above.
     assert pick_by(bound) == pick_by(unbound) == ["tree_"]
+
+
+def test_to_ir_rejects_a_control_command():
+    with pytest.raises(ValueError, match="CommandBlock"):
+        parse(".drop table A | getschema").to_ir()

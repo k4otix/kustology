@@ -107,6 +107,13 @@ detection's outer lookback that way.
 
 ## Where Tier 2 stops
 
+Tier 2 stops at the query grammar. A control command's arguments are not
+query positions, so `to_ir()` raises a `ValueError` on one. The message names
+the root kind: `parse(".drop table A | getschema").to_ir()` reports a
+`CommandBlock`. Read [`KustoQuery.is_command` and
+`command_kinds`](tier1-syntax-tree.md#control-commands) to branch before the
+call.
+
 Eight operators are recorded as their own source text rather than
 structured fields, on `raw_text`: `scan`, `top-nested`, `make-graph`,
 `graph-match`, `graph-mark-components`, `graph-shortest-paths`,

@@ -59,6 +59,11 @@ _UNKNOWN_NAME_CODES = frozenset({
 # was built from an unbound tree.
 ANALYZE_FAILED_CODE = "KUSTOLOGY001"
 
+# kustology's own code for input whose tail the parser skipped. The CLI
+# issues it; the library's ``validate`` and ``KustoQuery.diagnostics``
+# report what Microsoft reports and leave the judgement to the caller.
+SKIPPED_TEXT_CODE = "KUSTOLOGY002"
+
 
 def _analyze_guarded(
     analyze: Callable[[], Any],
@@ -143,6 +148,12 @@ def parse(query_text: str, schema: SchemaLike = None):
     holds the *unbound* parse (``has_semantics`` is ``False``) and reports one
     extra ``Error`` diagnostic naming the .NET exception — see
     :func:`_analyze_guarded`.
+
+    A control command (``.show tables``, ``.drop table T``) parses too, into
+    a ``CommandBlock`` instead of a ``QueryBlock``. Read
+    :attr:`kustology.KustoQuery.is_command` before an accessor written for
+    query grammar, and :attr:`kustology.KustoQuery.command_kinds` for what
+    the command does.
 
     Raises ``ValueError`` when ``query_text`` holds an unpaired surrogate,
     which UTF-16 cannot encode; see

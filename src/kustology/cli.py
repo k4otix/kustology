@@ -40,7 +40,8 @@ import os
 import sys
 
 from . import __version__
-from .services import format_query, parse, validate
+from .services import SKIPPED_TEXT_CODE, format_query, parse, validate
+from .spans import TextSpan
 from .utils.walker import MAX_AST_DEPTH, node_to_dict
 
 # Bound on the bytes read from stdin or a file. KQL queries are not large, so
@@ -232,6 +233,60 @@ def _format_diagnostic(d: dict) -> str:
     return f"{start}+{length} {severity}{code_str} {d.get('message', '')}\n"
 
 
+def _covers(diagnostic: dict, span: TextSpan) -> bool:
+    """Return whether ``diagnostic``'s range meets ``span``'s.
+
+    Half-open intersection, with a zero-length diagnostic widened to one
+    position so a caret-style row at the head of a skipped run still counts
+    as covering it. The parser's own row over a skipped tail is narrower
+    than the run (one character against three for ``)))``), so equality of
+    ``start`` and ``length`` would miss it and report the same defect twice.
+    """
+    start = diagnostic.get("start", 0)
+    end = start + max(diagnostic.get("length", 0), 1)
+    return start < span.end and span.start < end
+
+
+def _cli_diagnostics(
+    body: str,
+    *,
+    schema: dict | None = None,
+    ignore_unknown_tables: bool = False,
+) -> list[dict]:
+    """Return the diagnostics this CLI reports for ``body``.
+
+    Microsoft's diagnostics, plus one row for each run of text the parser
+    skipped that no diagnostic already covers. A shell user reads an empty
+    diagnostic list as "all of my input parsed", and a control command
+    carries no diagnostic for a second command it skipped:
+    ``.show table T details`` followed by ``.drop table Victim`` validates
+    clean while half of it goes unread.
+
+    The synthesized row carries ``Error`` severity, so ``format`` and
+    ``parse``, which already refuse Error-severity input, refuse this too.
+    It uses the seven-key shape :func:`kustology.services._diagnostic_dicts`
+    emits, with code-point offsets from the span.
+    """
+    diagnostics = validate(
+        body, schema=schema, ignore_unknown_tables=ignore_unknown_tables,
+    )
+    for span in parse(body).skipped_token_spans():
+        if any(_covers(d, span) for d in diagnostics):
+            continue
+        diagnostics.append({
+            "start": span.start,
+            "length": span.length,
+            "message": (
+                f"unparsed text at offset {span.start}, {span.length} characters"
+            ),
+            "severity": "Error",
+            "category": "Kustology",
+            "code": SKIPPED_TEXT_CODE,
+            "detail": span.text(body),
+        })
+    return diagnostics
+
+
 def _report_error_diagnostics(body: str) -> bool:
     """Write any Error-severity diagnostics to stderr; True if there were any.
 
@@ -241,9 +296,10 @@ def _report_error_diagnostics(body: str) -> bool:
     truncated ``T | where``, and a shell redirect writes that to a file. The
     gate is unbound, parser diagnostics only. A table the schema does not
     describe is a schema gap, and ``validate`` is the subcommand for asking
-    about that.
+    about that. Input whose tail the parser skipped fails here too, under
+    :data:`kustology.services.SKIPPED_TEXT_CODE`.
     """
-    errors = [d for d in validate(body) if d.get("severity") == "Error"]
+    errors = [d for d in _cli_diagnostics(body) if d.get("severity") == "Error"]
     # Same rule as stdout, on the other stream: the verdict is decided, so a
     # reader that hangs up mid-report stops the report and nothing else. Under
     # `kustology format bad.kql 2>&1 | head` these lines fill the pipe.
@@ -283,7 +339,7 @@ def _load_schema(path: str | None) -> dict | None:
 def _cmd_validate(args: argparse.Namespace) -> int:
     body = _read_input(args)
     schema = _load_schema(args.schema)
-    diags = validate(
+    diags = _cli_diagnostics(
         body,
         schema=schema,
         ignore_unknown_tables=args.ignore_unknown_tables,
@@ -328,16 +384,36 @@ def _cmd_parse(args: argparse.Namespace) -> int:
         try:
             from .ir import IR_SCHEMA_VERSION, SEMANTIC_HASH_SCHEME
         except ImportError as e:
-            sys.stderr.write(
-                "kustology parse --ir requires the [ir] extras (pydantic). "
-                "Install with: pip install 'kustology[ir]'\n"
-            )
-            sys.stderr.write(f"({e})\n")
+            # Guarded for the same reason as the rejection below: exit 2 is
+            # already decided, and a reader that hung up must not turn this
+            # usage error into main's `except BrokenPipeError: return 0`.
+            with contextlib.suppress(BrokenPipeError):
+                sys.stderr.write(
+                    "kustology parse --ir requires the [ir] extras (pydantic). "
+                    "Install with: pip install 'kustology[ir]'\n"
+                )
+                sys.stderr.write(f"({e})\n")
             return 2
         # `parse().to_ir()` is what makes `--schema` mean anything here:
         # `to_ir()` auto-attaches the schema on a bound parse, so the IR
         # carries column types and table provenance.
-        ir = parse(body, schema=schema).to_ir()
+        query = parse(body, schema=schema)
+        if query.is_command:
+            # Exit 1 is the "input rejected" code; the invocation was fine.
+            kinds = ", ".join(sorted(query.command_kinds))
+            # A dotted command the bundled DLL does not recognize still roots
+            # in a CommandBlock, with an empty command_kinds.
+            suffix = f" ({kinds})" if kinds else " (unrecognized command)"
+            # Same rule as every other write in this module: the exit code is
+            # already decided, so a reader that hung up must not turn this
+            # rejection into main's own `except BrokenPipeError: return 0`.
+            with contextlib.suppress(BrokenPipeError):
+                sys.stderr.write(
+                    "kustology parse --ir models queries; this input is a "
+                    f"control command{suffix}.\n"
+                )
+            return 1
+        ir = query.to_ir()
         if args.json:
             # Both version tags are the consumer's compatibility contract: a
             # stored payload naming neither cannot be checked against the IR

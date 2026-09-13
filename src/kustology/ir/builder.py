@@ -517,6 +517,10 @@ class IRBuilder:
         harmless for ``semantic_hash`` and what it costs everywhere else.
 
         ``semantic_hash`` behaves as in :meth:`build_from_code`.
+
+        Raises ``ValueError`` when ``query`` parses to anything but a
+        ``QueryBlock``. A control command roots in a ``CommandBlock``, whose
+        arguments are not query positions.
         """
         code, failure = _analyze_guarded(
             lambda: KustoCode.ParseAndAnalyze(query, self.global_state),
@@ -571,7 +575,25 @@ class IRBuilder:
         :func:`~kustology.ir.transforms.compute_semantic_hash`, the larger
         part of a build. The default defers it to the first read of
         :attr:`QueryIR.semantic_hash`, which computes and memoizes it then.
+
+        Raises ``ValueError`` when ``code`` is rooted in anything but a
+        ``QueryBlock``. A control command roots in a ``CommandBlock``, whose
+        arguments are not query positions. Read
+        :attr:`kustology.KustoQuery.is_command` first.
         """
+        root = code.Syntax
+        root_kind = str(root.Kind)
+        # Covers ``build()`` too, which routes here. A command block's
+        # arguments are not query positions, so every visitor below would
+        # read a shape it was not written for and emit IR that looks like a
+        # query's.
+        if root_kind != "QueryBlock":
+            raise ValueError(
+                f"The Tier 2 IR models a QueryBlock; this parse is a {root_kind}. "
+                "Read KustoQuery.is_command and command_kinds before building "
+                "IR from it."
+            )
+
         # Kusto evaluates a literal against the culture live at the moment of
         # access, and the visits below read literal values.
         ensure_invariant_culture()
@@ -602,7 +624,6 @@ class IRBuilder:
                 category=category_val,
             ))
 
-        root = code.Syntax
         self._let_names = set()
         self._param_names = set()
         let_bindings: list[LetBinding] = []

@@ -654,3 +654,103 @@ def test_no_subcommand_is_also_a_systemexit_usage_error(capsys):
         main([])
     assert exc_info.value.code == 2
     capsys.readouterr()
+
+
+def test_parse_ir_refuses_a_control_command(monkeypatch, capsys):
+    """Exit 1: the input is rejected, the invocation was fine."""
+    pytest.importorskip("pydantic")
+    monkeypatch.setattr(sys, "stdin", _stdin(".show tables"))
+    rc = main(["parse", "--ir", "-"])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    assert "ShowTables" in captured.err
+
+
+def test_parse_ir_refuses_an_unrecognized_command(monkeypatch, capsys):
+    """A dotted command Microsoft's parser does not recognize still roots in
+    a CommandBlock with an empty command_kinds; the message names that case
+    instead of dropping the parenthetical."""
+    pytest.importorskip("pydantic")
+    monkeypatch.setattr(sys, "stdin", _stdin(".foo bar baz"))
+    rc = main(["parse", "--ir", "-"])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    assert "unrecognized command" in captured.err
+
+
+def test_control_command_refusal_survives_a_broken_stderr(monkeypatch, capsys):
+    """A `BrokenPipeError` from the rejection write must not escape into
+    `main`'s own `except BrokenPipeError: return 0` arm, which would turn a
+    rejected command into a success exit code."""
+    pytest.importorskip("pydantic")
+    monkeypatch.setattr(sys, "stdin", _stdin(".show tables"))
+    monkeypatch.setattr(sys, "stderr", _BrokenPipeStdout())
+    rc = main(["parse", "--ir", "-"])
+    assert rc == 1
+
+
+def test_missing_extras_hint_survives_a_broken_stderr(monkeypatch, capsys):
+    """The same rule on the other stderr write in this arm: the missing-extras
+    hint is a usage error, and a reader that hung up leaves it at exit 2."""
+    monkeypatch.setitem(sys.modules, "kustology.ir", None)
+    monkeypatch.setattr(sys, "stdin", _stdin("StormEvents | take 5"))
+    monkeypatch.setattr(sys, "stderr", _BrokenPipeStdout())
+    rc = main(["parse", "--ir", "-"])
+    assert rc == 2
+
+
+_TWO_COMMANDS = ".show table T details\n.drop table Victim"
+
+
+def test_validate_reports_text_the_parser_skipped(monkeypatch, capsys):
+    """Exit 1: Microsoft parses this clean and reads only the first command.
+
+    The message names the code and the offsets; the skipped text itself
+    moved to `detail`, which `_format_diagnostic` never prints. See
+    `test_validate_json_carries_the_skipped_text_row` for that."""
+    span = kustology.parse(_TWO_COMMANDS).skipped_token_spans()[0]
+    monkeypatch.setattr(sys, "stdin", _stdin(_TWO_COMMANDS))
+    rc = main(["validate", "-"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "KUSTOLOGY002" in out
+    assert f"{span.start}+{span.length}" in out
+
+
+def test_validate_json_carries_the_skipped_text_row(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", _stdin(_TWO_COMMANDS))
+    rc = main(["validate", "--json", "-"])
+    rows = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    (row,) = [r for r in rows if r["code"] == "KUSTOLOGY002"]
+    assert set(row) == {
+        "start", "length", "message", "severity", "category", "code", "detail",
+    }
+    assert row["severity"] == "Error"
+    assert _TWO_COMMANDS[row["start"]:row["start"] + row["length"]] == (
+        ".drop table Victim"
+    )
+    assert row["detail"] == ".drop table Victim"
+
+
+def test_format_refuses_input_whose_tail_was_skipped(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", _stdin(_TWO_COMMANDS))
+    rc = main(["format", "-"])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    assert "KUSTOLOGY002" in captured.err
+
+
+def test_a_skipped_tail_the_parser_already_reported_is_not_doubled(
+    monkeypatch, capsys,
+):
+    """One row, not two: the parser's KS198 covers the same `)))`."""
+    monkeypatch.setattr(sys, "stdin", _stdin("T | where a == 1 )))"))
+    rc = main(["validate", "--json", "-"])
+    rows = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert len(rows) == 1
+    assert rows[0]["code"] != "KUSTOLOGY002"

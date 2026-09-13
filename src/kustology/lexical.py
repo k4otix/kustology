@@ -3,9 +3,9 @@
 
 """Lexical helpers over Microsoft's token stream (Tier 1, pydantic-free).
 
-Each helper reports positions the lexer already decided (comments, string
-literals, statements) as code-point :class:`TextSpan`s. None reinterprets the
-tree: "the main pipeline without its joins" is a Tier 2 question, see
+Each helper reports positions Microsoft's parser already decided (comments,
+string literals, statements, skipped text) as code-point
+:class:`TextSpan`s. None reinterprets the tree: "the main pipeline without its joins" is a Tier 2 question, see
 ``kustology.ir.walk(prune=...)`` and ``span_of``.
 """
 
@@ -16,6 +16,7 @@ from typing import Any, NamedTuple
 
 from ._text import Utf16Offsets
 from .spans import TextSpan
+from .utils.analysis import collect_nodes
 from .utils.walker import iter_elements
 
 _STRING_PREFIX = re.compile(r"[hH]?@?")
@@ -106,4 +107,33 @@ def statement_spans(kusto_code: Any) -> list[TextSpan]:
         TextSpan(*offsets.span_to_codepoints(stmt.TextStart, stmt.Width))
         for stmt in iter_elements(kusto_code.Syntax.Statements)
         if stmt.Width > 0
+    ]
+
+
+def skipped_token_spans(kusto_code: Any) -> list[TextSpan]:
+    """Return the span of every run of text the parser skipped, in source order.
+
+    The parser records text it cannot fit into the grammar as a
+    ``SkippedTokens`` node and carries on, so a query object can hold a
+    complete parse of part of its input. Both roots produce these nodes.
+
+    Whether a diagnostic accompanies one depends on the root. ``T | where a
+    == 1 )))`` is a query block, and the parser reports an error starting at
+    the same position as the trailing ``)))`` it skipped, one character wide
+    against the three. A command block reports
+    nothing: ``.show table T details`` followed by ``.drop table Victim``
+    parses with an empty ``diagnostics`` list and the second line as a
+    skipped run. Read this alongside ``diagnostics`` when "did all of my
+    input parse?" is the question.
+
+    Zero-width nodes are dropped, the same filter ``statement_spans``
+    applies to its statements.
+    """
+    offsets = Utf16Offsets(str(kusto_code.Text))
+    return [
+        TextSpan(*offsets.span_to_codepoints(node.TextStart, node.Width))
+        for node in collect_nodes(
+            kusto_code.Syntax, lambda n: str(n.Kind) == "SkippedTokens"
+        )
+        if node.Width > 0
     ]
