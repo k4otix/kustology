@@ -713,6 +713,32 @@ MUST_DIFFER = [
         "T | make-graph a --> b with_node_id=k",
         "T | make-graph a --> b with N on k",
     ),
+    # --- Track E: graph-match and graph-shortest-paths ---
+    (
+        "graph-pattern-direction",
+        "T | make-graph a --> b | graph-match (x)-[e]->(y) project x",
+        "T | make-graph a --> b | graph-match (x)<-[e]-(y) project x",
+    ),
+    (
+        "graph-pattern-hop-range",
+        "T | make-graph a --> b | graph-match (x)-[e*1..3]->(y) project x",
+        "T | make-graph a --> b | graph-match (x)-[e*1..4]->(y) project x",
+    ),
+    (
+        "graph-pattern-qualifier",
+        "T | make-graph a --> b | graph-match (x)-[e]->(y) project x.p",
+        "T | make-graph a --> b | graph-match (x)-[e]->(y) project y.p",
+    ),
+    (
+        "graph-match-cycles",
+        "T | make-graph a --> b | graph-match cycles=none (x)-[e]->(y) project x",
+        "T | make-graph a --> b | graph-match cycles=all (x)-[e]->(y) project x",
+    ),
+    (
+        "graph-shortest-paths-output",
+        "T | make-graph a --> b | graph-shortest-paths output=any (x)-[e*1..2]->(y) project x",
+        "T | make-graph a --> b | graph-shortest-paths output=all (x)-[e*1..2]->(y) project x",
+    ),
 ]
 
 
@@ -1090,13 +1116,10 @@ def test_no_battery_pair_discriminates_on_an_unmodelled_blob():
     whole battery is text-free is cheaper than reasoning about it pair by
     pair.
 
-    The check covers more than the ``Unknown*`` classes. Several modeled
-    operators record their own source too (the ``graph-*`` matchers), because
-    they are dispatched and only partly modeled. Nothing in the battery
-    reaches one today, so naming them in prose would protect nobody: the
-    first pair written against ``graph-match`` would discriminate on
-    ``raw_text`` and pass. Deriving the set from ``model_fields`` covers a
-    node added to the partly-modeled list from the moment it is defined.
+    The check covers more than the ``Unknown*`` classes by construction: the
+    carrier set is derived from ``model_fields`` at run time, so a node that
+    gains a ``raw_text`` field is covered from the moment it is defined
+    rather than from the moment somebody remembers to name it here.
     """
     offenders: dict[str, list[str]] = {}
     for query in sorted({q for _, a, b in MUST_DIFFER + MUST_EQUAL + KNOWN_COLLISIONS for q in (a, b)}):

@@ -187,6 +187,11 @@ MATRIX: list[tuple[str, str]] = [
     ("graph-mark-components", "T | make-graph k --> s | graph-mark-components kind=weak with_component_id=cid"),
     ("graph-to-table", "T | make-graph k --> s | graph-to-table nodes as N with_node_id=nid"),
     ("make-graph-with-nodes", "T | make-graph k --> s with U on k"),
+    ("graph-match-pattern", "T | make-graph k --> s | graph-match (x)-[e]->(y) project x"),
+    (
+        "graph-shortest-paths",
+        "T | make-graph k --> s | graph-shortest-paths output=any (x)-[e*1..2]->(y) project x",
+    ),
 ]
 
 # The bound leg's MATRIX run: one representative id per construct family. The

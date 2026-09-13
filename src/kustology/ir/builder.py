@@ -15,7 +15,7 @@ coverage audit script.
 from __future__ import annotations
 
 import logging
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from .._text import Utf16Offsets
 from ..bridge import (  # re-export-friendly; also triggers CLR init
@@ -71,6 +71,7 @@ from .expr import (
     Exists,
     ExternalDataExpr,
     FuncCall,
+    GraphElementRef,
     LetValueRef,
     LiteralExpr,
     NamedExpr,
@@ -111,6 +112,9 @@ from .query import (
     GetSchemaOp,
     GraphMarkComponentsOp,
     GraphMatchOp,
+    GraphPattern,
+    GraphPatternEdge,
+    GraphPatternNode,
     GraphShortestPathsOp,
     GraphToTableOp,
     GraphToTableOutput,
@@ -499,12 +503,18 @@ class IRBuilder:
         # saves and restores both.
         self._param_names: set[str] = set()
         # Names the enclosing operator declared as a scope: a ``scan`` step
-        # name. Empty everywhere else. A ``PathExpression`` whose left name is
-        # in this set is a qualified column reference, not a table read or a
-        # dynamic access. Every visitor that fills it restores it in a
-        # ``finally``, the way ``_visit_function_body`` restores
-        # ``_param_names``.
+        # name, a graph pattern element name. Empty everywhere else. A
+        # ``PathExpression`` whose left name is in this set is a qualified
+        # column reference, not a table read or a dynamic access. Every
+        # visitor that fills it restores it in a ``finally``, the way
+        # ``_visit_function_body`` restores ``_param_names``.
         self._qualifier_names: set[str] = set()
+        # The graph pattern element names alone, a subset of
+        # ``_qualifier_names``. A bare name in this set is the element itself
+        # and builds a ``GraphElementRef``; a bare ``scan`` step name stays a
+        # ``ColumnRef``, so the two scopes are read separately here even
+        # though they share the qualified path above.
+        self._element_names: set[str] = set()
 
     # -- entry points ----------------------------------------------------
 
@@ -643,6 +653,7 @@ class IRBuilder:
         self._let_names = set()
         self._param_names = set()
         self._qualifier_names = set()
+        self._element_names = set()
         let_bindings: list[LetBinding] = []
         # ``GetDescendants`` is recursive, so each sweep has to pick out the
         # query's own statements. A statement inside a ``FunctionDeclaration``
@@ -1952,17 +1963,16 @@ class IRBuilder:
         if kind == "TopNestedOperator":
             return self._visit_top_nested(n, span)
 
-        # Preserve-raw-text ops for elaborate state-machine operators.
         if kind == "MakeGraphOperator":
             return self._visit_make_graph(n, span)
         if kind == "MacroExpandOperator":
             return self._visit_macro_expand(n, span)
         if kind == "GraphMatchOperator":
-            return GraphMatchOp(raw_text=node.ToString(IncludeTrivia.Minimal), span=span)
+            return self._visit_graph_match(n, span)
         if kind == "GraphMarkComponentsOperator":
             return self._visit_graph_mark_components(n, span)
         if kind == "GraphShortestPathsOperator":
-            return GraphShortestPathsOp(raw_text=node.ToString(IncludeTrivia.Minimal), span=span)
+            return self._visit_graph_shortest_paths(n, span)
         if kind == "GraphToTableOperator":
             return self._visit_graph_to_table(n, span)
 
@@ -2198,6 +2208,146 @@ class IRBuilder:
                 ))
         return GraphToTableOp(outputs=outputs, span=span)
 
+    # Keyed by an edge's first and last token text, the only record of which
+    # arrow the pattern wrote.
+    _EDGE_DIRECTIONS: ClassVar[dict[tuple[str, str], str]] = {
+        ("-[", "]->"): "forward",
+        ("<-[", "]-"): "backward",
+        ("-[", "]-"): "any",
+    }
+
+    def _visit_graph_patterns(self, node: Any) -> tuple[list[GraphPattern], set[str]]:
+        """Read a graph operator's patterns and the names they bind.
+
+        Shared by ``graph-match`` and ``graph-shortest-paths``, which write
+        the same pattern grammar. The returned name set scopes the ``where``
+        and ``project`` clauses.
+
+        ``GraphMatchPatternNode`` has no ``FirstToken``/``LastToken``
+        property, so the direction read stays on the edge branch.
+        """
+        patterns: list[GraphPattern] = []
+        names: set[str] = set()
+        for pattern_node in _iter_elements(node.Patterns):
+            elements: list[GraphPatternNode | GraphPatternEdge] = []
+            for el in _iter_elements(pattern_node.PatternElements):
+                name_node = getattr(el, "Name", None)
+                name = visit_name(name_node) if name_node is not None else None
+                if name:
+                    names.add(name)
+                if str(type(el).__name__) == "GraphMatchPatternEdge":
+                    elements.append(self._visit_graph_pattern_edge(el, name))
+                else:
+                    elements.append(GraphPatternNode(name=name, span=to_span(el)))
+            patterns.append(GraphPattern(elements=elements, span=to_span(pattern_node)))
+        return patterns, names
+
+    def _visit_graph_pattern_edge(self, node: Any, name: str | None) -> GraphPatternEdge:
+        """Build one :class:`GraphPatternEdge`, hop range included.
+
+        ``Range`` is ``None`` unless the pattern wrote ``*``. Its bounds are
+        expressions rather than tokens, so each one goes through
+        :meth:`_hop_bound`. An arrow whose tokens match none of the three
+        spellings records ``any``, which is what an undirected edge matches.
+        """
+        edge_range = getattr(node, "Range", None)
+        return GraphPatternEdge(
+            name=name,
+            direction=self._EDGE_DIRECTIONS.get(
+                (str(node.FirstToken.Text), str(node.LastToken.Text)), "any",
+            ),
+            variable_length=edge_range is not None,
+            min_hops=self._hop_bound(getattr(edge_range, "RangeStart", None)),
+            max_hops=self._hop_bound(getattr(edge_range, "RangeEnd", None)),
+            span=to_span(node),
+        )
+
+    @staticmethod
+    def _hop_bound(node: Any) -> int | None:
+        """One written hop bound, or ``None`` when the pattern omitted it.
+
+        An unwritten bound is a zero-width ``NameReference`` the parser marks
+        missing. Reading it as a literal would record a hop count the query
+        never wrote.
+        """
+        if node is None or node.Width == 0 or node.IsMissing:
+            return None
+        value = getattr(node, "LiteralValue", None)
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _visit_graph_match(self, node: Any, span: Span) -> GraphMatchOp:
+        """Build a :class:`GraphMatchOp` with the pattern names in scope."""
+        patterns, names = self._visit_graph_patterns(node)
+        where, project = self._visit_graph_clauses(node, names)
+        return GraphMatchOp(
+            patterns=patterns,
+            where=where,
+            project=project,
+            cycles=self._graph_param(node, "cycles", ("all", "none", "unique_edges")),
+            span=span,
+        )
+
+    def _visit_graph_shortest_paths(self, node: Any, span: Span) -> GraphShortestPathsOp:
+        """Build a :class:`GraphShortestPathsOp` with the pattern names in scope."""
+        patterns, names = self._visit_graph_patterns(node)
+        where, project = self._visit_graph_clauses(node, names)
+        return GraphShortestPathsOp(
+            patterns=patterns,
+            where=where,
+            project=project,
+            output=self._graph_param(node, "output", ("all", "any")),
+            cycles=self._graph_param(node, "cycles", ("all", "none", "unique_edges")),
+            span=span,
+        )
+
+    def _visit_graph_clauses(
+        self, node: Any, names: set[str],
+    ) -> tuple[AnyExpr | None, list[ColumnRef | Assignment | AnyExpr]]:
+        """Read ``where`` and ``project`` with the pattern names in scope.
+
+        Both sets are restored in ``finally``: a graph operator inside a
+        ``make-graph``'s ``partitioned-by`` body must not leak its element
+        names outward.
+        """
+        saved_qualifiers = self._qualifier_names
+        saved_elements = self._element_names
+        self._qualifier_names = saved_qualifiers | names
+        self._element_names = saved_elements | names
+        try:
+            where_clause = getattr(node, "WhereClause", None)
+            where = (
+                self._visit_expr(where_clause.Condition)
+                if where_clause is not None else None
+            )
+            project_clause = getattr(node, "ProjectClause", None)
+            project = [
+                self._visit_expr_as_assignment(el)
+                for el in _iter_elements(project_clause.Expressions)
+            ] if project_clause is not None else []
+        finally:
+            self._qualifier_names = saved_qualifiers
+            self._element_names = saved_elements
+        return where, project
+
+    @staticmethod
+    def _graph_param(node: Any, name: str, allowed: tuple[str, ...]) -> str | None:
+        """One graph operator named parameter, validated against its Literal.
+
+        The parser accepts any value here without a diagnostic, so an
+        unrecognized one would reach pydantic and raise ``ValidationError``
+        out of ``to_ir()`` on a query Microsoft parsed clean. Membership in
+        ``allowed`` is the check the ``Literal`` itself applies, the policy
+        :meth:`_ordering_keyword` records.
+        """
+        value = extract_named_param(node, name)
+        return value if value in allowed else None
+
+
     def _visit_macro_expand(self, node: Any, span: Span) -> MacroExpandOp:
         """Build a :class:`MacroExpandOp`.
 
@@ -2412,6 +2562,13 @@ class IRBuilder:
             # collapses every prefix wildcard onto ``*``.
             if name == "*" and is_wildcarded_name(node.Name):
                 res = StarExpr(span=span)
+            # A graph pattern element name shadows a same-named ``let`` for
+            # the length of the operator, the way a function parameter
+            # shadows one, so this test precedes the ``let`` test. The
+            # element is neither a table nor a column: ``project n`` returns
+            # the bound node as a property bag.
+            elif name in self._element_names:
+                res = GraphElementRef(name=name, span=span)
             # A name an earlier ``let`` bound is a query-local value, the
             # expression-position twin of the ``LetRef`` check in
             # ``_visit_table_ref``. It is decided from the statement text

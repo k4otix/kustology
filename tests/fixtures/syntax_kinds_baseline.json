@@ -782,6 +782,24 @@
     "GraphMarkComponentsOperator": [
       "GraphMarkComponentsOperator"
     ],
+    "GraphMatchOperator": [
+      "GraphMatchOperator"
+    ],
+    "GraphMatchPattern": [
+      "GraphMatchPattern"
+    ],
+    "GraphMatchPatternEdge": [
+      "GraphMatchPatternEdge"
+    ],
+    "GraphMatchPatternEdgeRange": [
+      "GraphMatchPatternEdgeRange"
+    ],
+    "GraphMatchPatternNode": [
+      "GraphMatchPatternNode"
+    ],
+    "GraphShortestPathsOperator": [
+      "GraphShortestPathsOperator"
+    ],
     "GraphToTableAsClause": [
       "GraphToTableAsClause"
     ],
@@ -839,6 +857,7 @@
       "CommaToken",
       "ContainsKeyword",
       "CountKeyword",
+      "CyclesKeyword",
       "DataTableKeyword",
       "DatabaseKeyword",
       "DateTimeKeyword",
@@ -865,6 +884,8 @@
       "FromKeyword",
       "GraphEdgesKeyword",
       "GraphMarkComponentsKeyword",
+      "GraphMatchKeyword",
+      "GraphShortestPathsKeyword",
       "GraphToTableKeyword",
       "GreaterThanOrEqualToken",
       "GreaterThanToken",
@@ -1091,6 +1112,9 @@
     "ProjectAwayOperator": [
       "ProjectAwayOperator"
     ],
+    "ProjectClause": [
+      "ProjectClause"
+    ],
     "ProjectOperator": [
       "ProjectOperator"
     ],
@@ -1146,6 +1170,9 @@
       "SeparatedElement"
     ],
     "SeparatedElement[FunctionParameter]": [
+      "SeparatedElement"
+    ],
+    "SeparatedElement[GraphMatchPattern]": [
       "SeparatedElement"
     ],
     "SeparatedElement[GraphToTableOutputClause]": [
@@ -1205,6 +1232,9 @@
     "SyntaxList[ForkExpression]": [
       "List"
     ],
+    "SyntaxList[GraphMatchPatternNotation]": [
+      "List"
+    ],
     "SyntaxList[NamedParameter]": [
       "List"
     ],
@@ -1215,6 +1245,9 @@
       "List"
     ],
     "SyntaxList[SeparatedElement[FunctionParameter]]": [
+      "List"
+    ],
+    "SyntaxList[SeparatedElement[GraphMatchPattern]]": [
       "List"
     ],
     "SyntaxList[SeparatedElement[GraphToTableOutputClause]]": [
@@ -1260,6 +1293,8 @@
       "TakeOperator"
     ],
     "TextAndKindToken": [
+      "BracketDashGreaterThanToken",
+      "DashBracketToken",
       "DashDashGreaterThanToken",
       "EndOfTextToken"
     ],
@@ -1289,6 +1324,9 @@
     ],
     "UnionOperator": [
       "UnionOperator"
+    ],
+    "WhereClause": [
+      "WhereClause"
     ],
     "WildcardedName": [
       "WildcardedName"

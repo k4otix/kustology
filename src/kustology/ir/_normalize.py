@@ -26,6 +26,7 @@ from .expr import (
     Exists,
     ExternalDataExpr,
     FuncCall,
+    GraphElementRef,
     LetValueRef,
     LiteralExpr,
     NamedExpr,
@@ -216,6 +217,11 @@ def canonical(expr: Any) -> str:
         if isinstance(e, LetValueRef):
             # The name as the query wrote it. A ``let``-bound scalar reads
             # like a column at the use site; node type and the ``kind``
+            # discriminator in the digested dump tell the two apart.
+            return e.name
+        if isinstance(e, GraphElementRef):
+            # The element name as the pattern wrote it. A pattern element
+            # reads like a column at the use site; node type and the ``kind``
             # discriminator in the digested dump tell the two apart.
             return e.name
         if isinstance(e, TypedNameDecl):

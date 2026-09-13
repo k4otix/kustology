@@ -26,6 +26,7 @@ from .expr import (  # noqa: F401 — names referenced via forward refs
     Expr,
     ExternalDataExpr,
     FuncCall,
+    GraphElementRef,
     LetValueRef,
     LiteralExpr,
     NamedExpr,
@@ -1205,60 +1206,100 @@ class MacroExpandOp(Operator):
     pipeline: Optional["Pipeline"] = None
 
 
+class GraphPatternNode(BaseModel):
+    """One ``(name)`` element of a graph pattern; ``()`` leaves ``name`` unset."""
+
+    model_config = {"extra": "forbid"}
+    kind: Literal["graph_pattern_node"] = "graph_pattern_node"
+    name: str | None = None
+    span: Span
+
+
+class GraphPatternEdge(BaseModel):
+    """One ``-[name]->`` element of a graph pattern.
+
+    ``direction`` comes from the written arrow tokens: ``-[ ]->`` is
+    ``forward``, ``<-[ ]-`` is ``backward``, and ``-[ ]-`` is ``any``. The
+    three match different paths.
+
+    ``variable_length`` is the ``*`` of ``-[e*1..3]->``. ``min_hops`` and
+    ``max_hops`` are the bounds the query wrote; an omitted bound stays
+    ``None``, which is the pattern's own answer rather than a substituted
+    default.
+    """
+
+    model_config = {"extra": "forbid"}
+    kind: Literal["graph_pattern_edge"] = "graph_pattern_edge"
+    name: str | None = None
+    direction: Literal["forward", "backward", "any"]
+    variable_length: bool = False
+    min_hops: int | None = None
+    max_hops: int | None = None
+    span: Span
+
+
+class GraphPattern(BaseModel):
+    """One comma-separated pattern of a graph operator, in source order."""
+
+    model_config = {"extra": "forbid"}
+    kind: Literal["graph_pattern"] = "graph_pattern"
+    # Discriminated on the kind literal; member order is not load-bearing.
+    elements: list[Annotated[
+        GraphPatternNode | GraphPatternEdge, Field(discriminator="kind"),
+    ]]
+    span: Span
+
+
 class GraphMatchOp(Operator):
-    """``graph-match`` — kept as its own source text; the pattern is not modeled.
+    """``graph-match`` — find every path matching a pattern.
 
-    This is the first of the modeled operators the IR records on ``raw_text``
-    rather than in typed fields, the same register as :class:`LetFunction`'s:
-    the boundary is stated in the model instead of being left as fields that
-    read as implemented and are not. Every member of the register says so in
-    its own summary line, so the set is readable off the module. Two
-    exclusions keep it checkable. ``graph-where-edges`` and
-    ``graph-where-nodes`` carry a real ``predicate`` and no ``raw_text``.
-    :class:`UnknownOp` does carry one, but it is the builder's fallback for a
-    shape it could not dispatch rather than a modeling choice.
+    ``where`` and ``project`` are read against the pattern's element names,
+    so ``a.x`` is a :class:`~kustology.ir.expr.ColumnRef` qualified by ``a``
+    and bare ``a`` is a :class:`~kustology.ir.expr.GraphElementRef`.
 
-    ``raw_text`` is ``ToString(IncludeTrivia.Minimal)``, so these operators
-    round-trip through ``model_dump_json`` and participate in ``semantic_hash``
-    as text. Nothing typed is inside them to walk: ``find_all(ir, ColumnRef)``
-    will not report a column that appears only in one of their clauses.
-    Downstream scope splits by bind state. ``Operator.result_schema`` carries
-    Microsoft's ``ResultType``, which knows the columns each of them adds, and
-    :class:`SchemaAttacher` overlays it; an unbound parse has no such answer,
-    and nothing re-derives one, so the scope downstream is the one they
-    inherited. Hashing text also brings the formatting sensitivity
-    :class:`UnknownSource` documents: interior comments and interior spacing
-    are part of the digest.
+    ``cycles`` is the operator's only named parameter; ``output=`` is a
+    syntax error here. A value outside the three the engine accepts stays
+    ``None``.
 
-    The pattern, its ``where`` constraint and its ``project`` list are all
-    text, so a column named only in a graph pattern does not reach
-    ``find_all(ir, ColumnRef)``, and the columns this operator emits are in no
-    downstream scope. That second half is a boundary of the graph surface:
-    Microsoft's binder does not place them either, and reports KS142 for a
-    ``| project`` naming one on a bound parse.
+    The columns this operator emits are a boundary: they are in no downstream
+    scope, and Microsoft's binder does not place them either, reporting KS142
+    for a ``| project`` naming one on a bound parse.
     """
 
     kind: Literal["graph_match"] = "graph_match"
-    raw_text: str
+    patterns: list[GraphPattern]
+    where: AnyExpr | None = None
+    # The same annotation and reader ``ProjectOp.columns`` uses.
+    project: list[ColumnRef | Assignment | AnyExpr] = []
+    cycles: Literal["all", "none", "unique_edges"] | None = None
 
 
 class GraphShortestPathsOp(Operator):
-    """``graph-shortest-paths`` — text only; see :class:`GraphMatchOp`.
+    """``graph-shortest-paths`` — the shortest path matching a pattern.
 
-    Same shape as :class:`GraphMatchOp`: pattern, constraint and
-    projection are one string.
+    The pattern, ``where`` and ``project`` read exactly as
+    :class:`GraphMatchOp`'s. It takes both named parameters: ``output``
+    selects how many paths per pair, and ``cycles`` is the same parameter
+    ``graph-match`` carries. The two are written space-separated; a comma
+    between them is a syntax error.
+
+    Its output columns are the same boundary :class:`GraphMatchOp` records.
     """
 
     kind: Literal["graph_shortest_paths"] = "graph_shortest_paths"
-    raw_text: str
+    patterns: list[GraphPattern]
+    where: AnyExpr | None = None
+    project: list[ColumnRef | Assignment | AnyExpr] = []
+    output: Literal["all", "any"] | None = None
+    cycles: Literal["all", "none", "unique_edges"] | None = None
 
 
 class GraphWhereEdgesOp(Operator):
-    """``graph-where-edges (…)`` — modeled, with a real predicate.
+    """``graph-where-edges (…)`` — keep the edges a predicate matches.
 
-    Not part of the :class:`GraphMatchOp` register despite the family name:
-    the parenthesized condition is an ordinary expression over edge
-    properties, so it is built as one and its columns are walkable.
+    The parenthesized condition is an ordinary expression over edge
+    properties, so it is built as one and ``find_all(ir, ColumnRef)`` reaches
+    every column it names.
     """
 
     kind: Literal["graph_where_edges"] = "graph_where_edges"

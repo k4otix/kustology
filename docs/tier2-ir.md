@@ -114,25 +114,38 @@ the root kind: `parse(".drop table A | getschema").to_ir()` reports a
 `command_kinds`](tier1-syntax-tree.md#control-commands) to branch before the
 call.
 
-The IR records these operators as their own source text rather than
-structured fields, on `raw_text`: `make-graph`, `graph-match`, and
-`graph-shortest-paths`. They round-trip and they hash, but there is
-nothing typed inside them to walk. `graph-where-edges` and
-`graph-where-nodes` are modeled, with a real predicate. `scan` is
-modeled as a step machine: each step's condition and assignments are
-typed IR. `top-nested` is modeled as a list of levels: each level's
-count, key, aggregate, direction and `others` label are typed IR.
-`graph-mark-components` is modeled: its component kind and the id
-column it adds are typed IR. `graph-to-table` is modeled as a list of
-outputs: each output's entity, alias and id columns are typed IR.
-`macro-expand` is modeled: its entity group (named or a typed list of
-entity expressions) and its inner pipeline are typed IR. A `let`
-written inside its body reaches `body_lets`, scoped to the operator the
-way a `let`-declared function's own body `let`s are. Every other
-statement the body writes — `set`, `declare pattern`, `alias database`,
-`restrict access to`, `declare query_parameters` — reaches
-`body_statements`, in source order, the same statement kinds
-`QueryIR.statements` carries at the top level.
+`raw_text` marks a shape the builder could not model: `UnknownSource`,
+`UnknownExpr`, `UnknownOp`, and `UnknownStmt` each carry the node's own
+source, so a consumer can see what the builder did not reach. Every operator
+the builder dispatches has typed fields.
+
+Two boundaries survive that. `macro-expand` records the entity group it fans
+over and the alias each expansion binds; the IR has no way to enumerate the
+entities one expansion covers. `graph-match` and `graph-shortest-paths` emit
+columns that reach no downstream scope. Microsoft's binder does not place
+them either, and reports KS142 for a `| project` naming one on a bound parse.
+
+The operators with an inner grammar of their own are modeled field by field.
+`scan` is a step machine: each step's condition and assignments are typed IR.
+`top-nested` is a list of levels: each level's count, key, aggregate,
+direction and `others` label are typed IR. `make-graph` records its edge
+columns, its written arrow, its node table and key, and its `partitioned-by`
+key and body. `graph-mark-components` records its component kind and the id
+column it adds. `graph-to-table` is a list of outputs: each output's entity,
+alias and id columns are typed IR. `graph-match` and `graph-shortest-paths`
+record each pattern element with its name, each edge with its direction and
+hop range, and the `where` and `project` clauses read against the element
+names, so `a.x` is a `ColumnRef` qualified by `a` and bare `a` is a
+`GraphElementRef`. `graph-where-edges` and `graph-where-nodes` carry a real
+predicate. `macro-expand` records its entity group (named or a typed list of
+entity expressions) and its inner pipeline.
+
+A `let` written inside a `macro-expand` body reaches `body_lets`, scoped to
+the operator the way a `let`-declared function's own body `let`s are. Every
+other statement the body writes (`set`, `declare pattern`, `alias database`,
+`restrict access to`, `declare query_parameters`) reaches `body_statements`,
+in source order, the same statement kinds `QueryIR.statements` carries at the
+top level.
 
 ### Function call sites are not inlined
 
