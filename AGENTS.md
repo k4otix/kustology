@@ -483,8 +483,9 @@ an earlier `let` is a `LetRef` decided from the statement text alone.
 
 A `let` calling a declared tabular function diverges the same way: `let x =
 imProcessCreate(...)` resolves to `rhs_pipeline` (over a `FuncCallSource`)
-once the binder closes the call's declared return, and stays `rhs_expr`
-unbound. Two shapes, both bind-state dependent; no third has surfaced.
+once the binder closes the call's declared return, or once a later tabular
+use of `x` proves it with no schema at all. Absent both, it stays
+`rhs_expr`. Two routes to one shape; no third has surfaced.
 `_VOLATILE_FIELDS` names every field
 the binder writes — `result_type` / `result_type_inner` / `table` /
 `result_schema` — plus the source offsets, `span` and `body_span`, so field

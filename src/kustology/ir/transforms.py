@@ -964,7 +964,12 @@ def compute_semantic_hash(node: BaseModel) -> str:
     * A ``let`` whose right-hand side calls a declared tabular function
       records ``rhs_expr`` unbound and ``rhs_pipeline`` (over a
       ``FuncCallSource``) once the binder has closed the call's declared
-      return.
+      return. A use site closes the same gap without a schema
+      (``builder._infer_tabular_lets``): a pipeline whose source names the
+      binding and that pipes into an operator, or that sits nested inside
+      one, proves the call tabular, so ``let pce = imProcessCreate(...); pce
+      | where ...`` records ``rhs_pipeline`` either way. A bare top-level use
+      (``let s = f(); s``) proves nothing and keeps ``rhs_expr``.
 
     The tail of a ``let``-function body is the same grammatical position read
     by the same predicate (``builder._is_tabular_rhs``), so ``let f = () {

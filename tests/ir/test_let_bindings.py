@@ -17,6 +17,7 @@ from kustology.ir import (
     LiteralExpr,
     Pipeline,
     TableRef,
+    ToScalarExpr,
     find_all,
 )
 
@@ -700,17 +701,78 @@ def test_a_bound_tabular_function_binding_lands_on_rhs_pipeline():
 
 
 def test_an_unbound_function_binding_keeps_rhs_expr():
-    """Without a schema nothing proves the call is tabular, so the right-hand
-    side stays an expression.
+    """A bare top-level use proves nothing, so the right-hand side stays an
+    expression.
 
-    Task 4 replaces this expectation once the builder infers a tabular call
-    from a pipeline-use position without a schema; leaving the note here for
-    whoever picks that up.
+    ``let pce = imProcessCreate(...); pce`` returns whatever the call returns,
+    tabular or not, and no schema says which. Only a use site that pipes the
+    name into an operator, or nests it inside one, settles it.
+    """
+    lb = _binding(
+        "let pce = imProcessCreate(starttime=ago(1h), endtime=now()); pce",
+        "pce",
+    )
+    assert lb.rhs_pipeline is None
+    assert lb.rhs_expr is not None
+
+
+def test_a_later_tabular_use_proves_an_unbound_function_binding_tabular():
+    """A use site that pipes the name into an operator proves the call tabular.
+
+    No schema declares ``imProcessCreate``, so the call's own node says
+    nothing about its return. ``pce | where …`` does: a pipeline source that
+    goes on to pipe into an operator can only name something tabular, so the
+    binding lands on ``rhs_pipeline`` the way the bound parse lands it.
     """
     lb = _binding(
         "let pce = imProcessCreate(starttime=ago(1h), endtime=now()); "
         "pce | where isnotempty(ActorUsername)",
         "pce",
     )
+    assert lb.rhs_expr is None
+    assert isinstance(lb.rhs_pipeline, Pipeline)
+    source = lb.rhs_pipeline.source
+    assert isinstance(source, FuncCallSource)
+    assert source.name == "imProcessCreate"
+    # Unbound, so there is no declared return to read columns from.
+    assert source.result_schema is None
+    # The index fields are recomputed against the pipeline, so the call's
+    # arguments stay reachable through them.
+    assert [fc.name for fc in lb.inner_time_exprs] == ["ago", "now"]
+
+
+def test_a_nested_use_counts():
+    """A ``join`` operand is a nested pipeline, so a bare name there is tabular."""
+    lb = _binding("let a = f(); T | join (a) on x", "a")
+    assert lb.rhs_expr is None
+    assert isinstance(lb.rhs_pipeline, Pipeline)
+    assert isinstance(lb.rhs_pipeline.source, FuncCallSource)
+    assert lb.rhs_pipeline.source.name == "f"
+
+
+def test_a_scalar_use_does_not_count():
+    """A name read in expression position says nothing about tabularity.
+
+    ``toscalar(...)`` is not a ``FuncCall`` either, so this holds the
+    right-hand side's type gate as well as the use-site rule.
+    """
+    lb = _binding("let n = toscalar(T | count); T | where c > n", "n")
     assert lb.rhs_pipeline is None
-    assert lb.rhs_expr is not None
+    assert isinstance(lb.rhs_expr, ToScalarExpr)
+
+
+def test_a_function_body_let_is_inferred_too():
+    """A body's own ``let`` is inferred against the body pipeline.
+
+    The body is its own scope: the pass runs once per scope, so ``p`` is
+    proved by the body's ``p | count`` and not by anything the query writes
+    around the declaration.
+    """
+    ir = parse("let f = () { let p = g(); p | count }; T | count").to_ir()
+    fn = ir.let_bindings[0].rhs_function
+    assert fn is not None
+    (body_binding,) = fn.body_lets
+    assert body_binding.rhs_expr is None
+    assert isinstance(body_binding.rhs_pipeline, Pipeline)
+    assert isinstance(body_binding.rhs_pipeline.source, FuncCallSource)
+    assert body_binding.rhs_pipeline.source.name == "g"

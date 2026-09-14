@@ -34,19 +34,25 @@ shadows the same way any other parameter does, so a reference to it
 inside the body lowers as a `TableRef`, indistinguishable there from a
 real table name.
 
-### A `let` bound to a function call is bind-state dependent
+### A `let` bound to a function call
 
-`let pce = imProcessCreate(starttime=ago(1h), endtime=now());` lowers on
-whether the binder can resolve the call's declared return. Against a
-schema declaring `imProcessCreate` as a tabular function,
-`LetBinding.rhs_pipeline` holds a `Pipeline` whose source is a
-`FuncCallSource`, and a column read downstream (`pce | where
-isnotempty(ActorUsername)`) carries `imProcessCreate` as its
-`ColumnRef.table`. Without a schema, nothing proves the call is
-tabular, so the binding stays on `rhs_expr` as a scalar `FuncCall`. A
-bare table alias (`let A = OtherTable;`) diverges the same way, for the
-same reason: see `AGENTS.md`'s note on `semantic_hash` bind-state
-dependence.
+`let pce = imProcessCreate(starttime=ago(1h), endtime=now());` lowers to
+`LetBinding.rhs_pipeline`, a `Pipeline` whose source is a
+`FuncCallSource`, in either of two cases. A schema declaring
+`imProcessCreate` as a tabular function closes the call's declared
+return, and a column read downstream then carries `imProcessCreate` as
+its `ColumnRef.table`. Or a use site proves the call tabular: `pce |
+where isnotempty(ActorUsername)` names the binding in source position
+and pipes it into an operator, and a nested use (`join (pce)`, `union
+pce`) counts too. The idiom's `semantic_hash` is the same with a schema
+and without one.
+
+A bare top-level use (`let s = f(); s`) proves nothing, since that query
+returns whatever the call returns, so the binding stays on `rhs_expr` as
+a scalar `FuncCall`. So does a name read in expression position (`where
+c > n`). A bare table alias (`let A = OtherTable;`) has no use-site
+escape and stays bind-state dependent: see `AGENTS.md`'s note on
+`semantic_hash` bind-state dependence.
 
 ### Resolving columns through an alias
 
