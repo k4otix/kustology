@@ -953,6 +953,48 @@ def test_a_function_value_that_is_neither_shape_is_a_usage_error(
     assert "function" in captured.err
 
 
+@pytest.mark.parametrize(
+    "entry",
+    [{"c": 5}, 5, ["a", 3]],
+    ids=["non-string-type", "neither-form", "non-string-column"],
+)
+def test_a_malformed_table_entry_is_a_usage_error(tmp_path, monkeypatch, capsys, entry):
+    """A table entry that is none of the three forms `build_global_state`
+    accepts is malformed input at the CLI boundary: exit 2, naming the
+    table, instead of the schema builder's `TypeError` reported at exit 1,
+    the code that says the KQL has errors. The query binds clean under a
+    good schema, so only the schema file decides the code."""
+    schema = tmp_path / "schema.json"
+    schema.write_text(json.dumps({"T": entry}), encoding="utf-8")
+
+    monkeypatch.setattr(sys, "stdin", _stdin("T | take 1"))
+    rc = main(["validate", "--schema", str(schema)])
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "'T'" in captured.err
+    assert captured.out == ""
+    assert "Traceback" not in captured.err
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [{"c": "string"}, ["c"], "(c:string)"],
+    ids=["typed-columns", "column-list", "schema-string"],
+)
+def test_each_table_entry_form_binds(tmp_path, monkeypatch, capsys, entry):
+    """The loader's table-entry check passes every form the schema builder
+    takes: typed columns, a column-name list, and a schema string. Each one
+    reaches the binder and resolves the column the query projects."""
+    schema = tmp_path / "schema.json"
+    schema.write_text(json.dumps({"T": entry}), encoding="utf-8")
+
+    monkeypatch.setattr(sys, "stdin", _stdin("T | project c"))
+    rc = main(["validate", "--schema", str(schema)])
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert captured.err == ""
+
+
 # Copied from `tests/test_source_references.py` rather than imported: that
 # module is not a dependency of this one, and both files pin the same query
 # text on purpose so the CLI and library tests describe the same fixtures.

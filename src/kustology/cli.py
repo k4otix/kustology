@@ -336,21 +336,63 @@ def _cmd_format(args: argparse.Namespace) -> int:
     return 0
 
 
+def _check_table_entry(name: str, value: object) -> object:
+    """Check one ordinary table entry against the forms the schema builder takes.
+
+    `build_global_state` reads a table entry as an object mapping column
+    names to type names, a list of column names, or a Kusto schema string.
+    Anything else raises a `TypeError` or a `ValueError` from inside the
+    builder, which `main` reports at exit 1 — the code that says the query
+    has errors, when the query here is fine and the file is wrong.
+    """
+    if isinstance(value, dict):
+        for column, type_name in value.items():
+            if not isinstance(type_name, str):
+                raise _UsageError(
+                    f"Schema entry {name!r}: the type for column {column!r} "
+                    "must be a type-name string, such as 'string' or "
+                    f"'datetime'; got {type(type_name).__name__}."
+                )
+        return value
+    if isinstance(value, list):
+        for index, column in enumerate(value):
+            if not isinstance(column, str):
+                raise _UsageError(
+                    f"Schema entry {name!r}: column {index} must be a "
+                    f"column-name string; got {type(column).__name__}. A list "
+                    "entry names untyped columns, which bind as string."
+                )
+        return value
+    if isinstance(value, str):
+        if not value.strip():
+            raise _UsageError(
+                f"Schema entry {name!r}: the schema string is empty. Use "
+                "'(col:type, ...)', or [] for a table with no columns."
+            )
+        return value
+    raise _UsageError(
+        f"Schema entry {name!r}: a table entry must be an object mapping "
+        "column names to type names, a list of column names, or a "
+        f"'(col:type, ...)' schema string; got {type(value).__name__}."
+    )
+
+
 def _schema_entry(name: str, value: object) -> object:
     """Convert one schema-file entry, building a `FunctionSchema` for the marker.
 
     A table entry maps column names to type-name strings, and a type name is
     never an object. An entry whose `function` key holds an object declares a
     function. An entry whose `function` key holds a string is a table with a
-    column of that name, and passes through untouched. Any other `function`
-    value is neither shape, so it is a usage error here instead of a column
-    type error from deeper in the schema builder.
+    column of that name, and goes through the table check like any other
+    table entry. Any other `function` value is neither shape, so it is a
+    usage error here instead of a column type error from deeper in the
+    schema builder.
     """
     if not isinstance(value, dict) or "function" not in value:
-        return value
+        return _check_table_entry(name, value)
     decl = value["function"]
     if isinstance(decl, str):
-        return value
+        return _check_table_entry(name, value)
     if not isinstance(decl, dict):
         raise _UsageError(
             f"Schema entry {name!r}: the 'function' key must hold an object "
