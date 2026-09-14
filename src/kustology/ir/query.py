@@ -266,12 +266,23 @@ class ImplicitSource(BaseModel):
 
 
 class FuncCallSource(BaseModel):
-    """A function-call pipeline source, as in ``findAnomalies('foo') | summarize ...``."""
+    """A function-call pipeline source, as in ``findAnomalies('foo') | summarize ...``.
+
+    On a bound parse against a schema declaring the call's return, the columns
+    Microsoft's binder gives it land on :attr:`result_schema`, and
+    ``SchemaAttacher`` labels each downstream :attr:`ColumnRef.table
+    <kustology.ir.expr.ColumnRef.table>` with the function's name.
+    """
 
     model_config = {"extra": "forbid"}
     kind: Literal["func_call_source"] = "func_call_source"
     name: str
     args: list[AnyExpr] = []
+    # Microsoft's ``ResultType`` for the call, closed symbols only, the same
+    # contract ``Pipeline.result_schema`` carries: ``None`` on an unbound parse
+    # and whenever the declared return is open. Volatile: see
+    # ``Operator.result_schema``.
+    result_schema: TabularSchema | None = None
     span: Span
 
 

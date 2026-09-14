@@ -391,8 +391,10 @@ class KustoQuery:
           provenance.
         * non-empty ``dict`` — re-bind the *same tree* against
           ``build_global_state(dict)``, with no re-parse and the receiver
-          untouched, then run the attach pass with the same dict. On an
-          already-bound parse this replaces the parse-time schema for this
+          untouched, then run the attach pass with the same dict. A
+          :class:`kustology.FunctionSchema` entry declares a function for
+          that re-bind. The provenance pass reads the table entries alone.
+          On an already-bound parse this replaces the parse-time schema for this
           call, and the resulting output schemas, types and IR shape match
           ``parse(query, schema=dict).to_ir()`` exactly: ``let A = T``
           lowers to ``rhs_pipeline`` whenever ``T`` resolves in *either*
@@ -431,17 +433,17 @@ class KustoQuery:
             code, failure = _analyze_guarded(
                 lambda: self._code.Analyze(state), lambda: self._code,
             )
-            # ``build_global_state`` accepts three value shapes: a
-            # ``{col: type}`` dict, a Kusto schema string ``"(col:type)"``,
-            # and a bare ``[col]`` list. ``parse(schema=...)`` documents all
-            # three, so this entry point takes them too. ``SchemaAttacher``
-            # takes only the first — it reads ``schemas[table][column]`` — so
-            # a string value crashes it and a list resolves by coincidence.
+            # ``build_global_state`` accepts a ``{col: type}`` dict, a Kusto
+            # schema string ``"(col:type)"``, a bare ``[col]`` list, and a
+            # ``FunctionSchema``. ``parse(schema=...)`` documents every one,
+            # so this entry point takes them too. ``SchemaAttacher`` takes
+            # only the dict (it reads ``schemas[table][column]``), so a
+            # string value crashes it and a list resolves by coincidence.
             #
-            # Reading the shapes back off ``code.Globals`` normalizes all
-            # three through the parsing Microsoft already did, and guarantees
-            # the attacher sees what the *builder* bound against: the same
-            # source ``attach_schema=True`` normalizes from.
+            # Reading the shapes back off ``code.Globals`` normalizes every
+            # table shape through the parsing Microsoft already did, and
+            # guarantees the attacher sees what the *builder* bound against:
+            # the same source ``attach_schema=True`` normalizes from.
             schemas = _extract_schemas_from_global_state(code.Globals)
         elif bound_by_caller:
             code = self._code

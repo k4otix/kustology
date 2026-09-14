@@ -139,9 +139,12 @@ def parse(query_text: str, schema: SchemaLike = None):
     """Parse a KQL query and return a ``KustoQuery``.
 
     With ``schema`` the query is bound (semantic analysis runs) and
-    ``KustoQuery.has_semantics`` reports which. Schema is a dict mapping table
-    name to a column spec: ``{"Table": {"col": "type", ...}}``,
-    ``{"Table": "(col:type, ...)"}`` or ``{"Table": ["col", ...]}`` — see
+    ``KustoQuery.has_semantics`` reports which. Schema is a dict mapping a name
+    to a column spec: ``{"Table": {"col": "type", ...}}``,
+    ``{"Table": "(col:type, ...)"}`` or ``{"Table": ["col", ...]}``. A
+    :class:`kustology.FunctionSchema` value declares a function under its key
+    instead of a table, so a call to a workspace function binds and the columns
+    it returns resolve. See
     :func:`kustology.utils.analysis.build_global_state`.
 
     If Microsoft's analyzer crashes on the query, the returned ``KustoQuery``
@@ -240,8 +243,8 @@ def validate(
     the query is bound and semantic diagnostics (unresolved columns, type
     errors) are included. Set ``ignore_unknown_tables=True`` to suppress KS204
     ("name does not refer to any known table") diagnostics for tables outside
-    the schema. ``schema`` takes the same dict-of-tables shapes :func:`parse`
-    accepts.
+    the schema. ``schema`` takes the same dict shapes :func:`parse` accepts,
+    including a :class:`kustology.FunctionSchema` value.
 
     This parses the text. When you already hold a ``KustoQuery``, read
     :attr:`kustology.KustoQuery.diagnostics` instead: same dicts, no second

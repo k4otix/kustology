@@ -27,7 +27,7 @@ from kustology import parse
 
 _CHILD = r'''
 import json
-from kustology import format_query, parse, validate
+from kustology import FunctionSchema, format_query, parse, validate
 from kustology.utils.schema_state import build_global_state
 
 S = "\ud800"
@@ -39,6 +39,14 @@ PROBES = {
     "schema-column-name": lambda: build_global_state({"T": {S: "long"}}),
     "schema-string": lambda: build_global_state({"T": "(" + S + ":long)"}),
     "schema-column-type": lambda: build_global_state({"T": {"a": S}}),
+    "schema-function-name": lambda: build_global_state({S: FunctionSchema()}),
+    "schema-parameter-name": lambda: build_global_state(
+        {"f": FunctionSchema(parameters=((S, "long"),))}
+    ),
+    "schema-parameter-type": lambda: build_global_state(
+        {"f": FunctionSchema(parameters=(("p", S),))}
+    ),
+    "schema-return-type": lambda: build_global_state({"f": FunctionSchema(returns=S)}),
     "parse-with-bad-schema": lambda: parse("T | count", schema={"T": {S: "long"}}),
 }
 
@@ -70,6 +78,10 @@ EXPECTED_POSITION_WORDS = {
     "schema-column-name": "column name",
     "schema-string": "string for table",
     "schema-column-type": "column type",
+    "schema-function-name": "function name",
+    "schema-parameter-name": "Parameter name in function",
+    "schema-parameter-type": "parameter 'p' of function",
+    "schema-return-type": "return type of function",
     "parse-with-bad-schema": "column name",
 }
 

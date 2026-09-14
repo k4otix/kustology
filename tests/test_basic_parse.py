@@ -220,13 +220,16 @@ def test_unknown_scalar_type_warning_survives_extra_library_frames():
     """The depth must not depend on how many frames the library happens to use.
 
     PEP 709 inlines comprehensions from 3.12 on. Under 3.10 and 3.11, both
-    inside this project's ``requires-python``, the two comprehensions in the
-    ``build_global_state`` → ``_build_table_symbol`` chain each push a frame,
-    putting the caller seven frames up instead of five, so a hardcoded number
-    is attributed back into ``schema_state.py`` on those CI legs. A generator
-    expression pushes a frame on every version, so evaluating the call
-    through one compiled with an in-package filename reproduces that deeper
-    stack here on 3.12: two extra in-package frames, and the same attribution.
+    inside this project's ``requires-python``, the comprehension that
+    ``_build_table_symbol`` runs over a dict of columns pushes a frame of its
+    own, putting the caller one frame further out and sending a hardcoded
+    stacklevel back into ``schema_state.py`` on those CI legs. A generator
+    expression pushes a frame on every version, so a call routed through one
+    compiled with an in-package filename adds in-package frames on any
+    interpreter. The two this fixture adds, ``_deeper.py:<genexpr>`` and
+    ``_deeper.py:<module>``, overshoot the single frame the older interpreters
+    add. The attribution holds at either depth, because the walk stops at the
+    package boundary.
     """
     import os
 

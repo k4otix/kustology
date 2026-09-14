@@ -16,13 +16,23 @@ field-stripping cannot reach it.
 
 import pytest
 
-from kustology import parse
+from kustology import FunctionSchema, parse
 from kustology.ir import ColumnRef, compute_semantic_hash, find_all
 
 SCHEMA = {
     "T": {"a": "string", "b": "string", "k": "string"},
     "U": {"b": "string", "k": "string"},
     "SecurityEvent": {"Account": "string", "EventID": "int"},
+}
+
+# The ASIM parser idiom, shared with ``tests/test_function_schema.py``: a
+# declared tabular function is what closes the call's return for the binder.
+ASIM = {
+    "imProcessCreate": FunctionSchema(
+        parameters=(("starttime", "datetime"), ("endtime", "datetime")),
+        returns="(TimeGenerated:datetime, ActorUsername:string)",
+        required=0,
+    ),
 }
 
 
@@ -114,3 +124,40 @@ def test_a_column_named_table_is_not_erased_from_the_hash():
     assert without.main_pipeline.operators[0].columns == {"a": "long"}
 
     assert compute_semantic_hash(with_extra) != compute_semantic_hash(without)
+
+
+def test_the_function_source_idiom_hashes_the_same_bound_and_unbound():
+    """A ``let`` calling a tabular function digests the same either way.
+
+    Bound, the binder closes the call's declared return and the binding lands
+    on ``rhs_pipeline``. Unbound, the ``pce | where …`` use site proves the
+    same thing and the builder lands it there too, so the two shapes meet.
+    """
+    query = (
+        "let pce = imProcessCreate(starttime=ago(1h), endtime=now());\n"
+        "pce | where isnotempty(ActorUsername)"
+    )
+
+    bound = parse(query, schema=ASIM).to_ir()
+    unbound = parse(query).to_ir()
+
+    assert compute_semantic_hash(bound) == compute_semantic_hash(unbound)
+
+
+def test_a_two_step_function_source_idiom_hashes_the_same_bound_and_unbound():
+    """The idiom still meets when the proving use lives in another binding's
+    own right-hand side, not the query's top-level pipeline.
+
+    ``recent``'s pipeline proves ``pce`` tabular unbound, the same way
+    ``FunctionSchema`` closes the call's declared return bound.
+    """
+    query = (
+        "let pce = imProcessCreate(starttime=ago(1h), endtime=now());\n"
+        "let recent = pce | where isnotempty(ActorUsername);\n"
+        "recent | count"
+    )
+
+    bound = parse(query, schema=ASIM).to_ir()
+    unbound = parse(query).to_ir()
+
+    assert compute_semantic_hash(bound) == compute_semantic_hash(unbound)

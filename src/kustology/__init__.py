@@ -25,6 +25,7 @@ from .reflection import (
 )
 from .services import format_query, parse, validate
 from .spans import TextSpan, TimeExpr
+from .utils.schema_state import FunctionSchema
 from .utils.walker import iter_elements
 
 __all__ = [
@@ -39,6 +40,8 @@ __all__ = [
     "format_query",
     "validate",
     "iter_elements",
+    # Schema binding
+    "FunctionSchema",
     # Spans
     "TextSpan",
     "TimeExpr",

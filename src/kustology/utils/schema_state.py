@@ -6,24 +6,35 @@
 The IR binder, the validator's schema-aware paths, and tests all need a bound
 ``GlobalState`` to drive Microsoft's ``KustoCode.ParseAndAnalyze``. This module
 is the one place that translates the documented Python schema shapes
-(``{table: {col: type}}``, ``"(col:type, ...)"``, ``[col, ...]``) into the .NET
-``TableSymbol`` / ``ColumnSymbol`` / ``DatabaseSymbol`` tree.
+(``{table: {col: type}}``, ``"(col:type, ...)"``, ``[col, ...]``, and a
+:class:`FunctionSchema`) into the .NET ``TableSymbol`` / ``ColumnSymbol`` /
+``FunctionSymbol`` / ``DatabaseSymbol`` tree.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import warnings
+from collections.abc import Callable
+from dataclasses import dataclass
 
 from .._text import check_utf16_encodable
 from ..bridge import (
     ColumnSymbol,
+    CustomReturnType,
     DatabaseSymbol,
+    FunctionSymbol,
     GlobalState,
+    Parameter,
     ScalarTypes,
     TableSymbol,
+    Tabularity,
+    ensure_invariant_culture,
 )
+
+logger = logging.getLogger(__name__)
 
 # The `kustology` package directory. Every frame at or below it belongs to this
 # library; the first frame above it is the caller a warning should name.
@@ -45,10 +56,11 @@ def _caller_stacklevel() -> int:
     since ``parse`` and ``validate`` are one frame deeper than a direct
     :func:`build_global_state` call. It also depends on the Python version:
     PEP 709 inlined comprehensions in 3.12, and on the 3.10 and 3.11 this
-    project also supports, the two comprehensions in this module each push a
-    frame of their own. A constant tuned on 3.12 attributes the warning back
-    into this file on those interpreters. Walking out to the package boundary
-    is correct on every version and survives changes to the call chain.
+    project also supports, the comprehension that :func:`_build_table_symbol`
+    runs over a dict of columns pushes a frame of its own. A constant tuned
+    on 3.12 attributes the warning back into this file on those interpreters.
+    Walking out to the package boundary is correct on every version and
+    survives changes to the call chain.
 
     ``stacklevel=1`` means the frame that calls ``warn``, which is this
     function's caller, so the walk starts there at 1 and counts outward.
@@ -69,7 +81,7 @@ def _caller_stacklevel() -> int:
     return level  # pragma: no cover — unreachable: the loop returns first
 
 
-def _resolve_scalar_type(type_name: str, *, column: str | None = None):
+def _resolve_scalar_type(type_name: str, *, position: str):
     """Resolve a KQL type name to a ScalarSymbol via Microsoft's lookup.
 
     The lookup key is case-folded. ``ScalarTypes.GetSymbol`` is an exact
@@ -99,27 +111,35 @@ def _resolve_scalar_type(type_name: str, *, column: str | None = None):
     ``GetSymbol(None)`` surfaces as a bare ``System.ArgumentNullException``
     with a .NET stack trace through ``System.Collections.Generic.Dictionary``,
     and ``GetSymbol(5)`` as pythonnet's "No method matches given arguments";
-    neither mentions schemas. ``column`` puts the offending key in the message,
-    so every schema-shape error this module raises names its own position: the
-    schema, a table name, a table's value, a column name, or a column's type.
+    neither mentions schemas.
+
+    ``position`` is the tail of the phrase ``Schema <position>``, such as
+    ``"column type for column 'c'"`` or
+    ``"type for parameter 'p' of function 'f'"``. Every message raised or
+    warned here carries it, so each one names the place in the caller's schema
+    that produced it. It is required, because a type name arrives from a table
+    column, a function parameter, and a function's scalar return, and the
+    three read differently.
+
+    The ``TypeError``'s closing hint describes the typed-column form because
+    that is the only position reaching it: both function paths check for a
+    ``str`` themselves before calling.
     """
     if not isinstance(type_name, str):
-        where = f" for column {column!r}" if column is not None else ""
         raise TypeError(
-            f"Schema column type{where} must be a KQL scalar type name as a "
+            f"Schema {position} must be a KQL scalar type name as a "
             f"str; got {type(type_name).__name__}. The typed-column form is "
             "{table: {column: 'type'}}, for example {'T': {'c': 'long'}}."
         )
     folded = type_name.lower()
     if folded == _UNKNOWN_TYPE_NAME:
         return ScalarTypes.Unknown
-    check_utf16_encodable(
-        folded, f"Schema column type{f' for column {column!r}' if column else ''}",
-    )
+    check_utf16_encodable(folded, f"Schema {position}")
     sym = ScalarTypes.GetSymbol(folded)
     if sym is None:
         warnings.warn(
-            f"Unknown KQL scalar type {type_name!r}; falling back to 'string'.",
+            f"Schema {position}: Unknown KQL scalar type {type_name!r}; "
+            "falling back to 'string'.",
             RuntimeWarning,
             stacklevel=_caller_stacklevel(),
         )
@@ -176,6 +196,66 @@ def _check_column_name(column, table: str):
     return column
 
 
+# The non-callable forms `FunctionSchema.returns` accepts, and what a resolver
+# callable returns: a table value form, a scalar type name, or None for open
+# columns.
+_ReturnSpec = str | dict[str, str] | list[str] | None
+
+
+@dataclass(frozen=True)
+class FunctionSchema:
+    """Declare a function for the binder: its parameters and what it returns.
+
+    Put one in the schema dict under the function's name, beside the table
+    entries::
+
+        {"SignInEvents": {"IPAddress": "string"},
+         "imProcessCreate": FunctionSchema(
+             parameters=(("starttime", "datetime"), ("endtime", "datetime")),
+             returns="(TimeGenerated:datetime, ActorUsername:string)",
+             required=0)}
+
+    ``returns`` accepts any table value form :func:`build_global_state` takes
+    for a table (a ``{column: type}`` dict, a ``[column, ...]`` list, or a
+    ``"(col:type, ...)"`` schema string) and declares a tabular function whose
+    result carries those columns. Any other string is a KQL scalar type name
+    and declares a scalar function. ``None`` declares a tabular function whose
+    result columns are open, so every column a caller reads off the result
+    resolves and none of them is checked.
+
+    ``returns`` also accepts a callable, for a function whose columns depend on
+    what a call passes it. ``_GetWatchlist('HighValueAssets')`` is the shape:
+    one function, a different table behind every name::
+
+        {"_GetWatchlist": FunctionSchema(
+            parameters=(("watchlistName", "string"),),
+            returns=lambda values: WATCHLISTS.get(values[0]))}
+
+    Microsoft's binder calls the resolver once per call site. It receives the
+    call's argument values in order, each one a ``str``, ``int``, ``float``,
+    ``bool``, or ``None`` for an argument that is not a literal; a datetime,
+    timespan, or decimal literal arrives as its invariant-culture ``str``. It
+    returns one of the table value forms above, or ``None`` for open columns.
+    A callable always declares a tabular function, so a scalar type name back
+    from it is an error. Any failure inside the resolver, or in the spec it
+    hands back, is logged at ``WARNING`` and answered with the open symbol, so
+    that call site binds with its columns unchecked and the parse stands.
+
+    ``parameters`` is ``(name, scalar type name)`` pairs in declaration order.
+    ``required`` is how many leading parameters a call has to pass; ``None``
+    means all of them. A call that passes fewer gets Microsoft's arity
+    diagnostic.
+
+    The key this schema sits under becomes the function symbol's name
+    verbatim. Microsoft's binder resolves a built-in of the same name ahead of
+    the declaration, so pick a name that is not already a built-in.
+    """
+
+    parameters: tuple[tuple[str, str], ...] = ()
+    returns: _ReturnSpec | Callable[[tuple[object | None, ...]], _ReturnSpec] = None
+    required: int | None = None
+
+
 def _build_table_symbol(name: str, cols):
     """Build a TableSymbol from the supported schema-value forms."""
     if not isinstance(name, str):
@@ -201,7 +281,10 @@ def _build_table_symbol(name: str, cols):
         return table
     if isinstance(cols, dict):
         col_symbols = [
-            ColumnSymbol(_check_column_name(c, name), _resolve_scalar_type(t, column=c))
+            ColumnSymbol(
+                _check_column_name(c, name),
+                _resolve_scalar_type(t, position=f"column type for column {c!r}"),
+            )
             for c, t in cols.items()
         ]
         return TableSymbol(name, col_symbols)
@@ -214,6 +297,199 @@ def _build_table_symbol(name: str, cols):
         f"Unsupported schema value for table {name!r}: {type(cols).__name__}. "
         "Use a dict {col: type}, list [col, ...], or schema string '(col:type, ...)'."
     )
+
+
+def _build_function_parameters(name: str, spec: FunctionSchema):
+    """Build the ``Parameter`` list for one function declaration.
+
+    ``minOccurring=0`` is what makes a parameter optional to Microsoft's
+    binder. With the constructor's own default, a call that omits the
+    parameter gets Microsoft's arity diagnostic.
+
+    The name and the type are checked here, before either one reaches
+    :func:`_resolve_scalar_type` or the CLR. ``Parameter(5, ...)`` surfaces as
+    pythonnet's "No method matches given arguments", and the ``TypeError``
+    :func:`_resolve_scalar_type` raises closes with a hint about the
+    typed-column form, which is the wrong advice for a parameter.
+    """
+    required = spec.required
+    try:
+        params = tuple(spec.parameters)
+    except TypeError:
+        raise TypeError(
+            f"FunctionSchema.parameters for function {name!r} must be a "
+            "sequence of (name, type) pairs; got "
+            f"{type(spec.parameters).__name__}. Pass () for a function that "
+            "takes no parameters."
+        ) from None
+    if required is not None:
+        if isinstance(required, bool) or not isinstance(required, int):
+            raise TypeError(
+                f"FunctionSchema.required for function {name!r} must be an int "
+                f"or None; got {type(required).__name__}."
+            )
+        if not 0 <= required <= len(params):
+            raise ValueError(
+                f"FunctionSchema.required for function {name!r} is {required}, "
+                f"but the declaration has {len(params)} parameter(s). It counts "
+                "the leading parameters a call has to pass."
+            )
+    out = []
+    for index, item in enumerate(params):
+        try:
+            pname, ptype = item
+        except (TypeError, ValueError):
+            raise TypeError(
+                f"Parameter {index} of function {name!r} must be a "
+                f"(name, type) pair; got {item!r}."
+            ) from None
+        if not isinstance(pname, str):
+            raise TypeError(
+                f"Parameter {index} name of function {name!r} must be a str; "
+                f"got {type(pname).__name__}. It becomes the parameter "
+                "symbol's name verbatim."
+            )
+        if not isinstance(ptype, str):
+            raise TypeError(
+                f"Parameter {pname!r} of function {name!r} must name a KQL "
+                f"scalar type as a str; got {type(ptype).__name__}."
+            )
+        check_utf16_encodable(pname, f"Parameter name in function {name!r}")
+        min_occurring = 0 if required is not None and index >= required else 1
+        out.append(
+            Parameter(
+                pname,
+                _resolve_scalar_type(
+                    ptype,
+                    position=f"type for parameter {pname!r} of function {name!r}",
+                ),
+                minOccurring=min_occurring,
+            )
+        )
+    return out
+
+
+def _literal_argument_value(arg):
+    """Return one call argument's literal value as a Python scalar or None."""
+    value = getattr(arg, "LiteralValue", None)
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+def _is_tabular_spec(value) -> bool:
+    """Return whether a returns/resolver value is one of the tabular spec forms."""
+    return isinstance(value, (dict, list, tuple)) or (
+        isinstance(value, str) and value.lstrip().startswith("(")
+    )
+
+
+def _custom_return_type(name: str, resolver):
+    """Wrap a caller's resolver in the delegate Microsoft's binder calls.
+
+    Microsoft invokes the delegate while binding each call site, on the CLR's
+    own stack. A Python exception raised there propagates out of
+    ``KustoCode.ParseAndAnalyze`` into whatever public entry point the caller
+    invoked, from a frame the caller never wrote, so every ``Exception`` from
+    the resolver or from resolving its answer is logged at ``WARNING`` with
+    ``exc_info`` and answered with the open symbol. The call then binds with
+    its columns unchecked and the parse stands.
+
+    ``MemoryError`` and ``RecursionError`` are not contained: they say the
+    process is out of a resource rather than that the resolver is wrong, and
+    ``services._analyze_guarded`` is the layer that reports those.
+
+    Literal values cross as Python scalars where pythonnet marshals them and as
+    CLR objects otherwise (``System.DateTime``, ``System.TimeSpan``,
+    ``System.Decimal``). The wrapper renders those with ``str`` under the
+    invariant culture this package pins at import, so a resolver sees a stable
+    spelling wherever it runs.
+    """
+
+    def resolve(ctx):
+        try:
+            ensure_invariant_culture()
+            args = ctx.Arguments
+            values = tuple(
+                _literal_argument_value(args[i]) for i in range(args.Count)
+            )
+            spec = resolver(values)
+            if spec is not None and not _is_tabular_spec(spec):
+                raise TypeError(
+                    f"The return-type resolver for function {name!r} returned "
+                    f"{spec!r}, which is not a tabular spec. A resolver "
+                    "declares columns; use a static 'returns' for a scalar "
+                    "function."
+                )
+            if spec is None:
+                return TableSymbol.From("()").WithIsOpen(True)
+            return _build_table_symbol(name, spec)
+        except (MemoryError, RecursionError):
+            raise
+        except Exception:
+            logger.warning(
+                "The return-type resolver for function %r failed; the call "
+                "binds with open columns.",
+                name,
+                exc_info=True,
+            )
+            return TableSymbol.From("()").WithIsOpen(True)
+
+    return CustomReturnType(resolve)
+
+
+def _function_return_symbol(name: str, returns):
+    """Resolve a :attr:`FunctionSchema.returns` value to a return symbol.
+
+    A tabular return is a ``TableSymbol`` and goes through
+    :func:`_build_table_symbol`, so the message for a malformed one names the
+    declaration as a table. A callable is a per-call-site resolver and becomes
+    the ``CustomReturnType`` delegate Microsoft's binder invokes.
+    """
+    if returns is None:
+        # An open table symbol resolves every column a caller reads off the
+        # result and checks none of them, so a declaration that names only the
+        # signature produces no false diagnostics.
+        return TableSymbol.From("()").WithIsOpen(True)
+    if callable(returns):
+        return _custom_return_type(name, returns)
+    if _is_tabular_spec(returns):
+        return _build_table_symbol(name, returns)
+    if isinstance(returns, str):
+        return _resolve_scalar_type(
+            returns, position=f"return type of function {name!r}"
+        )
+    raise TypeError(
+        f"Unsupported FunctionSchema.returns for function {name!r}: "
+        f"{type(returns).__name__}. Use a KQL scalar type name, a tabular "
+        "spec (dict {col: type}, list [col, ...], or '(col:type, ...)'), or "
+        "None for an open tabular result."
+    )
+
+
+def _build_function_symbol(name: str, spec: FunctionSchema):
+    """Build a FunctionSymbol from a :class:`FunctionSchema`.
+
+    ``FunctionSymbol`` reads the tabularity off the return symbol: a
+    ``TableSymbol`` return declares a tabular function and a scalar type
+    declares a scalar one, so those two forms pass no tabularity argument. A
+    ``CustomReturnType`` carries no shape the constructor can read, so the
+    callable form states ``Tabularity.Tabular`` itself.
+
+    The ``GlobalState`` holds the symbol, and the symbol holds the delegate,
+    which is what keeps a resolver alive for as long as the binder can call it.
+    """
+    if not isinstance(name, str):
+        raise TypeError(
+            f"Schema function name must be a str; got {type(name).__name__} "
+            f"({name!r}). Keys become the function symbol's name verbatim."
+        )
+    check_utf16_encodable(name, "Schema function name")
+    return_symbol = _function_return_symbol(name, spec.returns)
+    parameters = _build_function_parameters(name, spec)
+    if callable(spec.returns):
+        return FunctionSymbol(name, return_symbol, Tabularity.Tabular, parameters)
+    return FunctionSymbol(name, return_symbol, parameters)
 
 
 def extract_schemas_from_global_state(global_state) -> dict[str, dict[str, str]]:
@@ -252,6 +528,10 @@ def build_global_state(schema):
       * dict ``{table: {col: type}}`` — typed columns
       * dict ``{table: "(col:type, ...)"}`` — per-table Kusto schema string
       * dict ``{table: [col, ...]}`` — untyped columns (treated as string)
+      * dict ``{name: FunctionSchema(...)}`` — a declared function
+
+    One dict carries both kinds. A :class:`FunctionSchema` value declares a
+    function under its key; every other value declares a table.
 
     Every key is a raw name. Table keys and column keys become the ``Name`` of
     a ``TableSymbol`` or ``ColumnSymbol`` verbatim. The bracket-quoting
@@ -269,16 +549,27 @@ def build_global_state(schema):
 
     Wrong-typed input raises before reaching the CLR. A non-``str`` table name,
     column name or type name is a ``TypeError``, as is a table value that is
-    none of the three forms; an empty or whitespace-only schema string is a
-    ``ValueError``. A name, type, or schema string holding an unpaired
-    surrogate is a ``ValueError`` too: UTF-16 cannot encode one, and
-    pythonnet's failure to marshal it aborts the process. Every message names
-    the position it rejects.
+    none of the table forms above; an empty or whitespace-only schema string is
+    a ``ValueError``. A :class:`FunctionSchema` raises the same two from the
+    same positions inside the declaration: a parameter that is not a
+    ``(name, type)`` pair of strings is a ``TypeError``, and a ``required``
+    outside ``0..len(parameters)`` is a ``ValueError``. A name, type, or schema
+    string holding an unpaired surrogate is a ``ValueError`` too: UTF-16 cannot
+    encode one, and pythonnet's failure to marshal it aborts the process. Every
+    message names the position it rejects.
     """
     if not isinstance(schema, dict):
         raise TypeError(
-            "schema must be a dict mapping table name to a column spec; "
-            f"got {type(schema).__name__}."
+            "schema must be a dict mapping each name to a column spec or a "
+            f"FunctionSchema; got {type(schema).__name__}."
         )
-    tables = [_build_table_symbol(name, cols) for name, cols in schema.items()]
-    return GlobalState.Default.WithDatabase(DatabaseSymbol("NetDB", tables))
+    tables = []
+    functions = []
+    for name, value in schema.items():
+        if isinstance(value, FunctionSchema):
+            functions.append(_build_function_symbol(name, value))
+        else:
+            tables.append(_build_table_symbol(name, value))
+    return GlobalState.Default.WithDatabase(
+        DatabaseSymbol("NetDB", tables + functions)
+    )

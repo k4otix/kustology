@@ -73,7 +73,22 @@ it writes the command kinds to stderr, prints nothing on stdout, and exits 1.
 
 ## Schema files
 
-A `--schema` file is JSON in the shape `parse(query, schema=...)` takes: `{"Table": {"column": "type"}}`.
+A `--schema` file is JSON in the shape `parse(query, schema=...)` takes: `{"Table": {"column": "type"}}`. An entry whose value holds a `function` key mapped to an object declares a function. A `function` key mapped to a type-name string is a table column of that name, so a table can still have a column called `function`. Any other `function` value is malformed input and exits 2:
+
+```json
+{
+  "SignInEvents": {"IPAddress": "string", "TimeGenerated": "datetime"},
+  "imProcessCreate": {
+    "function": {
+      "parameters": [["starttime", "datetime"], ["endtime", "datetime"]],
+      "returns": "(TimeGenerated:datetime, ActorUsername:string)",
+      "required": 0
+    }
+  }
+}
+```
+
+The `function` object mirrors [`FunctionSchema`](tier1-syntax-tree.md#declaring-functions)'s three fields. `parameters` is a list of `[name, type]` pairs. `returns` names a scalar type or a tabular result, one of the same static forms `FunctionSchema.returns` takes; a callable `returns`, which resolves the result per call, has no file form. `required` counts the leading parameters a call has to pass.
 
 On `validate` and `parse`, a schema file binds the parse. On `parse --ir`, `to_ir()` auto-attaches the schema from a bound parse, so the IR carries column types, table provenance, and `"schema_attached": true` instead of an unenriched skeleton.
 

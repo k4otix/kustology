@@ -214,14 +214,18 @@ from Kusto.Language.Editor import FormattingOptions, KustoCodeService
 from Kusto.Language.Parsing import TokenParser
 from Kusto.Language.Symbols import (
     ColumnSymbol,
+    CustomReturnType,
     DatabaseSymbol,
     FunctionSymbol,
+    Parameter,
     ScalarTypes,
     TableSymbol,
+    Tabularity,
 )
 
 __all__ = [
     "ColumnSymbol",
+    "CustomReturnType",
     "DatabaseSymbol",
     "FormattingOptions",
     "FunctionSymbol",
@@ -229,7 +233,9 @@ __all__ = [
     "KustoCode",
     "KustoCodeService",
     "KustoFacts",
+    "Parameter",
     "ScalarTypes",
     "TableSymbol",
+    "Tabularity",
     "TokenParser",
 ]

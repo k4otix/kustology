@@ -1494,3 +1494,57 @@ def test_enrichment_is_hash_silent_for_a_join_and_a_find_query():
     find_before = compute_semantic_hash(find_ir)
     SchemaAttacher(DICT_SCHEMA).enrich(find_ir)
     assert compute_semantic_hash(find_ir) == find_before
+
+
+def test_a_column_from_a_declared_function_carries_the_function_as_its_table():
+    """``_source_entry``'s ``FuncCallSource`` branch names the call, not a
+    table, as the provenance for a column it returns."""
+    from kustology import FunctionSchema
+    from kustology.ir import KustoType
+
+    schema = {
+        "imProcessCreate": FunctionSchema(
+            parameters=(("starttime", "datetime"), ("endtime", "datetime")),
+            returns="(TimeGenerated:datetime, ActorUsername:string)",
+            required=0,
+        ),
+    }
+    ir = parse(
+        "imProcessCreate(starttime=ago(1h), endtime=now()) "
+        "| where isnotempty(ActorUsername)",
+        schema=schema,
+    ).to_ir()
+    refs = [c for c in find_all(ir, ColumnRef) if c.name == "ActorUsername"]
+    assert len(refs) == 1
+    assert refs[0].table == "imProcessCreate"
+    assert refs[0].result_type == KustoType.STRING
+
+
+def test_to_ir_rebinds_with_a_callable_return_in_the_schema_dict():
+    """A callable ``returns`` in the ``attach_schema`` dict survives the re-bind.
+
+    ``to_ir`` re-extracts the table shapes off the re-bound ``Globals`` before
+    handing them to ``SchemaAttacher``, so the function entry has to declare
+    its columns through the binder rather than through that dict.
+    """
+    from kustology import FunctionSchema
+    from kustology.ir import FuncCallSource
+
+    watchlists = {"HighValueAssets": {"SearchKey": "string", "AssetTier": "long"}}
+    schema = {
+        "_GetWatchlist": FunctionSchema(
+            parameters=(("watchlistName", "string"),),
+            returns=lambda values: watchlists.get(values[0]),
+        ),
+    }
+
+    ir = parse(
+        "_GetWatchlist('HighValueAssets') | project SearchKey, AssetTier"
+    ).to_ir(attach_schema=schema)
+
+    sources = list(find_all(ir, FuncCallSource))
+    assert len(sources) == 1
+    assert sources[0].result_schema.columns == {
+        "SearchKey": "string",
+        "AssetTier": "long",
+    }

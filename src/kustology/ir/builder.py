@@ -320,11 +320,15 @@ def _is_tabular_rhs(expr: Any) -> bool:
 
     Covers the operator-rooted forms (``union``/``range``/``search``/``print``/
     ``find``, plus any operator Microsoft adds later), the four non-operator
-    tabular kinds, and a bare ``NameReference`` the binder resolved to a
-    table. That last arm reads ``ReferencedSymbol``, which is why the
-    predicate takes the node itself. Unbound, nothing proves ``OtherTable`` is
-    a table, and the builder does not guess one into existence. See the
-    bind-state divergence documented on
+    tabular kinds, a bare ``NameReference`` the binder resolved to a table,
+    and a function call whose declared return is a closed table. Both of the
+    last two read a binder-resolved symbol (``ReferencedSymbol`` and
+    ``ResultType`` respectively), which is why the predicate takes the node
+    itself. Unbound, nothing proves ``OtherTable`` or ``imProcessCreate(...)``
+    is tabular, and the builder does not guess one into existence. A ``let``
+    whose use site proves the call tabular is rewritten afterwards by
+    :func:`_infer_tabular_lets`; this predicate reads the right-hand side
+    alone. See the bind-state divergence documented on
     :func:`~kustology.ir.transforms.compute_semantic_hash`.
 
     ``ExternalDataExpression`` is one of the four.
@@ -336,9 +340,11 @@ def _is_tabular_rhs(expr: Any) -> bool:
     net_kind = str(type(expr).__name__)
     if net_kind.endswith("Operator") or net_kind in _TABULAR_RHS_KINDS:
         return True
-    return net_kind == "NameReference" and is_table_symbol(
-        getattr(expr, "ReferencedSymbol", None)
-    )
+    if net_kind == "NameReference":
+        return is_table_symbol(getattr(expr, "ReferencedSymbol", None))
+    if net_kind == "FunctionCallExpression":
+        return is_table_symbol(getattr(expr, "ResultType", None))
+    return False
 
 
 def _collect_inner_tables(node: Any) -> list[str]:
@@ -373,6 +379,80 @@ def _collect_inner_time_exprs(node: Any) -> list[Any]:
     from .walk import find_all
 
     return [fc for fc in find_all(node, FuncCall) if fc.is_time_func]
+
+
+def _infer_tabular_lets(bindings: list[LetBinding], roots: list[Pipeline]) -> None:
+    """Rewrite a bare ``let x = f(...)`` that a later tabular use proves tabular.
+
+    Unbound, nothing in ``let pce = imProcessCreate(...); pce | where ...``
+    says the call returns a table, so the binding lands on ``rhs_expr`` while
+    the same query bound against a ``FunctionSchema`` lands on
+    ``rhs_pipeline``. The use site settles it: a ``LetRef`` in source position
+    of a pipeline that goes on to pipe into an operator, or that sits nested
+    inside one, can only name something tabular -- and that pipeline can be
+    the query's own top-level pipeline, or a later binding's own right-hand
+    side, as in the two-step idiom ``let pce = f(...); let recent = pce |
+    where ...; recent | count``, where ``recent``'s own pipeline proves
+    ``pce``.
+
+    A top-level bare use (``let s = f(); s``) proves nothing -- that query
+    returns whatever the call returns -- so it is left alone.
+
+    ``roots`` are the pipelines a top-level use can stand in: the query's own
+    ``main_pipeline`` and ``additional_pipelines``, or a function body's
+    ``body_pipeline``. Every other pipeline reached from them, or from a
+    binding's own ``rhs_pipeline`` / ``rhs_function.body_pipeline``, is
+    nested. Every one of those pipelines already exists before this pass
+    rewrites anything -- the only field it ever sets is a fresh
+    ``FuncCallSource`` pipeline with no ``LetRef`` source, so nothing this
+    pass writes can itself supply a proof -- which is why one pass over the
+    full set suffices.
+    """
+    from .walk import find_all
+
+    search_roots: list[Pipeline] = list(roots)
+    for binding in bindings:
+        if binding.rhs_pipeline is not None:
+            search_roots.append(binding.rhs_pipeline)
+        if (
+            binding.rhs_function is not None
+            and binding.rhs_function.body_pipeline is not None
+        ):
+            search_roots.append(binding.rhs_function.body_pipeline)
+
+    proved: set[str] = set()
+    for root in search_roots:
+        for pipeline in find_all(root, Pipeline):
+            source = pipeline.source
+            if not isinstance(source, LetRef):
+                continue
+            # Identity, not equality: two structurally identical pipelines
+            # compare equal under pydantic, so ``in`` would read a nested
+            # pipeline as the top-level one it happens to match. The identity
+            # check is against the original ``roots``, not ``search_roots``:
+            # a binding's own ``rhs_pipeline`` is never one of the query's
+            # top-level pipelines, so it is always "nested" for this test,
+            # the same way a ``join (a)`` operand's pipeline is.
+            if pipeline.operators or not any(pipeline is r for r in roots):
+                proved.add(source.name)
+    if not proved:
+        return
+
+    for binding in bindings:
+        fc = binding.rhs_expr
+        if binding.name not in proved or not isinstance(fc, FuncCall):
+            continue
+        # ``result_schema`` stays unset: this pass runs on an unbound parse,
+        # where there is no declared return to read columns from.
+        binding.rhs_pipeline = Pipeline(
+            source=FuncCallSource(name=fc.name, args=fc.args, span=fc.span),
+            operators=[],
+        )
+        binding.rhs_expr = None
+        # Where a rewritten binding's index fields are recomputed. An index
+        # field derived from the right-hand side belongs in this block.
+        binding.inner_tables = _collect_inner_tables(binding.rhs_pipeline)
+        binding.inner_time_exprs = _collect_inner_time_exprs(binding.rhs_pipeline)
 
 
 class IRBuilder:
@@ -722,6 +802,9 @@ class IRBuilder:
             additional_pipelines=additional_pipelines,
             diagnostics=diagnostics,
         )
+        # Every pipeline exists by now, so a binding the query only proves
+        # tabular at its use site can be rewritten against those use sites.
+        _infer_tabular_lets(ir.let_bindings, [ir.main_pipeline, *ir.additional_pipelines])
         # Every span above came from .NET and counts UTF-16 code units; the
         # IR is a Python surface and reports code points. Spans are volatile,
         # so this cannot move ``semantic_hash`` whichever order the two run in.
@@ -1053,6 +1136,11 @@ class IRBuilder:
             self._param_names = saved_params
             self._let_names = saved_lets
 
+        # The body is its own scope, so its own tail is the only use site that
+        # can prove one of its ``let``s tabular.
+        if body_pipeline is not None:
+            _infer_tabular_lets(body_lets, [body_pipeline])
+
         return body_lets, body_query_parameters, body_pipeline, body_expr
 
     def _visit_function_declaration(self, node: Any) -> LetFunction:
@@ -1160,7 +1248,11 @@ class IRBuilder:
                     # Syntactic only: a table-valued source name is not
                     # looked up through the binder. See ``_read_func_call``.
                     name, args = self._read_func_call(n, prefer_symbol=False)
-                    source = FuncCallSource(name=name, args=args, span=to_span(n))
+                    call_source = FuncCallSource(name=name, args=args, span=to_span(n))
+                    columns = table_symbol_columns(getattr(n, "ResultType", None))
+                    if columns is not None:
+                        call_source.result_schema = TabularSchema(columns=columns)
+                    source = call_source
                 return
 
             if kind == "DataTableExpression":

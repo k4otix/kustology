@@ -12,6 +12,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`skipped_token_spans()`** (tier 1). `KustoQuery` and `kustology.lexical` report every run of text the parser skipped. A control command skips a trailing second command with no diagnostic, so an empty `diagnostics` list is not proof that all of the input parsed.
 - **`examples/safe_interpolation.py`** (tier 1). The example builds a query from a caller-supplied table name, quotes it, and checks the parse against a canary shape before trusting it. Linked from the README's example table.
 - **`GraphElementRef`** (tier 2). A bare pattern-element name in a `graph-match` or `graph-shortest-paths` clause is its own expression node, so `find_all(ir, ColumnRef)` does not report it as a column. A property of an element, `n.p`, stays a `ColumnRef` carrying `qualifier="n"`.
+- **`FunctionSchema` declares a tabular or scalar function in the schema dict** (tier 1). Put one under the function's name beside the table entries to give Microsoft's binder its parameters and its result columns; `returns=None` leaves the result columns open. See [Declaring functions](docs/tier1-syntax-tree.md#declaring-functions).
+- **Schema files declare functions** (CLI). A `--schema` entry whose value is `{"function": {...}}` declares a tabular or scalar function instead of a table.
+- **`FuncCallSource.result_schema`** (tier 2). A function source bound against a `FunctionSchema` carries the columns Microsoft's binder gives it, and columns read downstream carry the function's name as their `table`.
+- **`FunctionSchema.returns` accepts a callable** (tier 1). The resolver receives the call's literal argument values and returns the columns for that call; a resolver that fails leaves the columns open and logs a warning.
 
 ### Changed
 
@@ -20,6 +24,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`Span` is immutable and shared across copies of an IR** (tier 2). Copying an IR hands every span over by reference, so `copy.deepcopy(ir)` and the private copy each digest is built from stop rebuilding them. Assigning to a span's fields raises; build a new `Span` instead.
 - **Operators that carried their own source text are modeled with typed fields** (tier 2). `scan`, `top-nested`, `make-graph`, `macro-expand`, `graph-match`, `graph-mark-components`, `graph-shortest-paths` and `graph-to-table` drop `raw_text` for typed clauses, so `find_all` reaches the columns and tables inside them, and a `macro-expand` body's own `let` and statements stay scoped to the operator. Every query using one of them gets a different `semantic_hash`, and a stored IR dump that carries `raw_text` for one fails validation.
 - **`ColumnRef.qualifier`** (tier 2) carries the scope name a reference was written against when that name is not a table, as `s1.p` inside a `scan` step and `n.p` inside a graph pattern's `where` or `project` are. An unqualified reference dumps as before, so no other digest moves.
+- **A `let` bound to a declared tabular function lowers to `rhs_pipeline`** (tier 2). Bound against a `FunctionSchema`, or proven by a later tabular use with no schema at all, `semantic_hash` matches either way; absent both, the statement stays on `rhs_expr`.
 
 ### Fixed
 
