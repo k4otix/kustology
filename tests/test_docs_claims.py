@@ -17,8 +17,9 @@ from __future__ import annotations
 import ast
 import io
 import re
+import subprocess
 import tokenize
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "test.yml"
@@ -190,3 +191,127 @@ def test_prose_is_greenfield_and_spells_out_latin():
         if _NOT_GREENFIELD.search(line)
     ]
     assert hits == [], "\n".join(hits)
+
+
+ARCHITECTURE = REPO_ROOT / "ARCHITECTURE.md"
+
+# The directories ARCHITECTURE's layout tree lists file by file. A module
+# added to one of them belongs in the tree with its one-liner.
+_LAYOUT_FILE_BY_FILE = {
+    "src/kustology",
+    "src/kustology/ir",
+    "src/kustology/utils",
+    "scripts",
+}
+# The directories the tree lists by their subdirectories. It names a file
+# inside one of these only as an illustration, so the files are not pinned;
+# a new subdirectory is, because that is a place a reader has to be sent.
+_LAYOUT_BY_SUBDIRECTORY = {"tests"}
+# Package plumbing carries no description a reader of the tree would use.
+_LAYOUT_UNLISTED = {"__init__.py", "py.typed"}
+
+
+def _layout_tree_entries() -> dict[str, int]:
+    """Return ``{path: line number}`` for every entry in the layout tree.
+
+    An entry is the text left of the ``#`` description column, and its
+    indentation nests it under the entry above. A line holding only a
+    description continues the entry above it and names nothing. One line may
+    hold several comma-separated names, none of which can have children.
+    """
+    lines = ARCHITECTURE.read_text(encoding="utf-8").splitlines()
+    start = lines.index("## Layout")
+    entries: dict[str, int] = {}
+    stack: list[tuple[int, str]] = []
+    in_block = False
+    for lineno, line in enumerate(lines[start:], start + 1):
+        if line.startswith("```"):
+            if in_block:
+                break
+            in_block = True
+            continue
+        if not in_block:
+            continue
+        column = line.split("#", 1)[0]
+        if not column.strip():
+            continue
+        indent = len(column) - len(column.lstrip())
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        prefix = stack[-1][1] if stack else ""
+        names = [name.strip() for name in column.strip().split(",") if name.strip()]
+        for name in names:
+            entries.setdefault(prefix + name.rstrip("/"), lineno)
+        if len(names) == 1 and names[0].endswith("/"):
+            stack.append((indent, prefix + names[0]))
+    return entries
+
+
+def _tracked_files() -> set[str]:
+    """Return every file git tracks, as a repo-relative POSIX path.
+
+    ``git ls-files`` rather than a directory walk: it reports what the
+    repository has, leaving out build output, ``__pycache__``, and everything
+    else ``.gitignore`` covers, which is what the layout tree describes.
+    """
+    listing = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return {path for path in listing.stdout.split("\0") if path}
+
+
+def test_architecture_layout_tree_matches_the_repository():
+    """ARCHITECTURE's layout tree is a hand-maintained map of the source.
+
+    It is the first thing a new contributor reads to find where a change
+    goes, so a module missing from it is invisible and a name that outlived
+    its file sends the reader somewhere that is not there. Both directions
+    are checked, at the granularity the tree itself keeps: the package
+    directories and ``scripts`` file by file, ``tests`` by its
+    subdirectories.
+    """
+    entries = _layout_tree_entries()
+    assert entries, "no entries parsed out of ARCHITECTURE.md's layout tree"
+    tracked = _tracked_files()
+    tracked_dirs = {
+        str(parent)
+        for path in tracked
+        for parent in PurePosixPath(path).parents
+        if str(parent) != "."
+    }
+
+    stale = sorted(
+        f"ARCHITECTURE.md:{lineno}: {path}"
+        for path, lineno in entries.items()
+        if path not in tracked and path not in tracked_dirs
+    )
+    assert stale == [], "the layout tree names paths the repository does not have:\n" + "\n".join(stale)
+
+    missing_files = sorted(
+        path
+        for path in tracked
+        if str(PurePosixPath(path).parent) in _LAYOUT_FILE_BY_FILE
+        and PurePosixPath(path).name not in _LAYOUT_UNLISTED
+        and path not in entries
+    )
+    assert missing_files == [], (
+        "the layout tree lists these directories file by file, so add a row "
+        "with a one-liner for:\n" + "\n".join(missing_files)
+    )
+
+    listed_dirs = _LAYOUT_FILE_BY_FILE | _LAYOUT_BY_SUBDIRECTORY
+    missing_dirs = sorted(
+        directory
+        for directory in tracked_dirs
+        if str(PurePosixPath(directory).parent) in listed_dirs
+        and directory not in entries
+    )
+    assert missing_dirs == [], (
+        "the layout tree sends a reader to every subdirectory of the "
+        "directories it lists, so add a row for:\n" + "\n".join(missing_dirs)
+    )
+
