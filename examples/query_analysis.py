@@ -15,6 +15,11 @@ join-bearing query:
   - ``get_referenced_tables()``    — every table source, including
                                      joined, union'd, and
                                      ``database()``-qualified refs.
+  - ``find_source_references()``   — every source: tables, plus the
+                                     function calls, ``externaldata``
+                                     literals, and ``datatable`` literals
+                                     that ``get_referenced_tables()``
+                                     skips.
   - ``get_referenced_columns()``   — every column reference, with
                                      function callees and ``$``-prefixed
                                      join sides filtered out.
@@ -123,6 +128,39 @@ def analyze(query_text: str) -> None:
     )
 
     section(
+        "find_source_references()",
+        "Every source the query reads: tables, plus the function calls, "
+        "externaldata literals, and datatable literals get_referenced_tables() "
+        "cannot see.",
+    )
+    for ref in result.find_source_references():
+        print(f"  {ref.kind:10s} {ref.name or '(anonymous)':16s} "
+              f"start={ref.span.start:4d}  length={ref.span.length}")
+    note(
+        "StormEvents appears twice: once inside high_impact_states's own "
+        "right-hand side, once as the main pipeline's source. "
+        "find_source_references() reports each read on its own line, with no "
+        "deduplication by name."
+    )
+
+    function_query = '_GetWatchlist("Ranges") | take 5'
+    section(
+        "find_source_references(), a function-sourced query",
+        "A second, short query whose only source is a function call.",
+    )
+    kql(function_query)
+    function_result = parse(function_query)
+    for ref in function_result.find_source_references():
+        print(f"  {ref.kind:10s} {ref.name or '(anonymous)':16s} "
+              f"start={ref.span.start:4d}  length={ref.span.length}")
+    function_tables = sorted(function_result.get_referenced_tables())
+    note(
+        f"get_referenced_tables() on this query returns {function_tables}: "
+        "the function call that reads the watchlist stands where a table "
+        "stands, and get_referenced_tables() does not see it."
+    )
+
+    section(
         "get_referenced_columns()",
         "Every name in a column position, with function callees and "
         "$-prefixed join sides filtered out.",
@@ -159,7 +197,14 @@ def analyze(query_text: str) -> None:
     # so print it separately rather than expecting it at the head of the list.
     chain = result.get_operator_chain()
     flow = [str(node.Kind).replace("Operator", "") for node in chain]
-    sources = sorted(result.get_referenced_tables())
+    # find_source_references() carries one entry per read, StormEvents twice
+    # here; dict.fromkeys() dedupes by (kind, name) while keeping first-seen
+    # order, and an anonymous externaldata/datatable source, which has no
+    # name, renders by its kind instead.
+    seen_sources = dict.fromkeys(
+        (ref.kind, ref.name) for ref in result.find_source_references()
+    )
+    sources = [name or kind for kind, name in seen_sources]
     reading = f", reading {', '.join(sources)}" if sources else ""
     print(f"  {len(chain)} operators{reading}:")
     print("  " + (" -> ".join(flow) if flow else "(none)"))

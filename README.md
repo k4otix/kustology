@@ -119,6 +119,7 @@ The `kustology` console script ships with the base install:
 kustology format query.kql        # reformat to canonical form
 kustology validate query.kql      # print parser diagnostics
 kustology parse --ir query.kql    # print the Pydantic IR (needs [ir])
+kustology sources query.kql       # report every source the query reads
 ```
 
 Every subcommand, the `--schema` and `--json` flags, and the exit codes CI

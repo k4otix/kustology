@@ -71,6 +71,24 @@ never reaches the command message.
 it writes the command kinds to stderr, prints nothing on stdout, and exits 1.
 `parse --ast` prints a command's syntax tree the same as a query's.
 
+### sources
+
+Reports every source a query reads: a table, a function call, an
+`externaldata` literal, or a `datatable` literal, in source order.
+
+```bash
+kustology sources query.kql                   # one line per source, tab-separated
+kustology sources --json query.kql            # sources as a JSON array
+kustology sources --schema s.json query.kql   # bind first: a make-graph Nodes clause too
+```
+
+- `--json` emits the sources as a JSON array of `{"kind", "name", "start", "length"}` objects instead of tab-separated text.
+- `--schema` binds the parse, so a source only the binder resolves — a `make-graph` clause's `Nodes` table, for example — is reported. See [Schema files](#schema-files).
+
+`sources` runs the validator before it prints anything, the same as `format`
+and `parse`. `name` is `null` in JSON and `-` in text for the two anonymous
+kinds, `externaldata` and `datatable`.
+
 ## Schema files
 
 A `--schema` file is JSON in the shape `parse(query, schema=...)` takes: `{"Table": {"column": "type"}}`. An entry whose value holds a `function` key mapped to an object declares a function. A `function` key mapped to a type-name string is a table column of that name, so a table can still have a column called `function`. Any other `function` value is malformed input and exits 2:
