@@ -9,6 +9,7 @@ call produces reads as an unknown name. Each case here binds a real query
 through ``parse(query, schema=...)`` and reads what Microsoft's binder resolved.
 """
 
+import logging
 import warnings
 
 import pytest
@@ -273,3 +274,147 @@ def test_functions_and_tables_share_one_dict():
     )
     assert query.diagnostics == []
     assert query.get_referenced_columns() == {"IPAddress", "ActorUsername"}
+
+
+# A callable `returns`: the columns depend on the call's own arguments -------
+
+WATCHLISTS = {
+    "HighValueAssets": {"SearchKey": "string", "AssetTier": "long"},
+    "TerminatedEmployees": {"SearchKey": "string", "LastDay": "datetime"},
+}
+
+
+def test_a_resolver_returns_a_different_schema_per_argument():
+    """A callable ``returns`` declares one column set per call site.
+
+    ``_GetWatchlist('name')`` is the shape: one function, a different table
+    behind every name a caller passes it.
+    """
+    schema = {
+        "_GetWatchlist": FunctionSchema(
+            parameters=(("watchlistName", "string"),),
+            returns=lambda values: WATCHLISTS.get(values[0]),
+        ),
+    }
+
+    assets = parse(
+        "_GetWatchlist('HighValueAssets') | project SearchKey, AssetTier",
+        schema=schema,
+    )
+    assert assets.diagnostics == []
+    assert assets.get_referenced_columns() == {"SearchKey", "AssetTier"}
+
+    terminated = parse(
+        "_GetWatchlist('TerminatedEmployees') | project SearchKey, LastDay",
+        schema=schema,
+    )
+    assert terminated.diagnostics == []
+    assert terminated.get_referenced_columns() == {"SearchKey", "LastDay"}
+
+    # The column the other watchlist declares is what proves each call site got
+    # its own closed symbol rather than the union of both.
+    crossed = parse(
+        "_GetWatchlist('HighValueAssets') | project LastDay", schema=schema
+    ).diagnostics
+    assert len(crossed) == 1
+    assert "does not refer to any known column" in crossed[0]["message"]
+
+
+def test_a_non_literal_argument_reaches_the_resolver_as_none():
+    """An argument with no literal value reaches the resolver as ``None``."""
+    seen = []
+
+    def resolver(values):
+        seen.append(values)
+        # The closed branch is what makes the query below depend on the value:
+        # a name the resolver could read would close the columns and turn
+        # ``anyColumn`` into a diagnostic.
+        return None if values[0] is None else {"SearchKey": "string"}
+
+    schema = {
+        "T": {"name": "string"},
+        "_GetWatchlist": FunctionSchema(
+            parameters=(("watchlistName", "string"),), returns=resolver
+        ),
+    }
+
+    query = parse(
+        "let n = toscalar(T | take 1 | project name); "
+        "_GetWatchlist(n) | where anyColumn == 1",
+        schema=schema,
+    )
+
+    assert query.diagnostics == []
+    assert seen == [(None,)]
+
+
+def test_a_datetime_literal_reaches_the_resolver_as_a_string():
+    """A datetime literal crosses as its invariant-culture ``str``."""
+    from System import DateTime
+
+    seen = []
+
+    def resolver(values):
+        seen.append(values)
+        return {"SearchKey": "string"}
+
+    schema = {
+        "getRange": FunctionSchema(
+            parameters=(("starttime", "datetime"),), returns=resolver
+        ),
+    }
+
+    query = parse(
+        "getRange(datetime(2024-01-01)) | project SearchKey", schema=schema
+    )
+
+    assert query.diagnostics == []
+    assert isinstance(seen[0][0], str)
+    assert seen == [(str(DateTime(2024, 1, 1)),)]
+
+
+def test_a_resolver_that_raises_leaves_the_columns_open(caplog):
+    """A resolver that raises is contained: a warning, and the call binds open.
+
+    Microsoft calls the resolver on the CLR's own stack while binding, so an
+    exception that escapes leaves ``parse`` from a frame the caller never
+    wrote.
+    """
+
+    def resolver(values):
+        raise RuntimeError("kaboom")
+
+    schema = {
+        "getWatchlist": FunctionSchema(
+            parameters=(("watchlistName", "string"),), returns=resolver
+        ),
+    }
+
+    with caplog.at_level(logging.WARNING, logger="kustology.utils.schema_state"):
+        query = parse("getWatchlist('x') | where anyColumn == 1", schema=schema)
+
+    assert query.diagnostics == []
+    assert query.get_referenced_columns() == {"anyColumn"}
+    records = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(records) == 1
+    assert "'getWatchlist'" in records[0].getMessage()
+    assert records[0].exc_info is not None
+
+
+def test_a_resolver_returning_a_scalar_type_name_falls_back_with_a_warning(caplog):
+    """A resolver declares columns, so a scalar type name back from it fails the same way."""
+    schema = {
+        "getWatchlist": FunctionSchema(
+            parameters=(("watchlistName", "string"),),
+            returns=lambda values: "long",
+        ),
+    }
+
+    with caplog.at_level(logging.WARNING, logger="kustology.utils.schema_state"):
+        query = parse("getWatchlist('x') | where anyColumn == 1", schema=schema)
+
+    assert query.diagnostics == []
+    assert query.get_referenced_columns() == {"anyColumn"}
+    records = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert len(records) == 1
+    assert "'getWatchlist'" in records[0].getMessage()

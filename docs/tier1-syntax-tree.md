@@ -151,6 +151,7 @@ q.get_referenced_columns()   # {'ActorUsername'}
 | `"(col:type, ...)"`, `{col: type}`, or `[col, ...]` | a tabular function whose result carries exactly those columns |
 | any other string | a scalar function returning that KQL scalar type |
 | `None` | a tabular function whose result columns are open, so every column a caller reads off it resolves |
+| a callable | a tabular function whose columns the callable decides for each call site |
 
 `parameters` is `(name, scalar type name)` pairs in declaration order. An
 unrecognized type name falls back to `string` with a `RuntimeWarning`, the same
@@ -168,6 +169,52 @@ to return `long` still binds as the built-in returning `string`.
 
 On [Tier 2](tier2-ir.md), a `FunctionSchema` entry declares the function for
 the binder. `to_ir()`'s schema-provenance pass reads the table entries alone.
+
+### Argument-dependent return schemas
+
+Some workspace functions return a different table for each argument they get.
+`_GetWatchlist('HighValueAssets')` and `_GetWatchlist('TerminatedEmployees')`
+are one function over two schemas. Pass a callable as `returns` and it decides
+the columns for each call site:
+
+```python
+from kustology import FunctionSchema, parse
+
+WATCHLISTS = {
+    "HighValueAssets": {"SearchKey": "string", "AssetTier": "long"},
+    "TerminatedEmployees": {"SearchKey": "string", "LastDay": "datetime"},
+}
+schema = {
+    "_GetWatchlist": FunctionSchema(
+        parameters=(("watchlistName", "string"),),
+        returns=lambda values: WATCHLISTS.get(values[0]),
+    ),
+}
+q = parse(
+    "_GetWatchlist('HighValueAssets') | project SearchKey, AssetTier",
+    schema=schema,
+)
+q.diagnostics                # []
+q.get_referenced_columns()   # {'SearchKey', 'AssetTier'}
+```
+
+Microsoft's binder calls the resolver while it binds, once for each call site.
+The resolver receives that call's argument values in order:
+
+| Argument | Value the resolver gets |
+|---|---|
+| a string, long, real, or bool literal | the Python scalar |
+| a datetime, timespan, or decimal literal | its invariant-culture `str`, such as `01/01/2024 00:00:00` |
+| anything else, including a name reference | `None` |
+
+It returns one of the table forms above, or `None` for open columns. A callable
+always declares a tabular function, so a scalar type name back from it is an
+error.
+
+A resolver that raises, and a spec no table form matches, both leave that call
+site's columns open and log one `WARNING` with the traceback on the
+`kustology.utils.schema_state` logger. The parse carries no diagnostic of its
+own for either, so turn that logger on while you write a resolver.
 
 ## `TotalSeconds` loses sub-second precision
 

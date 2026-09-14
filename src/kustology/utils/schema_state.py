@@ -13,21 +13,28 @@ is the one place that translates the documented Python schema shapes
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import warnings
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from .._text import check_utf16_encodable
 from ..bridge import (
     ColumnSymbol,
+    CustomReturnType,
     DatabaseSymbol,
     FunctionSymbol,
     GlobalState,
     Parameter,
     ScalarTypes,
     TableSymbol,
+    Tabularity,
+    ensure_invariant_culture,
 )
+
+logger = logging.getLogger(__name__)
 
 # The `kustology` package directory. Every frame at or below it belongs to this
 # library; the first frame above it is the caller a warning should name.
@@ -189,6 +196,12 @@ def _check_column_name(column, table: str):
     return column
 
 
+# The non-callable forms `FunctionSchema.returns` accepts, and what a resolver
+# callable returns: a table value form, a scalar type name, or None for open
+# columns.
+_ReturnSpec = str | dict[str, str] | list[str] | None
+
+
 @dataclass(frozen=True)
 class FunctionSchema:
     """Declare a function for the binder: its parameters and what it returns.
@@ -210,6 +223,24 @@ class FunctionSchema:
     result columns are open, so every column a caller reads off the result
     resolves and none of them is checked.
 
+    ``returns`` also accepts a callable, for a function whose columns depend on
+    what a call passes it. ``_GetWatchlist('HighValueAssets')`` is the shape:
+    one function, a different table behind every name::
+
+        {"_GetWatchlist": FunctionSchema(
+            parameters=(("watchlistName", "string"),),
+            returns=lambda values: WATCHLISTS.get(values[0]))}
+
+    Microsoft's binder calls the resolver once per call site. It receives the
+    call's argument values in order, each one a ``str``, ``int``, ``float``,
+    ``bool``, or ``None`` for an argument that is not a literal; a datetime,
+    timespan, or decimal literal arrives as its invariant-culture ``str``. It
+    returns one of the table value forms above, or ``None`` for open columns.
+    A callable always declares a tabular function, so a scalar type name back
+    from it is an error. Any failure inside the resolver, or in the spec it
+    hands back, is logged at ``WARNING`` and answered with the open symbol, so
+    that call site binds with its columns unchecked and the parse stands.
+
     ``parameters`` is ``(name, scalar type name)`` pairs in declaration order.
     ``required`` is how many leading parameters a call has to pass; ``None``
     means all of them. A call that passes fewer gets Microsoft's arity
@@ -221,7 +252,7 @@ class FunctionSchema:
     """
 
     parameters: tuple[tuple[str, str], ...] = ()
-    returns: str | dict[str, str] | list[str] | None = None
+    returns: _ReturnSpec | Callable[[tuple[object | None, ...]], _ReturnSpec] = None
     required: int | None = None
 
 
@@ -338,21 +369,91 @@ def _build_function_parameters(name: str, spec: FunctionSchema):
     return out
 
 
+def _literal_argument_value(arg):
+    """Return one call argument's literal value as a Python scalar or None."""
+    value = getattr(arg, "LiteralValue", None)
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+def _is_tabular_spec(value) -> bool:
+    """Return whether a returns/resolver value is one of the tabular spec forms."""
+    return isinstance(value, (dict, list, tuple)) or (
+        isinstance(value, str) and value.lstrip().startswith("(")
+    )
+
+
+def _custom_return_type(name: str, resolver):
+    """Wrap a caller's resolver in the delegate Microsoft's binder calls.
+
+    Microsoft invokes the delegate while binding each call site, on the CLR's
+    own stack. A Python exception raised there propagates out of
+    ``KustoCode.ParseAndAnalyze`` into whatever public entry point the caller
+    invoked, from a frame the caller never wrote, so every ``Exception`` from
+    the resolver or from resolving its answer is logged at ``WARNING`` with
+    ``exc_info`` and answered with the open symbol. The call then binds with
+    its columns unchecked and the parse stands.
+
+    ``MemoryError`` and ``RecursionError`` are not contained: they say the
+    process is out of a resource rather than that the resolver is wrong, and
+    ``services._analyze_guarded`` is the layer that reports those.
+
+    Literal values cross as Python scalars where pythonnet marshals them and as
+    CLR objects otherwise (``System.DateTime``, ``System.TimeSpan``,
+    ``System.Decimal``). The wrapper renders those with ``str`` under the
+    invariant culture this package pins at import, so a resolver sees a stable
+    spelling wherever it runs.
+    """
+
+    def resolve(ctx):
+        try:
+            ensure_invariant_culture()
+            args = ctx.Arguments
+            values = tuple(
+                _literal_argument_value(args[i]) for i in range(args.Count)
+            )
+            spec = resolver(values)
+            if spec is not None and not _is_tabular_spec(spec):
+                raise TypeError(
+                    f"The return-type resolver for function {name!r} returned "
+                    f"{spec!r}, which is not a tabular spec. A resolver "
+                    "declares columns; use a static 'returns' for a scalar "
+                    "function."
+                )
+            if spec is None:
+                return TableSymbol.From("()").WithIsOpen(True)
+            return _build_table_symbol(name, spec)
+        except (MemoryError, RecursionError):
+            raise
+        except Exception:
+            logger.warning(
+                "The return-type resolver for function %r failed; the call "
+                "binds with open columns.",
+                name,
+                exc_info=True,
+            )
+            return TableSymbol.From("()").WithIsOpen(True)
+
+    return CustomReturnType(resolve)
+
+
 def _function_return_symbol(name: str, returns):
     """Resolve a :attr:`FunctionSchema.returns` value to a return symbol.
 
     A tabular return is a ``TableSymbol`` and goes through
     :func:`_build_table_symbol`, so the message for a malformed one names the
-    declaration as a table.
+    declaration as a table. A callable is a per-call-site resolver and becomes
+    the ``CustomReturnType`` delegate Microsoft's binder invokes.
     """
     if returns is None:
         # An open table symbol resolves every column a caller reads off the
         # result and checks none of them, so a declaration that names only the
         # signature produces no false diagnostics.
         return TableSymbol.From("()").WithIsOpen(True)
-    if isinstance(returns, (dict, list, tuple)) or (
-        isinstance(returns, str) and returns.lstrip().startswith("(")
-    ):
+    if callable(returns):
+        return _custom_return_type(name, returns)
+    if _is_tabular_spec(returns):
         return _build_table_symbol(name, returns)
     if isinstance(returns, str):
         return _resolve_scalar_type(
@@ -371,7 +472,12 @@ def _build_function_symbol(name: str, spec: FunctionSchema):
 
     ``FunctionSymbol`` reads the tabularity off the return symbol: a
     ``TableSymbol`` return declares a tabular function and a scalar type
-    declares a scalar one, so no tabularity argument is passed.
+    declares a scalar one, so those two forms pass no tabularity argument. A
+    ``CustomReturnType`` carries no shape the constructor can read, so the
+    callable form states ``Tabularity.Tabular`` itself.
+
+    The ``GlobalState`` holds the symbol, and the symbol holds the delegate,
+    which is what keeps a resolver alive for as long as the binder can call it.
     """
     if not isinstance(name, str):
         raise TypeError(
@@ -379,11 +485,11 @@ def _build_function_symbol(name: str, spec: FunctionSchema):
             f"({name!r}). Keys become the function symbol's name verbatim."
         )
     check_utf16_encodable(name, "Schema function name")
-    return FunctionSymbol(
-        name,
-        _function_return_symbol(name, spec.returns),
-        _build_function_parameters(name, spec),
-    )
+    return_symbol = _function_return_symbol(name, spec.returns)
+    parameters = _build_function_parameters(name, spec)
+    if callable(spec.returns):
+        return FunctionSymbol(name, return_symbol, Tabularity.Tabular, parameters)
+    return FunctionSymbol(name, return_symbol, parameters)
 
 
 def extract_schemas_from_global_state(global_state) -> dict[str, dict[str, str]]:

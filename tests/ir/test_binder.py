@@ -1518,3 +1518,33 @@ def test_a_column_from_a_declared_function_carries_the_function_as_its_table():
     assert len(refs) == 1
     assert refs[0].table == "imProcessCreate"
     assert refs[0].result_type == KustoType.STRING
+
+
+def test_to_ir_rebinds_with_a_callable_return_in_the_schema_dict():
+    """A callable ``returns`` in the ``attach_schema`` dict survives the re-bind.
+
+    ``to_ir`` re-extracts the table shapes off the re-bound ``Globals`` before
+    handing them to ``SchemaAttacher``, so the function entry has to declare
+    its columns through the binder rather than through that dict.
+    """
+    from kustology import FunctionSchema
+    from kustology.ir import FuncCallSource
+
+    watchlists = {"HighValueAssets": {"SearchKey": "string", "AssetTier": "long"}}
+    schema = {
+        "_GetWatchlist": FunctionSchema(
+            parameters=(("watchlistName", "string"),),
+            returns=lambda values: watchlists.get(values[0]),
+        ),
+    }
+
+    ir = parse(
+        "_GetWatchlist('HighValueAssets') | project SearchKey, AssetTier"
+    ).to_ir(attach_schema=schema)
+
+    sources = list(find_all(ir, FuncCallSource))
+    assert len(sources) == 1
+    assert sources[0].result_schema.columns == {
+        "SearchKey": "string",
+        "AssetTier": "long",
+    }

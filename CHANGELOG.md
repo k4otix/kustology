@@ -15,6 +15,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`FunctionSchema` declares a tabular or scalar function in the schema dict** (tier 1). Put one under the function's name beside the table entries to give Microsoft's binder its parameters and its result columns; `returns=None` leaves the result columns open. See [Declaring functions](docs/tier1-syntax-tree.md#declaring-functions).
 - **Schema files declare functions** (CLI). A `--schema` entry whose value is `{"function": {...}}` declares a tabular or scalar function instead of a table.
 - **`FuncCallSource.result_schema`** (tier 2). A function source bound against a `FunctionSchema` carries the columns Microsoft's binder gives it, and columns read downstream carry the function's name as their `table`.
+- **`FunctionSchema.returns` accepts a callable** (tier 1). The resolver receives the call's literal argument values and returns the columns for that call; a resolver that fails leaves the columns open and logs a warning.
 
 ### Changed
 
