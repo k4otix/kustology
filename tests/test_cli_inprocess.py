@@ -475,8 +475,8 @@ def test_parse_ir_json_is_wrapped_in_a_versioned_envelope(monkeypatch, capsys):
     assert rc == 0, captured.err
     payload = json.loads(captured.out)
     assert set(payload) == {"ir_schema_version", "semantic_hash_scheme", "ir"}
-    assert payload["ir_schema_version"] == IR_SCHEMA_VERSION == "0.2"
-    assert payload["semantic_hash_scheme"] == SEMANTIC_HASH_SCHEME == "kustology-sem-v2"
+    assert payload["ir_schema_version"] == IR_SCHEMA_VERSION == "0.3"
+    assert payload["semantic_hash_scheme"] == SEMANTIC_HASH_SCHEME == "kustology-sem-v3"
     assert payload["ir"]["main_pipeline"]["operators"]
     assert payload["ir"]["semantic_hash"].startswith(SEMANTIC_HASH_SCHEME + ":")
 

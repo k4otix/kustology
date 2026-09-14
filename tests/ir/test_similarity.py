@@ -36,7 +36,7 @@ def test_root_entry_equals_semantic_hash():
     hashes = subtree_hashes(ir)
     assert hashes[-1].digest == compute_semantic_hash(ir)
     assert hashes[-1].size == max(h.size for h in hashes)
-    assert all(isinstance(h, SubtreeHash) and h.digest.startswith("kustology-sem-v2:") for h in hashes)
+    assert all(isinstance(h, SubtreeHash) and h.digest.startswith("kustology-sem-v3:") for h in hashes)
 
 
 def test_bag_is_let_name_invariant():

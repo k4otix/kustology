@@ -399,7 +399,7 @@ def test_to_ir_on_an_unbound_parse_survives_the_crash():
     ir = parse(ARITY_CRASH).to_ir()
     (crash,) = _crashes(ir.diagnostics)
     assert crash.severity == "Error"
-    assert ir.semantic_hash.startswith("kustology-sem-v2:")
+    assert ir.semantic_hash.startswith("kustology-sem-v3:")
 
 
 def test_to_ir_with_a_schema_dict_survives_the_crash():

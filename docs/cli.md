@@ -123,8 +123,8 @@ On `validate` and `parse`, a schema file binds the parse. On `parse --ir`, `to_i
 
 ```json
 {
-  "ir_schema_version": "0.2",
-  "semantic_hash_scheme": "kustology-sem-v2",
+  "ir_schema_version": "0.3",
+  "semantic_hash_scheme": "kustology-sem-v3",
   "ir": { "kind": "query", "...": "..." }
 }
 ```

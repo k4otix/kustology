@@ -35,7 +35,7 @@ rows are load-bearing rather than illustrative: if any of them stops
 matching the group it is filed under, ``main()`` raises instead of printing
 a table that is quietly wrong.
 
-The digest carries its scheme as a prefix (``kustology-sem-v2:``) so a
+The digest carries its scheme as a prefix (``kustology-sem-v3:``) so a
 stored hash from an older canonicalization cannot silently compare unequal
 against a fresh one. Rehash from source rather than across schemes.
 

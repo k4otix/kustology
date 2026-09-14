@@ -29,6 +29,6 @@ only while nothing has consumed the intermediate value.
 ``tests/ir/test_schema_tags.py`` pins both, so an accidental bump fails there.
 """
 
-IR_SCHEMA_VERSION = "0.2"
+IR_SCHEMA_VERSION = "0.3"
 
-SEMANTIC_HASH_SCHEME = "kustology-sem-v2"
+SEMANTIC_HASH_SCHEME = "kustology-sem-v3"

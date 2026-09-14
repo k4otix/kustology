@@ -893,7 +893,7 @@ def compute_semantic_hash(node: BaseModel) -> str:
 
     Accepts any IR ``BaseModel`` subtree — a full :class:`QueryIR`, a
     standalone :class:`Pipeline`, an :class:`Expr` subtree — and returns a
-    scheme-tagged hash like ``kustology-sem-v2:<64 hex chars>``.
+    scheme-tagged hash like ``kustology-sem-v3:<64 hex chars>``.
 
     Two subtrees with the same semantic content collide:
 

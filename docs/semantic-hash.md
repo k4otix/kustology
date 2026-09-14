@@ -34,7 +34,7 @@ fields from a different schema fails to load. IR JSON written before
 
 ## Storing hashes
 
-`semantic_hash` carries its scheme as a prefix (`kustology-sem-v2:…`). A
+`semantic_hash` carries its scheme as a prefix (`kustology-sem-v3:…`). A
 hash computed under a different scheme carries a different prefix, so a
 stored hash never collides by accident with a freshly computed one from a
 different scheme.
@@ -51,10 +51,12 @@ same reason: the stored value is dropped, so a dump whose digest was edited
 by hand reloads with a different one.
 
 Check the prefix before comparing hashes you deduplicate by. Schemes
-differ in which queries they merge: `kustology-sem-v2` distinguishes
-`in` / `in~` / `has_any` / `has_all` and `isnotnull` / `isnotempty`, where
-`kustology-sem-v1` does not. When the schemes differ, rehash both queries
-from source and compare the new hashes.
+differ in which queries they merge: `kustology-sem-v3` hashes `scan`,
+`top-nested`, `make-graph`, `macro-expand`, and the `graph-*` operators as
+typed fields, a `typeof(...)` argument as a schema literal, and a qualified
+column by its qualifier, where `kustology-sem-v2` hashed their source text.
+When the schemes differ, rehash both queries from source and compare the new
+hashes.
 
 For anything short of exact equality — how much two queries overlap, or
 where two versions of a rule diverge — see
@@ -63,7 +65,7 @@ where two versions of a rule diverge — see
 ## What the digest ignores
 
 The digest is built to survive differences that do not change what a query
-returns. Within `kustology-sem-v2` these are ignored:
+returns. Within `kustology-sem-v3` these are ignored:
 
 - **Operand order in commutative positions.** `where A and B` and
   `where B and A` are one digest, as are `in ("x", "y")` and
