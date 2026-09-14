@@ -29,6 +29,28 @@ class TextSpan(NamedTuple):
         return query[self.start : self.end]
 
 
+class SourceRef(NamedTuple):
+    """One thing a query reads, with the kind alongside the name.
+
+    ``kind`` is one of ``"table"``, ``"function"``, ``"externaldata"``, or
+    ``"datatable"``. ``name`` carries the table or function name; the two
+    anonymous kinds have no name and carry ``None``.
+
+    ``span`` covers the table's name for a table and the whole construct for
+    the other three kinds, so ``span.text(query)`` reads back
+    ``SecurityEvent`` for a table and ``_GetWatchlist("AllowedRanges")`` for a
+    function call.
+
+    A wildcard resolved by the binder is the exception. ``union T*`` bound
+    against a schema with exactly one matching table reports that table's
+    ``name``, ``T1``, against the span holding the pattern ``T*``.
+    """
+
+    kind: str
+    name: str | None
+    span: TextSpan
+
+
 class TimeExpr(NamedTuple):
     """One result of ``find_time_expressions``; positionally ``(text, start, length)``."""
 

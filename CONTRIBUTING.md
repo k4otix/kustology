@@ -5,12 +5,17 @@ contribution loop is short.
 
 ## Setup
 
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then:
+
 ```bash
 git clone https://github.com/k4otix/kustology.git
 cd kustology
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+uv sync --locked --extra dev
 ```
+
+`uv sync --locked` builds `.venv` from `uv.lock`, the same pinned set CI
+installs. Run everything through `uv run`, which uses that environment
+without activating it.
 
 Requires .NET 8.0+. On Homebrew macOS the bridge auto-detects
 `/opt/homebrew/opt/dotnet/libexec`; elsewhere set `DOTNET_ROOT` if your
@@ -19,12 +24,13 @@ runtime is not on a standard path.
 ## Workflow
 
 1. Open an issue first for non-trivial changes so the design can be discussed.
-2. Branch from `main`.
+2. Branch from `main`. A ruleset protects `main`: every commit has to be
+   signed, so set up SSH or GPG commit signing before your first commit.
 3. Run the full check locally:
    ```bash
-   pytest
-   ruff check src tests scripts examples
-   mypy src
+   uv run pytest
+   uv run ruff check src tests scripts examples
+   uv run mypy src
    ```
 4. Add or update tests for any behavior change. Tests should pin a specific
    diagnostic code, AST shape, or output — avoid asserting on free-form English
@@ -39,7 +45,9 @@ runtime is not on a standard path.
    move once, at release, so they mark what a consumer can observe rather than
    the project's internal history — several branches can land between releases
    and still share one increment.
-7. Open a PR. CI runs the same checks on Linux across Python 3.10–3.14,
+7. Open a PR. Changes reach `main` through a pull request only, and squash
+   is the one merge style the ruleset allows, so your branch lands as a
+   single commit. CI runs the same checks on Linux across Python 3.10–3.14,
    with macOS and Windows sanity cells on 3.14. `test`, `test-ir`, and `lint`
    in `.github/workflows/test.yml` are the loop above; every other job in
    that workflow has no local counterpart and is listed below:
@@ -48,8 +56,8 @@ runtime is not on a standard path.
    | --- | --- |
    | `dependency-review` | flags vulnerable dependencies on the PR itself |
    | `test-locale` | the whole suite again in three cells — `de-DE` and `fr-FR` for the culture pin, and `en_US.UTF-8` with `TZ=Asia/Tokyo` for the timezone bug below |
-   | `coverage-audit` | `python scripts/audit_syntax_kinds.py --check` |
-   | `corpus-regression` | `python scripts/mine_corpus.py` |
+   | `coverage-audit` | `uv run python scripts/audit_syntax_kinds.py --check` |
+   | `corpus-regression` | `uv run python scripts/mine_corpus.py` |
    | `verify-dll` | the bundled DLL's SHA-256, offline and against NuGet |
    | `sbom` | CycloneDX SBOM build |
 
@@ -60,7 +68,7 @@ runtime is not on a standard path.
    cannot tell "converted to UTC" from "not converted", so a
    timezone-dependent defect is invisible in every other cell — and the
    library has exactly one such surface, the `DateTimeKind` branch in
-   `ir/_builder_helpers.py:613-616` behind `LiteralExpr.value` / `.ticks`
+   `ir/_builder_helpers.py:639-642` behind `LiteralExpr.value` / `.ticks`
    (it is the only `ToUniversalTime` / `DateTimeKind` / `TimeZone` read in
    `src/`). If you touch datetime literals, read
    *"Datetime literals are UTC-normalized at build"* in `AGENTS.md` first;
@@ -112,10 +120,10 @@ say why in the marker and expect the next reader to delete it.
 ## Refreshing the bundled DLL
 
 ```bash
-python scripts/refresh_dll.py --version X.Y.Z --pin
-python scripts/verify_dll.py
-pytest
-python scripts/audit_syntax_kinds.py --check
+uv run python scripts/refresh_dll.py --version X.Y.Z --pin
+uv run python scripts/verify_dll.py
+uv run pytest
+uv run python scripts/audit_syntax_kinds.py --check
 ```
 
 `bin/VERSION.txt` is rewritten on **every** run — including a bare

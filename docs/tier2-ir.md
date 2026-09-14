@@ -48,6 +48,12 @@ and pipes it into an operator, and a nested use (`join (pce)`, `union
 pce`) counts too. For that idiom, `semantic_hash` is the same with a
 schema and without one.
 
+`LetBinding.inner_sources` names which non-table sources the binding's
+right-hand side reaches: `[("function", "imProcessCreate")]` for the
+binding above, using the same kind vocabulary as
+`kustology.spans.SourceRef`. A real table stays on `inner_tables`
+instead.
+
 A bare top-level use (`let s = f(); s`) proves nothing, since that query
 returns whatever the call returns, so the binding stays on `rhs_expr` as
 a scalar `FuncCall`. So does a name read in expression position (`where
@@ -101,6 +107,8 @@ Each tier has its own vocabulary, and a third appears on the wire. One
 | `sort by`, `order by` | `SortOperator` | `SortOp` / `"sort"` |
 | `take`, `limit` | `TakeOperator` | `TakeOp` / `"take"` |
 | `mv-expand` | `MvExpandOperator` | `MvExpandOp` / `"mv_expand"` |
+| `scan` | `ScanOperator` | `ScanOp` / `"scan"` |
+| `top-nested` | `TopNestedOperator` | `TopNestedOp` / `"top_nested"` |
 
 Two spellings that share a parser node share an IR node too. `order by`
 is `sort`, and `limit` is `take`, so an analyzer written against one
@@ -135,8 +143,8 @@ the root kind: `parse(".drop table A | getschema").to_ir()` reports a
 `command_kinds`](tier1-syntax-tree.md#control-commands) to branch before the
 call.
 
-The `Unknown*` fallbacks — `UnknownSource`, `UnknownExpr`, `UnknownOp`, and
-`UnknownStmt` — and `QueryIR` declare `raw_text`. On each `Unknown*` node it
+The four `Unknown*` fallbacks (`UnknownSource`, `UnknownExpr`, `UnknownOp`,
+and `UnknownStmt`) and `QueryIR` declare `raw_text`. On an `Unknown*` node it
 marks a shape the builder could not model and holds that node's own source,
 so a consumer can see what the builder did not reach. On `QueryIR` it holds
 the whole query text. Every operator the builder dispatches has typed

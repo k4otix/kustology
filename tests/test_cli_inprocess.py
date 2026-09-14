@@ -475,8 +475,8 @@ def test_parse_ir_json_is_wrapped_in_a_versioned_envelope(monkeypatch, capsys):
     assert rc == 0, captured.err
     payload = json.loads(captured.out)
     assert set(payload) == {"ir_schema_version", "semantic_hash_scheme", "ir"}
-    assert payload["ir_schema_version"] == IR_SCHEMA_VERSION == "0.2"
-    assert payload["semantic_hash_scheme"] == SEMANTIC_HASH_SCHEME == "kustology-sem-v2"
+    assert payload["ir_schema_version"] == IR_SCHEMA_VERSION == "0.3"
+    assert payload["semantic_hash_scheme"] == SEMANTIC_HASH_SCHEME == "kustology-sem-v3"
     assert payload["ir"]["main_pipeline"]["operators"]
     assert payload["ir"]["semantic_hash"].startswith(SEMANTIC_HASH_SCHEME + ":")
 
@@ -951,3 +951,84 @@ def test_a_function_value_that_is_neither_shape_is_a_usage_error(
     assert rc == 2
     assert "imProcessCreate" in captured.err
     assert "function" in captured.err
+
+
+# Copied from `tests/test_source_references.py` rather than imported: that
+# module is not a dependency of this one, and both files pin the same query
+# text on purpose so the CLI and library tests describe the same fixtures.
+_SOURCES_WATCHLIST = (
+    'let allowed =\n'
+    '    _GetWatchlist("AllowedRanges")\n'
+    '    | summarize make_set(IPAddress);\n'
+    'SignInEvents\n'
+    '| where TimeGenerated > ago(1h)\n'
+    '| where IPAddress !in (allowed)'
+)
+
+_SOURCES_GRAPH = "Edges | make-graph src --> dst with Nodes on n"
+
+_SOURCES_GRAPH_SCHEMA = {
+    "Edges": {"src": "string", "dst": "string"},
+    "Nodes": {"n": "string"},
+}
+
+
+def test_sources_text_form_reports_function_then_table(monkeypatch, capsys):
+    """Text form: one tab-separated line per source, offsets matching the
+    library's own `find_source_references()` rather than hard-coded twice."""
+    refs = kustology.parse(_SOURCES_WATCHLIST).find_source_references()
+
+    monkeypatch.setattr(sys, "stdin", _stdin(_SOURCES_WATCHLIST))
+    rc = main(["sources", "-"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert out.splitlines() == [
+        f"function\t_GetWatchlist\t{refs[0].span.start}\t{refs[0].span.length}",
+        f"table\tSignInEvents\t{refs[1].span.start}\t{refs[1].span.length}",
+    ]
+
+
+def test_sources_json_shape(monkeypatch, capsys):
+    """`--json` is a list of dicts with exactly the four `SourceRef` keys."""
+    monkeypatch.setattr(sys, "stdin", _stdin(_SOURCES_WATCHLIST))
+    rc = main(["sources", "--json"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    rows = json.loads(out)
+    assert isinstance(rows, list)
+    assert len(rows) == 2
+    for row in rows:
+        assert set(row) == {"kind", "name", "start", "length"}
+    assert rows[1]["name"] is not None
+
+
+def test_sources_schema_flag_binds_the_parse(tmp_path, monkeypatch, capsys):
+    """`--schema` binds the parse, so `make-graph`'s `Nodes` clause resolves
+    to its own table source; unbound, only the syntactic `Edges` source
+    reports."""
+    schema = tmp_path / "schema.json"
+    schema.write_text(json.dumps(_SOURCES_GRAPH_SCHEMA), encoding="utf-8")
+
+    monkeypatch.setattr(sys, "stdin", _stdin(_SOURCES_GRAPH))
+    rc = main(["sources"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "Nodes" not in out
+
+    monkeypatch.setattr(sys, "stdin", _stdin(_SOURCES_GRAPH))
+    rc = main(["sources", "--schema", str(schema)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "Nodes" in out
+
+
+def test_sources_refuses_input_whose_tail_was_skipped(monkeypatch, capsys):
+    """`sources` shares `_report_error_diagnostics`, so it inherits the
+    unparsed-tail rejection `format` and `parse` already have, rather than
+    reporting sources from only the text the parser read."""
+    monkeypatch.setattr(sys, "stdin", _stdin(_TWO_COMMANDS))
+    rc = main(["sources", "-"])
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert captured.out == ""
+    assert "KUSTOLOGY002" in captured.err

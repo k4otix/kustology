@@ -286,7 +286,7 @@ replacements back-to-front so earlier offsets remain valid. Do not use
 
 ### Path expressions: `database("d").T` and `cluster("c").database("d").T`
 Modeled as `PathExpression(left, dot, right)` where `right` is the trailing
-table identifier. `_unwrap_table_expr` descends into the right child so
+table identifier. `_unwrap_source_expr` descends into the right child so
 syntactic table extraction still resolves `T`. Replacement targets only `T`,
 not the `database(...)`/`cluster(...)` calls.
 
@@ -416,6 +416,11 @@ a DLL refresh). To add coverage: dispatch the shape explicitly in
 `IRBuilder` and append the `SyntaxKind` to `IRBuilder.HANDLED_OPERATOR_KINDS`,
 `IRBuilder.HANDLED_EXPR_KINDS`, or `IRBuilder.HANDLED_STATEMENT_KINDS` —
 these are **public** attributes that the audit script reads as contract.
+
+Every operator the builder dispatches has typed fields. `raw_text` is declared
+only on these four fallbacks and on `QueryIR`, so a node carrying one is a
+shape the builder did not model, and `_normalize_raw_text` re-lexes it before
+the digest reads it.
 
 ### Declare a field only in the change that populates it
 A declared-but-never-populated field reads as implemented and is invisible to

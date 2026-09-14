@@ -59,6 +59,46 @@ def test_tabular_binding_populates_rhs_pipeline_and_inner_tables():
     assert lb.rhs_function is None
 
 
+def test_inner_sources_indexes_a_function_source():
+    q = (
+        'let allowed = _GetWatchlist("AllowedRanges") | summarize make_set(IPAddress);\n'
+        'let recent  = SignInEvents | where TimeGenerated > ago(1h);\n'
+        'recent | where IPAddress !in (allowed)'
+    )
+    ir = parse(q).to_ir()
+    allowed, recent = ir.let_bindings[0], ir.let_bindings[1]
+    assert allowed.inner_sources == [("function", "_GetWatchlist")]
+    assert allowed.inner_tables == []
+    assert recent.inner_sources == []
+    assert recent.inner_tables == ["SignInEvents"]
+
+
+def test_inner_sources_indexes_an_externaldata_source():
+    lb = _binding(
+        'let ext = externaldata(a:string)["https://x/1.csv"]; ext | count',
+        "ext",
+    )
+    assert lb.inner_sources == [("externaldata", None)]
+
+
+def test_inner_sources_indexes_a_datatable_source_inside_a_function_body():
+    lb = _binding(
+        "let f = () { datatable(a:long)[1] | count }; f() | count",
+        "f",
+    )
+    assert isinstance(lb.rhs_function, LetFunction)
+    assert lb.inner_sources == [("datatable", None)]
+
+
+def test_inner_sources_after_tabular_inference():
+    q = (
+        "let pce = imProcessCreate(starttime=ago(1h), endtime=now());\n"
+        "pce | where isnotempty(ActorUsername)"
+    )
+    ir = parse(q).to_ir()
+    assert ir.let_bindings[0].inner_sources == [("function", "imProcessCreate")]
+
+
 def test_parenthesized_tabular_binding_populates_rhs_pipeline():
     """`let X = ( T | where … );` — the dominant Sentinel idiom.
 
