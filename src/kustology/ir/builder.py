@@ -389,26 +389,50 @@ def _infer_tabular_lets(bindings: list[LetBinding], roots: list[Pipeline]) -> No
     the same query bound against a ``FunctionSchema`` lands on
     ``rhs_pipeline``. The use site settles it: a ``LetRef`` in source position
     of a pipeline that goes on to pipe into an operator, or that sits nested
-    inside one, can only name something tabular.
+    inside one, can only name something tabular -- and that pipeline can be
+    the query's own top-level pipeline, or a later binding's own right-hand
+    side, as in the two-step idiom ``let pce = f(...); let recent = pce |
+    where ...; recent | count``, where ``recent``'s own pipeline proves
+    ``pce``.
 
     A top-level bare use (``let s = f(); s``) proves nothing -- that query
     returns whatever the call returns -- so it is left alone.
 
     ``roots`` are the pipelines a top-level use can stand in: the query's own
     ``main_pipeline`` and ``additional_pipelines``, or a function body's
-    ``body_pipeline``. Every other pipeline reached from them is nested.
+    ``body_pipeline``. Every other pipeline reached from them, or from a
+    binding's own ``rhs_pipeline`` / ``rhs_function.body_pipeline``, is
+    nested. Every one of those pipelines already exists before this pass
+    rewrites anything -- the only field it ever sets is a fresh
+    ``FuncCallSource`` pipeline with no ``LetRef`` source, so nothing this
+    pass writes can itself supply a proof -- which is why one pass over the
+    full set suffices.
     """
     from .walk import find_all
 
+    search_roots: list[Pipeline] = list(roots)
+    for binding in bindings:
+        if binding.rhs_pipeline is not None:
+            search_roots.append(binding.rhs_pipeline)
+        if (
+            binding.rhs_function is not None
+            and binding.rhs_function.body_pipeline is not None
+        ):
+            search_roots.append(binding.rhs_function.body_pipeline)
+
     proved: set[str] = set()
-    for root in roots:
+    for root in search_roots:
         for pipeline in find_all(root, Pipeline):
             source = pipeline.source
             if not isinstance(source, LetRef):
                 continue
             # Identity, not equality: two structurally identical pipelines
             # compare equal under pydantic, so ``in`` would read a nested
-            # pipeline as the top-level one it happens to match.
+            # pipeline as the top-level one it happens to match. The identity
+            # check is against the original ``roots``, not ``search_roots``:
+            # a binding's own ``rhs_pipeline`` is never one of the query's
+            # top-level pipelines, so it is always "nested" for this test,
+            # the same way a ``join (a)`` operand's pipeline is.
             if pipeline.operators or not any(pipeline is r for r in roots):
                 proved.add(source.name)
     if not proved:

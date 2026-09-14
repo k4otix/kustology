@@ -741,6 +741,24 @@ def test_a_later_tabular_use_proves_an_unbound_function_binding_tabular():
     assert [fc.name for fc in lb.inner_time_exprs] == ["ago", "now"]
 
 
+def test_a_two_step_use_through_another_binding_proves_tabularity():
+    """``recent``'s own pipeline, not the top-level pipeline, is what proves
+    ``pce`` tabular -- the ASIM idiom of naming an intermediate binding
+    before applying operators and using *that* downstream.
+    """
+    ir = parse(
+        "let pce = imProcessCreate(starttime=ago(1h), endtime=now());\n"
+        "let recent = pce | where isnotempty(ActorUsername);\n"
+        "recent | count"
+    ).to_ir()
+    pce = next(b for b in ir.let_bindings if b.name == "pce")
+    assert pce.rhs_expr is None
+    assert pce.rhs_pipeline is not None
+    assert isinstance(pce.rhs_pipeline.source, FuncCallSource)
+    assert pce.rhs_pipeline.source.name == "imProcessCreate"
+    assert [fc.name for fc in pce.inner_time_exprs] == ["ago", "now"]
+
+
 def test_a_nested_use_counts():
     """A ``join`` operand is a nested pipeline, so a bare name there is tabular."""
     lb = _binding("let a = f(); T | join (a) on x", "a")

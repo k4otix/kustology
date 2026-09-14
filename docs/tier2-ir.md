@@ -51,12 +51,9 @@ schema and without one.
 A bare top-level use (`let s = f(); s`) proves nothing, since that query
 returns whatever the call returns, so the binding stays on `rhs_expr` as
 a scalar `FuncCall`. So does a name read in expression position (`where
-c > n`). The search reaches the query's top-level pipelines and a
-function body's own pipeline, not every binding's, so a use that lives
-only inside another `let`'s right-hand side proves nothing either — that
-binding stays bind-state dependent, like a bare table alias
-(`let A = OtherTable;`), which has no use-site escape at all: see
-`AGENTS.md`'s note on `semantic_hash` bind-state dependence.
+c > n`). A bare table alias (`let A = OtherTable;`) has no use-site
+escape at all and stays bind-state dependent: see `AGENTS.md`'s note on
+`semantic_hash` bind-state dependence.
 
 ### Resolving columns through an alias
 
