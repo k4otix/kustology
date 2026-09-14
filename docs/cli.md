@@ -142,13 +142,13 @@ Input is capped at 10 MB. Set `KUSTOLOGY_MAX_INPUT_BYTES` to override the cap. T
 
 Code 1 means the query is wrong. Code 2 means the command is wrong. A CI job can branch on this distinction: an unreadable path or a malformed `--schema` file says nothing about the KQL itself.
 
-`format` and `parse` both run the validator before they emit anything. If the input has Error-severity diagnostics, neither command writes output derived from the rejected parse. The diagnostics go to stderr, stdout stays empty, and the command exits 1.
+`format`, `parse`, and `sources` all run the validator before they emit anything. If the input has Error-severity diagnostics, none of the three writes output derived from the rejected parse. The diagnostics go to stderr, stdout stays empty, and the command exits 1.
 
 Text the parser skipped is one such diagnostic: kustology's own code
 `KUSTOLOGY002`, at `Error` severity. Its message states the offset and
 length of the skipped run; the skipped text itself is in the diagnostic's
-`detail` field. `validate`, `format`, and `parse` all treat it this way, so
-each of the three exits 1 on input whose tail went unread.
+`detail` field. `validate`, `format`, `parse`, and `sources` all treat it
+this way, so each exits 1 on input whose tail went unread.
 
 `parse --ir` also exits 1 on a control command, which the Tier 2 IR does not
 model.
