@@ -48,6 +48,12 @@ and pipes it into an operator, and a nested use (`join (pce)`, `union
 pce`) counts too. For that idiom, `semantic_hash` is the same with a
 schema and without one.
 
+`LetBinding.inner_sources` names which non-table sources the binding's
+right-hand side reaches: `[("function", "imProcessCreate")]` for the
+binding above, using the same kind vocabulary as
+`kustology.spans.SourceRef`. A real table stays on `inner_tables`
+instead.
+
 A bare top-level use (`let s = f(); s`) proves nothing, since that query
 returns whatever the call returns, so the binding stays on `rhs_expr` as
 a scalar `FuncCall`. So does a name read in expression position (`where

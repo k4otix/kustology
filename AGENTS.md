@@ -286,7 +286,7 @@ replacements back-to-front so earlier offsets remain valid. Do not use
 
 ### Path expressions: `database("d").T` and `cluster("c").database("d").T`
 Modeled as `PathExpression(left, dot, right)` where `right` is the trailing
-table identifier. `_unwrap_table_expr` descends into the right child so
+table identifier. `_unwrap_source_expr` descends into the right child so
 syntactic table extraction still resolves `T`. Replacement targets only `T`,
 not the `database(...)`/`cluster(...)` calls.
 

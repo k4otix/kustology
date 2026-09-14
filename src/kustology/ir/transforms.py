@@ -254,12 +254,12 @@ _VOLATILE_FIELDS = frozenset({
 
 # Cleared by the same pass on the same private copy, for a different reason,
 # hence a separate set. Nothing here is bind state:
-# :attr:`LetBinding.inner_tables` and :attr:`LetBinding.inner_time_exprs` are a
-# **derived index**, written by the builder from the very subtree
-# (``rhs_pipeline`` / ``rhs_function``) that is already in the digest, so
-# excluding them cannot merge anything the tree still splits. Hashing the index
-# instead breaks two ways, since an index copies a name and the copy
-# desynchronizes from it.
+# :attr:`LetBinding.inner_tables`, :attr:`LetBinding.inner_sources` and
+# :attr:`LetBinding.inner_time_exprs` are a **derived index**, written by the
+# builder from the very subtree (``rhs_pipeline`` / ``rhs_function``) that is
+# already in the digest, so excluding them cannot merge anything the tree
+# still splits. Hashing the index instead breaks two ways, since an index
+# copies a name and the copy desynchronizes from it.
 #
 # * ``inner_tables`` is a list of plain ``str``, which no node rename reaches,
 #   so a body reading a tabular parameter records ``["T"]`` against ``["U"]``
@@ -267,6 +267,11 @@ _VOLATILE_FIELDS = frozenset({
 #   alpha-equivalent functions split on the index alone. A tabular parameter
 #   reference is indistinguishable from a table name there (see
 #   :class:`~kustology.ir.query.LetBinding`).
+# * ``inner_sources`` shares that rationale: a ``("function", name)`` entry
+#   copies a ``FuncCallSource.name`` the same way ``inner_tables`` copies a
+#   ``TableRef.name``, so a call site renamed alongside the binding it names
+#   would leave the index holding the old spelling, splitting one query into
+#   two digests.
 # * ``inner_time_exprs`` holds the *same objects* as the right-hand side beside
 #   it, so a rename walk would reach each one twice, correctly only for as long
 #   as ``rhs_function`` stays declared before the index on
@@ -275,7 +280,7 @@ _VOLATILE_FIELDS = frozenset({
 #
 # A future index field over query content belongs here. The test is whether the
 # field's value is *recoverable* from what is already hashed.
-_DERIVED_INDEX_FIELDS = frozenset({"inner_tables", "inner_time_exprs"})
+_DERIVED_INDEX_FIELDS = frozenset({"inner_tables", "inner_sources", "inner_time_exprs"})
 
 _CLEARED_FIELDS = _VOLATILE_FIELDS | _DERIVED_INDEX_FIELDS
 

@@ -3,7 +3,7 @@
 
 """Command-line interface for kustology.
 
-Subcommands: version, format, validate, parse.
+Subcommands: version, format, validate, parse, sources.
 
 Exit codes:
   0 — success.
@@ -185,6 +185,20 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to a JSON schema file ({table: {column: type}}). Binds the "
              "parse, which fills the IR's column types and table provenance. "
              "The --ast tree is unaffected by binding.",
+    )
+
+    sources_p = subparsers.add_parser(
+        "sources", help="Report every source a KQL query reads.",
+    )
+    _add_io_arguments(sources_p)
+    sources_p.add_argument(
+        "--json", action="store_true",
+        help="Emit the sources as a JSON array instead of tab-separated text.",
+    )
+    sources_p.add_argument(
+        "--schema", metavar="PATH",
+        help="Path to a JSON schema file ({table: {column: type}}). Binds the "
+             "parse, so a source only the binder resolves is reported.",
     )
 
     return parser
@@ -511,6 +525,35 @@ def _cmd_parse(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_sources(args: argparse.Namespace) -> int:
+    body = _read_input(args)
+    schema = _load_schema(args.schema)
+    if _report_error_diagnostics(body):
+        return 1
+    refs = parse(body, schema=schema).find_source_references()
+    if args.json:
+        rendered = _json.dumps(
+            [
+                {
+                    "kind": r.kind,
+                    "name": r.name,
+                    "start": r.span.start,
+                    "length": r.span.length,
+                }
+                for r in refs
+            ],
+            indent=2,
+        ) + "\n"
+    else:
+        rendered = "".join(
+            f"{r.kind}\t{r.name or '-'}\t{r.span.start}\t{r.span.length}\n"
+            for r in refs
+        )
+    with _tolerate_broken_pipe():
+        sys.stdout.write(rendered)
+    return 0
+
+
 def _silence_broken_stdout() -> None:
     """Point stdout somewhere harmless after the downstream reader went away.
 
@@ -570,6 +613,8 @@ def main(argv: list[str] | None = None) -> int:
             rc = _cmd_validate(args)
         elif args.command == "parse":
             rc = _cmd_parse(args)
+        elif args.command == "sources":
+            rc = _cmd_sources(args)
         else:
             parser.error(f"unknown command: {args.command!r}")
             rc = 2  # unreachable; parser.error raises SystemExit

@@ -16,6 +16,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Schema files declare functions** (CLI). A `--schema` entry whose value is `{"function": {...}}` declares a tabular or scalar function instead of a table.
 - **`FuncCallSource.result_schema`** (tier 2). A function source bound against a `FunctionSchema` carries the columns Microsoft's binder gives it, and columns read downstream carry the function's name as their `table`.
 - **`FunctionSchema.returns` accepts a callable** (tier 1). The resolver receives the call's literal argument values and returns the columns for that call; a resolver that fails leaves the columns open and logs a warning.
+- **`find_source_references()`** (tier 1). Reports everything a query reads as a `SourceRef(kind, name, span)`, including the function calls, `externaldata` literals, and `datatable` literals that stand in a table's position and that `find_table_references()` skips. Tables inherit that helper's bind-state split; the other three kinds are syntactic on both paths. See [Sources that are not tables](docs/tier1-syntax-tree.md#sources-that-are-not-tables).
+- **`LetBinding.inner_sources`** (tier 2). Indexes the function calls, `externaldata` literals, and `datatable` literals a binding's right-hand side reaches, using the kind vocabulary `find_source_references()` uses. `inner_tables` keeps its tables-only meaning.
+- **`kustology sources`** (CLI). Prints every source a query reads — tables, function calls, `externaldata` literals, and `datatable` literals — as tab-separated text or, with `--json`, a JSON array. `--schema` binds the parse, so a `make-graph` clause's `Nodes` table and other binder-resolved sources report too.
 
 ### Changed
 

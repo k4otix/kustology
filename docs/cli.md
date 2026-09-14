@@ -1,6 +1,6 @@
 # CLI
 
-The `kustology` console script ships with the base install and covers formatting, validation, and parsing from a shell or a CI step.
+The `kustology` console script ships with the base install and covers formatting, validation, parsing, and source reporting from a shell or a CI step.
 
 ## Commands
 
@@ -71,6 +71,29 @@ never reaches the command message.
 it writes the command kinds to stderr, prints nothing on stdout, and exits 1.
 `parse --ast` prints a command's syntax tree the same as a query's.
 
+### sources
+
+Reports every source a query reads: a table, a function call, an
+`externaldata` literal, or a `datatable` literal, in source order.
+
+```bash
+kustology sources query.kql                   # one line per source, tab-separated
+kustology sources --json query.kql            # sources as a JSON array
+kustology sources --schema s.json query.kql   # bind first: a make-graph Nodes clause too
+```
+
+- `--json` emits the sources as a JSON array of `{"kind", "name", "start", "length"}` objects instead of tab-separated text.
+- `--schema` binds the parse, so a source only the binder resolves — a `make-graph` clause's `Nodes` table, for example — is reported. See [Schema files](#schema-files).
+
+`sources` runs the validator before it prints anything, the same as `format`
+and `parse`. `name` is `null` in JSON and `-` in text for the two anonymous
+kinds, `externaldata` and `datatable`.
+
+On a control command, `sources` reports nothing and exits 0: `find_source_references()`
+answers a question query grammar poses, and a command carries none. This is
+the same output a query with no sources would give; branch on `is_command`
+first if the distinction matters. See [Control commands](tier1-syntax-tree.md#control-commands).
+
 ## Schema files
 
 A `--schema` file is JSON in the shape `parse(query, schema=...)` takes: `{"Table": {"column": "type"}}`. An entry whose value holds a `function` key mapped to an object declares a function. A `function` key mapped to a type-name string is a table column of that name, so a table can still have a column called `function`. Any other `function` value is malformed input and exits 2:
@@ -124,13 +147,13 @@ Input is capped at 10 MB. Set `KUSTOLOGY_MAX_INPUT_BYTES` to override the cap. T
 
 Code 1 means the query is wrong. Code 2 means the command is wrong. A CI job can branch on this distinction: an unreadable path or a malformed `--schema` file says nothing about the KQL itself.
 
-`format` and `parse` both run the validator before they emit anything. If the input has Error-severity diagnostics, neither command writes output derived from the rejected parse. The diagnostics go to stderr, stdout stays empty, and the command exits 1.
+`format`, `parse`, and `sources` all run the validator before they emit anything. If the input has Error-severity diagnostics, none of the three writes output derived from the rejected parse. The diagnostics go to stderr, stdout stays empty, and the command exits 1.
 
 Text the parser skipped is one such diagnostic: kustology's own code
 `KUSTOLOGY002`, at `Error` severity. Its message states the offset and
 length of the skipped run; the skipped text itself is in the diagnostic's
-`detail` field. `validate`, `format`, and `parse` all treat it this way, so
-each of the three exits 1 on input whose tail went unread.
+`detail` field. `validate`, `format`, `parse`, and `sources` all treat it
+this way, so each exits 1 on input whose tail went unread.
 
 `parse --ir` also exits 1 on a control command, which the Tier 2 IR does not
 model.
