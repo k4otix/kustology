@@ -28,8 +28,8 @@ from kustology.ir import IR_SCHEMA_VERSION, SEMANTIC_HASH_SCHEME, IRBuilder
 
 
 def test_schema_tags_are_pinned():
-    assert IR_SCHEMA_VERSION == "0.2"
-    assert SEMANTIC_HASH_SCHEME == "kustology-sem-v2"
+    assert IR_SCHEMA_VERSION == "0.3"
+    assert SEMANTIC_HASH_SCHEME == "kustology-sem-v3"
 
 
 def test_handled_kinds_are_real_syntax_classes():

@@ -513,7 +513,7 @@ def test_the_llm_view_is_tagged_with_the_ir_schema_version():
 
     dumped = to_llm_dict(IRBuilder().build("T | count"))
     assert dumped["ir_schema_version"] == IR_SCHEMA_VERSION
-    assert dumped["ir_schema_version"] == "0.2"
+    assert dumped["ir_schema_version"] == "0.3"
 
 
 def test_only_the_root_carries_the_schema_version():
@@ -535,7 +535,7 @@ def test_the_llm_view_surfaces_the_semantic_hash(storm_ir):
     ``model_dump()`` would."""
     dumped = to_llm_dict(storm_ir)
     assert dumped["semantic_hash"] == storm_ir.semantic_hash
-    assert dumped["semantic_hash"].startswith("kustology-sem-v2:")
+    assert dumped["semantic_hash"].startswith("kustology-sem-v3:")
 
 
 def test_the_null_flag_strip_is_scoped_to_binop():

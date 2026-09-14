@@ -83,9 +83,9 @@ QUERIES = [
 
 # `has` matches whole terms against the term index; `contains` is an
 # unindexed substring scan. Both case variants belong here and each has its
-# own indexed counterpart — `has` for `contains`, `has_cs` for
-# `contains_cs`. The negated forms (`!contains`, `!contains_cs`) are left
-# out deliberately: `!has` is not equivalent, so there is no drop-in
+# own indexed counterpart: `has` for `contains`, `has_cs` for
+# `contains_cs`. The negated forms (`!contains`, `!contains_cs`) stay out
+# of the set, because `!has` is not equivalent and there is no drop-in
 # replacement to suggest.
 _UNINDEXED_STRING_OPS = {"contains", "contains_cs"}
 

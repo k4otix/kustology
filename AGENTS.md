@@ -417,6 +417,11 @@ a DLL refresh). To add coverage: dispatch the shape explicitly in
 `IRBuilder.HANDLED_EXPR_KINDS`, or `IRBuilder.HANDLED_STATEMENT_KINDS` —
 these are **public** attributes that the audit script reads as contract.
 
+Every operator the builder dispatches has typed fields. `raw_text` is declared
+only on these four fallbacks and on `QueryIR`, so a node carrying one is a
+shape the builder did not model, and `_normalize_raw_text` re-lexes it before
+the digest reads it.
+
 ### Declare a field only in the change that populates it
 A declared-but-never-populated field reads as implemented and is invisible to
 tests. `LetBinding` shipped a public release with four such fields and a

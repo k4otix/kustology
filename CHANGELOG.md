@@ -6,6 +6,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-09-14
+
+`IR_SCHEMA_VERSION` moves to `0.3` and `SEMANTIC_HASH_SCHEME` to `kustology-sem-v3`. Every operator the IR used to record as source text is typed, `ColumnRef` gains `qualifier`, `TypeOfExpr` and `GraphElementRef` are new nodes, and `raw_text` is hashed after re-lexing, so stored `0.2` dumps of those queries fail validation and every stored `kustology-sem-v2` digest needs recomputing. Tier 1 and the CLI gain the surfaces listed under Added; the one hard break outside tier 2 is that the CLI rejects input whose tail the parser skipped.
+
 ### Added
 
 - **`KustoQuery.is_command` and `command_kinds`** (tier 1). `is_command` tells a dotted control command from a query; `command_kinds` returns Microsoft's `CommandKind` strings for every command in the parse. See [Control commands](docs/tier1-syntax-tree.md#control-commands).
@@ -293,7 +297,8 @@ Tier 1 (`kustology` top-level surface) is on a stabilization track: the package 
   - `find_all_demo.py` — generic IR traversal via `find_all`.
   - `llm_view.py` — LLM-tailored IR serialization via `to_llm_dict`.
 
-[Unreleased]: https://github.com/k4otix/kustology/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/k4otix/kustology/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/k4otix/kustology/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/k4otix/kustology/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/k4otix/kustology/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/k4otix/kustology/compare/v0.1.0...v0.2.0
