@@ -10,7 +10,7 @@ parsing cannot produce. A schema entry declares either a table's columns or
 a function's parameters and return columns through ``FunctionSchema``.
 
 This example uses the canonical Azure Data Explorer ``StormEvents`` schema
-and a query containing a deliberate typo (``EvenType`` instead of
+and a query carrying a planted typo (``EvenType`` instead of
 ``EventType``) to show the difference.
 """
 

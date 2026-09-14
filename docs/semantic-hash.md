@@ -34,7 +34,7 @@ fields from a different schema fails to load. IR JSON written before
 
 ## Storing hashes
 
-`semantic_hash` carries its scheme as a prefix (`kustology-sem-v2:…`). A
+`semantic_hash` carries its scheme as a prefix (`kustology-sem-v3:…`). A
 hash computed under a different scheme carries a different prefix, so a
 stored hash never collides by accident with a freshly computed one from a
 different scheme.
@@ -51,10 +51,12 @@ same reason: the stored value is dropped, so a dump whose digest was edited
 by hand reloads with a different one.
 
 Check the prefix before comparing hashes you deduplicate by. Schemes
-differ in which queries they merge: `kustology-sem-v2` distinguishes
-`in` / `in~` / `has_any` / `has_all` and `isnotnull` / `isnotempty`, where
-`kustology-sem-v1` does not. When the schemes differ, rehash both queries
-from source and compare the new hashes.
+differ in which queries they merge: `kustology-sem-v3` hashes `scan`,
+`top-nested`, `make-graph`, `macro-expand`, and the `graph-*` operators as
+typed fields, a `typeof(...)` argument as a schema literal, and a qualified
+column by its qualifier, where `kustology-sem-v2` hashed their source text.
+When the schemes differ, rehash both queries from source and compare the new
+hashes.
 
 For anything short of exact equality — how much two queries overlap, or
 where two versions of a rule diverge — see
@@ -63,7 +65,7 @@ where two versions of a rule diverge — see
 ## What the digest ignores
 
 The digest is built to survive differences that do not change what a query
-returns. Within `kustology-sem-v2` these are ignored:
+returns. Within `kustology-sem-v3` these are ignored:
 
 - **Operand order in commutative positions.** `where A and B` and
   `where B and A` are one digest, as are `in ("x", "y")` and
@@ -109,6 +111,17 @@ returns. Within `kustology-sem-v2` these are ignored:
   result schemas are stripped, so passing a schema does not move the
   digest. Source offsets and `hint.*` are stripped too: a hint changes how
   the engine executes a query without changing the rows it returns.
+- **A `let` binding's indexes.** `inner_tables`, `inner_sources`, and
+  `inner_time_exprs` copy what the binding's right-hand side holds, and that
+  right-hand side is in the digest already. They stay populated on your own
+  IR; only the hash payload drops them.
+
+A scope name written in the query is not on that list. `ColumnRef.qualifier`
+holds the step or pattern-element name a reference was written against
+(`s1.p` inside a `scan`, `n.p` inside a graph pattern), and the digest reads
+it, so renaming a step or an element splits two queries apart. An unqualified
+reference leaves the field unset, and the payload drops an unset field, so a
+query that qualifies nothing is unaffected.
 
 Your own IR keeps all of this as written; canonicalization runs on a
 private copy for hashing only. `normalize_expressions` is a separate,

@@ -300,6 +300,66 @@ references only, and `tables` there is a command argument. Branch on
 [Tier 2](tier2-ir.md)'s `to_ir()` raises a `ValueError` on a command. The
 message names the root kind it got.
 
+## Sources that are not tables
+
+`find_source_references()` reports everything a query reads, including the
+three constructs that stand where a table name stands without naming a table:
+a call to a stored function, an `externaldata` literal, and a `datatable`
+literal. `find_table_references()` and `get_referenced_tables()` report none of
+them.
+
+```python
+from kustology import parse
+
+q = parse('let allowed = _GetWatchlist("Ranges") | summarize make_set(Ip);\n'
+          'SignInEvents | where Ip !in (allowed)')
+
+[(r.kind, r.name) for r in q.find_source_references()]
+# [('function', '_GetWatchlist'), ('table', 'SignInEvents')]
+```
+
+Each `SourceRef` carries a `kind` of `table`, `function`, `externaldata`, or
+`datatable`, the `name` for the two kinds that have one, and a code-point
+`TextSpan`. An `externaldata` or `datatable` literal has no name and carries
+`None`.
+
+The span covers the table's name for a table and the whole construct for the
+other three kinds, so `span.text(query)` reads back `SignInEvents` for a table
+and `_GetWatchlist("Ranges")` for a function call. The two anonymous kinds have
+no name to point at, and a function's arguments are part of what it reads.
+
+For a table, `span.text(query)` is normally the `name` itself. A wildcard
+resolved by the binder is the exception: `union T*` bound against a schema with
+exactly one matching table reports `name` as `T1` against the span holding the
+pattern `T*`. This is the same asymmetry that stops `replace_table()` rewriting
+a wildcard. With no match, or with two, the reference is not reported at all.
+
+`function` is any call standing in a source position, which includes the
+built-ins that name a table in an argument: `external_table("Logs")`,
+`table("Logs")`, and `materialized_view("MV")` each report `name` as the
+function they call. The argument stays unread, so parse it yourself if you need
+the table it names.
+
+There is one entry per occurrence, in source order. Use
+`get_referenced_tables()` for a deduplicated set of table names.
+
+A name the query binds itself is not a source. In
+`let f = (){ T | count }; f() | count` the only source is `T`, because the
+`let` alias, `as` alias, and function parameter filters apply to every kind
+that carries a name. The wildcard filter applies to tables alone, as described
+above.
+
+Tables come from `find_table_references()` and inherit its bind state, so the
+node table in `make-graph`'s `with` clause resolves on a bound parse only, and
+`force_syntactic=True` selects the syntactic walk for them. The other three
+kinds are syntactic on both paths.
+
+`get_referenced_functions()` answers a different question: every function the
+query calls anywhere, including a scalar call in a `where` clause. A function
+reaches `find_source_references()` only where it stands as a source, so
+`T | where a > ago(1h)` gives `{'ago'}` from the first and the table `T` alone
+from the second.
+
 ## Lexical spans
 
 `kustology.lexical` reports positions Microsoft's parser already decided
@@ -319,20 +379,20 @@ token's own `kind`/`text`/`span` with the `trivia`/`trivia_span`
 `tokens(kusto_code)` returns every token, including the final
 `EndOfTextToken`, which owns the query's trailing trivia. On a
 malformed query, the list also includes the zero-width placeholder
-tokens the parser inserts for what it expected but did not find —
-empty `text`, no source of their own — for example the missing operand
+tokens the parser inserts for what it expected but did not find (empty
+`text`, no source of their own), such as the missing operand
 `IdentifierToken` in `T | where // c\n`.
 
 `comment_spans(kusto_code)` finds every `//` comment by scanning each
-token's trivia. A trivia run can carry several comments — `// a\n  // b\n`
-before one token reports two spans, not one — and the final
-`EndOfTextToken` owns the query's trailing trivia, so a comment at the very
-end of the query is reported too. `//` inside a string literal is not
-trivia at all, so `"http://x.com"` in a query is never mistaken for a
-comment. KQL has no block comments — `/* … */` is a parse error, not a
-recognized comment — so `//` to the end of the line is the complete rule.
-A comment ends at `\n`, `\r`, U+2028 LINE SEPARATOR, or U+2029 PARAGRAPH
-SEPARATOR — the line terminator itself is not part of the span.
+token's trivia. A trivia run can carry several comments: `// a\n  // b\n`
+before one token reports two spans. The final `EndOfTextToken` owns the
+query's trailing trivia, so a comment at the very end of the query is
+reported too. `//` inside a string literal is not trivia at all, so
+`"http://x.com"` in a query is never mistaken for a comment. KQL has no
+block comments, since `/* … */` is a parse error, so `//` to the end of the
+line is the complete rule. A comment ends at `\n`, `\r`, U+2028 LINE
+SEPARATOR, or U+2029 PARAGRAPH SEPARATOR, and the line terminator itself is
+not part of the span.
 
 `string_literal_spans(kusto_code, include_prefix=True)` finds every
 string literal token. Microsoft's token text includes the `@` and `h`

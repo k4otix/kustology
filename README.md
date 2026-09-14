@@ -119,6 +119,7 @@ The `kustology` console script ships with the base install:
 kustology format query.kql        # reformat to canonical form
 kustology validate query.kql      # print parser diagnostics
 kustology parse --ir query.kql    # print the Pydantic IR (needs [ir])
+kustology sources query.kql       # report every source the query reads
 ```
 
 Every subcommand, the `--schema` and `--json` flags, and the exit codes CI
@@ -181,11 +182,11 @@ for the full contract.
 ```bash
 git clone https://github.com/k4otix/kustology.git
 cd kustology
-pip install -e ".[dev]"
+uv sync --locked --extra dev
 
-pytest
-ruff check src tests scripts examples
-mypy src
+uv run pytest
+uv run ruff check src tests scripts examples
+uv run mypy src
 ```
 
 See [CONTRIBUTING.md](https://github.com/k4otix/kustology/blob/main/CONTRIBUTING.md)

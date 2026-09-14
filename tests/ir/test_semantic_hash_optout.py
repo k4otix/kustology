@@ -40,7 +40,7 @@ def test_the_digest_is_not_computed_until_read(counter):
     ir = parse(QUERY).to_ir()
     assert counter == []
     first = ir.semantic_hash
-    assert counter == [1] and first.startswith("kustology-sem-v2:")
+    assert counter == [1] and first.startswith("kustology-sem-v3:")
     assert ir.semantic_hash == first and counter == [1]  # memoized
 
 
