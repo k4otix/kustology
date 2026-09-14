@@ -61,7 +61,7 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
 
       # tests/ir/ used to run on exactly one matrix cell (the standalone
       # test-ir job below), so a python-version- or OS-specific IR regression
@@ -120,7 +120,7 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: "8.0.x"
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
       - name: Install package with [ir] extras
         run: uv sync --locked --extra test --extra ir --python 3.10
       - name: Run full pytest (including tests/ir/)
@@ -165,7 +165,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y locales
           sudo locale-gen de_DE.UTF-8 fr_FR.UTF-8 en_US.UTF-8
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
       - name: Install package with [ir] extras
         run: uv sync --locked --extra test --extra ir
       # de-DE / fr-FR guard the culture pin: without it, fractional duration
@@ -199,7 +199,7 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: "8.0.x"
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
       - name: Install package with [ir] extras
         run: uv sync --locked --extra test --extra ir
       - name: Audit visitor coverage against Kusto.Language.dll
@@ -224,7 +224,7 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: "8.0.x"
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
       - name: Install package with [ir] extras
         run: uv sync --locked --extra test --extra ir
       - name: Mine the bundled Sentinel corpus for builder gaps
@@ -244,7 +244,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
       # Lint tooling is pinned by uv.lock; upgrades arrive as dependabot PRs.
       - name: Install package + dev deps (locked)
         run: uv sync --locked --extra dev
@@ -293,7 +293,7 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: "8.0.x"
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
       - name: Install [ir] extras for corpus mine
         run: uv sync --locked --extra test --extra ir
       - name: Mine Microsoft's KQL corpus for new builder gaps (soft signal)
@@ -315,7 +315,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
       - name: Install package (runtime deps only)
         run: uv sync --locked
       # Scans .venv so the SBOM describes shipped dependencies rather than the
