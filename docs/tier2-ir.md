@@ -40,19 +40,23 @@ real table name.
 `LetBinding.rhs_pipeline`, a `Pipeline` whose source is a
 `FuncCallSource`, in either of two cases. A schema declaring
 `imProcessCreate` as a tabular function closes the call's declared
-return, and a column read downstream then carries `imProcessCreate` as
-its `ColumnRef.table`. Or a use site proves the call tabular: `pce |
+return onto `FuncCallSource.result_schema`, and a column read
+downstream then carries `imProcessCreate` as its `ColumnRef.table`. Or
+a use site proves the call tabular: `pce |
 where isnotempty(ActorUsername)` names the binding in source position
 and pipes it into an operator, and a nested use (`join (pce)`, `union
-pce`) counts too. The idiom's `semantic_hash` is the same with a schema
-and without one.
+pce`) counts too. For that idiom, `semantic_hash` is the same with a
+schema and without one.
 
 A bare top-level use (`let s = f(); s`) proves nothing, since that query
 returns whatever the call returns, so the binding stays on `rhs_expr` as
 a scalar `FuncCall`. So does a name read in expression position (`where
-c > n`). A bare table alias (`let A = OtherTable;`) has no use-site
-escape and stays bind-state dependent: see `AGENTS.md`'s note on
-`semantic_hash` bind-state dependence.
+c > n`). The search reaches the query's top-level pipelines and a
+function body's own pipeline, not every binding's, so a use that lives
+only inside another `let`'s right-hand side proves nothing either — that
+binding stays bind-state dependent, like a bare table alias
+(`let A = OtherTable;`), which has no use-site escape at all: see
+`AGENTS.md`'s note on `semantic_hash` bind-state dependence.
 
 ### Resolving columns through an alias
 

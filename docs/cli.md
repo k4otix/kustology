@@ -88,7 +88,7 @@ A `--schema` file is JSON in the shape `parse(query, schema=...)` takes: `{"Tabl
 }
 ```
 
-The `function` object mirrors [`FunctionSchema`](tier1-syntax-tree.md#declaring-functions)'s three fields. `parameters` is a list of `[name, type]` pairs. `returns` names a scalar type or a tabular result, the same forms `FunctionSchema.returns` takes. `required` counts the leading parameters a call has to pass.
+The `function` object mirrors [`FunctionSchema`](tier1-syntax-tree.md#declaring-functions)'s three fields. `parameters` is a list of `[name, type]` pairs. `returns` names a scalar type or a tabular result, one of the same static forms `FunctionSchema.returns` takes; a callable `returns`, which resolves the result per call, has no file form. `required` counts the leading parameters a call has to pass.
 
 On `validate` and `parse`, a schema file binds the parse. On `parse --ir`, `to_ir()` auto-attaches the schema from a bound parse, so the IR carries column types, table provenance, and `"schema_attached": true` instead of an unenriched skeleton.
 

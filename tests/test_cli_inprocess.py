@@ -819,6 +819,70 @@ def test_a_malformed_function_declaration_is_a_usage_error(tmp_path, capsys):
 
 
 @pytest.mark.parametrize(
+    "params",
+    [[["starttime", 5]], [[1, "datetime"]]],
+    ids=["non-string-type", "non-string-name"],
+)
+def test_a_parameter_with_a_non_string_element_is_a_usage_error(
+    tmp_path, capsys, params
+):
+    """A `[name, type]` pair whose name or type is not a string is malformed
+    input at the CLI boundary: exit 2, naming the entry and `parameters`,
+    instead of a raw exception from the schema builder deeper in the stack."""
+    schema = tmp_path / "schema.json"
+    schema.write_text(
+        json.dumps(
+            {
+                "imProcessCreate": {
+                    "function": {
+                        "parameters": params,
+                        "returns": "(TimeGenerated:datetime, ActorUsername:string)",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    query = tmp_path / "q.kql"
+    query.write_text(_ASIM_IDIOM, encoding="utf-8")
+
+    rc = main(["validate", str(query), "--schema", str(schema)])
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "imProcessCreate" in captured.err
+    assert "parameters" in captured.err
+
+
+@pytest.mark.parametrize("returns", [5, True], ids=["int", "bool"])
+def test_a_returns_of_the_wrong_type_is_a_usage_error(tmp_path, capsys, returns):
+    """`returns` must be a scalar type name, a tabular spec, or null, so an
+    int or a bool is malformed input at the CLI boundary: exit 2, naming the
+    entry and `returns`, instead of a raw exception deeper in the stack."""
+    schema = tmp_path / "schema.json"
+    schema.write_text(
+        json.dumps(
+            {
+                "imProcessCreate": {
+                    "function": {
+                        "parameters": [["starttime", "datetime"]],
+                        "returns": returns,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    query = tmp_path / "q.kql"
+    query.write_text(_ASIM_IDIOM, encoding="utf-8")
+
+    rc = main(["validate", str(query), "--schema", str(schema)])
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "imProcessCreate" in captured.err
+    assert "returns" in captured.err
+
+
+@pytest.mark.parametrize(
     "required", ["zero", -1, 3], ids=["string", "negative", "too-large"]
 )
 def test_a_malformed_required_is_a_usage_error(tmp_path, capsys, required):

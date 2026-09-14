@@ -969,7 +969,10 @@ def compute_semantic_hash(node: BaseModel) -> str:
       binding and that pipes into an operator, or that sits nested inside
       one, proves the call tabular, so ``let pce = imProcessCreate(...); pce
       | where ...`` records ``rhs_pipeline`` either way. A bare top-level use
-      (``let s = f(); s``) proves nothing and keeps ``rhs_expr``.
+      (``let s = f(); s``) proves nothing and keeps ``rhs_expr``. Nor does a
+      use that lives only inside another binding's own right-hand side — the
+      search reaches the query's top-level pipelines and a function body's
+      own pipeline, not every binding's — so that case still diverges.
 
     The tail of a ``let``-function body is the same grammatical position read
     by the same predicate (``builder._is_tabular_rhs``), so ``let f = () {

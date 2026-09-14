@@ -24,8 +24,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`Span` is immutable and shared across copies of an IR** (tier 2). Copying an IR hands every span over by reference, so `copy.deepcopy(ir)` and the private copy each digest is built from stop rebuilding them. Assigning to a span's fields raises; build a new `Span` instead.
 - **Operators that carried their own source text are modeled with typed fields** (tier 2). `scan`, `top-nested`, `make-graph`, `macro-expand`, `graph-match`, `graph-mark-components`, `graph-shortest-paths` and `graph-to-table` drop `raw_text` for typed clauses, so `find_all` reaches the columns and tables inside them, and a `macro-expand` body's own `let` and statements stay scoped to the operator. Every query using one of them gets a different `semantic_hash`, and a stored IR dump that carries `raw_text` for one fails validation.
 - **`ColumnRef.qualifier`** (tier 2) carries the scope name a reference was written against when that name is not a table, as `s1.p` inside a `scan` step and `n.p` inside a graph pattern's `where` or `project` are. An unqualified reference dumps as before, so no other digest moves.
-- **A `let` bound to a declared tabular function lowers to `rhs_pipeline`** (tier 2). Unbound, the same lowering happens once a later use proves the binding tabular; see the next entry.
-- **A bare `let x = f(...)` used as a pipeline source lowers to `rhs_pipeline`** (tier 2). `semantic_hash` moves for that idiom, and matches the digest the same query gets bound against a `FunctionSchema`.
+- **A `let` bound to a declared tabular function lowers to `rhs_pipeline`** (tier 2). Bound against a `FunctionSchema`, or proven by a later tabular use with no schema at all, `semantic_hash` matches either way; absent both, the statement stays on `rhs_expr`.
 
 ### Fixed
 

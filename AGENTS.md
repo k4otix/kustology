@@ -482,21 +482,20 @@ own right-hand side; the *use* site is bind-independent, since a name bound by
 an earlier `let` is a `LetRef` decided from the statement text alone.
 
 A `let` calling a declared tabular function diverges the same way: `let x =
-imProcessCreate(...)` resolves to `rhs_pipeline` (over a `FuncCallSource`)
-once the binder closes the call's declared return, or once a later tabular
-use of `x` proves it with no schema at all. Absent both, it stays
-`rhs_expr`. Two routes to one shape; no third has surfaced.
-`_VOLATILE_FIELDS` names every field
-the binder writes — `result_type` / `result_type_inner` / `table` /
+imProcessCreate(...)` resolves to `rhs_pipeline` (over a `FuncCallSource`) once
+the binder closes the call's declared return, or once a later tabular use of
+`x` proves it with no schema at all. Absent both, it stays `rhs_expr`. Two
+routes to one shape; no third has surfaced. `_VOLATILE_FIELDS` names every
+field the binder writes — `result_type` / `result_type_inner` / `table` /
 `result_schema` — plus the source offsets, `span` and `body_span`, so field
 *values* never make a query hash two ways. `hints` is in the set for a
 different reason: nothing binder-ish about it, but a `hint.strategy=shuffle`
 asks the engine to *execute* a query differently without changing the rows it
 returns, so two rules that differ only there are one rule to a deduplicating
 consumer. When you add a binder-populated field, add it there too, and check
-first whether it is carrying source-derived information that must keep
-hashing: `ColumnRef.table` was, and splitting `join_side` out of it is what let
-the rest be stripped.
+first whether it is carrying source-derived information that must keep hashing:
+`ColumnRef.table` was, and splitting `join_side` out of it is what let the rest
+be stripped.
 
 The set is keyed by **model field name**, cleared by `_clear_volatile` walking
 the hash's deep copy — not by key name in the dumped JSON, which is what it

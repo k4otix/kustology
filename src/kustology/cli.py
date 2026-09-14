@@ -352,11 +352,23 @@ def _schema_entry(name: str, value: object) -> object:
         )
     params = decl.get("parameters", [])
     if not isinstance(params, list) or any(
-        not isinstance(p, list) or len(p) != 2 for p in params
+        not isinstance(p, list)
+        or len(p) != 2
+        or not isinstance(p[0], str)
+        or not isinstance(p[1], str)
+        for p in params
     ):
         raise _UsageError(
             f"Schema entry {name!r}: 'parameters' must be a list of "
-            '[name, type] pairs, for example [["starttime", "datetime"]].'
+            '[name, type] string pairs, for example '
+            '[["starttime", "datetime"]].'
+        )
+    returns = decl.get("returns")
+    if returns is not None and not isinstance(returns, (str, dict, list)):
+        raise _UsageError(
+            f"Schema entry {name!r}: 'returns' must be a scalar type name, a "
+            "tabular spec (an object, a list, or a '(col:type, ...)' "
+            f"string), or null for open; got {type(returns).__name__}."
         )
     required = decl.get("required")
     if required is not None:
@@ -373,7 +385,7 @@ def _schema_entry(name: str, value: object) -> object:
             )
     return FunctionSchema(
         parameters=tuple((p[0], p[1]) for p in params),
-        returns=decl.get("returns"),
+        returns=returns,
         required=required,
     )
 
