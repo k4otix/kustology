@@ -169,6 +169,40 @@ def test_operator_result_schema_is_dropped_but_the_pipeline_keeps_its_own(storm_
     assert storm_ir.model_dump_json().count('"DeathsDirect":"int"') == 3
 
 
+def test_func_call_source_result_schema_is_dropped_but_the_pipeline_keeps_its_own():
+    """``FuncCallSource.result_schema`` restates what ``Pipeline.result_schema``
+    already carries, so the view drops the source's copy the same way it
+    drops an operator's."""
+    from kustology import FunctionSchema, parse
+
+    schema = {
+        "imProcessCreate": FunctionSchema(
+            parameters=(("starttime", "datetime"), ("endtime", "datetime")),
+            returns="(TimeGenerated:datetime, ActorUsername:string)",
+            required=0,
+        ),
+    }
+    ir = parse(
+        "imProcessCreate(starttime=ago(1h), endtime=now()) "
+        "| where isnotempty(ActorUsername)",
+        schema=schema,
+    ).to_ir()
+
+    source = ir.main_pipeline.source
+    assert source.result_schema is not None  # premise: the field is populated
+
+    out = to_llm_dict(ir)
+    view_source = out["main_pipeline"]["source"]
+    assert view_source["kind"] == "func_call_source"
+    assert "result_schema" not in view_source
+    assert out["main_pipeline"]["result_schema"]["columns"] == {
+        "TimeGenerated": "datetime", "ActorUsername": "string",
+    }
+
+    # The lossless dump keeps the source's own copy.
+    assert '"result_schema"' in ir.main_pipeline.source.model_dump_json()
+
+
 def test_redundant_canonical_form_dropped_on_leaves(storm_ir):
     """``canonical_form`` is dropped on ColumnRef when it restates ``name``
     (bare or ``table.name`` for bound nodes), and on LiteralExpr when it is

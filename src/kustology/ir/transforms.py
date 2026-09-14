@@ -236,9 +236,17 @@ def _merge_at_one_level(ops: list) -> list:
 # dispatch is bind-dependent by *shape*, so ``let A = OtherTable`` yields
 # ``rhs_expr: ColumnRef`` unbound and ``rhs_pipeline: Pipeline(TableRef)`` once
 # the binder proves ``OtherTable`` is a table (see
-# ``IRBuilder._visit_let_statement``). That divergence is accepted; the
-# alternative treats every bare ``NameReference`` as a table with no schema to
-# prove it, trading an honest difference for a silently wrong answer.
+# ``IRBuilder._visit_let_statement``). ``let f = imProcessCreate(...)`` shares
+# the same shape divergence over a declared function's return: ``rhs_expr``
+# unbound, ``rhs_pipeline: Pipeline(FuncCallSource)`` once the binder closes
+# the call's ``ResultType``. Both are accepted; the alternative treats every
+# bare ``NameReference`` or function call as tabular with no schema to prove
+# it, trading an honest difference for a silently wrong answer.
+#
+# ``FuncCallSource.result_schema`` itself is ordinary volatile state, not a
+# second divergence: it is a field value, and this set already clears it
+# under the ``result_schema`` entry shared with every other node that
+# declares one.
 _VOLATILE_FIELDS = frozenset({
     "span", "body_span", "result_type", "result_type_inner", "table",
     "result_schema", "hints",
@@ -946,15 +954,24 @@ def compute_semantic_hash(node: BaseModel) -> str:
     Everything the binder *writes* is stripped before the dump —
     ``result_type``, ``result_type_inner``, ``table``, ``result_schema`` and
     ``hints``, plus ``span`` / ``body_span`` (:data:`_VOLATILE_FIELDS`) — so
-    passing a schema does not move the digest. One divergence survives that,
-    being a difference of *shape* rather than of a field's value: a ``let``
-    whose right-hand side aliases a table records ``rhs_expr`` unbound and
-    ``rhs_pipeline`` once the binder has proved the name is a table, and no
-    field-clearing can make two different nodes into one. The tail of a
-    ``let``-function body is the same grammatical position read by the same
-    predicate (``builder._is_tabular_rhs``), so ``let f = () { OtherTable }``
-    diverges the same way, on ``body_expr`` vs ``body_pipeline``. Queries that
-    alias no bare table name in either position are unaffected.
+    passing a schema does not move the digest. Two divergences survive that,
+    each a difference of *shape* rather than of a field's value, and no
+    field-clearing can make two differently shaped nodes into one:
+
+    * A ``let`` whose right-hand side aliases a table records ``rhs_expr``
+      unbound and ``rhs_pipeline`` once the binder has proved the name is a
+      table.
+    * A ``let`` whose right-hand side calls a declared tabular function
+      records ``rhs_expr`` unbound and ``rhs_pipeline`` (over a
+      ``FuncCallSource``) once the binder has closed the call's declared
+      return.
+
+    The tail of a ``let``-function body is the same grammatical position read
+    by the same predicate (``builder._is_tabular_rhs``), so ``let f = () {
+    OtherTable }`` and ``let f = () { imProcessCreate(...) }`` diverge the
+    same way, on ``body_expr`` vs ``body_pipeline``. Queries that name no bare
+    table alias and call no declared tabular function in either position are
+    unaffected.
 
     Two more fields are excluded for an unrelated reason.
     :attr:`~kustology.ir.query.LetBinding.inner_tables` and

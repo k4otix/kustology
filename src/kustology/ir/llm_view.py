@@ -232,18 +232,23 @@ def _cap_datatable_rows(out: dict[str, Any], cls: type) -> None:
 
 
 def _drop_operator_result_schema(out: dict[str, Any], cls: type) -> None:
-    """Remove ``result_schema`` from an operator node. Pipelines keep theirs.
+    """Remove ``result_schema`` from an operator node or a function-call source.
 
-    ``Operator.result_schema`` is the column list the operator emits, read off
-    Microsoft's binder. On a bound parse most operators emit the columns the
-    one before them emitted, so a pipeline of *n* steps restates one column
-    list *n* times, which a view built for context economy cannot afford.
-    Measured across the 49-query fixture corpus, bound against a schema naming
-    every referenced column, the per-operator copies were 35% of the whole LLM
-    view (295,156 of 851,224 bytes): with them the view was a median 28%
-    smaller than ``model_dump_json`` on the same query, without them it is
-    45%. ``CHANGELOG.md``'s ``to_llm_dict`` entry carries those numbers; keep
-    the two in step.
+    Pipelines keep theirs. ``Operator.result_schema`` is the column list the
+    operator emits, read off Microsoft's binder. On a bound parse most
+    operators emit the columns the one before them emitted, so a pipeline of
+    *n* steps restates one column list *n* times, which a view built for
+    context economy cannot afford. Measured across the 49-query fixture
+    corpus, bound against a schema naming every referenced column, the
+    per-operator copies were 35% of the whole LLM view (295,156 of 851,224
+    bytes): with them the view was a median 28% smaller than
+    ``model_dump_json`` on the same query, without them it is 45%.
+    ``CHANGELOG.md``'s ``to_llm_dict`` entry carries those numbers; keep the
+    two in step.
+
+    ``FuncCallSource.result_schema`` restates the same columns a third time:
+    the enclosing pipeline's own ``result_schema`` already carries them, so
+    the view loses nothing by dropping the copy on the source.
 
     ``Pipeline.result_schema`` stays: "what columns does this query return" is
     one answer per pipeline, and it is the answer a reader asks for. The
@@ -252,9 +257,9 @@ def _drop_operator_result_schema(out: dict[str, Any], cls: type) -> None:
     ``issubclass`` does the scoping; the field name in :data:`_OMIT_FIELDS`
     would match across every model and take ``Pipeline``'s with it.
     """
-    from .query import Operator  # lazy import: avoids cycle at module load
+    from .query import FuncCallSource, Operator  # lazy import: avoids cycle at module load
 
-    if issubclass(cls, Operator):
+    if issubclass(cls, (Operator, FuncCallSource)):
         out.pop("result_schema", None)
 
 

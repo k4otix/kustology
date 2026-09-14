@@ -320,10 +320,12 @@ def _is_tabular_rhs(expr: Any) -> bool:
 
     Covers the operator-rooted forms (``union``/``range``/``search``/``print``/
     ``find``, plus any operator Microsoft adds later), the four non-operator
-    tabular kinds, and a bare ``NameReference`` the binder resolved to a
-    table. That last arm reads ``ReferencedSymbol``, which is why the
-    predicate takes the node itself. Unbound, nothing proves ``OtherTable`` is
-    a table, and the builder does not guess one into existence. See the
+    tabular kinds, a bare ``NameReference`` the binder resolved to a table,
+    and a function call whose declared return is a closed table. Both of the
+    last two read a binder-resolved symbol (``ReferencedSymbol`` and
+    ``ResultType`` respectively), which is why the predicate takes the node
+    itself. Unbound, nothing proves ``OtherTable`` or ``imProcessCreate(...)``
+    is tabular, and the builder does not guess one into existence. See the
     bind-state divergence documented on
     :func:`~kustology.ir.transforms.compute_semantic_hash`.
 
@@ -336,9 +338,11 @@ def _is_tabular_rhs(expr: Any) -> bool:
     net_kind = str(type(expr).__name__)
     if net_kind.endswith("Operator") or net_kind in _TABULAR_RHS_KINDS:
         return True
-    return net_kind == "NameReference" and is_table_symbol(
-        getattr(expr, "ReferencedSymbol", None)
-    )
+    if net_kind == "NameReference":
+        return is_table_symbol(getattr(expr, "ReferencedSymbol", None))
+    if net_kind == "FunctionCallExpression":
+        return is_table_symbol(getattr(expr, "ResultType", None))
+    return False
 
 
 def _collect_inner_tables(node: Any) -> list[str]:
@@ -1160,7 +1164,11 @@ class IRBuilder:
                     # Syntactic only: a table-valued source name is not
                     # looked up through the binder. See ``_read_func_call``.
                     name, args = self._read_func_call(n, prefer_symbol=False)
-                    source = FuncCallSource(name=name, args=args, span=to_span(n))
+                    call_source = FuncCallSource(name=name, args=args, span=to_span(n))
+                    columns = table_symbol_columns(getattr(n, "ResultType", None))
+                    if columns is not None:
+                        call_source.result_schema = TabularSchema(columns=columns)
+                    source = call_source
                 return
 
             if kind == "DataTableExpression":

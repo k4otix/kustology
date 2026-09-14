@@ -30,6 +30,7 @@ from .query import (
     DataTableSource,
     ExternalDataSource,
     FindOp,
+    FuncCallSource,
     JoinOp,
     LetBinding,
     LetFunctionParameter,
@@ -185,6 +186,9 @@ class SchemaAttacher:
       the bare-key left-first rule.
     * ``let`` threading: a tabular binding's output columns registered under
       its name, so ``Base | project Account`` resolves.
+    * A declared function-call source's columns, registered under the call's
+      own name, so ``imProcessCreate(...) | where isnotempty(ActorUsername)``
+      resolves ``ActorUsername`` and names ``imProcessCreate`` as its table.
     * ``Expr.result_type`` backfill for the exactly-knowable cases: a
       literal's own kind, a comparison's ``bool``. Arithmetic stays
       unresolved.
@@ -497,6 +501,12 @@ class SchemaAttacher:
             return ScopeEntry(table=None, columns=columns)
         if isinstance(source, LetRef):
             return self._let_alias_entry(source.name)
+        if isinstance(source, FuncCallSource):
+            # The function name is the provenance label: a column read off
+            # ``imProcessCreate(...)`` came from that function, not from a
+            # table.
+            columns = dict(source.result_schema.columns) if source.result_schema else {}
+            return ScopeEntry(table=source.name, columns=columns)
         if isinstance(source, TableRef) and source.is_wildcard:
             # ``union T*`` names a *set* of tables. Resolving it against a
             # schema entry literally called ``T*`` would be a coincidence,

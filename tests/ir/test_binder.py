@@ -1494,3 +1494,27 @@ def test_enrichment_is_hash_silent_for_a_join_and_a_find_query():
     find_before = compute_semantic_hash(find_ir)
     SchemaAttacher(DICT_SCHEMA).enrich(find_ir)
     assert compute_semantic_hash(find_ir) == find_before
+
+
+def test_a_column_from_a_declared_function_carries_the_function_as_its_table():
+    """``_source_entry``'s ``FuncCallSource`` branch names the call, not a
+    table, as the provenance for a column it returns."""
+    from kustology import FunctionSchema
+    from kustology.ir import KustoType
+
+    schema = {
+        "imProcessCreate": FunctionSchema(
+            parameters=(("starttime", "datetime"), ("endtime", "datetime")),
+            returns="(TimeGenerated:datetime, ActorUsername:string)",
+            required=0,
+        ),
+    }
+    ir = parse(
+        "imProcessCreate(starttime=ago(1h), endtime=now()) "
+        "| where isnotempty(ActorUsername)",
+        schema=schema,
+    ).to_ir()
+    refs = [c for c in find_all(ir, ColumnRef) if c.name == "ActorUsername"]
+    assert len(refs) == 1
+    assert refs[0].table == "imProcessCreate"
+    assert refs[0].result_type == KustoType.STRING

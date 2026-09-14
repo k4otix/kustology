@@ -5,10 +5,11 @@
 
 import pytest
 
-from kustology import parse
+from kustology import FunctionSchema, parse
 from kustology.ir import (
     BinOp,
     ColumnRef,
+    FuncCallSource,
     LetBinding,
     LetFunction,
     LetRef,
@@ -18,6 +19,17 @@ from kustology.ir import (
     TableRef,
     find_all,
 )
+
+# A declared tabular function, the ASIM parser idiom: Sentinel workspace
+# functions like this are the common case a caller has to declare to bind at
+# all. Shared with ``tests/test_function_schema.py``'s ``ASIM``.
+FUNCTION_SCHEMA = {
+    "imProcessCreate": FunctionSchema(
+        parameters=(("starttime", "datetime"), ("endtime", "datetime")),
+        returns="(TimeGenerated:datetime, ActorUsername:string)",
+        required=0,
+    ),
+}
 
 
 def _binding(query: str, name: str, schema: dict | None = None) -> LetBinding:
@@ -657,3 +669,48 @@ def test_externaldata_let_rhs_is_tabular():
     assert lb.inner_tables == []
     assert source.columns == [("id", "string")]
     assert source.uris == ["https://example.test/x.csv"]
+
+
+def test_a_bound_tabular_function_binding_lands_on_rhs_pipeline():
+    """`let pce = imProcessCreate(...)` is tabular only when the binder
+    proves the call's declared return is a closed table.
+
+    With ``FUNCTION_SCHEMA`` the call's ``ResultType`` is a closed
+    ``TableSymbol``, so the binding becomes a pipeline over a
+    ``FuncCallSource`` carrying the declared columns. This is the non-default
+    assertion the global constraints require: a hand-built node with an
+    unpopulated ``result_schema`` would pass a test that only checked the
+    field's type.
+    """
+    lb = _binding(
+        "let pce = imProcessCreate(starttime=ago(1h), endtime=now()); "
+        "pce | where isnotempty(ActorUsername)",
+        "pce",
+        schema=FUNCTION_SCHEMA,
+    )
+    assert lb.rhs_expr is None
+    assert isinstance(lb.rhs_pipeline, Pipeline)
+    source = lb.rhs_pipeline.source
+    assert isinstance(source, FuncCallSource)
+    assert source.name == "imProcessCreate"
+    assert source.result_schema is not None
+    assert source.result_schema.columns == {
+        "TimeGenerated": "datetime", "ActorUsername": "string",
+    }
+
+
+def test_an_unbound_function_binding_keeps_rhs_expr():
+    """Without a schema nothing proves the call is tabular, so the right-hand
+    side stays an expression.
+
+    Task 4 replaces this expectation once the builder infers a tabular call
+    from a pipeline-use position without a schema; leaving the note here for
+    whoever picks that up.
+    """
+    lb = _binding(
+        "let pce = imProcessCreate(starttime=ago(1h), endtime=now()); "
+        "pce | where isnotempty(ActorUsername)",
+        "pce",
+    )
+    assert lb.rhs_pipeline is None
+    assert lb.rhs_expr is not None

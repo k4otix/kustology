@@ -59,14 +59,17 @@ from pathlib import Path
 
 import pytest
 
-from kustology import parse
+from kustology import FunctionSchema, parse
 from kustology.bridge import KustoCode
 from kustology.utils.analysis import build_global_state
 
 # A collision-heavy schema: ``L`` and ``R`` share ``k`` and ``shared``, which
 # makes join renaming (``shared1``) observable, and ``U`` types ``a``
 # differently from ``T`` so a union conflict has to produce two columns.
-SCHEMA: dict[str, dict[str, str]] = {
+# ``imProcessCreate`` is a declared tabular function, the ASIM parser idiom,
+# so a MATRIX row can exercise a function-call source's ``result_schema``
+# alongside every table-rooted shape.
+SCHEMA: dict[str, dict[str, str] | FunctionSchema] = {
     "L": {"k": "string", "a": "long", "shared": "string"},
     "R": {"k": "string", "b": "real", "shared": "string"},
     "T": {
@@ -74,6 +77,11 @@ SCHEMA: dict[str, dict[str, str]] = {
         "d": "dynamic", "s": "string", "g": "guid",
     },
     "U": {"k": "string", "a": "string", "z": "long"},
+    "imProcessCreate": FunctionSchema(
+        parameters=(("starttime", "datetime"), ("endtime", "datetime")),
+        returns="(TimeGenerated:datetime, ActorUsername:string)",
+        required=0,
+    ),
 }
 
 # All twelve spellings the parser accepts; its KS005 message lists them.
@@ -165,6 +173,10 @@ MATRIX: list[tuple[str, str]] = [
     ("top-by", "T | top 5 by a"),
     ("sample", "T | sample 5"),
     ("as-operator", "T | as X"),
+    (
+        "func-call-source-declared",
+        "imProcessCreate(starttime=ago(1h), endtime=now()) | where isnotempty(ActorUsername)",
+    ),
     ("make-series", "T | make-series c = count() on t step 1h by k"),
     ("evaluate-bag-unpack", "T | evaluate bag_unpack(d)"),
     # A plug-in that adds columns instead of consuming one: the other half
@@ -207,6 +219,7 @@ BOUND_LEG_IDS: set[str] = {
     "search",
     "evaluate-bag-unpack",
     "getschema",
+    "func-call-source-declared",
 }
 
 # Guard against BOUND_LEG_IDS drifting from MATRIX, for example through a

@@ -481,7 +481,11 @@ difference no volatile-field stripping can hide. This applies to a binding's
 own right-hand side; the *use* site is bind-independent, since a name bound by
 an earlier `let` is a `LetRef` decided from the statement text alone.
 
-That shape divergence is the *only* one. `_VOLATILE_FIELDS` names every field
+A `let` calling a declared tabular function diverges the same way: `let x =
+imProcessCreate(...)` resolves to `rhs_pipeline` (over a `FuncCallSource`)
+once the binder closes the call's declared return, and stays `rhs_expr`
+unbound. Two shapes, both bind-state dependent; no third has surfaced.
+`_VOLATILE_FIELDS` names every field
 the binder writes — `result_type` / `result_type_inner` / `table` /
 `result_schema` — plus the source offsets, `span` and `body_span`, so field
 *values* never make a query hash two ways. `hints` is in the set for a

@@ -34,6 +34,20 @@ shadows the same way any other parameter does, so a reference to it
 inside the body lowers as a `TableRef`, indistinguishable there from a
 real table name.
 
+### A `let` bound to a function call is bind-state dependent
+
+`let pce = imProcessCreate(starttime=ago(1h), endtime=now());` lowers on
+whether the binder can resolve the call's declared return. Against a
+schema declaring `imProcessCreate` as a tabular function,
+`LetBinding.rhs_pipeline` holds a `Pipeline` whose source is a
+`FuncCallSource`, and a column read downstream (`pce | where
+isnotempty(ActorUsername)`) carries `imProcessCreate` as its
+`ColumnRef.table`. Without a schema, nothing proves the call is
+tabular, so the binding stays on `rhs_expr` as a scalar `FuncCall`. A
+bare table alias (`let A = OtherTable;`) diverges the same way, for the
+same reason: see `AGENTS.md`'s note on `semantic_hash` bind-state
+dependence.
+
 ### Resolving columns through an alias
 
 A bound parse resolves columns through a tabular alias. In
