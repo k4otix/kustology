@@ -367,6 +367,33 @@ def _collect_inner_tables(node: Any) -> list[str]:
     return seen
 
 
+def _collect_inner_sources(node: Any) -> list[tuple[str, str | None]]:
+    """Collect a let binding's non-table sources, in first-seen order.
+
+    ``node`` is read as in :func:`_collect_inner_tables`. Entries are
+    ``("function", name)``, ``("externaldata", None)`` and
+    ``("datatable", None)``, the same kind vocabulary
+    :class:`~kustology.spans.SourceRef` uses. Tables stay on ``inner_tables``.
+    """
+    from .query import DataTableSource, ExternalDataSource, FuncCallSource
+    from .walk import walk
+
+    seen: list[tuple[str, str | None]] = []
+    for src in walk(node):
+        entry: tuple[str, str | None]
+        if isinstance(src, FuncCallSource):
+            entry = ("function", src.name)
+        elif isinstance(src, ExternalDataSource):
+            entry = ("externaldata", None)
+        elif isinstance(src, DataTableSource):
+            entry = ("datatable", None)
+        else:
+            continue
+        if entry not in seen:
+            seen.append(entry)
+    return seen
+
+
 def _collect_inner_time_exprs(node: Any) -> list[Any]:
     """Collect a let binding's time-function calls, in walk order.
 
@@ -452,6 +479,7 @@ def _infer_tabular_lets(bindings: list[LetBinding], roots: list[Pipeline]) -> No
         # Where a rewritten binding's index fields are recomputed. An index
         # field derived from the right-hand side belongs in this block.
         binding.inner_tables = _collect_inner_tables(binding.rhs_pipeline)
+        binding.inner_sources = _collect_inner_sources(binding.rhs_pipeline)
         binding.inner_time_exprs = _collect_inner_time_exprs(binding.rhs_pipeline)
 
 
@@ -1028,6 +1056,7 @@ class IRBuilder:
                 span=span,
                 rhs_function=function,
                 inner_tables=_collect_inner_tables(function),
+                inner_sources=_collect_inner_sources(function),
                 inner_time_exprs=_collect_inner_time_exprs(function),
             )
 
@@ -1038,6 +1067,7 @@ class IRBuilder:
                 span=span,
                 rhs_pipeline=pipeline,
                 inner_tables=_collect_inner_tables(pipeline),
+                inner_sources=_collect_inner_sources(pipeline),
                 inner_time_exprs=_collect_inner_time_exprs(pipeline),
             )
 

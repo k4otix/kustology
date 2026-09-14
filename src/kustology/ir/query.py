@@ -1548,17 +1548,25 @@ class LetBinding(BaseModel):
     # parameter does (see ``LetFunctionParameter``) and lowers as a
     # ``TableRef``, indistinguishable here from a genuine table name.
     #
-    # Both fields are a digest-excluded derived index: they are written from
-    # the right-hand side beside them and hold the same objects
-    # (``inner_time_exprs``) or a copy of their names (``inner_tables``), so
-    # ``compute_semantic_hash`` clears them before it dumps -- see
-    # ``transforms._DERIVED_INDEX_FIELDS``. Nothing is lost, since the nodes
-    # they index are hashed through the right-hand side. Hashing the index
-    # would lose something: a copy of a name cannot be alpha-canonicalized, so
-    # a body reading a tabular parameter would carry its written name into the
-    # digest after every ``TableRef`` beside it had been renamed, splitting two
-    # spellings of one function. Read them freely; only the digest ignores them.
+    # All three fields are a digest-excluded derived index: they are written
+    # from the right-hand side beside them and hold the same objects
+    # (``inner_time_exprs``) or a copy of their names (``inner_tables``,
+    # ``inner_sources``), so ``compute_semantic_hash`` clears them before it
+    # dumps -- see ``transforms._DERIVED_INDEX_FIELDS``. Nothing is lost,
+    # since the nodes they index are hashed through the right-hand side.
+    # Hashing the index would lose something: a copy of a name cannot be
+    # alpha-canonicalized, so a body reading a tabular parameter would carry
+    # its written name into the digest after every ``TableRef`` beside it had
+    # been renamed, splitting two spellings of one function. Read them
+    # freely; only the digest ignores them.
+    #
+    # ``inner_tables`` keeps its tables-only meaning: a real table name, not a
+    # hop to an earlier binding or a non-table source. ``inner_sources``
+    # covers the rest of what a binding's right-hand side can read --
+    # ``FuncCallSource``, ``ExternalDataSource``, ``DataTableSource`` -- using
+    # the same kind vocabulary as ``kustology.spans.SourceRef``.
     inner_tables: list[str] = []
+    inner_sources: list[tuple[str, str | None]] = []
     inner_time_exprs: list[AnyExpr] = []
 
 

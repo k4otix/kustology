@@ -1064,6 +1064,15 @@ MUST_EQUAL = [
         "T | scan declare(n:long=0) with (step s: a > 1 => n = 1;)",
         "T | scan\n    declare(n:long=0)\n    with (\n        step s: a > 1 => n = 1;\n    )",
     ),
+    # `LetBinding.inner_sources` copies a `FuncCallSource`'s name out of the
+    # body beside it, and a plain string is past every rename. The call site
+    # itself renames with the binding it names, so these two are one query only
+    # while `transforms._DERIVED_INDEX_FIELDS` clears the index first.
+    (
+        "let-inner-sources-call-site-rename",
+        "let g = () { T | count }; let S = () { g() | count }; S()",
+        "let h = () { T | count }; let S = () { h() | count }; S()",
+    ),
 ]
 
 
