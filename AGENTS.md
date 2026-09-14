@@ -318,12 +318,13 @@ python scripts/refresh_dll.py             # uses the pinned version
 python scripts/refresh_dll.py --version X.Y.Z --pin
 ```
 
-`bin/VERSION.txt` is rewritten on **every** run (`refresh_dll.py:229-235`),
-the bare form included — it re-resolves the pinned version and restamps
-`refreshed=`. `--pin` adds the `pyproject.toml` write (`:239-241`), nothing
-else. So `refresh_dll.py --version X.Y.Z` *without* `--pin` leaves the two
-files disagreeing. Only the **online** `verify_dll.py` catches that: it
-reads the version from `pyproject.toml`, prints
+`bin/VERSION.txt` is rewritten on **every** run (the `VERSION.txt` write in
+`refresh_dll.py`'s `main()`), the bare form included — it re-resolves the
+pinned version and restamps `refreshed=`. `--pin` adds the `pyproject.toml`
+write (`write_pinned_version()`), nothing else. So `refresh_dll.py --version
+X.Y.Z` *without* `--pin` leaves the two files disagreeing. Only the
+**online** `verify_dll.py` catches that: it reads the version from
+`pyproject.toml`, prints
 `WARN: bin/VERSION.txt records version …` and then fails on the hash it
 fetches. `--offline` compares the DLL against `VERSION.txt` alone and never
 opens `pyproject.toml`, so it passes happily. After refreshing, run

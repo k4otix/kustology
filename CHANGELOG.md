@@ -37,6 +37,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **Reflowing an unmodeled operator does not move `semantic_hash`** (tier 2). Its recorded source text is re-lexed before it is hashed, so line breaks and inter-token spacing stop splitting one operator into two digests.
 - **`typeof(...)` in argument position lowers to `TypeOfExpr`** (tier 2). The plugin operators' output schema reaches the IR as declared columns instead of source text, and the digest ignores its interior spacing.
+- **A malformed table entry in a `--schema` file exits 2** (CLI). An entry that is none of the three table forms, and a column type that is not a type-name string, report as usage errors naming the table, instead of exiting 1 as though the query were at fault.
 
 ## [0.3.0] — 2026-08-30
 

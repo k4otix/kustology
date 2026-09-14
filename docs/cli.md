@@ -111,6 +111,8 @@ A `--schema` file is JSON in the shape `parse(query, schema=...)` takes: `{"Tabl
 }
 ```
 
+A table entry takes one of three forms: an object mapping column names to type names, a list of column names, which bind as `string`, or a `"(col:type, ...)"` schema string. An entry in none of those forms, and a column type that is not a type-name string, are malformed input and exit 2, with the message naming the table and the offending column or position.
+
 The `function` object mirrors [`FunctionSchema`](tier1-syntax-tree.md#declaring-functions)'s three fields. `parameters` is a list of `[name, type]` pairs. `returns` names a scalar type or a tabular result, one of the same static forms `FunctionSchema.returns` takes; a callable `returns`, which resolves the result per call, has no file form. `required` counts the leading parameters a call has to pass.
 
 On `validate` and `parse`, a schema file binds the parse. On `parse --ir`, `to_ir()` auto-attaches the schema from a bound parse, so the IR carries column types, table provenance, and `"schema_attached": true` instead of an unenriched skeleton.
@@ -143,7 +145,7 @@ Input is capped at 10 MB. Set `KUSTOLOGY_MAX_INPUT_BYTES` to override the cap. T
 | --- | --- |
 | `0` | Success. |
 | `1` | The input had Error-severity diagnostics, the command failed at runtime, or `parse --ir` ran on a control command. |
-| `2` | The invocation was wrong: bad flags, a file that cannot be read, a `--schema` file that is not JSON, input over the byte cap, or `parse --ir` without the `[ir]` extra. |
+| `2` | The invocation was wrong: bad flags, a file that cannot be read, a `--schema` file that is not JSON or holds a malformed entry, input over the byte cap, or `parse --ir` without the `[ir]` extra. |
 
 Code 1 means the query is wrong. Code 2 means the command is wrong. A CI job can branch on this distinction: an unreadable path or a malformed `--schema` file says nothing about the KQL itself.
 

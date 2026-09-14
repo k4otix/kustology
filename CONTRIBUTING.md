@@ -68,11 +68,11 @@ runtime is not on a standard path.
    cannot tell "converted to UTC" from "not converted", so a
    timezone-dependent defect is invisible in every other cell — and the
    library has exactly one such surface, the `DateTimeKind` branch in
-   `ir/_builder_helpers.py:639-642` behind `LiteralExpr.value` / `.ticks`
-   (it is the only `ToUniversalTime` / `DateTimeKind` / `TimeZone` read in
-   `src/`). If you touch datetime literals, read
-   *"Datetime literals are UTC-normalized at build"* in `AGENTS.md` first;
-   that cell is what will catch you, and only on a PR.
+   `literal_value_and_ticks()` (`ir/_builder_helpers.py`) behind
+   `LiteralExpr.value` / `.ticks` (it is the only `ToUniversalTime` /
+   `DateTimeKind` / `TimeZone` read in `src/`). If you touch datetime
+   literals, read *"Datetime literals are UTC-normalized at build"* in
+   `AGENTS.md` first; that cell is what will catch you, and only on a PR.
 
 ## The oracle harness
 
