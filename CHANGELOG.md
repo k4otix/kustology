@@ -6,10 +6,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Fixed
-
-- **A malformed table entry in a `--schema` file exits 2** (CLI). An entry that is none of the three table forms, and a column type that is not a type-name string, report as usage errors naming the table, instead of exiting 1 as though the query were at fault.
-
 ## [0.4.0] — 2026-09-14
 
 `IR_SCHEMA_VERSION` moves to `0.3` and `SEMANTIC_HASH_SCHEME` to `kustology-sem-v3`. Every operator the IR used to record as source text is typed, `ColumnRef` gains `qualifier`, `TypeOfExpr` and `GraphElementRef` are new nodes, and `raw_text` is hashed after re-lexing, so stored `0.2` dumps of those queries fail validation and every stored `kustology-sem-v2` digest needs recomputing. Tier 1 and the CLI gain the surfaces listed under Added; the one hard break outside tier 2 is that the CLI rejects input whose tail the parser skipped.
@@ -41,6 +37,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **Reflowing an unmodeled operator does not move `semantic_hash`** (tier 2). Its recorded source text is re-lexed before it is hashed, so line breaks and inter-token spacing stop splitting one operator into two digests.
 - **`typeof(...)` in argument position lowers to `TypeOfExpr`** (tier 2). The plugin operators' output schema reaches the IR as declared columns instead of source text, and the digest ignores its interior spacing.
+- **A malformed table entry in a `--schema` file exits 2** (CLI). An entry that is none of the three table forms, and a column type that is not a type-name string, report as usage errors naming the table, instead of exiting 1 as though the query were at fault.
 
 ## [0.3.0] — 2026-08-30
 
