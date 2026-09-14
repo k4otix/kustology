@@ -315,3 +315,55 @@ def test_architecture_layout_tree_matches_the_repository():
         "directories it lists, so add a row for:\n" + "\n".join(missing_dirs)
     )
 
+
+# A citation into a file by line number: ``builder.py:512``, the
+# ``builder.py:512-518`` range form, and the bare ``:239-241`` continuation a
+# second reference to the same file takes. `CHANGELOG.md` is out of scope
+# because a released entry describes the tree as it stood at the release.
+_LINE_CITATION = re.compile(
+    r"[\w][\w./-]*\.(?:py|md|ya?ml|toml|json|txt|cfg|ini|sh|dll):\d+(?:-\d+)?"
+    r"|`:\d+(?:-\d+)?`"
+)
+
+_CITATION_FILES = [
+    *(REPO_ROOT / "docs").glob("*.md"),
+    REPO_ROOT / "README.md",
+    REPO_ROOT / "ARCHITECTURE.md",
+    REPO_ROOT / "CONTRIBUTING.md",
+    REPO_ROOT / "AGENTS.md",
+]
+
+
+def _markdown_prose(path: Path):
+    """Yield ``(lineno, text)`` for the lines of a Markdown file outside fences.
+
+    A fenced block holds sample output and file listings, where a line number
+    is data rather than a pointer a reader follows.
+    """
+    fenced = False
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if line.lstrip().startswith(("```", "~~~")):
+            fenced = not fenced
+            continue
+        if not fenced:
+            yield lineno, line
+
+
+def test_prose_cites_symbols_rather_than_line_numbers():
+    """A pointer into a file survives edits only when it names a symbol.
+
+    ``builder.py:512`` is right the day it is written and silently wrong
+    after the next insertion above it, and nothing tells the reader which of
+    the two they are looking at. Cite the function, class, heading, or test
+    name instead; a rename breaks loudly at the grep the reader runs.
+    """
+    hits = [
+        f"{path.relative_to(REPO_ROOT)}:{lineno}: {match.group(0)}"
+        for path in _CITATION_FILES
+        for lineno, line in _markdown_prose(path)
+        for match in _LINE_CITATION.finditer(line)
+    ]
+    assert hits == [], (
+        "these pointers cite a line number and go stale on the next edit "
+        "above them; name the symbol instead:\n" + "\n".join(hits)
+    )
