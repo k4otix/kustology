@@ -1,6 +1,6 @@
 # CLI
 
-The `kustology` console script ships with the base install and covers formatting, validation, and parsing from a shell or a CI step.
+The `kustology` console script ships with the base install and covers formatting, validation, parsing, and source reporting from a shell or a CI step.
 
 ## Commands
 
@@ -88,6 +88,11 @@ kustology sources --schema s.json query.kql   # bind first: a make-graph Nodes c
 `sources` runs the validator before it prints anything, the same as `format`
 and `parse`. `name` is `null` in JSON and `-` in text for the two anonymous
 kinds, `externaldata` and `datatable`.
+
+On a control command, `sources` reports nothing and exits 0: `find_source_references()`
+answers a question query grammar poses, and a command carries none. This is
+the same output a query with no sources would give; branch on `is_command`
+first if the distinction matters. See [Control commands](tier1-syntax-tree.md#control-commands).
 
 ## Schema files
 

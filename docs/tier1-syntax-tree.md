@@ -345,8 +345,9 @@ There is one entry per occurrence, in source order. Use
 
 A name the query binds itself is not a source. In
 `let f = (){ T | count }; f() | count` the only source is `T`, because the
-`let` alias, `as` alias, function parameter, and wildcard filters apply to
-every kind that carries a name.
+`let` alias, `as` alias, and function parameter filters apply to every kind
+that carries a name. The wildcard filter applies to tables alone, as described
+above.
 
 Tables come from `find_table_references()` and inherit its bind state, so the
 node table in `make-graph`'s `with` clause resolves on a bound parse only, and
