@@ -976,6 +976,21 @@ def test_a_malformed_table_entry_is_a_usage_error(tmp_path, monkeypatch, capsys,
     assert "Traceback" not in captured.err
 
 
+def test_a_schema_file_that_is_not_an_object_is_a_usage_error(tmp_path, monkeypatch, capsys):
+    """A schema file whose top level is a JSON array has no table names to
+    read, so it is malformed input at the CLI boundary: exit 2, with the
+    shape named, and nothing on stdout."""
+    schema = tmp_path / "schema.json"
+    schema.write_text(json.dumps([{"T": {"c": "string"}}]), encoding="utf-8")
+
+    monkeypatch.setattr(sys, "stdin", _stdin("T | take 1"))
+    rc = main(["validate", "--schema", str(schema)])
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "JSON object" in captured.err and "list" in captured.err
+    assert captured.out == ""
+
+
 @pytest.mark.parametrize(
     "entry",
     [{"c": "string"}, ["c"], "(c:string)"],

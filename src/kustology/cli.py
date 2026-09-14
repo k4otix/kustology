@@ -460,7 +460,10 @@ def _load_schema(path: str | None) -> dict | None:
     except _json.JSONDecodeError as e:
         raise _UsageError(f"JSONDecodeError: {e}") from e
     if not isinstance(raw, dict):
-        return raw
+        raise _UsageError(
+            "A schema file must be a JSON object mapping table names to "
+            f"entries; got {type(raw).__name__}."
+        )
     return {name: _schema_entry(name, value) for name, value in raw.items()}
 
 
