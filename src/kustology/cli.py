@@ -534,8 +534,12 @@ def _cmd_sources(args: argparse.Namespace) -> int:
     if args.json:
         rendered = _json.dumps(
             [
-                {"kind": r.kind, "name": r.name,
-                 "start": r.span.start, "length": r.span.length}
+                {
+                    "kind": r.kind,
+                    "name": r.name,
+                    "start": r.span.start,
+                    "length": r.span.length,
+                }
                 for r in refs
             ],
             indent=2,

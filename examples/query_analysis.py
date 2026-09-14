@@ -56,6 +56,13 @@ StormEvents
 | project State, EventType, EventCount, TotalDamage"""
 
 
+def _print_source_refs(refs) -> None:
+    """Print one line per `SourceRef`, kind and name padded into columns."""
+    for ref in refs:
+        print(f"  {ref.kind:10s} {ref.name or '(anonymous)':16s} "
+              f"start={ref.span.start:4d}  length={ref.span.length}")
+
+
 def analyze(query_text: str) -> None:
     """Run every ``KustoQuery`` analyzer over ``query_text`` and print each result."""
     banner(
@@ -133,9 +140,7 @@ def analyze(query_text: str) -> None:
         "externaldata literals, and datatable literals get_referenced_tables() "
         "cannot see.",
     )
-    for ref in result.find_source_references():
-        print(f"  {ref.kind:10s} {ref.name or '(anonymous)':16s} "
-              f"start={ref.span.start:4d}  length={ref.span.length}")
+    _print_source_refs(result.find_source_references())
     note(
         "StormEvents appears twice: once inside high_impact_states's own "
         "right-hand side, once as the main pipeline's source. "
@@ -150,9 +155,7 @@ def analyze(query_text: str) -> None:
     )
     kql(function_query)
     function_result = parse(function_query)
-    for ref in function_result.find_source_references():
-        print(f"  {ref.kind:10s} {ref.name or '(anonymous)':16s} "
-              f"start={ref.span.start:4d}  length={ref.span.length}")
+    _print_source_refs(function_result.find_source_references())
     function_tables = sorted(function_result.get_referenced_tables())
     note(
         f"get_referenced_tables() on this query returns {function_tables}: "
