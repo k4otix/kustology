@@ -107,6 +107,8 @@ Each tier has its own vocabulary, and a third appears on the wire. One
 | `sort by`, `order by` | `SortOperator` | `SortOp` / `"sort"` |
 | `take`, `limit` | `TakeOperator` | `TakeOp` / `"take"` |
 | `mv-expand` | `MvExpandOperator` | `MvExpandOp` / `"mv_expand"` |
+| `scan` | `ScanOperator` | `ScanOp` / `"scan"` |
+| `top-nested` | `TopNestedOperator` | `TopNestedOp` / `"top_nested"` |
 
 Two spellings that share a parser node share an IR node too. `order by`
 is `sort`, and `limit` is `take`, so an analyzer written against one
@@ -141,8 +143,8 @@ the root kind: `parse(".drop table A | getschema").to_ir()` reports a
 `command_kinds`](tier1-syntax-tree.md#control-commands) to branch before the
 call.
 
-The `Unknown*` fallbacks — `UnknownSource`, `UnknownExpr`, `UnknownOp`, and
-`UnknownStmt` — and `QueryIR` declare `raw_text`. On each `Unknown*` node it
+The four `Unknown*` fallbacks (`UnknownSource`, `UnknownExpr`, `UnknownOp`,
+and `UnknownStmt`) and `QueryIR` declare `raw_text`. On an `Unknown*` node it
 marks a shape the builder could not model and holds that node's own source,
 so a consumer can see what the builder did not reach. On `QueryIR` it holds
 the whole query text. Every operator the builder dispatches has typed

@@ -379,20 +379,20 @@ token's own `kind`/`text`/`span` with the `trivia`/`trivia_span`
 `tokens(kusto_code)` returns every token, including the final
 `EndOfTextToken`, which owns the query's trailing trivia. On a
 malformed query, the list also includes the zero-width placeholder
-tokens the parser inserts for what it expected but did not find —
-empty `text`, no source of their own — for example the missing operand
+tokens the parser inserts for what it expected but did not find (empty
+`text`, no source of their own), such as the missing operand
 `IdentifierToken` in `T | where // c\n`.
 
 `comment_spans(kusto_code)` finds every `//` comment by scanning each
-token's trivia. A trivia run can carry several comments — `// a\n  // b\n`
-before one token reports two spans, not one — and the final
-`EndOfTextToken` owns the query's trailing trivia, so a comment at the very
-end of the query is reported too. `//` inside a string literal is not
-trivia at all, so `"http://x.com"` in a query is never mistaken for a
-comment. KQL has no block comments — `/* … */` is a parse error, not a
-recognized comment — so `//` to the end of the line is the complete rule.
-A comment ends at `\n`, `\r`, U+2028 LINE SEPARATOR, or U+2029 PARAGRAPH
-SEPARATOR — the line terminator itself is not part of the span.
+token's trivia. A trivia run can carry several comments: `// a\n  // b\n`
+before one token reports two spans. The final `EndOfTextToken` owns the
+query's trailing trivia, so a comment at the very end of the query is
+reported too. `//` inside a string literal is not trivia at all, so
+`"http://x.com"` in a query is never mistaken for a comment. KQL has no
+block comments, since `/* … */` is a parse error, so `//` to the end of the
+line is the complete rule. A comment ends at `\n`, `\r`, U+2028 LINE
+SEPARATOR, or U+2029 PARAGRAPH SEPARATOR, and the line terminator itself is
+not part of the span.
 
 `string_literal_spans(kusto_code, include_prefix=True)` finds every
 string literal token. Microsoft's token text includes the `@` and `h`

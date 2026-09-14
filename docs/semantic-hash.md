@@ -109,6 +109,17 @@ returns. Within `kustology-sem-v2` these are ignored:
   result schemas are stripped, so passing a schema does not move the
   digest. Source offsets and `hint.*` are stripped too: a hint changes how
   the engine executes a query without changing the rows it returns.
+- **A `let` binding's indexes.** `inner_tables`, `inner_sources`, and
+  `inner_time_exprs` copy what the binding's right-hand side holds, and that
+  right-hand side is in the digest already. They stay populated on your own
+  IR; only the hash payload drops them.
+
+A scope name written in the query is not on that list. `ColumnRef.qualifier`
+holds the step or pattern-element name a reference was written against
+(`s1.p` inside a `scan`, `n.p` inside a graph pattern), and the digest reads
+it, so renaming a step or an element splits two queries apart. An unqualified
+reference leaves the field unset, and the payload drops an unset field, so a
+query that qualifies nothing is unaffected.
 
 Your own IR keeps all of this as written; canonicalization runs on a
 private copy for hashing only. `normalize_expressions` is a separate,

@@ -182,11 +182,11 @@ for the full contract.
 ```bash
 git clone https://github.com/k4otix/kustology.git
 cd kustology
-pip install -e ".[dev]"
+uv sync --locked --extra dev
 
-pytest
-ruff check src tests scripts examples
-mypy src
+uv run pytest
+uv run ruff check src tests scripts examples
+uv run mypy src
 ```
 
 See [CONTRIBUTING.md](https://github.com/k4otix/kustology/blob/main/CONTRIBUTING.md)

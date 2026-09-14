@@ -27,8 +27,8 @@ values of one statement split as well.
 
 **Merges you may not want.** Every case is a row in ``KNOWN_MERGES`` below
 and every row is hashed when this file runs, so the list *is* the claim.
-There is no tally in this sentence on purpose — a number quoted about the
-list is one more thing that can drift away from it.
+This sentence quotes no tally: a number quoted about the list is one more
+thing that can drift away from it.
 
 A consumer deduplicating on the digest acts on that third group, so the
 rows are load-bearing rather than illustrative: if any of them stops
@@ -190,15 +190,14 @@ SPLITS = [
      'restrict access to (database("e")); T | take 1'),
 ]
 
-# Every row here is a *merge* the library makes on purpose, and the list
+# Every row here is a *merge* the library makes by decision, and the list
 # can only shrink loudly: a gap that closes turns
-# `tests/ir/test_hash_battery.py`'s KNOWN_COLLISIONS red on purpose, so a
-# row leaves this file with a failing test pointing at it rather than
-# quietly.
+# `tests/ir/test_hash_battery.py`'s KNOWN_COLLISIONS red, so a row leaves
+# this file with a failing test pointing at it.
 KNOWN_MERGES = [
-    ("typed nulls: real(null) == datetime(null) — deliberate",
+    ("typed nulls: real(null) == datetime(null)",
      "T | where a > real(null)", "T | where a > datetime(null)"),
-    ('obfuscated strings: h"x" == "x" — deliberate',
+    ('obfuscated strings: h"x" == "x"',
      'T | where a == h"x"', 'T | where a == "x"'),
 ]
 

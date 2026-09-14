@@ -983,8 +983,9 @@ def compute_semantic_hash(node: BaseModel) -> str:
     table alias and call no declared tabular function in either position are
     unaffected.
 
-    Two more fields are excluded for an unrelated reason.
-    :attr:`~kustology.ir.query.LetBinding.inner_tables` and
+    The derived indexes are excluded for an unrelated reason.
+    :attr:`~kustology.ir.query.LetBinding.inner_tables`,
+    :attr:`~kustology.ir.query.LetBinding.inner_sources` and
     :attr:`~kustology.ir.query.LetBinding.inner_time_exprs` index the
     right-hand side sitting beside them (:data:`_DERIVED_INDEX_FIELDS`), so
     hashing them adds nothing the tree does not already carry and costs the

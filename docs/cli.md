@@ -133,7 +133,7 @@ Both tags are part of the IR's compatibility contract. They let you check a stor
 
 ## Input and limits
 
-`format`, `validate`, and `parse` read the query from the `file` argument. Pass `-`, or omit the argument, to read from stdin. `version` takes no file.
+`format`, `validate`, `parse`, and `sources` read the query from the `file` argument. Pass `-`, or omit the argument, to read from stdin. `version` takes no file.
 
 Input is capped at 10 MB. Set `KUSTOLOGY_MAX_INPUT_BYTES` to override the cap. The cap counts bytes, not characters.
 

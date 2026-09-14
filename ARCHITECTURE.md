@@ -9,8 +9,13 @@ src/kustology/
   bridge.py          # .NET CLR init, loads Kusto.Language.dll via pythonnet
   core.py            # KustoQuery wrapper; to_ir() is the tier-1 → tier-2 seam
   services.py        # Public entry points: parse(), format_query(), validate()
+  lexical.py         # Token, comment, string-literal, statement and skipped-text spans
+  spans.py           # TextSpan, SourceRef, TimeExpr: the span types tier 1 returns
+  _text.py           # Utf16Offsets: UTF-16 offsets to code-point offsets, and back
   reflection.py      # Runtime introspection of Kusto.Language for func classification
-  cli.py             # Command-line interface — kustology parse/format/validate/version
+  cli.py             # Command-line interface — kustology format/validate/parse/sources/version
+  buildinfo.py       # build_info(): the three version tags, plus the DLL's version and hash
+  _version.py        # __version__, read from the source tree rather than install metadata
   _ir_tags.py        # IR_SCHEMA_VERSION + SEMANTIC_HASH_SCHEME; no imports, read by both tiers
   ir/                # Tier-2: pydantic IR (opt-in via [ir] extras)
     builder.py       # Walks .NET syntax tree → QueryIR; dispatch tables for operators/expressions
@@ -19,6 +24,7 @@ src/kustology/
     binder.py        # SchemaAttacher: provenance (ColumnRef.table, origins)
     walk.py          # Generic IR traversal: walk() and find_all()
     transforms.py    # semantic_hash, canonicalization
+    similarity.py    # subtree_hashes, similarity, containment, differing_subtrees
     llm_view.py      # to_llm_dict — compact JSON-safe rendering for LLMs
     analyzers.py     # The Finding vocabulary for IR-driven static analysis
     types.py         # Kusto type enum
@@ -42,6 +48,7 @@ scripts/             # Tooling
                             # from published Azure-Sentinel analytic rules. It
                             # deletes nothing: the rest are hand-written
                             # synthetics and the script does not know they exist
+  eval_similarity.py        # Re-derives similarity's min_size and k defaults
   sample_sentinel_corpus.py, extract_sentinel_schemas.py
   verify_dll.py, refresh_dll.py   # DLL provenance and refresh
 
@@ -75,7 +82,13 @@ independent version tags (`__version__`, `IR_SCHEMA_VERSION`,
 
 **A new tabular operator** (for example `mv-apply` or `partition`):
 
-1. Add an IR node class in `src/kustology/ir/query.py`.
+1. Add an IR node class in `src/kustology/ir/query.py`, plus a model for each
+   part of the operator's inner grammar that carries more than one field:
+   `scan` has `ScanStep`, `top-nested` has `TopNestedLevel`, `graph-match` has
+   `GraphPattern` and its node and edge models. Export every one of them from
+   `__all__` in `src/kustology/ir/__init__.py`;
+   `tests/ir/test_canonical_coverage.py` rebuilds that list by introspection
+   and fails on a model you left out.
 2. Add its `SyntaxKind` string to `IRBuilder.HANDLED_OPERATOR_KINDS` in
    `src/kustology/ir/builder.py`.
 3. Add a dispatch branch in `IRBuilder._visit_operator()` that reads the .NET
@@ -118,8 +131,19 @@ independent version tags (`__version__`, `IR_SCHEMA_VERSION`,
    file a wrong shape under: Microsoft's `ResultType.IsOpen` tells the
    oracle when to expect `result_schema=None` instead of an exact match,
    and that is the only leniency either leg grants.
-6. Regenerate the baseline:
-   `python scripts/audit_syntax_kinds.py --update-baseline`.
+6. Add `MUST_EQUAL` / `MUST_DIFFER` rows to `tests/ir/test_hash_battery.py`,
+   one pair per distinction your typed fields carry that changes what the
+   query returns — a `scan` step's `output=` mode and its `optional` keyword,
+   a `top-nested` level's sort direction and its `others` label. Without a
+   row, nothing checks that the field reaches the digest.
+7. Regenerate the baseline:
+   `uv run python scripts/audit_syntax_kinds.py --update-baseline`.
+
+A defaulted field added to an *existing* node also needs a row in
+`transforms._UNWRITTEN_DEFAULTS`, keyed by the node's `kind`. The hash payload
+drops a field sitting at its unwritten default, so a node that leaves the
+field unset hashes as though the field were not declared.
+`ColumnRef.qualifier` is there for that reason.
 
 If the operator's inner structure is genuinely not worth modeling yet, the
 honest fallback is a single `raw_text` field plus a class docstring saying
@@ -196,7 +220,7 @@ against it before discovering it never fills.
 5. Add a minimal `.kql` fixture and `MUST_EQUAL`/`MUST_DIFFER` rows in
    `tests/ir/test_hash_battery.py` for the values the new kind carries.
 6. Regenerate the baseline:
-   `python scripts/audit_syntax_kinds.py --update-baseline`.
+   `uv run python scripts/audit_syntax_kinds.py --update-baseline`.
 
 **A new CLI subcommand**:
 
@@ -222,6 +246,10 @@ protecting.
 | Our `result_schema` equals Microsoft's `ResultType`, in order | `tests/ir/test_binder_oracle.py` (bound leg and dict-path leg) |
 | `semantic_hash` splits queries that differ and merges those that don't | `tests/ir/test_hash_battery.py` |
 | `semantic_hash` does not move when a schema is supplied | `tests/ir/test_semantic_hash_bind_invariance.py` |
+| An unmodeled operator's `raw_text` hashes as its token sequence, with spacing folded out | `tests/ir/test_normalize_raw_text.py` |
+| A qualified `ColumnRef` carries its scope name and resolves to no table | `tests/ir/test_scan.py`, `tests/ir/test_graph_patterns.py` |
+| A `let` proven tabular by a use site lowers the same as one proven by a schema | `tests/ir/test_let_bindings.py`, `tests/ir/test_semantic_hash_bind_invariance.py` |
+| The CLI refuses input whose tail the parser skipped | `tests/test_cli_inprocess.py` (the `KUSTOLOGY002` cases) |
 | No IR model holds a live `System.Object` | `tests/ir/test_ast_isolation.py` |
 | `IR_SCHEMA_VERSION` / `SEMANTIC_HASH_SCHEME` never move silently | `tests/ir/test_schema_tags.py` |
 | The corpus produces no `Unknown*` nodes | `scripts/mine_corpus.py` (the `corpus-regression` CI job) |
@@ -246,8 +274,9 @@ version). CI verifies the hash on every push via `scripts/verify_dll.py`.
   It is also the PyPI long description, so every link in it must be absolute.
 - `docs/` — the user-facing manual: `tier1-syntax-tree.md` for the syntax tree
   and pythonnet behavior, `tier2-ir.md` for how KQL lowers into IR nodes,
-  `cli.md` for the command-line reference, and `semantic-hash.md` for the
-  version tags and the digest's contract.
+  `cli.md` for the command-line reference, `semantic-hash.md` for the version
+  tags and the digest's contract, and `similarity.md` for comparing two queries
+  by degree.
 - `CONTRIBUTING.md` — workflow, coding conventions, the local check loop.
 - `AGENTS.md` — the non-obvious interop and traversal traps. Read it before
   touching `bridge.py`, `IRBuilder`, or anything that walks the IR; every

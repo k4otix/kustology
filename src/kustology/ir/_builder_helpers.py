@@ -298,9 +298,11 @@ def read_external_data(
     ``externaldata(a:string)[// note\n u]`` as ``"// note\n u"`` and hash it
     apart from the same query without the comment. A comment interior to the
     element, ``strcat(// note\n "https://","x")``, still reaches the text,
-    because no ``IncludeTrivia`` mode strips interior trivia. That is the same
-    accepted boundary as :attr:`~kustology.ir.query.UnknownSource.raw_text`,
-    and it splits a digest without merging two.
+    because no ``IncludeTrivia`` mode strips interior trivia. The field is a
+    string hashed as written, with none of the re-lexing
+    :attr:`~kustology.ir.query.UnknownSource.raw_text` gets, so a comment
+    there splits one query's digest from the same query written without it.
+    Two feeds that read different data never merge here.
 
     Column types come from :func:`read_row_schema`, the single reader for
     every ``name:type`` list in the grammar.
