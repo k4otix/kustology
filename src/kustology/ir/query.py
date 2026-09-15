@@ -3,10 +3,16 @@
 
 """Source-position and pipeline-stage IR nodes, plus the top-level ``QueryIR`` model."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import cached_property
 from typing import Annotated, Any, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, computed_field, model_validator
+from pydantic_core import PydanticCustomError
+
+from .._ir_tags import IR_SCHEMA_VERSION
 
 # Pydantic v2 resolves string forward refs in `AnyExpr` using the namespace of
 # the consuming module, so every name in AnyExpr must be importable here.
@@ -1803,8 +1809,34 @@ AnyStatement = Annotated[
 ]
 
 
+# True while ``QueryIR.model_validate`` or ``model_validate_json`` runs. A
+# constructor call passes the before-validator the same dict a load does, and
+# pydantic runs a custom ``__init__`` on the load path too, so those two
+# classmethods are the only code that runs on a load alone.
+_LOADING_A_DUMP: ContextVar[bool] = ContextVar("_LOADING_A_DUMP", default=False)
+
+
+@contextmanager
+def _loading_a_dump() -> Iterator[None]:
+    token = _LOADING_A_DUMP.set(True)
+    try:
+        yield
+    finally:
+        _LOADING_A_DUMP.reset(token)
+
+
 class QueryIR(BaseModel):
-    """Root of the IR: one parsed query, its statements, and its digest."""
+    """Root of the IR: one parsed query, its statements, and its digest.
+
+    A dump carries ``ir_schema_version``, the :data:`IR_SCHEMA_VERSION` of the
+    kustology that dumped it. ``model_validate`` and ``model_validate_json``
+    check the tag before any field and reject a dump tagged with another
+    version, or with none. The ``ValidationError`` holds one error of type
+    ``ir_schema_version`` whose ``ctx`` gives ``found`` and ``expected``. A
+    constructor call needs no tag. Validation through a ``TypeAdapter``, or as
+    a field of another model, rejects a mismatched tag and accepts a missing
+    one.
+    """
 
     model_config = {"extra": "forbid"}
     kind: Literal["query"] = "query"
@@ -1850,6 +1882,51 @@ class QueryIR(BaseModel):
         if isinstance(data, dict) and "semantic_hash" in data:
             return {k: v for k, v in data.items() if k != "semantic_hash"}
         return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def _check_ir_schema_version(cls, data: Any) -> Any:
+        # Runs before any field is validated, so a dump from another IR schema
+        # fails on its tag whichever fields its query happens to reach.
+        if not isinstance(data, dict):
+            return data
+        if "ir_schema_version" not in data:
+            if _LOADING_A_DUMP.get():
+                raise PydanticCustomError(
+                    "ir_schema_version",
+                    "IR dump carries no ir_schema_version; kustology 0.3.x and "
+                    "earlier write none, and this kustology reads '{expected}'. "
+                    "Rebuild the IR from the query text.",
+                    {"found": None, "expected": IR_SCHEMA_VERSION},
+                )
+            return data
+        found = data["ir_schema_version"]
+        if found != IR_SCHEMA_VERSION:
+            raise PydanticCustomError(
+                "ir_schema_version",
+                "IR dump is tagged ir_schema_version '{found}'; this kustology "
+                "reads '{expected}'. Rebuild the IR from the query text.",
+                {"found": found, "expected": IR_SCHEMA_VERSION},
+            )
+        return {k: v for k, v in data.items() if k != "ir_schema_version"}
+
+    @classmethod
+    def model_validate(cls, obj: Any, **kwargs: Any) -> "QueryIR":
+        """Load a dump, rejecting one tagged with another ``ir_schema_version`` or with none."""
+        with _loading_a_dump():
+            return super().model_validate(obj, **kwargs)
+
+    @classmethod
+    def model_validate_json(cls, json_data: Any, **kwargs: Any) -> "QueryIR":
+        """Load a JSON dump, rejecting one tagged with another ``ir_schema_version`` or with none."""
+        with _loading_a_dump():
+            return super().model_validate_json(json_data, **kwargs)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def ir_schema_version(self) -> str:
+        """Return the :data:`IR_SCHEMA_VERSION` this IR's shape follows."""
+        return IR_SCHEMA_VERSION
 
     @computed_field  # type: ignore[prop-decorator]
     @cached_property
