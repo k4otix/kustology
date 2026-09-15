@@ -171,9 +171,10 @@ external use without correctness breaks. Tier 2 keeps evolving at minor cadence.
 
 Three numbers describe compatibility: `kustology.__version__` tags the library,
 `kustology.ir.IR_SCHEMA_VERSION` tags the IR's field shape, and
-`kustology.ir.SEMANTIC_HASH_SCHEME` tags the hash canonicalization rules. Tag
-any IR JSON or hash you store with the value that produced it, and refuse a
-payload whose tag you do not recognize. See
+`kustology.ir.SEMANTIC_HASH_SCHEME` tags the hash canonicalization rules. A
+`QueryIR` dump carries its `ir_schema_version`, and `QueryIR.model_validate`
+rejects a dump tagged with any other version or with none. A `semantic_hash`
+carries its scheme as a prefix. See
 [Versioning and `semantic_hash`](https://github.com/k4otix/kustology/blob/main/docs/semantic-hash.md)
 for the full contract.
 

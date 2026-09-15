@@ -27,10 +27,30 @@ from install metadata.
 
 ## Storing IR JSON
 
-Tag stored IR JSON with `IR_SCHEMA_VERSION` and refuse a payload whose tag
-you do not recognize. Every IR model sets `extra="forbid"`, so a dump with
-fields from a different schema fails to load. IR JSON written before
-0.2.0 does not load into 0.2.0.
+A `QueryIR` dump carries `ir_schema_version`, the `IR_SCHEMA_VERSION` of the
+kustology that dumped it. `QueryIR.model_validate` and
+`QueryIR.model_validate_json` check the tag before they read any field.
+Loading a dump tagged with another version, or with no tag, raises a
+`ValidationError` holding one error of type `ir_schema_version`. Its `ctx`
+gives the `found` and `expected` versions. Dumps from kustology 0.3.x and
+earlier carry no tag, so none of them loads.
+
+Rebuild a rejected dump from its query text, which the dump holds as
+`raw_text`. Pass the schema the original IR was bound against, if any:
+
+```python
+from kustology import parse
+from kustology.ir import IR_SCHEMA_VERSION, QueryIR
+
+if payload.get("ir_schema_version") == IR_SCHEMA_VERSION:
+    ir = QueryIR.model_validate(payload)
+else:
+    ir = parse(payload["raw_text"], schema=schema).to_ir()
+```
+
+Validating `QueryIR` through a `TypeAdapter`, or as a field of your own
+model, rejects a mismatched tag and accepts a missing one. Check for the tag
+yourself on those paths.
 
 ## Storing hashes
 

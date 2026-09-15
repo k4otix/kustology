@@ -8,12 +8,11 @@ being fed to a language model:
 
 * Every node carries a stable ``kind`` discriminator drawn from the class's
   ``KIND`` constant — the wire format uses snake_case KQL-aligned labels.
-* A ``QueryIR`` root also carries ``ir_schema_version``, the same
-  ``IR_SCHEMA_VERSION`` the CLI's JSON envelope publishes. The view is a
-  lossy projection with no validator behind it, unlike ``model_dump_json``
-  which pydantic re-validates, so without the tag a dump from an earlier
-  release is indistinguishable from a query that did not use the fields a
-  reader expects.
+* A ``QueryIR`` root carries ``ir_schema_version`` second, after ``kind``.
+  It is the tag ``model_dump`` writes and ``QueryIR.model_validate`` checks.
+  The view is a lossy projection with no validator behind it, so without the
+  tag a view built from another IR schema is indistinguishable from a query
+  that did not use the fields a reader expects.
 * Fields holding their declared default (``result_type=unresolved``,
   ``result_type_inner=None``, empty lists/dicts) are dropped.
 * ``span`` (and ``LetFunction.body_span``) and ``schema_attached`` are
@@ -89,21 +88,14 @@ def to_llm_dict(node: Any) -> Any:
     See the module docstring for the shape contract.
     """
     out = _convert(node)
-    # Lazy imports: ``ir/__init__`` imports this module, and ``query``
-    # participates in the expr <-> query cycle.
-    from . import IR_SCHEMA_VERSION
+    # Lazy import: ``query`` participates in the expr <-> query cycle.
     from .query import QueryIR
 
     if isinstance(node, QueryIR) and isinstance(out, dict):
-        # Only the document root: a sub-tree dumped on its own is not a
-        # document, and stamping every node would repeat one string hundreds
-        # of times into the context window this view conserves. Placed second,
-        # after the ``kind`` discriminator that leads every node.
-        out = {
-            "kind": out["kind"],
-            "ir_schema_version": IR_SCHEMA_VERSION,
-            **{k: v for k, v in out.items() if k != "kind"},
-        }
+        # ``_convert`` emits the computed ``ir_schema_version`` after the
+        # declared fields. Move it second, after ``kind``, so a reader meets
+        # the tag before the fields it versions.
+        out = {"kind": out.pop("kind"), "ir_schema_version": out.pop("ir_schema_version"), **out}
     return out
 
 

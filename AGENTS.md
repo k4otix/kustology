@@ -480,6 +480,9 @@ increment, and the tags exist to mark what a consumer can observe rather than
 the project's internal history. Record the shape change in the CHANGELOG and
 leave the constants alone; the release commit moves them.
 `tests/ir/test_schema_tags.py` pins both, so an accidental bump fails there.
+Every `QueryIR` dump carries `IR_SCHEMA_VERSION` as `ir_schema_version`, and
+`QueryIR.model_validate` rejects any other value, so a bump makes every
+stored dump fail to load.
 
 Note `semantic_hash` is not bind-invariant: a `let` aliasing a table resolves to
 `rhs_pipeline` when bound and `rhs_expr` when not, and that is a shape
