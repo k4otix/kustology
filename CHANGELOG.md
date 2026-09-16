@@ -6,7 +6,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.4.0] — 2026-09-14
+## [0.4.0] — 2026-09-16
 
 `IR_SCHEMA_VERSION` moves to `0.3` and `SEMANTIC_HASH_SCHEME` to `kustology-sem-v3`. Every operator the IR used to record as source text is typed, `ColumnRef` gains `qualifier`, `TypeOfExpr` and `GraphElementRef` are new nodes, and `raw_text` is hashed after re-lexing, so every stored `kustology-sem-v2` digest needs recomputing. A `QueryIR` dump carries `ir_schema_version` and a load checks it first, so every stored `0.2` dump fails validation, whatever its query uses; rebuild those from source. Tier 1 and the CLI gain the surfaces listed under Added; the one hard break outside tier 2 is that the CLI rejects input whose tail the parser skipped.
 
