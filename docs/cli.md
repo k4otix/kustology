@@ -131,7 +131,7 @@ On `validate` and `parse`, a schema file binds the parse. On `parse --ir`, `to_i
 }
 ```
 
-Both tags are part of the IR's compatibility contract. They let you check a stored payload against the IR shape that produced it. See [semantic-hash.md](semantic-hash.md) for what each tag covers and when it changes.
+Both tags are part of the IR's compatibility contract. They let you check a stored payload against the IR shape that produced it. The IR under `"ir"` carries its own `ir_schema_version` with the same value, so it loads through `QueryIR.model_validate` as it stands. See [semantic-hash.md](semantic-hash.md) for what each tag covers and when it changes.
 
 ## Input and limits
 

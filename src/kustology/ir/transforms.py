@@ -855,9 +855,10 @@ def _payload(canonical: BaseModel) -> dict[str, Any]:
     payload: Any
     if isinstance(canonical, QueryIR):
         # Named field by field rather than dumping the whole model, so
-        # ``raw_text``, ``semantic_hash`` and ``schema_attached`` stay out of
-        # the digest. The cost: a new ``QueryIR`` field is invisible here until
-        # it is added, so the builder can fill one faithfully while it hashes
+        # ``raw_text``, ``semantic_hash``, ``ir_schema_version``, and
+        # ``schema_attached`` stay out of the digest. The cost: a new
+        # ``QueryIR`` field is invisible here until it is added, so the
+        # builder can fill one faithfully while it hashes
         # to nothing at all and two queries differing only there become one
         # digest. Add every field that carries query meaning.
         payload = {

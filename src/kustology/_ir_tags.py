@@ -9,9 +9,10 @@ such dependency-free source. ``kustology.ir`` re-exports both, which is the
 public spelling.
 
 ``IR_SCHEMA_VERSION`` versions the IR shape, separately from the ``kustology``
-package version. It moves on breaking field-shape changes, so serialized IR
-JSON can carry a version tag (in a wrapper envelope, for example) and a
-consumer can refuse an incompatible payload.
+package version. It moves on breaking field-shape changes. Every ``QueryIR``
+dump carries it as ``ir_schema_version``. ``QueryIR.model_validate`` rejects a
+dump carrying any other value or none, so a bump makes every stored dump fail
+to load.
 
 ``SEMANTIC_HASH_SCHEME`` prefixes every ``semantic_hash`` and versions the
 canonicalization rules behind it: the volatile field set, the transforms, and

@@ -252,6 +252,7 @@ protecting.
 | The CLI refuses input whose tail the parser skipped | `tests/test_cli_inprocess.py` (the `KUSTOLOGY002` cases) |
 | No IR model holds a live `System.Object` | `tests/ir/test_ast_isolation.py` |
 | `IR_SCHEMA_VERSION` / `SEMANTIC_HASH_SCHEME` never move silently | `tests/ir/test_schema_tags.py` |
+| A `QueryIR` dump tagged with another `ir_schema_version`, or with none, fails on the tag whatever its query uses | `tests/ir/test_ir_schema_version_tag.py` |
 | The corpus produces no `Unknown*` nodes | `scripts/mine_corpus.py` (the `corpus-regression` CI job) |
 | Every example still runs | `tests/test_examples.py` |
 | Fractional literals survive a comma-decimal locale | `tests/test_culture.py`, plus the `de-DE` / `fr-FR` CI matrix |

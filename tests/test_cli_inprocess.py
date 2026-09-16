@@ -462,12 +462,13 @@ def test_parse_ast_with_schema_binds_without_changing_the_tree(
 
 
 def test_parse_ir_json_is_wrapped_in_a_versioned_envelope(monkeypatch, capsys):
-    """Without the envelope, `--ir --json` would emit the bare `QueryIR`
-    dump, leaving a consumer holding a stored payload no way to tell which
-    IR shape produced it even though both version tags exist. The output is
-    an envelope naming both, with the IR under `"ir"`."""
+    """Check that `--ir --json` wraps the IR in an envelope naming both version tags.
+
+    The IR under `"ir"` carries its own `ir_schema_version`, equal to the
+    envelope's, so `"ir"` loads through `QueryIR.model_validate` as it stands.
+    """
     pytest.importorskip("pydantic")
-    from kustology.ir import IR_SCHEMA_VERSION, SEMANTIC_HASH_SCHEME
+    from kustology.ir import IR_SCHEMA_VERSION, SEMANTIC_HASH_SCHEME, QueryIR
 
     monkeypatch.setattr(sys, "stdin", _stdin("StormEvents | take 5"))
     rc = main(["parse", "--ir", "--json"])
@@ -479,6 +480,8 @@ def test_parse_ir_json_is_wrapped_in_a_versioned_envelope(monkeypatch, capsys):
     assert payload["semantic_hash_scheme"] == SEMANTIC_HASH_SCHEME == "kustology-sem-v3"
     assert payload["ir"]["main_pipeline"]["operators"]
     assert payload["ir"]["semantic_hash"].startswith(SEMANTIC_HASH_SCHEME + ":")
+    assert payload["ir"]["ir_schema_version"] == payload["ir_schema_version"]
+    assert QueryIR.model_validate(payload["ir"]).semantic_hash == payload["ir"]["semantic_hash"]
 
 
 def test_parse_ir_missing_extras_hint_is_a_usage_error(monkeypatch, capsys):

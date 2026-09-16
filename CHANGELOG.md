@@ -8,7 +8,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.4.0] — 2026-09-14
 
-`IR_SCHEMA_VERSION` moves to `0.3` and `SEMANTIC_HASH_SCHEME` to `kustology-sem-v3`. Every operator the IR used to record as source text is typed, `ColumnRef` gains `qualifier`, `TypeOfExpr` and `GraphElementRef` are new nodes, and `raw_text` is hashed after re-lexing, so stored `0.2` dumps of those queries fail validation and every stored `kustology-sem-v2` digest needs recomputing. Tier 1 and the CLI gain the surfaces listed under Added; the one hard break outside tier 2 is that the CLI rejects input whose tail the parser skipped.
+`IR_SCHEMA_VERSION` moves to `0.3` and `SEMANTIC_HASH_SCHEME` to `kustology-sem-v3`. Every operator the IR used to record as source text is typed, `ColumnRef` gains `qualifier`, `TypeOfExpr` and `GraphElementRef` are new nodes, and `raw_text` is hashed after re-lexing, so every stored `kustology-sem-v2` digest needs recomputing. A `QueryIR` dump carries `ir_schema_version` and a load checks it first, so every stored `0.2` dump fails validation, whatever its query uses; rebuild those from source. Tier 1 and the CLI gain the surfaces listed under Added; the one hard break outside tier 2 is that the CLI rejects input whose tail the parser skipped.
 
 ### Added
 
@@ -26,6 +26,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **A `QueryIR` dump carries `ir_schema_version`** (tier 2). `model_validate` and `model_validate_json` reject a dump tagged with another version, or with none, with a `ValidationError` of type `ir_schema_version`. Rebuild a rejected dump from its `raw_text`; see [Storing IR JSON](docs/semantic-hash.md#storing-ir-json).
 - **`to_ir()` raises on a control command** (tier 2). The IR models query grammar, so a `CommandBlock` parse raises `ValueError`; branch on `KustoQuery.is_command` first. `kustology parse --ir` exits 1 on the same input.
 - **`validate`, `format`, and `parse` reject input whose tail the parser skipped** (CLI). The diagnostic carries kustology's code `KUSTOLOGY002` at `Error` severity. The library's `validate()` and `KustoQuery.diagnostics` are unchanged.
 - **`Span` is immutable and shared across copies of an IR** (tier 2). Copying an IR hands every span over by reference, so `copy.deepcopy(ir)` and the private copy each digest is built from stop rebuilding them. Assigning to a span's fields raises; build a new `Span` instead.
